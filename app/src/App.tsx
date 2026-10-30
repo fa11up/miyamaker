@@ -9,6 +9,7 @@ import { Provider } from 'react-redux'
 import { WagmiProvider } from 'wagmi'
 
 import { wagmiConfig } from './config/wagmi'
+import { GRAPHQL_URL } from './constants/indexer'
 import AccountProvider from './context/AccountProvider'
 import ClustersProvider from './context/ClustersProvider'
 import Router from './Router'
@@ -46,7 +47,8 @@ const readTheme = merge(lightTheme(), {
 } as Theme)
 
 const client = new ApolloClient({
-  uri: import.meta.env.VITE_GRAPHQL_URL,
+  // Optional indexer; queries are skipped when it is not configured (see constants/indexer.ts).
+  uri: GRAPHQL_URL || 'http://indexer.invalid/graphql',
   cache: new InMemoryCache(),
 })
 

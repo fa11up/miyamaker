@@ -1,5 +1,6 @@
 import { useQuery } from '@apollo/client'
 import CollectionsImage from 'assets/explorer/sample/collections.jpeg'
+import { INDEXER_ENABLED } from '@/constants/indexer'
 import styled from 'styled-components/macro'
 
 import SearchIcon from '@/assets/explorer/icon/search.svg'
@@ -126,6 +127,14 @@ const CollectionInfoWrapper = styled.div`
   justify-content: center;
 `
 
+const EmptyState = styled.div`
+  padding: 24px 12px;
+  text-align: center;
+  opacity: 0.8;
+  font-size: 12px;
+  line-height: 1.6;
+`
+
 export default function Collections({
   setPageSection,
   closeWindow,
@@ -137,7 +146,7 @@ export default function Collections({
   isConnected: boolean
   setSelectedCollection: (collection: Collection) => void
 }) {
-  const { loading, error, data } = useQuery(GET_COLLECTIONS, { variables: { offset: 0, limit: 20 } })
+  const { loading, error, data } = useQuery(GET_COLLECTIONS, { variables: { offset: 0, limit: 20 }, skip: !INDEXER_ENABLED })
 
   const handleClickCollection = (collection: Collection) => {
     setSelectedCollection(collection)
@@ -163,7 +172,11 @@ export default function Collections({
         <CollectionListWrapper>
           <CollectionSearch type="text" placeholder="Search for collection..." />
           <CollectionListItemContainer>
-            {loading || error ? (
+            {!INDEXER_ENABLED || error ? (
+              <EmptyState>
+                {INDEXER_ENABLED ? 'Could not reach the collection index.' : 'Collection index is offline.'}
+              </EmptyState>
+            ) : loading || !data ? (
               <div
                 style={{
                   display: 'flex',

@@ -8,10 +8,12 @@ import { NormalButton } from '@/components/Button/NormalButton'
 import { ErrorButtonWrapper, ErrorContent, ErrorMessage, ErrorWindow, ErrorWrapper } from '@/components/Errors'
 import TitleBar from '@/components/TitleBar'
 import WindowWrapper from '@/components/WindowWrapper'
+import { INDEXER_ENABLED } from '@/constants/indexer'
 import Pages from '@/constants/pages'
 import CollectionInfo from '@/pages/Mint/Collection'
 import Collections from '@/pages/Mint/Collections'
 import { EXPLORER_PAGE_SECTION } from '@/pages/Mint/constants'
+import MiyaminiMint from '@/pages/Mint/Miyamini'
 import NFTDetail from '@/pages/Mint/NFT'
 import type { Collection } from '@/pages/Mint/types/collection'
 import type { TokenMetadata } from '@/store/collections/reducer'
@@ -23,7 +25,7 @@ const page = Pages.mint
 const pageId = page?.id as PageKey
 
 const Background = styled.div`
-  height: calc(100% - 1.5rem);
+  height: 100%;
   width: 100%;
 
   position: relative;
@@ -44,7 +46,8 @@ const Background = styled.div`
     background-size: cover;
   }
 
-  * {
+  /* The legacy collection browser uses the display face everywhere; the MIYAMINI view uses the type scale. */
+  &.legacy * {
     font-family: 'Revalia', sans-serif;
     letter-spacing: 1px;
   }
@@ -74,7 +77,7 @@ export default function MintPage() {
 
   const [errorMessage, setErrorMessage] = useState<string>('')
   const [errorName, setErrorName] = useState<string>('Mint Error')
-  const [pageSection, setPageSection] = useState<string>(EXPLORER_PAGE_SECTION.COLLECTIONS_SECTION)
+  const [pageSection, setPageSection] = useState<string>(EXPLORER_PAGE_SECTION.MIYAMINI_SECTION)
   const [selectedCollection, setSelectedCollection] = useState<Collection>({
     name: '',
     metadataUri: '',
@@ -102,12 +105,20 @@ export default function MintPage() {
 
   const renderSection = () => {
     switch (pageSection) {
+      case EXPLORER_PAGE_SECTION.MIYAMINI_SECTION:
+        return (
+          <MiyaminiMint
+            onBrowseCollections={
+              INDEXER_ENABLED ? () => setPageSection(EXPLORER_PAGE_SECTION.COLLECTIONS_SECTION) : undefined
+            }
+          />
+        )
       case EXPLORER_PAGE_SECTION.COLLECTIONS_SECTION:
         return (
           <Collections
             isConnected={isConnected}
             setPageSection={setPageSection}
-            closeWindow={close}
+            closeWindow={() => setPageSection(EXPLORER_PAGE_SECTION.MIYAMINI_SECTION)}
             setSelectedCollection={setSelectedCollection}
           />
         )
@@ -145,8 +156,8 @@ export default function MintPage() {
       >
         {page?.label}
       </TitleBar>
-      <Background>
-        <Container>
+      <Background className={pageSection === EXPLORER_PAGE_SECTION.MIYAMINI_SECTION ? 'miyamini' : 'legacy'}>
+        <Container style={pageSection === EXPLORER_PAGE_SECTION.MIYAMINI_SECTION ? { padding: 0 } : undefined}>
           {renderSection()}
           {errorMessage && (
             <ErrorWrapper>
