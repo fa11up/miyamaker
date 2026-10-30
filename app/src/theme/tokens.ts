@@ -41,6 +41,8 @@ export const space = {
 export const font = {
   ui: `'W95FA', 'Hiragino Kaku Gothic Pro W3', Osaka, Meiryo, 'MS PGothic', arial, sans-serif`,
   display: `'Revalia', 'W95FA', sans-serif`,
+  /** Long-form reading text inside windows (About page etc.). */
+  body: `'Hiragino Kaku Gothic Pro W3', Osaka, Meiryo, 'MS PGothic', arial, sans-serif`,
   mono: `ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace`,
 } as const
 
