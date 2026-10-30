@@ -1,0 +1,34 @@
+[profile.default]
+src = "src"
+out = "out"
+libs = ["lib"]
+solc = "0.8.28"
+optimizer = true
+optimizer_runs = 100
+via_ir = true
+evm_version = "cancun"
+test = "test"
+script = "script"
+broadcast = "broadcast"
+fs_permissions = [{ access = "read-write", path = "./deployments/" }]
+remappings = [
+    "forge-std/=lib/forge-std/src/",
+    "solady/=lib/solady/src/",
+    "v4-core/=lib/v4-core/src/",
+    "v4-core/test/=lib/v4-core/test/",
+    "createx-forge/=lib/createx-forge/",
+]
+
+# Fast local iteration: `FOUNDRY_PROFILE=lite forge test`
+[profile.lite]
+via_ir = false
+optimizer = false
+
+[profile.ci]
+fuzz_runs = 1000
+invariant_runs = 10000
+
+[fmt]
+line_length = 120
+tab_width = 4
+bracket_spacing = true
