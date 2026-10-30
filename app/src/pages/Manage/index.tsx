@@ -452,7 +452,7 @@ export default function ManagePage() {
           flexDirection: 'column',
           padding: '0.5rem',
           gap: '1rem',
-          height: 'calc(100% - 1.5rem)',
+          height: '100%',
         }}
       >
         {collection && isOwner && is721m ? (

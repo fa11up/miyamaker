@@ -7,6 +7,7 @@ import CaretUpIcon from 'assets/icon/caret_up.svg'
 import CaretDownIcon from 'assets/icon/caret_down.svg'
 
 import type { Colors } from './styled'
+import { color as c, focusRing, font, TASKBAR_HEIGHT } from './tokens'
 
 type TextProps = Omit<TextPropsOriginal, 'css'>
 
@@ -154,22 +155,48 @@ export const ThemedText = {
 export const ThemedGlobalStyle = createGlobalStyle`
   
 @font-face {
-  font-family: 'W95FA';
-  src: url("/fonts/w95fa/w95fa.woff");
-}
-
-@font-face {
   font-family: 'Revalia';
   src: url("/fonts/Revalia/Revalia.ttf");
 }
 
+@font-face {
+  font-family: 'W95FA';
+  src: url("/fonts/w95fa/w95fa.woff");
+  font-display: swap;
+}
+
+:root {
+  --taskbar-h: ${TASKBAR_HEIGHT.desktop}px;
+  @media (max-width: 768px) {
+    --taskbar-h: ${TASKBAR_HEIGHT.mobile}px;
+  }
+}
+
 * {
   box-sizing: border-box;
-  font-family: 'Hiragino Kaku Gothic Pro W3', Osaka, Meiryo, 'MS PGothic', arial, helvetica, clean, sans-serif;
+  font-family: ${font.ui};
+}
+
+button, input, select, textarea {
+  font-family: ${font.ui};
+  font-size: inherit;
+  color: inherit;
+}
+
+:where(button, a, input, select, textarea, [role='button']):focus-visible {
+  ${focusRing}
+}
+
+::selection {
+  background: ${c.accent};
+  color: ${c.highlight};
 }
 
 html {
-  color: ${({ theme }) => theme.neutral900};
+  color: ${c.ink};
+  -webkit-font-smoothing: none;
+  -webkit-tap-highlight-color: transparent;
+  font-size: 16px;
   background-repeat: no-repeat;
   height: 100%;
   //max-width: 43em;

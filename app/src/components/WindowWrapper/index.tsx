@@ -1,31 +1,43 @@
 import type { ReactNode } from 'react'
 import styled from 'styled-components/macro'
 
-const WindowBorder = styled.div`
-  border-left: 2px solid #a9a3c9;
-  border-top: 2px solid #a9a3c9;
-  border-bottom: 1px solid black;
-  border-right: 1px solid black;
+import { bevel, color } from '@/theme/tokens'
+
+/** Classic raised window frame. Content below the title bar fills the remaining height. */
+const WindowFrame = styled.div`
   height: 100%;
-  background-color: #a9a3c9;
-  > .inner-border {
-    border-left: 1px solid white;
-    border-top: 1px solid white;
-    border-right: 2px solid #808080;
-    height: 100%;
-    > .inner-border-two {
-      height: 100%;
-      border: 2px solid #a9a3c9;
-    }
+  display: flex;
+  flex-direction: column;
+  padding: 3px;
+  background-color: ${color.face};
+  box-shadow: ${bevel.raised}, 4px 6px 0 rgba(20, 16, 31, 0.25);
+  color: ${color.ink};
+
+  > .window-body {
+    position: relative;
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  > .window-body > * {
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+
+  @media (max-width: 768px) {
+    padding: 0;
+    box-shadow: none;
   }
 `
 
 export default function WindowWrapper({ children }: { children: ReactNode }) {
+  const [titleBar, ...rest] = Array.isArray(children) ? children : [children]
   return (
-    <WindowBorder>
-      <div className="inner-border">
-        <div className="inner-border-two">{children}</div>
-      </div>
-    </WindowBorder>
+    <WindowFrame className="window-frame">
+      {titleBar}
+      <div className="window-body">{rest}</div>
+    </WindowFrame>
   )
 }

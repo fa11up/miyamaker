@@ -15,7 +15,7 @@ import License from '@/components/License'
 import { Bar, BorderContainer, MBox } from '@/theme/common'
 
 const Bg = styled.div`
-  height: calc(100% - 26px);
+  height: 100%;
   background-image: linear-gradient(black, black, white, black, black);
   overflow: hidden;
 `

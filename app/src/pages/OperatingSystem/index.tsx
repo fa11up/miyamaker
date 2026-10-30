@@ -1,9 +1,7 @@
 /* eslint-disable @typescript-eslint/no-non-null-assertion */
 import MiyaLogo from 'assets/134321870.png'
-import Folder from 'assets/folder.png?preset=thumbnail&resize=true'
-import FolderOpen from 'assets/folder_open.png?preset=thumbnail&resize=true'
 import CreateNew from 'assets/miyamints1.png?preset=thumbnail&resize=true'
-import { Fragment, useEffect, useMemo } from 'react'
+import { Fragment, useEffect, useMemo, useState } from 'react'
 import { Helmet } from 'react-helmet-async'
 import { useLocation } from 'react-router-dom'
 import styled from 'styled-components/macro'
@@ -14,11 +12,12 @@ import OsLoader from '@/components/OsLoader'
 import TaskBar from '@/components/TaskBar'
 import Pages from '@/constants/pages'
 import { useAppDispatch, useAppSelector } from '@/store/hooks'
-import { minimizeWindow, openWindow, setToFront } from '@/store/windows/actions'
+import { closeWindow, minimizeWindow, openWindow, setToFront } from '@/store/windows/actions'
 import { useWindows } from '@/store/windows/hooks'
 import type { PageKey } from '@/store/windows/reducer'
-import getMediaKey from '@/utils/getMediaKey'
+import { MOBILE_BREAKPOINT } from '@/theme/tokens'
 
+import AppSwitcher from './AppSwitcher'
 import Background from './Background'
 import DesktopIcon from './DesktopIcon'
 import FourthWall from './FourthWall'
@@ -27,7 +26,7 @@ import Windows from './Windows'
 const Foreground = styled.div`
   position: relative;
   z-index: 1;
-  height: calc(100svh - 32px);
+  height: calc(100svh - var(--taskbar-h));
   pointer-events: none;
   * {
     pointer-events: auto;
@@ -61,6 +60,10 @@ const WindowContainer = styled.div<{ mobile?: boolean }>`
     width: 100% !important;
     height: 100% !important;
   }
+  /* Phones: one app at a time, switch via the taskbar app switcher. */
+  > .react-draggable:not(.is-focused) {
+    display: none;
+  }
   `}
 `
 
@@ -75,20 +78,48 @@ const Icons = styled.div`
   }
 `
 
+/* Desktop: icons flow top-to-bottom in columns, like a real desktop. Phones: a home-screen grid. */
+const IconGrid = styled.div`
+  display: grid;
+  grid-auto-flow: column;
+  grid-template-rows: repeat(auto-fill, 104px);
+  grid-auto-columns: 96px;
+  gap: 8px;
+  padding: 16px;
+  height: 100%;
+  width: max-content;
+  align-content: start;
+
+  @media (max-width: ${MOBILE_BREAKPOINT}px) {
+    grid-auto-flow: row;
+    grid-template-rows: none;
+    grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
+    grid-auto-columns: auto;
+    width: 100%;
+    height: auto;
+    padding: 24px 16px;
+    row-gap: 20px;
+  }
+`
+
 // const ComponentPage = Pages.components
-const UploaderPage = Pages.uploader
-const ManagePage = Pages.manager
-const AuctionPage = Pages.auction
-const MintPage = Pages.mint
+export type DesktopApp = { id: PageKey; label: string; src: string | undefined }
+
+const DESKTOP_ICONS: DesktopApp[] = [
+  { id: 'mint', label: Pages.mint?.label || 'Mint', src: Pages.mint?.icon?.src },
+  { id: 'home', label: 'Net Explorer', src: MiyaLogo },
+  { id: 'launch', label: 'Launch', src: CreateNew[0]?.src },
+  { id: 'manager', label: Pages.manager?.label || 'Manager', src: Pages.manager?.icon?.src },
+  { id: 'auction', label: Pages.auction?.label || 'Auction', src: Pages.auction?.icon?.src },
+  { id: 'uploader', label: Pages.uploader?.label || 'Upload', src: Pages.uploader?.icon?.src },
+]
 
 export default function OperatingSystem() {
   const location = useLocation()
   /* Responsiveness stuff */
   const { width, height } = useWindowSize()
-  const [, isMobile] = useMemo(() => {
-    const result = getMediaKey(width)
-    return [result, ['upToExtraSmall', 'upToSmall'].includes(result)]
-  }, [width])
+  const isMobile = width > 0 && width <= MOBILE_BREAKPOINT
+  const [switcherOpen, setSwitcherOpen] = useState(false)
 
   /* Redux stuff */
   const dispatch = useAppDispatch()
@@ -106,7 +137,10 @@ export default function OperatingSystem() {
     dispatch(
       openWindow({
         value: id,
-        position: { x: width / 2 - page.minSize.width / 2, y: height / 2 - page.minSize.height / 2 },
+        position: {
+          x: Math.max(0, width / 2 - page.minSize.width / 2),
+          y: Math.max(0, (height - 34) / 2 - page.minSize.height / 2),
+        },
       })
     )
   }
@@ -141,6 +175,7 @@ export default function OperatingSystem() {
         <Fragment key={`${window}-window`}>
           <Windows
             minimized={minimized.includes(window)}
+            focused={zindex[zindex.length - 1] === window && !minimized.includes(window)}
             mobile={isMobile || fullScreen.includes(window)}
             baseDepth={zindex.indexOf(window) * 1000 + 2000}
             identifier={window}
@@ -168,71 +203,39 @@ export default function OperatingSystem() {
       <Foreground>
         <WindowContainer mobile={isMobile}>{MemoizedWindows}</WindowContainer>
         <Icons>
-          <div
-            style={{
-              zIndex: 1,
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'start',
-              padding: '1rem',
-            }}
-          >
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'start', gap: '2rem' }}>
-              <div style={{ display: 'flex', justifyContent: 'center', padding: '0 0', gap: '2rem' }}>
-                <DesktopIcon normalState={MiyaLogo} onClick={() => handleOpen('home')}>
-                  Net
-                  <br />
-                  Explorer
-                </DesktopIcon>
-                <DesktopIcon
-                  normalState={UploaderPage?.icon?.src}
-                  onClick={() => handleOpen(UploaderPage?.id as PageKey)}
-                >
-                  {UploaderPage?.label}
-                </DesktopIcon>
-                <DesktopIcon normalState={ManagePage?.icon?.src} onClick={() => handleOpen(ManagePage?.id as PageKey)}>
-                  {' '}
-                  {ManagePage?.label}{' '}
-                </DesktopIcon>
-              </div>
-
-              <div style={{ display: 'flex', justifyContent: 'center', padding: '0 0', gap: '2rem' }}>
-                <DesktopIcon
-                  normalState={CreateNew[0]?.src}
-                  onClick={() => handleOpen('launch')}
-                  realignment={'0 -10px 0 0'}
-                >
-                  Launch
-                </DesktopIcon>
-                {/*
-                <DesktopIcon
-                  normalState={ComponentPage?.icon?.src}
-                  onClick={() => handleOpen(ComponentPage?.id as PageKey)}
-                >
-                  {ComponentPage?.label}
-                </DesktopIcon>
-                */}
-                <DesktopIcon normalState={Folder[0]?.src} hoverState={FolderOpen[0]?.src} onClick={() => null}>
-                  My collections
-                </DesktopIcon>
-                <DesktopIcon
-                  normalState={AuctionPage?.icon?.src}
-                  onClick={() => handleOpen(AuctionPage?.id as PageKey)}
-                >
-                  {AuctionPage?.label}
-                </DesktopIcon>
-              </div>
-
-              <div style={{ display: 'flex', justifyContent: 'center', padding: '0 0', gap: '2rem' }}>
-                <DesktopIcon normalState={MintPage?.icon?.src} onClick={() => handleOpen(MintPage?.id as PageKey)}>
-                  {MintPage?.label}
-                </DesktopIcon>
-              </div>
-            </div>
-          </div>
+          <IconGrid>
+            {DESKTOP_ICONS.map((icon) => (
+              <DesktopIcon key={icon.id} normalState={icon.src} onClick={() => handleOpen(icon.id)}>
+                {icon.label}
+              </DesktopIcon>
+            ))}
+          </IconGrid>
         </Icons>
       </Foreground>
-      <TaskBar active={windows} focus={zindex[zindex.length - 1]} onClick={(id) => handleTaskbar(id)} />
+      <TaskBar
+        active={windows}
+        focus={zindex[zindex.length - 1]}
+        onClick={(id) => handleTaskbar(id)}
+        mobile={isMobile}
+        onOpenSwitcher={() => setSwitcherOpen((open) => !open)}
+        onHome={() => {
+          const top = zindex[zindex.length - 1]
+          if (top) dispatch(minimizeWindow({ value: top }))
+        }}
+      />
+      {isMobile && switcherOpen && (
+        <AppSwitcher
+          open={windows}
+          focus={zindex[zindex.length - 1]}
+          apps={DESKTOP_ICONS}
+          onSelect={(id) => {
+            setSwitcherOpen(false)
+            handleOpen(id)
+          }}
+          onClose={(id) => dispatch(closeWindow({ value: id }))}
+          onDismiss={() => setSwitcherOpen(false)}
+        />
+      )}
       <FourthWall />
     </div>
   )

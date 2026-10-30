@@ -587,7 +587,7 @@ export default function LaunchPage() {
           flexDirection: 'column',
           padding: '0.5rem',
           gap: '1rem',
-          height: 'calc(100% - 1.5rem)',
+          height: '100%',
         }}
       >
         <div style={{ display: 'flex', marginBottom: '0.5rem', flex: '1 0 auto' }}>

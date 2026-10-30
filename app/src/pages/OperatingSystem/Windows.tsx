@@ -48,8 +48,10 @@ const DraggableWrapper = ({
   dragPosition,
   onDragWindow,
   onStopDrag,
+  disabled,
   children,
 }: {
+  disabled?: boolean
   className: string
   dragPosition: { x: number; y: number }
   onDragWindow: (x: number, y: number) => void
@@ -72,6 +74,7 @@ const DraggableWrapper = ({
       defaultClassName={`react-draggable ${className}`}
       axis="both"
       handle=".title-bar"
+      disabled={disabled}
       defaultPosition={{ x: 0, y: 0 }}
       bounds=".bwindow"
       position={dragPosition}
@@ -91,6 +94,7 @@ export default function Windows({
   onClick,
   mobile,
   minimized,
+  focused,
   identifier = 'program',
   baseDepth = 2000,
 }: {
@@ -99,6 +103,7 @@ export default function Windows({
   onClick: () => void
   mobile?: boolean
   minimized?: boolean
+  focused?: boolean
   identifier?: string
   baseDepth?: number
 }) {
@@ -160,7 +165,10 @@ export default function Windows({
   return position && dragPosition ? (
     <>
       <DraggableWrapper
-        className={[mobile ? 'fullscreen' : '', minimized ? 'minimized' : ''].filter(Boolean).join(' ')}
+        className={[mobile ? 'fullscreen' : '', minimized ? 'minimized' : '', focused ? 'is-focused' : '']
+          .filter(Boolean)
+          .join(' ')}
+        disabled={mobile}
         dragPosition={mobile ? { x: 0, y: 0 } : dragPosition}
         onDragWindow={(x, y) => moveIt(x, y)}
         onStopDrag={() => {
