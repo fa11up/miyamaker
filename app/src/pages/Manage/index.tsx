@@ -3,9 +3,10 @@
 import { createContext, useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import styled from 'styled-components/macro'
-import { goerli } from 'viem/chains'
-import type { Address } from 'wagmi'
-import { mainnet, useAccount, useContractRead, useWaitForTransaction } from 'wagmi'
+import type { Address } from 'viem'
+import { useAccount, useReadContract } from 'wagmi'
+import { mainnet, sepolia } from 'viem/chains'
+import { useWaitForTransaction } from '@/hooks/useWaitForTransaction'
 
 import { ConnectedButton, HighlightButton } from '@/components/Button'
 import FormInput from '@/components/FormInput'
@@ -121,7 +122,7 @@ export default function ManagePage() {
     return !!alignedNft
   }, [alignedNft])
 
-  const { data: owner, refetch: refetchOwner } = useContractRead({
+  const { data: owner, refetch: refetchOwner } = useReadContract({
     functionName: 'owner',
     address: collection,
     abi: [
@@ -133,7 +134,7 @@ export default function ManagePage() {
         type: 'function',
       },
     ],
-    enabled: !!(collection && is721m),
+    query: { enabled: !!(collection && is721m) },
   })
 
   const isOwner = useMemo(() => {
@@ -295,7 +296,7 @@ export default function ManagePage() {
             }}
             disabled={!!transacting || uriLocked}
             onClick={() => handleLockUri()}
-            withChain={[mainnet.id, goerli.id]}
+            withChain={[mainnet.id, sepolia.id]}
           >
             {transacting === 'lockUri' ? 'Updating...' : uriLocked ? 'Locked' : 'Lock'}
           </ConnectedButton>
@@ -314,7 +315,7 @@ export default function ManagePage() {
             }}
             disabled={!!transacting || mintOpen}
             onClick={() => handleOpenMint()}
-            withChain={[mainnet.id, goerli.id]}
+            withChain={[mainnet.id, sepolia.id]}
           >
             {transacting === 'openMint' ? 'Updating...' : mintOpen ? 'Already open' : 'Open'}
           </ConnectedButton>
@@ -411,7 +412,7 @@ export default function ManagePage() {
           }}
           disabled={!!transacting}
           onClick={() => handleUpdateMetadata()}
-          withChain={[mainnet.id, goerli.id]}
+          withChain={[mainnet.id, sepolia.id]}
         >
           {transacting === 'metadata' ? 'Updating...' : 'Update'}
         </ConnectedButton>

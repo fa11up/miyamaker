@@ -1,4 +1,4 @@
-import { mainnet } from 'wagmi'
+import { mainnet } from 'viem/chains'
 
 import { DEFAULT_PARENT, DEFAULT_VAULT, FACTORY_CONTRACT } from '@/constants/contracts'
 

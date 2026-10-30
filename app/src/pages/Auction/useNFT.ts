@@ -1,12 +1,12 @@
 import { useFetch } from 'usehooks-ts'
 import type { Address } from 'viem'
-import { useContractReads } from 'wagmi'
+import { useReadContracts } from 'wagmi'
 
 import type { ContractMetadata } from '@/store/collections/reducer'
 
 export function useNFT({ address }: { address: Address }) {
-  const { data } = useContractReads({
-    enabled: !!address,
+  const { data } = useReadContracts({
+    query: { enabled: !!address },
     contracts: [
       {
         address,

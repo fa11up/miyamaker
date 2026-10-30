@@ -2,7 +2,8 @@ import WarningIcon from 'assets/icon/warning.png'
 import { useEffect, useState } from 'react'
 import { useWindowSize } from 'usehooks-ts'
 import type { Address } from 'viem'
-import { mainnet, useNetwork } from 'wagmi'
+import { useAccount as useWagmiAccount } from 'wagmi'
+import { mainnet } from 'viem/chains'
 
 import { NormalButton } from '@/components/Button/NormalButton'
 import { ErrorButtonWrapper, ErrorContent, ErrorMessage, ErrorWindow, ErrorWrapper } from '@/components/Errors'
@@ -39,7 +40,7 @@ export default function AuctionPage() {
   const [pageSection, setPageSection] = useState(AUCTION_PAGE_SECTION.COLLECTIONS_SECTION)
 
   // Network
-  const { chain } = useNetwork()
+  const { chain } = useWagmiAccount()
   const auctionContract = AUCTION_CONTRACT[chain?.id || mainnet.id] || AUCTION_CONTRACT[mainnet.id]!
 
   // Get contract data

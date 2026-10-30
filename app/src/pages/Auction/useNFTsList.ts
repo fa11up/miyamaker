@@ -1,13 +1,13 @@
 import { values } from 'lodash'
 import type { Address } from 'viem'
-import { useContractRead } from 'wagmi'
+import { useReadContract } from 'wagmi'
 
 import { abi } from './constants'
 
 export function useNFTsList({ address }: { address: Address }) {
-  const { data } = useContractRead({
+  const { data } = useReadContract({
     address,
-    enabled: !!address,
+    query: { enabled: !!address },
     functionName: 'getNfts',
     abi,
   })

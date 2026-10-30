@@ -10,7 +10,7 @@ import { useState } from 'react'
 import styled from 'styled-components/macro'
 import type { Address } from 'viem'
 import { formatUnits } from 'viem'
-import { useWaitForTransaction } from 'wagmi'
+import { useWaitForTransaction } from '@/hooks/useWaitForTransaction'
 
 import { NormalButton } from '@/components/Button/NormalButton'
 import Dialog from '@/components/Dialog'

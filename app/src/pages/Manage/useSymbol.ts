@@ -1,10 +1,10 @@
 import type { Address } from 'viem'
-import { useContractRead } from 'wagmi'
+import { useReadContract } from 'wagmi'
 
 export function useSymbol({ address }: { address?: Address }) {
-  const { data: symbol } = useContractRead({
+  const { data: symbol } = useReadContract({
     address,
-    enabled: !!address,
+    query: { enabled: !!address },
     functionName: 'symbol',
     abi: [
       {

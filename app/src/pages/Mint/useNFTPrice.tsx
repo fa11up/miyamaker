@@ -1,10 +1,10 @@
 import type { Address } from 'viem'
-import { useContractRead } from 'wagmi'
+import { useReadContract } from 'wagmi'
 
 export function useNFTPrice({ address }: { address: Address }) {
-  const { data: price } = useContractRead({
+  const { data: price } = useReadContract({
     address,
-    enabled: !!address,
+    query: { enabled: !!address },
     functionName: 'price',
     abi: [
       {

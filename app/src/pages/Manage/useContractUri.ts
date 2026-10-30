@@ -1,11 +1,12 @@
 /* eslint-disable @typescript-eslint/naming-convention */
 import type { Address } from 'viem'
-import { useContractRead, useContractWrite } from 'wagmi'
+import { useReadContract } from 'wagmi'
+import { useContractWrite } from '@/hooks/useContractWrite'
 
 export function useContractUri({ address }: { address?: Address }) {
-  const { data: contractUri } = useContractRead({
+  const { data: contractUri } = useReadContract({
     address,
-    enabled: !!address,
+    query: { enabled: !!address },
     functionName: 'contractURI',
     abi: [
       {

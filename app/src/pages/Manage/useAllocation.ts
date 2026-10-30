@@ -1,10 +1,11 @@
 import { type Address } from 'viem'
-import { useContractRead, useContractWrite } from 'wagmi'
+import { useReadContract } from 'wagmi'
+import { useContractWrite } from '@/hooks/useContractWrite'
 
 export function useAllocation({ address }: { address?: Address }) {
-  const { data: allocation, refetch } = useContractRead({
+  const { data: allocation, refetch } = useReadContract({
     address,
-    enabled: !!address,
+    query: { enabled: !!address },
     functionName: 'allocation',
     abi: [
       {
@@ -33,5 +34,5 @@ export function useAllocation({ address }: { address?: Address }) {
 
   const increaseAllocation = async (input: bigint) => writeAsync({ args: [input] })
 
-  return { allocation: (allocation as bigint) || 0n, increaseAllocation, refetch }
+  return { allocation: BigInt(allocation ?? 0), increaseAllocation, refetch }
 }

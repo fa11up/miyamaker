@@ -1,4 +1,4 @@
-import type { FetchBalanceResult } from '@wagmi/core'
+import type { BalanceData } from '@/context/AccountProvider'
 import Countdown, { zeroPad } from 'react-countdown'
 import styled from 'styled-components/macro'
 import { useWindowSize } from 'usehooks-ts'
@@ -97,7 +97,7 @@ export default function BidContainer({
   isConnected: boolean
   transacting: boolean
   endTime: number | undefined
-  balance: FetchBalanceResult | undefined
+  balance: BalanceData | undefined
   currentAuctionToken: TokenMetadata
   attributes: Attribute[]
 }) {

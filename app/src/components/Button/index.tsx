@@ -3,7 +3,7 @@ import PatternBg from 'assets/bg_pattern.png?preset=pattern&resize=true'
 import type { ReactNode } from 'react'
 import { useMemo } from 'react'
 import styled from 'styled-components/macro'
-import { useAccount, useNetwork, useSwitchNetwork } from 'wagmi'
+import { useAccount, useSwitchChain } from 'wagmi'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export const HighlightButton = styled.button<any>`
@@ -143,10 +143,8 @@ export const ConnectedButton = ({
   onClick: () => void
 }) => {
   const { openConnectModal } = useConnectModal()
-  const { isConnected } = useAccount()
-  const { chain, chains } = useNetwork()
-
-  const { switchNetwork } = useSwitchNetwork()
+  const { isConnected, chain } = useAccount()
+  const { chains, switchChain } = useSwitchChain()
   const correctChain = useMemo(() => {
     if (withChain !== undefined) {
       if (!chain?.id) return false
@@ -162,8 +160,8 @@ export const ConnectedButton = ({
       return
     }
 
-    if (withChain && !correctChain && switchNetwork) {
-      switchNetwork(withChain[0])
+    if (withChain && !correctChain && withChain[0] !== undefined) {
+      switchChain({ chainId: withChain[0] as (typeof chains)[number]['id'] })
       return
     }
 

@@ -1,16 +1,10 @@
 import Love from 'assets/love.jpg?preset=avatar&resize=true'
 import { useEffect, useMemo, useState } from 'react'
 import styled from 'styled-components/macro'
-import { goerli } from 'viem/chains'
-import type { Address } from 'wagmi'
-import {
-  mainnet,
-  useAccount,
-  useContractWrite,
-  useNetwork,
-  usePrepareContractWrite,
-  useWaitForTransaction,
-} from 'wagmi'
+import type { Address } from 'viem'
+import { useAccount, useSimulateContract, useWriteContract } from 'wagmi'
+import { mainnet } from 'viem/chains'
+import { useWaitForTransaction } from '@/hooks/useWaitForTransaction'
 
 import ComputerIcon from '@/assets/computer.png'
 import GearIcon from '@/assets/gears.png'
@@ -20,6 +14,7 @@ import Radio from '@/components/Radio'
 import { Separator } from '@/components/Separator'
 import TitleBar from '@/components/TitleBar'
 import WindowWrapper from '@/components/WindowWrapper'
+import { explorerUrl } from '@/config/wagmi'
 import { DEFAULT_PARENT, DEFAULT_VAULT, FACTORY_CONTRACT } from '@/constants/contracts'
 import Pages from '@/constants/pages'
 import { useAppDispatch } from '@/store/hooks'
@@ -75,8 +70,8 @@ const ResponsiveImage = styled.img`
 `
 
 export default function LaunchPage() {
+  const { chain } = useAccount()
   // Network
-  const { chain } = useNetwork()
   const factory = FACTORY_CONTRACT[chain?.id || mainnet.id] || FACTORY_CONTRACT[mainnet.id]!
 
   // Account
@@ -536,7 +531,7 @@ export default function LaunchPage() {
         {selectedType === 'advanced' && <p>NFTX Vault Id: {form.vaultId}</p>}
         <p>Allocation: {form.allocation || '0'}%</p>
         {result && (
-          <LinkButton target="_blank" href={`https://goerli.etherscan.io/address/${result.logs[0].address}`}>
+          <LinkButton target="_blank" href={`${explorerUrl(chain?.id)}/address/${result.logs[0]?.address}`}>
             View contract
           </LinkButton>
         )}
@@ -545,21 +540,22 @@ export default function LaunchPage() {
     )
   }, [form, selectedType])
 
-  const prepare = usePrepareContractWrite({
+  const prepare = useSimulateContract({
     address: factory as Address,
     functionName: 'deploy',
     abi,
     args: validated,
+    query: { enabled: !!validated && !!factory },
   })
 
-  const { writeAsync } = useContractWrite(prepare.config)
+  const { writeContractAsync } = useWriteContract()
   const handleCreation = async () => {
-    if (isConnected && isValidated && prepare.isSuccess && !!writeAsync) {
+    if (isConnected && isValidated && prepare.isSuccess && prepare.data) {
       setTransacting(true)
       setError(null)
       try {
-        const res = await writeAsync()
-        setTransactionHash(res.hash)
+        const hash = await writeContractAsync(prepare.data.request as Parameters<typeof writeContractAsync>[0])
+        setTransactionHash(hash)
       } catch (e) {
         setTransacting(false)
       }
@@ -623,7 +619,7 @@ export default function LaunchPage() {
                 style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
                 disabled={isNextDisabled}
                 onClick={() => setIndex((prev) => prev + 1)}
-                withChain={[mainnet.id, goerli.id]}
+                withChain={[mainnet.id]}
               >
                 <span>Next</span> <span>{'>'}</span>
               </ConnectedButton>
@@ -632,7 +628,7 @@ export default function LaunchPage() {
                 style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
                 disabled={!isValidated || isTransacting || !!result}
                 onClick={() => handleCreation()}
-                withChain={[mainnet.id, goerli.id]}
+                withChain={[mainnet.id]}
               >
                 {isTransacting ? 'Deploying...' : `Deploy on ${chain?.name}`}
               </ConnectedButton>

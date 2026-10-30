@@ -1,8 +1,8 @@
 import { useMemo, useState } from 'react'
 import { formatUnits, parseUnits } from 'viem'
-import { goerli } from 'viem/chains'
-import type { Address } from 'wagmi'
-import { mainnet, useWaitForTransaction } from 'wagmi'
+import type { Address } from 'viem'
+import { mainnet, sepolia } from 'viem/chains'
+import { useWaitForTransaction } from '@/hooks/useWaitForTransaction'
 import { z } from 'zod'
 
 import { ConnectedButton } from '@/components/Button'
@@ -114,7 +114,7 @@ export default function MaxSupplyRow({
           }}
           disabled={transacting || (active && !isValidated)}
           onClick={() => (active ? handleUpdate() : openInput())}
-          withChain={[mainnet.id, goerli.id]}
+          withChain={[mainnet.id, sepolia.id]}
         >
           {active ? (transacting ? 'Updating...' : `Update`) : 'Edit'}
         </ConnectedButton>

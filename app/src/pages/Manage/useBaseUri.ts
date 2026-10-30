@@ -1,9 +1,10 @@
 import type { Address } from 'viem'
-import { useContractReads, useContractWrite } from 'wagmi'
+import { useReadContracts } from 'wagmi'
+import { useContractWrite } from '@/hooks/useContractWrite'
 
 export function useBaseUri({ address }: { address?: Address }) {
-  const { data, refetch } = useContractReads({
-    enabled: !!address,
+  const { data, refetch } = useReadContracts({
+    query: { enabled: !!address },
     contracts: [
       {
         address,

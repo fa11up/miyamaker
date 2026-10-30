@@ -1,6 +1,6 @@
 import { createReducer } from '@reduxjs/toolkit'
 import type { Address } from 'viem'
-import { mainnet } from 'wagmi'
+import { mainnet } from 'viem/chains'
 
 import { DEFAULT_NFT_CONTRACT } from '@/constants/contracts'
 import { setCurrentNFT, setCurrentToken, setNFTsList } from '@/store/collections/actions'

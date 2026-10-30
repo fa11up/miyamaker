@@ -1,9 +1,10 @@
 import type { Address } from 'viem'
-import { useContractRead, useContractWrite } from 'wagmi'
+import { useReadContract } from 'wagmi'
+import { useContractWrite } from '@/hooks/useContractWrite'
 
 export function useMintOpen({ address }: { address?: Address }) {
-  const { data, refetch } = useContractRead({
-    enabled: !!address,
+  const { data, refetch } = useReadContract({
+    query: { enabled: !!address },
     address,
     functionName: 'mintOpen',
     abi: [

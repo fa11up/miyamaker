@@ -1,10 +1,11 @@
-import type { FetchBalanceResult } from '@wagmi/core'
+import type { BalanceData } from '@/context/AccountProvider'
 import { get } from 'lodash'
 import { useEffect, useState } from 'react'
 import styled from 'styled-components/macro'
 import type { Address } from 'viem'
 import { formatUnits } from 'viem'
-import { useAccount, useEnsName, useWaitForTransaction } from 'wagmi'
+import { useAccount, useEnsName } from 'wagmi'
+import { useWaitForTransaction } from '@/hooks/useWaitForTransaction'
 
 import BidContainer from '@/pages/Auction/ProductDetail/BidContainer'
 import ImagesList from '@/pages/Auction/ProductDetail/ImagesList'
@@ -100,7 +101,7 @@ export default function ProductDetail({
 }: {
   setErrorMessage: (value: string) => void
   setErrorName: (value: string) => void
-  balance: FetchBalanceResult | undefined
+  balance: BalanceData | undefined
   auctionContract: Address
 }) {
   // Account
@@ -128,6 +129,7 @@ export default function ProductDetail({
 
   const highestBidderENS = useEnsName({
     address: bidder as Address,
+    chainId: 1,
   })
 
   useWaitForTransaction({
