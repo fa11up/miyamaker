@@ -23,6 +23,11 @@ interface IMiyaRegistry {
 
     function isTokenInTarget(uint256 targetId, address token) external view returns (bool);
 
+    // ── vaults ──────────────────────────────────────────────────────────────
+    function isVault(address vault) external view returns (bool);
+
+    function registerVault(address vault) external;
+
     // ── components and factories ────────────────────────────────────────────
     function isApprovedComponent(address component) external view returns (bool);
 
