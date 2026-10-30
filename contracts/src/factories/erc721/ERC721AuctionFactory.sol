@@ -4,7 +4,7 @@ pragma solidity ^0.8.24;
 import {Ownable} from "solady/auth/Ownable.sol";
 import {ReentrancyGuard} from "solady/utils/ReentrancyGuard.sol";
 import {SafeTransferLib} from "solady/utils/SafeTransferLib.sol";
-import {IMasterRegistry} from "../../master/interfaces/IMasterRegistry.sol";
+import {IMiyaRegistry} from "../../registry/interfaces/IMiyaRegistry.sol";
 import {ERC721AuctionInstance} from "./ERC721AuctionInstance.sol";
 import {IAlignmentVault} from "../../interfaces/IAlignmentVault.sol";
 import {IFactory} from "../../interfaces/IFactory.sol";
@@ -12,21 +12,18 @@ import {ICreateX, CREATEX} from "../../shared/CreateXConstants.sol";
 
 /**
  * @title ERC721AuctionFactory
- * @notice Deploys and registers ERC721 auction instances for 1/1 artists.
+ * @notice Deploys ERC721 auction instances for 1/1 artists and registers them in the MiyaRegistry.
  *         Single responsibility: validate → deploy via CREATE3 → register.
- *         Protocol fees flow directly to treasury — no custody.
+ *         Each instance snapshots the registry's treasury and protocol fee plus the creator's chosen
+ *         alignment share at launch. Any creation fee is forwarded to the registry treasury — no custody.
  */
 contract ERC721AuctionFactory is Ownable, ReentrancyGuard, IFactory {
     error InvalidAddress();
     error InvalidName();
-    error VaultMustBeContract();
-    error NameAlreadyTaken();
-    error NotAuthorizedAgent();
+    error InvalidVault();
+    error NotCreator();
 
-    // slither-disable-next-line immutable-states
-    IMasterRegistry public masterRegistry;
-    address public immutable globalMessageRegistry;
-    address public protocolTreasury;
+    IMiyaRegistry public immutable registry;
     address public weth;
 
     struct CreateParams {
@@ -34,6 +31,7 @@ contract ERC721AuctionFactory is Ownable, ReentrancyGuard, IFactory {
         string metadataURI;
         address creator;
         address vault;
+        uint16 alignmentBps;     // vault share; registry-enforced minimum, artist gets the remainder
         string symbol;
         uint8 lines;
         uint40 baseDuration;
@@ -45,45 +43,38 @@ contract ERC721AuctionFactory is Ownable, ReentrancyGuard, IFactory {
         address indexed instance,
         address indexed creator,
         string name,
-        address indexed vault
+        address indexed vault,
+        string metadataURI,
+        uint16 protocolFeeBps,
+        uint16 alignmentBps
     );
-    event ProtocolTreasuryUpdated(address indexed oldTreasury, address indexed newTreasury);
     event VaultCapabilityWarning(address indexed vault, bytes32 indexed capability);
 
-    constructor(
-        address _masterRegistry,
-        address _globalMessageRegistry,
-        address _weth
-    ) {
+    constructor(IMiyaRegistry _registry, address _weth) {
+        if (address(_registry) == address(0)) revert InvalidAddress();
         _initializeOwner(msg.sender);
-        if (_globalMessageRegistry == address(0)) revert InvalidAddress();
-        masterRegistry = IMasterRegistry(_masterRegistry);
-        globalMessageRegistry = _globalMessageRegistry;
+        registry = _registry;
         weth = _weth;
     }
 
-    /// @notice Deploy a new ERC721 auction instance. Any ETH forwarded directly to treasury.
+    /// @notice Deploy a new ERC721 auction instance. Any ETH is forwarded directly to the registry treasury.
     function createInstance(
         bytes32 salt,
         CreateParams calldata params
     ) external payable nonReentrant returns (address instance) {
-        // Forward fee directly to treasury — factory holds no ETH
-        if (msg.value > 0 && protocolTreasury != address(0)) {
-            SafeTransferLib.safeTransferETH(protocolTreasury, msg.value);
-        }
+        registry.checkAlignmentBps(params.alignmentBps);
 
         if (bytes(params.name).length == 0) revert InvalidName();
         if (params.creator == address(0)) revert InvalidAddress();
+        if (msg.sender != params.creator) revert NotCreator();
         if (params.vault == address(0)) revert InvalidAddress();
-        if (params.vault.code.length == 0) revert VaultMustBeContract();
+        if (!registry.isVault(params.vault)) revert InvalidVault();
 
-        bool agentCreated = false;
-        if (msg.sender != params.creator) {
-            if (!masterRegistry.isAgent(msg.sender)) revert NotAuthorizedAgent();
-            agentCreated = true;
-        }
+        address treasury = registry.treasury();
+        uint16 protocolFeeBps = registry.protocolFeeBps();
 
-        if (masterRegistry.isNameTaken(params.name)) revert NameAlreadyTaken();
+        // Forward fee directly to treasury — factory holds no ETH
+        if (msg.value > 0) SafeTransferLib.safeTransferETH(treasury, msg.value);
 
         // Soft vault capability check
         try IAlignmentVault(payable(params.vault)).supportsCapability(keccak256("YIELD_GENERATION"))
@@ -93,25 +84,26 @@ contract ERC721AuctionFactory is Ownable, ReentrancyGuard, IFactory {
             emit VaultCapabilityWarning(params.vault, keccak256("YIELD_GENERATION"));
         }
 
-        instance = _deployInstance(salt, params, agentCreated);
-        masterRegistry.registerInstance(
-            instance, address(this), params.creator, params.name, params.metadataURI, params.vault
-        );
+        instance = _deployInstance(salt, params, treasury, protocolFeeBps);
+        registry.registerInstance(instance, params.vault, params.creator);
 
-        emit InstanceCreated(instance, params.creator, params.name, params.vault);
+        emit InstanceCreated(
+            instance, params.creator, params.name, params.vault, params.metadataURI, protocolFeeBps, params.alignmentBps
+        );
     }
 
-    function _deployInstance(
-        bytes32 salt,
-        CreateParams calldata params,
-        bool agentCreated
-    ) private returns (address instance) {
+    function _deployInstance(bytes32 salt, CreateParams calldata params, address treasury, uint16 protocolFeeBps)
+        private
+        returns (address instance)
+    {
         bytes memory initCode = abi.encodePacked(
             type(ERC721AuctionInstance).creationCode,
             abi.encode(
                 ERC721AuctionInstance.ConstructorParams({
                     vault: params.vault,
-                    protocolTreasury: protocolTreasury,
+                    protocolTreasury: treasury,
+                    protocolFeeBps: protocolFeeBps,
+                    alignmentBps: params.alignmentBps,
                     owner: params.creator,
                     name: params.name,
                     symbol: params.symbol,
@@ -119,17 +111,12 @@ contract ERC721AuctionFactory is Ownable, ReentrancyGuard, IFactory {
                     baseDuration: params.baseDuration,
                     timeBuffer: params.timeBuffer,
                     bidIncrement: params.bidIncrement,
-                    globalMessageRegistry: globalMessageRegistry,
-                    masterRegistry: address(masterRegistry),
                     factory: address(this),
                     weth: weth
                 })
             )
         );
         instance = ICreateX(CREATEX).deployCreate3(salt, initCode);
-        if (agentCreated) {
-            ERC721AuctionInstance(payable(instance)).setAgentDelegationFromFactory();
-        }
     }
 
     // ── Admin ─────────────────────────────────────────────────────────────────
@@ -137,13 +124,6 @@ contract ERC721AuctionFactory is Ownable, ReentrancyGuard, IFactory {
     function setWeth(address _weth) external onlyOwner {
         if (_weth == address(0)) revert InvalidAddress();
         weth = _weth;
-    }
-
-    function setProtocolTreasury(address _treasury) external onlyOwner {
-        if (_treasury == address(0)) revert InvalidAddress();
-        address old = protocolTreasury;
-        protocolTreasury = _treasury;
-        emit ProtocolTreasuryUpdated(old, _treasury);
     }
 
     // ── IFactory ─────────────────────────────────────────────────────────────

@@ -4,12 +4,11 @@ pragma solidity ^0.8.20;
 import "forge-std/Test.sol";
 import "../../src/vaults/uni/UniAlignmentVault.sol";
 import {TestableUniAlignmentVault} from "../helpers/TestableUniAlignmentVault.sol";
-import "../../src/master/MasterRegistryV1.sol";
 import {MockZRouter} from "../mocks/MockZRouter.sol";
 import {MockVaultPriceValidator} from "../mocks/MockVaultPriceValidator.sol";
 import {IVaultPriceValidator} from "../../src/interfaces/IVaultPriceValidator.sol";
-import {MockAlignmentRegistry} from "../mocks/MockAlignmentRegistry.sol";
-import {IAlignmentRegistry} from "../../src/master/interfaces/IAlignmentRegistry.sol";
+import {MiyaRegistry} from "../../src/registry/MiyaRegistry.sol";
+import {IMiyaRegistry} from "../../src/registry/interfaces/IMiyaRegistry.sol";
 import {LibClone} from "solady/utils/LibClone.sol";
 import {PoolKey} from "v4-core/types/PoolKey.sol";
 import {Currency} from "v4-core/types/Currency.sol";
@@ -121,9 +120,9 @@ contract M04_GriefingAttackTests is Test {
     TestableUniAlignmentVault public vaultImpl;
     MockZRouter public mockZRouter;
     MockVaultPriceValidator public mockValidator;
-    MockAlignmentRegistry public mockAlignmentRegistry;
+    MiyaRegistry public alignmentRegistry;
 
-    uint256 constant TARGET_ID = 1;
+    uint256 constant TARGET_ID = 0;
 
     address public owner;
     address public alice;
@@ -147,9 +146,10 @@ contract M04_GriefingAttackTests is Test {
         alignmentToken = new MockEXECToken(1000000e18);
 
         // Deploy mock alignment registry
-        mockAlignmentRegistry = new MockAlignmentRegistry();
-        mockAlignmentRegistry.setTargetActive(TARGET_ID, true);
-        mockAlignmentRegistry.setTokenInTarget(TARGET_ID, address(alignmentToken), true);
+        alignmentRegistry = new MiyaRegistry(address(this), address(0xFEE), 100, 1000);
+        address[] memory targetTokens = new address[](1);
+        targetTokens[0] = address(alignmentToken);
+        alignmentRegistry.addTarget("Test target", targetTokens);
 
         // Deploy vault (using testable version with mock swap/LP overrides)
         mockZRouter = new MockZRouter();
@@ -168,7 +168,7 @@ contract M04_GriefingAttackTests is Test {
             3000,
             60,
             IVaultPriceValidator(address(mockValidator)),
-            IAlignmentRegistry(address(mockAlignmentRegistry)),
+            IMiyaRegistry(address(alignmentRegistry)),
             TARGET_ID
         );
 
@@ -322,7 +322,7 @@ contract M04_GriefingAttackTests is Test {
             3000,
             60,
             IVaultPriceValidator(address(poorValidator)),
-            IAlignmentRegistry(address(mockAlignmentRegistry)),
+            IMiyaRegistry(address(alignmentRegistry)),
             TARGET_ID
         );
 

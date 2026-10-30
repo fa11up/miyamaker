@@ -4,7 +4,7 @@ pragma solidity ^0.8.24;
 import {IComponentModule} from "../../../interfaces/IComponentModule.sol";
 
 /// @notice Pluggable exponential pricing module for ERC1155 LIMITED_DYNAMIC editions.
-/// @dev Implementations registered in ComponentRegistry under tag keccak256("dynamic_pricing").
+/// @dev Implementations approved in MiyaRegistry (setComponent); factory feature tag keccak256("dynamic_pricing").
 ///      Both functions are pure — no state reads. Acts as a deployed math library.
 interface IDynamicPricingModule is IComponentModule {
     error PriceCalculationError();

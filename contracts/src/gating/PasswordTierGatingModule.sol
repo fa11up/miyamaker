@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 import {IGatingModule} from "./IGatingModule.sol";
-import {IMasterRegistry} from "../master/interfaces/IMasterRegistry.sol";
+import {IMiyaRegistry} from "../registry/interfaces/IMiyaRegistry.sol";
 import {Ownable} from "solady/auth/Ownable.sol";
 
 /// @title PasswordTierGatingModule
@@ -31,14 +31,14 @@ contract PasswordTierGatingModule is IGatingModule, Ownable {
 
     // ── Immutables ─────────────────────────────────────────────────────────────
 
-    IMasterRegistry public immutable masterRegistry;
+    IMiyaRegistry public immutable registry;
 
     // ── Metadata ───────────────────────────────────────────────────────────────
 
     string private _metadataURI;
 
-    constructor(address _masterRegistry) {
-        masterRegistry = IMasterRegistry(_masterRegistry);
+    constructor(address _registry) {
+        registry = IMiyaRegistry(_registry);
         _initializeOwner(msg.sender);
     }
 
@@ -59,7 +59,7 @@ contract PasswordTierGatingModule is IGatingModule, Ownable {
     ///      canMint data encoding: abi.encode(bytes32 passwordHash, uint256 openTime)
     function configureFor(address instance, TierConfig calldata config) external {
         if (!configured[instance]) {
-            if (!masterRegistry.isFactoryRegistered(msg.sender)) revert Unauthorized();
+            if (!registry.isFactoryRegistered(msg.sender)) revert Unauthorized();
         } else {
             if (msg.sender != Ownable(instance).owner()) revert Unauthorized();
         }

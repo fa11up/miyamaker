@@ -3,19 +3,20 @@ pragma solidity ^0.8.20;
 
 import {UniAlignmentVault} from "./UniAlignmentVault.sol";
 import {IVaultPriceValidator} from "../../interfaces/IVaultPriceValidator.sol";
-import {IAlignmentRegistry} from "../../master/interfaces/IAlignmentRegistry.sol";
+import {IMiyaRegistry} from "../../registry/interfaces/IMiyaRegistry.sol";
 import {PoolKey} from "v4-core/types/PoolKey.sol";
 import {ICreateX, CREATEX} from "../../shared/CreateXConstants.sol";
 import {Ownable} from "solady/auth/Ownable.sol";
 
 /// @title UniAlignmentVaultFactory
-/// @notice Deploys UniAlignmentVault clones; zRouter config is shared across all vaults.
+/// @notice Deploys UniAlignmentVault clones and registers each in the MiyaRegistry (this factory must be
+///         registered there via setVaultFactory); zRouter config is shared across all vaults.
 ///         The factory is the owner of every vault it deploys, so pool key configuration
 ///         must go through setVaultPoolKey (onlyOwner) rather than calling the vault directly.
 contract UniAlignmentVaultFactory is Ownable {
     address public immutable vaultImplementation;
     IVaultPriceValidator public immutable defaultPriceValidator;
-    IAlignmentRegistry public immutable alignmentRegistry;
+    IMiyaRegistry public immutable registry;
 
     address public immutable weth;
     address public immutable poolManager;
@@ -35,7 +36,7 @@ contract UniAlignmentVaultFactory is Ownable {
         uint24  _zRouterFee,
         int24   _zRouterTickSpacing,
         IVaultPriceValidator _defaultPriceValidator,
-        IAlignmentRegistry _alignmentRegistry
+        IMiyaRegistry _registry
     ) {
         _initializeOwner(msg.sender);
         weth = _weth;
@@ -44,7 +45,7 @@ contract UniAlignmentVaultFactory is Ownable {
         zRouterFee = _zRouterFee;
         zRouterTickSpacing = _zRouterTickSpacing;
         defaultPriceValidator = _defaultPriceValidator;
-        alignmentRegistry = _alignmentRegistry;
+        registry = _registry;
         vaultImplementation = address(new UniAlignmentVault());
     }
 
@@ -85,9 +86,10 @@ contract UniAlignmentVaultFactory is Ownable {
             zRouterFee,
             zRouterTickSpacing,
             priceValidator == IVaultPriceValidator(address(0)) ? defaultPriceValidator : priceValidator,
-            alignmentRegistry,
+            registry,
             alignmentTargetId
         );
+        registry.registerVault(vault);
 
         emit VaultDeployed(vault, alignmentToken);
     }

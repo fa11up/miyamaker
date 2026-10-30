@@ -12,7 +12,6 @@ contract Finding4_ERC1155ForceFeedTest is Test {
     address public creator  = address(0xC1);
     address public buyer    = address(0xB2);
     address public treasury = address(0xFEE);
-    address public gmr      = address(0x6D72);
     address public weth     = address(0xE770);
 
     function setUp() public {
@@ -23,14 +22,13 @@ contract Finding4_ERC1155ForceFeedTest is Test {
             address(new MockRevertingVault()),
             "",
             ERC1155Instance.InstanceInit({
-                globalMessageRegistry: gmr,
                 protocolTreasury: treasury,
-                masterRegistry: address(0),
+                protocolFeeBps: 100,
+                alignmentBps: 1900,
                 gatingModule: address(0),
                 dynamicPricingModule: address(0),
                 weth: weth
-            }),
-            false
+            })
         );
 
         vm.prank(creator);

@@ -40,7 +40,7 @@ bytes32 constant STATE_ENDED       = keccak256("ended");       // Permanently cl
  *      standard set; future instance types may emit custom states beyond these.
  *
  *      Indexer integration flow:
- *        1. Discover instances via MasterRegistry.CreatorInstanceAdded events
+ *        1. Discover instances via MiyaRegistry.InstanceRegistered events
  *        2. Subscribe to StateChanged across all addresses for state updates
  *        3. Replay StateChanged from each instance's deploy block to bootstrap
  */
@@ -49,8 +49,8 @@ interface IInstanceLifecycle {
      * @notice Returns the type identifier for this instance.
      * @dev MUST be implemented as a pure function returning a compile-time constant
      *      (e.g. TYPE_ERC404, TYPE_ERC1155, TYPE_ERC721, or a custom bytes32).
-     *      MasterRegistry calls this during registerInstance — failure reverts registration,
-     *      making it the enforcement gate for IInstanceLifecycle compliance.
+     *      Factories deploy only instance types implementing this; indexers read it after
+     *      MiyaRegistry.InstanceRegistered to classify the instance.
      * @return Bytes32 type identifier matching one of the TYPE_* constants (or custom).
      */
     function instanceType() external pure returns (bytes32);

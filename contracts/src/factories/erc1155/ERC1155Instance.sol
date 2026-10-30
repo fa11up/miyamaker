@@ -7,8 +7,6 @@ import { SafeTransferLib } from "solady/utils/SafeTransferLib.sol";
 import { SmartTransferLib } from "../../libraries/SmartTransferLib.sol";
 import {IDynamicPricingModule} from "./interfaces/IDynamicPricingModule.sol";
 import { IAlignmentVault } from "../../interfaces/IAlignmentVault.sol";
-import {IMasterRegistry} from "../../master/interfaces/IMasterRegistry.sol";
-import { IGlobalMessageRegistry } from "../../registry/interfaces/IGlobalMessageRegistry.sol";
 import {IGatingModule, GatingScope} from "../../gating/IGatingModule.sol";
 
 // ── Free mint errors ─────────────────────────────────────────────────────────
@@ -42,6 +40,7 @@ error ERC1155RejectedTokens();
 error NoDynamicPricingModule();
 error OnlyFactory();
 error AlreadyInitialized();
+error InvalidSplit();
 import { Currency } from "v4-core/types/Currency.sol";
 import { RevenueSplitLib } from "../../shared/libraries/RevenueSplitLib.sol";
 import { IInstanceLifecycle, TYPE_ERC1155, STATE_MINTING } from "../../interfaces/IInstanceLifecycle.sol";
@@ -49,7 +48,8 @@ import { IInstanceLifecycle, TYPE_ERC1155, STATE_MINTING } from "../../interface
 /**
  * @title ERC1155Instance
  * @notice ERC1155 token instance for open edition artists
- * @dev Supports unlimited/limited editions with fixed or dynamic pricing, message system, and withdraw tax
+ * @dev Supports unlimited/limited editions with fixed or dynamic pricing, mint messages, and a withdraw split
+ *      (protocol / alignment vault / artist) whose terms are snapshotted at launch.
  */
 // slither-disable-next-line missing-inheritance
 contract ERC1155Instance is Ownable, ReentrancyGuard, IInstanceLifecycle {
@@ -67,9 +67,9 @@ contract ERC1155Instance is Ownable, ReentrancyGuard, IInstanceLifecycle {
     /// @notice All addresses wired at construction. Passed as one struct to keep the
     ///         constructor under the stack-depth limit without via-ir.
     struct InstanceInit {
-        address globalMessageRegistry;
         address protocolTreasury;
-        address masterRegistry;
+        uint16 protocolFeeBps;    // snapshotted from MiyaRegistry at launch
+        uint16 alignmentBps;      // chosen by the creator at launch
         address gatingModule;
         address dynamicPricingModule;
         address weth;
@@ -96,11 +96,12 @@ contract ERC1155Instance is Ownable, ReentrancyGuard, IInstanceLifecycle {
     address public creator;
     // slither-disable-next-line immutable-states
     address public factory;
-    IAlignmentVault public vault;
-    // slither-disable-next-line immutable-states
-    IMasterRegistry public masterRegistry;
-    IGlobalMessageRegistry public immutable globalMessageRegistry;
+    IAlignmentVault public immutable vault;
     address public immutable protocolTreasury;
+    /// @notice Protocol fee (bps) snapshotted at launch; never changes.
+    uint16 public immutable protocolFeeBps;
+    /// @notice Alignment vault share (bps) chosen at launch; never changes.
+    uint16 public immutable alignmentBps;
     address public immutable weth;
 
     // Customization
@@ -121,7 +122,6 @@ contract ERC1155Instance is Ownable, ReentrancyGuard, IInstanceLifecycle {
     mapping(address => bool) public freeMintClaimed;
     GatingScope public gatingScope;
     bool private _freeMintInitialized;
-    bool public agentDelegationEnabled;
 
     uint256 public nextEditionId;
     uint256 public totalProceeds;  // Total ETH collected from mints
@@ -169,6 +169,8 @@ contract ERC1155Instance is Ownable, ReentrancyGuard, IInstanceLifecycle {
         uint256 totalCost
     );
 
+    event MintMessage(address indexed minter, uint256 indexed editionId, string message);
+
     event Withdrawn(
         address indexed creator,
         uint256 artistAmount,
@@ -192,23 +194,22 @@ contract ERC1155Instance is Ownable, ReentrancyGuard, IInstanceLifecycle {
         address _factory,
         address _vault,
         string memory _styleUri,
-        InstanceInit memory _init,
-        bool _agentCreated
+        InstanceInit memory _init
     ) {
         if (bytes(_name).length == 0) revert InvalidName();
         if (_creator == address(0)) revert InvalidAddress();
         if (_factory == address(0)) revert InvalidAddress();
         if (_vault == address(0)) revert InvalidAddress();
-        if (_init.globalMessageRegistry == address(0)) revert InvalidAddress();
+        if (uint256(_init.protocolFeeBps) + _init.alignmentBps > RevenueSplitLib.BPS) revert InvalidSplit();
 
         _initializeOwner(_creator);
         name = _name;
         creator = _creator;
         factory = _factory;
         vault = IAlignmentVault(payable(_vault));
-        masterRegistry = IMasterRegistry(_init.masterRegistry);
-        globalMessageRegistry = IGlobalMessageRegistry(_init.globalMessageRegistry);
         protocolTreasury = _init.protocolTreasury;
+        protocolFeeBps = _init.protocolFeeBps;
+        alignmentBps = _init.alignmentBps;
         weth = _init.weth;
         styleUri = _styleUri;
         nextEditionId = 1;
@@ -219,7 +220,6 @@ contract ERC1155Instance is Ownable, ReentrancyGuard, IInstanceLifecycle {
             dynamicPricingModule = IDynamicPricingModule(_init.dynamicPricingModule);
         }
         emit StateChanged(STATE_MINTING);
-        agentDelegationEnabled = _agentCreated;
     }
 
     // ── IInstanceLifecycle ─────────────────────────────────────────────────────
@@ -238,12 +238,6 @@ contract ERC1155Instance is Ownable, ReentrancyGuard, IInstanceLifecycle {
         _freeMintInitialized = true;
         freeMintAllocation = allocation;
         gatingScope = scope;
-    }
-
-    /// @notice Toggle agent delegation for this instance
-    function setAgentDelegation(bool enabled) external {
-        if (msg.sender != owner()) revert Unauthorized();
-        agentDelegationEnabled = enabled;
     }
 
     /// @notice Claim one free token of a specified edition at zero ETH cost.
@@ -298,13 +292,7 @@ contract ERC1155Instance is Ownable, ReentrancyGuard, IInstanceLifecycle {
         uint256 priceIncreaseRate,
         uint256 openTime           // NEW: Unix timestamp; 0 = open immediately
     ) external {
-        if (msg.sender == owner()) {
-            // Owner always allowed
-        } else if (agentDelegationEnabled && masterRegistry.isAgent(msg.sender)) {
-            // Direct agent call when delegation is on
-        } else {
-            revert Unauthorized();
-        }
+        if (msg.sender != owner()) revert Unauthorized();
         if (bytes(pieceTitle).length == 0) revert InvalidTitle();
         if (basePrice == 0) revert InvalidPrice();
 
@@ -348,14 +336,6 @@ contract ERC1155Instance is Ownable, ReentrancyGuard, IInstanceLifecycle {
 
         editions[editionId].metadataURI = metadataURI;
         emit EditionMetadataUpdated(editionId, metadataURI);
-    }
-
-    /**
-     * @notice Get global message registry address (public getter for frontend)
-     * @return Address of the GlobalMessageRegistry contract
-     */
-    function getGlobalMessageRegistry() external view returns (address) {
-        return address(globalMessageRegistry);
     }
 
     // ┌─────────────────────────┐
@@ -415,7 +395,7 @@ contract ERC1155Instance is Ownable, ReentrancyGuard, IInstanceLifecycle {
      * @notice Mint tokens with optional message
      * @param editionId Edition ID
      * @param amount Number of tokens to mint
-     * @param messageData Optional encoded message data (empty bytes skips registry call, saves gas)
+     * @param message Optional message shown alongside the mint (empty string emits nothing)
      * @param maxCost Maximum acceptable total cost (0 = no limit, uses msg.value as implicit cap)
      */
     // slither-disable-next-line reentrancy-benign,reentrancy-no-eth,timestamp,unused-return
@@ -423,7 +403,7 @@ contract ERC1155Instance is Ownable, ReentrancyGuard, IInstanceLifecycle {
         uint256 editionId,
         uint256 amount,
         bytes32 gatingData,        // NEW: password hash (bytes32(0) = open tier)
-        bytes calldata messageData,
+        string calldata message,
         uint256 maxCost
     ) external payable nonReentrant {
         Edition storage edition = editions[editionId];
@@ -458,11 +438,6 @@ contract ERC1155Instance is Ownable, ReentrancyGuard, IInstanceLifecycle {
         balanceOf[msg.sender][editionId] += amount;
         totalProceeds += totalCost;
 
-        // Forward message to global registry
-        if (messageData.length > 0) {
-            globalMessageRegistry.postForAction(msg.sender, address(this), messageData);
-        }
-
         // Refund excess
         if (msg.value > totalCost) {
             SmartTransferLib.smartTransferETH(msg.sender, msg.value - totalCost, weth);
@@ -470,6 +445,7 @@ contract ERC1155Instance is Ownable, ReentrancyGuard, IInstanceLifecycle {
 
         emit TransferSingle(msg.sender, address(0), msg.sender, editionId, amount);
         emit Minted(msg.sender, editionId, amount, totalCost);
+        if (bytes(message).length > 0) emit MintMessage(msg.sender, editionId, message);
     }
 
     // ┌─────────────────────────┐
@@ -477,19 +453,18 @@ contract ERC1155Instance is Ownable, ReentrancyGuard, IInstanceLifecycle {
     // └─────────────────────────┘
 
     /**
-     * @notice Withdraw proceeds (1% protocol, 19% vault, 80% artist)
-     * @dev Applies 1/19/80 split: protocol treasury, alignment vault, artist
+     * @notice Withdraw proceeds, split between protocol treasury, alignment vault and artist
+     * @dev Uses the protocolFeeBps / alignmentBps snapshotted at launch; the artist gets the remainder.
      * @param amount Amount to withdraw
      */
     function withdraw(uint256 amount) external nonReentrant {
         if (msg.sender != owner()) revert Unauthorized();
         if (amount == 0) revert AmountMustBePositive();
-        // Use proceeds accounting to prevent force-fed ETH from bypassing the 1/19/80 split
+        // Use proceeds accounting to prevent force-fed ETH from bypassing the split
         if (amount > totalProceeds - totalWithdrawn) revert InsufficientBalance();
         totalWithdrawn += amount;
 
-        // 1/19/80 split
-        RevenueSplitLib.Split memory s = RevenueSplitLib.split(amount);
+        RevenueSplitLib.Split memory s = RevenueSplitLib.split(amount, protocolFeeBps, alignmentBps);
 
         // Protocol cut to treasury
         if (s.protocolCut > 0 && protocolTreasury != address(0)) {
@@ -548,21 +523,17 @@ contract ERC1155Instance is Ownable, ReentrancyGuard, IInstanceLifecycle {
         SmartTransferLib.smartTransferETH(owner(), totalClaimed, weth);
     }
 
-    /// @notice Migrate to a new vault. New vault must share this instance's alignment target.
-    /// @dev Updates local active vault and appends to registry vault array.
-    function migrateVault(address newVault) external onlyOwner {
-        vault = IAlignmentVault(payable(newVault));
-        masterRegistry.migrateVault(address(this), newVault);
+    /// @notice Claim accumulated fees from this instance's vault (fixed at launch) and forward them to the owner.
+    /// @dev With a single fixed vault this is equivalent to claimVaultFees(); kept for IFactoryInstance.
+    function claimAllFees() external onlyOwner nonReentrant {
+        uint256 claimed = vault.claimFees();
+        if (claimed > 0) SmartTransferLib.smartTransferETH(owner(), claimed, weth);
     }
 
-    /// @notice Claim accumulated fees from all vault positions (current and historical).
-    // slither-disable-next-line calls-loop,unused-return
-    function claimAllFees() external onlyOwner {
-        address[] memory allVaults = masterRegistry.getInstanceVaults(address(this));
-        for (uint256 i = 0; i < allVaults.length; i++) {
-            IAlignmentVault(payable(allVaults[i])).claimFees();
-        }
-    }
+    /// @notice Accept ETH from the vault when it pays out claimed fees (UniAlignmentVault.claimFees pays the
+    ///         benefactor with a plain call). Such ETH is never counted in totalProceeds or pendingVaultCut,
+    ///         so withdraw() cannot route it through the revenue split; claimVaultFees() forwards it to the owner.
+    receive() external payable {}
 
     // ┌─────────────────────────┐
     // │   ERC1155 Functions    │

@@ -3,30 +3,21 @@ pragma solidity ^0.8.20;
 
 import {Test} from "forge-std/Test.sol";
 import {PasswordTierGatingModule} from "../../src/gating/PasswordTierGatingModule.sol";
-import {MockMasterRegistry} from "../mocks/MockMasterRegistry.sol";
-import {IMasterRegistry} from "../../src/master/interfaces/IMasterRegistry.sol";
-import {IComponentRegistry} from "../../src/registry/interfaces/IComponentRegistry.sol";
+import {MiyaRegistry} from "../../src/registry/MiyaRegistry.sol";
 import {Ownable} from "solady/auth/Ownable.sol";
-
-/// @dev Registry that rejects one specific address (for Unauthorized path testing).
-contract MockRejectRegistry {
-    address public immutable rejected;
-    constructor(address _rejected) { rejected = _rejected; }
-    function isFactoryRegistered(address factory) external view returns (bool) {
-        return factory != rejected;
-    }
-}
 
 contract PasswordTierGatingModuleTest is Test {
     PasswordTierGatingModule module;
-    MockMasterRegistry mockRegistry;
+    MiyaRegistry registry;
     address instance1 = address(0xAAAA);
     address instance2 = address(0xBBBB);
     address user1 = address(0x1111);
 
     function setUp() public {
-        mockRegistry = new MockMasterRegistry();
-        module = new PasswordTierGatingModule(address(mockRegistry));
+        // This test contract plays the registered factory.
+        registry = new MiyaRegistry(address(this), address(0xFEE), 100, 1000);
+        registry.setFactory(address(this), true);
+        module = new PasswordTierGatingModule(address(registry));
     }
 
     function _volumeCapConfig() internal pure returns (PasswordTierGatingModule.TierConfig memory) {
@@ -54,19 +45,20 @@ contract PasswordTierGatingModuleTest is Test {
 
     function test_configureFor_revertsIfUnauthorizedCaller() public {
         address attacker = address(0xDEAD);
-        // MockMasterRegistry returns true for all addresses, so we need a registry
-        // that returns false for the attacker to test the Unauthorized path.
-        // Deploy a registry that rejects the attacker specifically.
-        MockRejectRegistry rejectRegistry = new MockRejectRegistry(attacker);
-        PasswordTierGatingModule strictModule = new PasswordTierGatingModule(address(rejectRegistry));
-
+        // attacker is not a registered factory in the MiyaRegistry
         vm.prank(attacker);
         vm.expectRevert(Ownable.Unauthorized.selector);
-        strictModule.configureFor(instance1, _volumeCapConfig());
+        module.configureFor(instance1, _volumeCapConfig());
+    }
+
+    function test_configureFor_revertsAfterFactoryUnregistered() public {
+        registry.setFactory(address(this), false);
+        vm.expectRevert(Ownable.Unauthorized.selector);
+        module.configureFor(instance1, _volumeCapConfig());
     }
 
     function test_configureFor_ownerCanReconfigure() public {
-        // Initial config by factory (test contract — MockMasterRegistry says registered)
+        // Initial config by factory (test contract — registered in MiyaRegistry)
         module.configureFor(instance1, _volumeCapConfig());
         assertTrue(module.configured(instance1));
 
@@ -156,7 +148,7 @@ contract PasswordTierGatingModuleTest is Test {
             tierUnlockTimes: unlockTimes
         });
 
-        // Called from test contract — MockMasterRegistry treats any address as a registered factory.
+        // Called from test contract — the test contract is a registered factory.
         module.configureFor(instance, config);
     }
 
@@ -269,7 +261,7 @@ contract PasswordTierGatingModuleTest is Test {
             tierUnlockTimes: new uint256[](0)
         });
 
-        // Called from test contract — MockMasterRegistry treats any address as a registered factory.
+        // Called from test contract — the test contract is a registered factory.
         module.configureFor(inst, config);
 
         bytes32 tier1Hash = keccak256("vippass");

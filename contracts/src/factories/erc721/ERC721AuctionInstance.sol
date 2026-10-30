@@ -7,9 +7,6 @@ import {ReentrancyGuard} from "solady/utils/ReentrancyGuard.sol";
 import {SafeTransferLib} from "solady/utils/SafeTransferLib.sol";
 import {SmartTransferLib} from "../../libraries/SmartTransferLib.sol";
 import {IAlignmentVault} from "../../interfaces/IAlignmentVault.sol";
-import {IMasterRegistry} from "../../master/interfaces/IMasterRegistry.sol";
-
-import {IGlobalMessageRegistry} from "../../registry/interfaces/IGlobalMessageRegistry.sol";
 import {Currency} from "v4-core/types/Currency.sol";
 import {RevenueSplitLib} from "../../shared/libraries/RevenueSplitLib.sol";
 import {IInstanceLifecycle, TYPE_ERC721, STATE_ACTIVE} from "../../interfaces/IInstanceLifecycle.sol";
@@ -37,6 +34,7 @@ error NoFeesToClaim();
 error TokenDoesNotExist();
 error InvalidLine();
 error Unauthorized();
+error InvalidSplit();
 
 /**
  * @title ERC721AuctionInstance
@@ -65,11 +63,12 @@ contract ERC721AuctionInstance is ERC721, Ownable, ReentrancyGuard, IInstanceLif
     // │   Immutable Config      │
     // └─────────────────────────┘
 
-    IAlignmentVault public vault;
-    // slither-disable-next-line immutable-states
-    IMasterRegistry public masterRegistry;
+    IAlignmentVault public immutable vault;
     address public immutable protocolTreasury;
-    IGlobalMessageRegistry public immutable globalMessageRegistry;
+    /// @notice Protocol fee (bps) snapshotted at launch; never changes.
+    uint16 public immutable protocolFeeBps;
+    /// @notice Alignment vault share (bps) chosen at launch; never changes.
+    uint16 public immutable alignmentBps;
     uint8 public immutable lines;
     uint40 public immutable baseDuration;
     uint40 public immutable timeBuffer;
@@ -96,7 +95,6 @@ contract ERC721AuctionInstance is ERC721, Ownable, ReentrancyGuard, IInstanceLif
     mapping(uint24 => string) private _tokenURIs;
     // slither-disable-next-line immutable-states
     address public factory;
-    bool public agentDelegationEnabled;
 
     /// @dev Vault cuts that could not be sent (vault reverted). Retry via flushPendingVaultCut().
     uint256 public pendingVaultCut;
@@ -110,7 +108,7 @@ contract ERC721AuctionInstance is ERC721, Ownable, ReentrancyGuard, IInstanceLif
     event BidPlaced(uint24 indexed tokenId, address indexed bidder, uint256 amount);
     event AuctionSettled(uint24 indexed tokenId, address indexed winner, uint256 amount);
     event UnsoldReclaimed(uint24 indexed tokenId, uint256 forfeitedDeposit);
-    event AgentDelegationChanged(bool enabled);
+    event BidMessage(uint24 indexed tokenId, address indexed bidder, string message);
     event VaultContributionFailed(address indexed vault, uint256 amount);
 
     // ┌─────────────────────────┐
@@ -120,6 +118,8 @@ contract ERC721AuctionInstance is ERC721, Ownable, ReentrancyGuard, IInstanceLif
     struct ConstructorParams {
         address vault;
         address protocolTreasury;
+        uint16 protocolFeeBps;
+        uint16 alignmentBps;
         address owner;
         string name;
         string symbol;
@@ -127,8 +127,6 @@ contract ERC721AuctionInstance is ERC721, Ownable, ReentrancyGuard, IInstanceLif
         uint40 baseDuration;
         uint40 timeBuffer;
         uint256 bidIncrement;
-        address globalMessageRegistry;
-        address masterRegistry;
         address factory;
         address weth;
     }
@@ -137,7 +135,7 @@ contract ERC721AuctionInstance is ERC721, Ownable, ReentrancyGuard, IInstanceLif
         if (p.vault == address(0)) revert InvalidAddress();
         if (p.protocolTreasury == address(0)) revert InvalidAddress();
         if (p.owner == address(0)) revert InvalidAddress();
-        if (p.globalMessageRegistry == address(0)) revert InvalidAddress();
+        if (uint256(p.protocolFeeBps) + p.alignmentBps > RevenueSplitLib.BPS) revert InvalidSplit();
         if (bytes(p.name).length == 0) revert InvalidName();
         if (bytes(p.symbol).length == 0) revert InvalidSymbol();
         if (p.lines < 1 || p.lines > 3) revert InvalidLines();
@@ -147,34 +145,18 @@ contract ERC721AuctionInstance is ERC721, Ownable, ReentrancyGuard, IInstanceLif
 
         _initializeOwner(p.owner);
         vault = IAlignmentVault(payable(p.vault));
-        masterRegistry = IMasterRegistry(p.masterRegistry);
         protocolTreasury = p.protocolTreasury;
+        protocolFeeBps = p.protocolFeeBps;
+        alignmentBps = p.alignmentBps;
         _name = p.name;
         _symbol = p.symbol;
         lines = p.lines;
         baseDuration = p.baseDuration;
         timeBuffer = p.timeBuffer;
         bidIncrement = p.bidIncrement;
-        globalMessageRegistry = IGlobalMessageRegistry(p.globalMessageRegistry);
         factory = p.factory;
         weth = p.weth;
         nextTokenId = 1;
-    }
-
-    /// @notice Called by factory to enable delegation for agent-created instances
-    function setAgentDelegationFromFactory() external {
-        if (msg.sender != factory) revert Unauthorized();
-        agentDelegationEnabled = true;
-    }
-
-    /// @notice Toggle agent delegation for this instance
-    function setAgentDelegation(bool enabled) external onlyOwner {
-        agentDelegationEnabled = enabled;
-        emit AgentDelegationChanged(enabled);
-    }
-
-    function getGlobalMessageRegistry() external view returns (address) {
-        return address(globalMessageRegistry);
     }
 
     // ── IInstanceLifecycle ─────────────────────────────────────────────────────
@@ -211,13 +193,7 @@ contract ERC721AuctionInstance is ERC721, Ownable, ReentrancyGuard, IInstanceLif
      * @param _tokenURI Metadata URI for the piece (required)
      */
     function queuePiece(string calldata _tokenURI) external payable nonReentrant {
-        if (msg.sender == owner()) {
-            // Owner always allowed
-        } else if (agentDelegationEnabled && masterRegistry.isAgent(msg.sender)) {
-            // Approved agent with delegation enabled
-        } else {
-            revert Unauthorized();
-        }
+        if (msg.sender != owner()) revert Unauthorized();
         if (msg.value == 0) revert DepositRequired();
         if (bytes(_tokenURI).length == 0) revert URIRequired();
 
@@ -257,9 +233,10 @@ contract ERC721AuctionInstance is ERC721, Ownable, ReentrancyGuard, IInstanceLif
      * @dev First bid must meet minBid. Subsequent bids must exceed current by bidIncrement.
      *      Previous bidder is refunded via forceSafeTransferETH. Late bids extend the auction.
      * @param tokenId The token ID to bid on
+     * @param message Optional message shown alongside the bid (empty string emits nothing)
      */
     // slither-disable-next-line timestamp
-    function createBid(uint24 tokenId, bytes calldata messageData) external payable nonReentrant {
+    function createBid(uint24 tokenId, string calldata message) external payable nonReentrant {
         Auction storage auction = auctions[tokenId];
         if (auction.tokenId == 0) revert AuctionDoesNotExist();
         if (auction.startTime == 0) revert AuctionNotStarted();
@@ -290,11 +267,8 @@ contract ERC721AuctionInstance is ERC721, Ownable, ReentrancyGuard, IInstanceLif
             auction.endTime = uint40(block.timestamp) + timeBuffer;
         }
 
-        if (messageData.length > 0) {
-            globalMessageRegistry.postForAction(msg.sender, address(this), messageData);
-        }
-
         emit BidPlaced(tokenId, msg.sender, msg.value);
+        if (bytes(message).length > 0) emit BidMessage(tokenId, msg.sender, message);
     }
 
     // ┌─────────────────────────┐
@@ -303,7 +277,8 @@ contract ERC721AuctionInstance is ERC721, Ownable, ReentrancyGuard, IInstanceLif
 
     /**
      * @notice Settle an auction after it ends with bids
-     * @dev Mints NFT to winner, refunds creator deposit, splits winning bid (1% protocol, 19% vault, 80% artist).
+     * @dev Mints NFT to winner, refunds creator deposit, splits winning bid
+     *      (protocol / vault / artist, using the bps snapshotted at launch).
      *      Auto-advances line to next queued piece.
      * @param tokenId The token ID to settle
      */
@@ -326,8 +301,7 @@ contract ERC721AuctionInstance is ERC721, Ownable, ReentrancyGuard, IInstanceLif
         // Refund creator's deposit (force-transfer so a non-receiving owner cannot permanently strand the bidder's funds)
         SafeTransferLib.forceSafeTransferETH(owner(), auction.minBid);
 
-        // Split winning bid: 1/19/80
-        RevenueSplitLib.Split memory s = RevenueSplitLib.split(auction.highBid);
+        RevenueSplitLib.Split memory s = RevenueSplitLib.split(auction.highBid, protocolFeeBps, alignmentBps);
 
         if (s.protocolCut > 0 && protocolTreasury != address(0)) {
             SafeTransferLib.safeTransferETH(protocolTreasury, s.protocolCut);
@@ -403,20 +377,11 @@ contract ERC721AuctionInstance is ERC721, Ownable, ReentrancyGuard, IInstanceLif
         vault.receiveContribution{value: pending}(Currency.wrap(address(0)), pending, address(this));
     }
 
-    /// @notice Migrate to a new vault. New vault must share this instance's alignment target.
-    /// @dev Updates local active vault and appends to registry vault array.
-    function migrateVault(address newVault) external onlyOwner {
-        vault = IAlignmentVault(payable(newVault));
-        masterRegistry.migrateVault(address(this), newVault);
-    }
-
-    /// @notice Claim accumulated fees from all vault positions (current and historical).
-    // slither-disable-next-line calls-loop,unused-return
-    function claimAllFees() external onlyOwner {
-        address[] memory allVaults = masterRegistry.getInstanceVaults(address(this));
-        for (uint256 i = 0; i < allVaults.length; i++) {
-            IAlignmentVault(payable(allVaults[i])).claimFees();
-        }
+    /// @notice Claim accumulated fees from this instance's vault (fixed at launch) and forward them to the owner.
+    /// @dev With a single fixed vault this is equivalent to claimVaultFees(); kept for IFactoryInstance.
+    function claimAllFees() external onlyOwner nonReentrant {
+        uint256 claimed = vault.claimFees();
+        if (claimed > 0) SmartTransferLib.smartTransferETH(owner(), claimed, weth);
     }
 
     // ┌─────────────────────────┐

@@ -5,10 +5,10 @@ import "forge-std/Test.sol";
 import "../../src/vaults/uni/UniAlignmentVaultFactory.sol";
 import {UniAlignmentVault} from "../../src/vaults/uni/UniAlignmentVault.sol";
 import {IVaultPriceValidator} from "../../src/interfaces/IVaultPriceValidator.sol";
-import {IAlignmentRegistry} from "../../src/master/interfaces/IAlignmentRegistry.sol";
+import {IMiyaRegistry} from "../../src/registry/interfaces/IMiyaRegistry.sol";
 import {MockZRouter} from "../mocks/MockZRouter.sol";
 import {MockVaultPriceValidator} from "../mocks/MockVaultPriceValidator.sol";
-import {MockAlignmentRegistry} from "../mocks/MockAlignmentRegistry.sol";
+import {MiyaRegistry} from "../../src/registry/MiyaRegistry.sol";
 import {MockEXECToken} from "../mocks/MockEXECToken.sol";
 import {CREATEX} from "../../src/shared/CreateXConstants.sol";
 import {CREATEX_BYTECODE} from "createx-forge/script/CreateX.d.sol";
@@ -16,7 +16,7 @@ import {CREATEX_BYTECODE} from "createx-forge/script/CreateX.d.sol";
 contract UniAlignmentVaultFactoryTest is Test {
     UniAlignmentVaultFactory public factory;
     MockEXECToken public alignmentToken;
-    MockAlignmentRegistry public mockRegistry;
+    MiyaRegistry public registry;
 
     address public owner;
     address public mockPoolManager;
@@ -27,7 +27,7 @@ contract UniAlignmentVaultFactoryTest is Test {
 
     uint256 internal _saltCounter;
 
-    uint256 constant TARGET_ID = 1;
+    uint256 constant TARGET_ID = 0;
 
     event VaultDeployed(address indexed vault, address indexed alignmentToken);
 
@@ -46,9 +46,10 @@ contract UniAlignmentVaultFactoryTest is Test {
 
         mockZRouter = new MockZRouter();
         mockPriceValidator = new MockVaultPriceValidator();
-        mockRegistry = new MockAlignmentRegistry();
-        mockRegistry.setTargetActive(TARGET_ID, true);
-        mockRegistry.setTokenInTarget(TARGET_ID, address(alignmentToken), true);
+        registry = new MiyaRegistry(address(this), address(0xFEE), 100, 1000);
+        address[] memory targetTokens = new address[](1);
+        targetTokens[0] = address(alignmentToken);
+        registry.addTarget("Test target", targetTokens);
 
         factory = new UniAlignmentVaultFactory(
             mockWeth,
@@ -57,8 +58,9 @@ contract UniAlignmentVaultFactoryTest is Test {
             3000,
             60,
             IVaultPriceValidator(address(mockPriceValidator)),
-            IAlignmentRegistry(address(mockRegistry))
+            IMiyaRegistry(address(registry))
         );
+        registry.setVaultFactory(address(factory), true);
     }
 
     function test_deployVault_setsAlignmentToken() public {
@@ -109,7 +111,9 @@ contract UniAlignmentVaultFactoryTest is Test {
 
     function test_deployVault_differentInstancesAreIndependent() public {
         MockEXECToken token2 = new MockEXECToken(1000000e18);
-        mockRegistry.setTokenInTarget(TARGET_ID, address(token2), true);
+        address[] memory t2 = new address[](1);
+        t2[0] = address(token2);
+        uint256 target2 = registry.addTarget("Second target", t2);
 
         address vault1 = factory.deployVault(
             _nextSalt(),
@@ -121,7 +125,7 @@ contract UniAlignmentVaultFactoryTest is Test {
         address vault2 = factory.deployVault(
             _nextSalt(),
             address(token2),
-            TARGET_ID,
+            target2,
             IVaultPriceValidator(address(0))
         );
 
@@ -155,7 +159,7 @@ contract UniAlignmentVaultFactoryTest is Test {
     }
 
     function test_deployVault_revertsWhenTargetNotActive() public {
-        mockRegistry.setTargetActive(TARGET_ID, false);
+        registry.setTargetActive(TARGET_ID, false);
 
         vm.expectRevert(UniAlignmentVault.TargetNotActive.selector);
         factory.deployVault(
@@ -173,7 +177,32 @@ contract UniAlignmentVaultFactoryTest is Test {
         assertEq(factory.zRouterFee(), 3000);
         assertEq(factory.zRouterTickSpacing(), 60);
         assertEq(address(factory.defaultPriceValidator()), address(mockPriceValidator));
-        assertEq(address(factory.alignmentRegistry()), address(mockRegistry));
+        assertEq(address(factory.registry()), address(registry));
         assertTrue(factory.vaultImplementation() != address(0));
+    }
+
+    // ── MiyaRegistry vault registration ─────────────────────────────────────
+
+    function test_deployVault_registersVaultInRegistry() public {
+        address vault = factory.deployVault(
+            _nextSalt(), address(alignmentToken), TARGET_ID, IVaultPriceValidator(address(0))
+        );
+        assertTrue(registry.isVault(vault), "vault should be registered");
+        assertFalse(registry.isVault(address(0xdead)));
+    }
+
+    function test_deployVault_emitsVaultRegistered() public {
+        bytes32 salt = _nextSalt();
+        address predicted = factory.computeVaultAddress(salt);
+        vm.expectEmit(true, true, false, false, address(registry));
+        emit MiyaRegistry.VaultRegistered(predicted, address(factory));
+        factory.deployVault(salt, address(alignmentToken), TARGET_ID, IVaultPriceValidator(address(0)));
+    }
+
+    function test_deployVault_revertsWhenFactoryNotRegistered() public {
+        registry.setVaultFactory(address(factory), false);
+        bytes32 salt = _nextSalt();
+        vm.expectRevert(MiyaRegistry.NotVaultFactory.selector);
+        factory.deployVault(salt, address(alignmentToken), TARGET_ID, IVaultPriceValidator(address(0)));
     }
 }

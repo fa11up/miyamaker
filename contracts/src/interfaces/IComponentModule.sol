@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-/// @notice Common interface for all DAO-approved component modules registered in ComponentRegistry.
+/// @notice Common interface for all approved component modules (MiyaRegistry.isApprovedComponent).
 ///         Provides self-describing metadata so frontends can render component information
 ///         without hardcoding it — the module creator owns and maintains their own metadata.
 interface IComponentModule {

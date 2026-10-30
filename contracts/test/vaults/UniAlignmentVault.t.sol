@@ -7,9 +7,9 @@ import {TestableUniAlignmentVault} from "../helpers/TestableUniAlignmentVault.so
 import {MockEXECToken} from "../mocks/MockEXECToken.sol";
 import {MockZRouter} from "../mocks/MockZRouter.sol";
 import {MockVaultPriceValidator} from "../mocks/MockVaultPriceValidator.sol";
-import {MockAlignmentRegistry} from "../mocks/MockAlignmentRegistry.sol";
+import {MiyaRegistry} from "../../src/registry/MiyaRegistry.sol";
 import {IVaultPriceValidator} from "../../src/interfaces/IVaultPriceValidator.sol";
-import {IAlignmentRegistry} from "../../src/master/interfaces/IAlignmentRegistry.sol";
+import {IMiyaRegistry} from "../../src/registry/interfaces/IMiyaRegistry.sol";
 import {Currency} from "v4-core/types/Currency.sol";
 import {PoolKey} from "v4-core/types/PoolKey.sol";
 import {IHooks} from "v4-core/interfaces/IHooks.sol";
@@ -36,10 +36,10 @@ contract UniAlignmentVaultTest is Test {
 
     MockZRouter public mockZRouter;
     MockVaultPriceValidator public mockValidator;
-    MockAlignmentRegistry public mockAlignmentRegistry;
+    MiyaRegistry public alignmentRegistry;
     TestableUniAlignmentVault public vaultImpl;
 
-    uint256 constant TARGET_ID = 1;
+    uint256 constant TARGET_ID = 0;
 
     // Events
     event ContributionReceived(address indexed benefactor, uint256 amount);
@@ -62,9 +62,11 @@ contract UniAlignmentVaultTest is Test {
         // Deploy mock peripherals
         mockZRouter = new MockZRouter();
         mockValidator = new MockVaultPriceValidator();
-        mockAlignmentRegistry = new MockAlignmentRegistry();
-        mockAlignmentRegistry.setTargetActive(TARGET_ID, true);
-        mockAlignmentRegistry.setTokenInTarget(TARGET_ID, address(alignmentToken), true);
+        alignmentRegistry = new MiyaRegistry(owner, address(0xFEE), 100, 1000);
+        address[] memory targetTokens = new address[](2);
+        targetTokens[0] = address(alignmentToken);
+        targetTokens[1] = address(0x9999);
+        alignmentRegistry.addTarget("Test target", targetTokens);
 
         // Pre-fund MockZRouter for both swap directions
         vm.deal(address(mockZRouter), 100 ether);
@@ -82,7 +84,7 @@ contract UniAlignmentVaultTest is Test {
             3000,
             60,
             IVaultPriceValidator(address(mockValidator)),
-            IAlignmentRegistry(address(mockAlignmentRegistry)),
+            IMiyaRegistry(address(alignmentRegistry)),
             TARGET_ID
         );
 
@@ -133,7 +135,7 @@ contract UniAlignmentVaultTest is Test {
             mockWETH, mockPoolManager, address(alignmentToken),
             address(mockZRouter), 3000, 60,
             IVaultPriceValidator(address(mockValidator)),
-            IAlignmentRegistry(address(mockAlignmentRegistry)), TARGET_ID
+            IMiyaRegistry(address(alignmentRegistry)), TARGET_ID
         );
     }
 
@@ -144,7 +146,7 @@ contract UniAlignmentVaultTest is Test {
             address(alignmentToken),
             address(mockZRouter), 3000, 60,
             IVaultPriceValidator(address(mockValidator)),
-            IAlignmentRegistry(address(mockAlignmentRegistry)), TARGET_ID);
+            IMiyaRegistry(address(alignmentRegistry)), TARGET_ID);
     }
 
     function test_Initialize_RevertsOnInvalidPoolManager() public {
@@ -154,7 +156,7 @@ contract UniAlignmentVaultTest is Test {
             address(alignmentToken),
             address(mockZRouter), 3000, 60,
             IVaultPriceValidator(address(mockValidator)),
-            IAlignmentRegistry(address(mockAlignmentRegistry)), TARGET_ID);
+            IMiyaRegistry(address(alignmentRegistry)), TARGET_ID);
     }
 
     function test_Initialize_RevertsOnInvalidAlignmentToken() public {
@@ -164,7 +166,7 @@ contract UniAlignmentVaultTest is Test {
             address(0),
             address(mockZRouter), 3000, 60,
             IVaultPriceValidator(address(mockValidator)),
-            IAlignmentRegistry(address(mockAlignmentRegistry)), TARGET_ID);
+            IMiyaRegistry(address(alignmentRegistry)), TARGET_ID);
     }
 
     function test_Initialize_RevertsOnDoubleInit() public {
@@ -846,8 +848,7 @@ contract UniAlignmentVaultTest is Test {
 
     function test_SetAlignmentToken_OwnerCanUpdate() public {
         address newToken = address(0x9999);
-        // Register new token in the same alignment target
-        mockAlignmentRegistry.setTokenInTarget(TARGET_ID, newToken, true);
+        // newToken (0x9999) is part of TARGET_ID (see setUp)
 
         vm.prank(owner);
         vault.setAlignmentToken(newToken);
@@ -869,7 +870,6 @@ contract UniAlignmentVaultTest is Test {
 
     function test_SetAlignmentToken_RevertsWhenPendingETH() public {
         address newToken = address(0x9999);
-        mockAlignmentRegistry.setTokenInTarget(TARGET_ID, newToken, true);
 
         // Contribute ETH so totalPendingETH > 0
         vm.deal(alice, 1 ether);
