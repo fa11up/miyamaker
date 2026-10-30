@@ -4,12 +4,11 @@ pragma solidity ^0.8.24;
 import {Test} from "forge-std/Test.sol";
 import {ERC1155Factory} from "../../../src/factories/erc1155/ERC1155Factory.sol";
 import {ERC1155Instance} from "../../../src/factories/erc1155/ERC1155Instance.sol";
-import {MockMasterRegistry} from "../../mocks/MockMasterRegistry.sol";
+import {MiyaRegistry} from "../../../src/registry/MiyaRegistry.sol";
+import {IMiyaRegistry} from "../../../src/registry/interfaces/IMiyaRegistry.sol";
 import {FreeMintParams} from "../../../src/interfaces/IFactoryTypes.sol";
 import {GatingScope} from "../../../src/gating/IGatingModule.sol";
 import {FreeMintDisabled, FreeMintAlreadyClaimed, FreeMintExhausted} from "../../../src/factories/erc1155/ERC1155Instance.sol";
-import {ComponentRegistry} from "../../../src/registry/ComponentRegistry.sol";
-import {LibClone} from "solady/utils/LibClone.sol";
 import {ICreateX, CREATEX} from "../../../src/shared/CreateXConstants.sol";
 import {CREATEX_BYTECODE} from "createx-forge/script/CreateX.d.sol";
 
@@ -20,9 +19,8 @@ contract MockVaultERC1155FM {
 
 contract ERC1155FreeMintTest is Test {
     ERC1155Factory factory;
-    MockMasterRegistry mockRegistry;
+    MiyaRegistry registry;
     MockVaultERC1155FM mockVault;
-    ComponentRegistry componentRegistry;
 
     uint256 internal _saltCounter;
 
@@ -30,7 +28,6 @@ contract ERC1155FreeMintTest is Test {
     address creator  = makeAddr("creator");
     address user1    = makeAddr("user1");
     address user2    = makeAddr("user2");
-    address mockGMR  = makeAddr("gmr");
 
     uint256 constant FREE_ALLOC = 5;
 
@@ -42,17 +39,13 @@ contract ERC1155FreeMintTest is Test {
     function setUp() public {
         vm.startPrank(protocol);
         vm.etch(CREATEX, CREATEX_BYTECODE);
-        mockRegistry = new MockMasterRegistry();
+        registry = new MiyaRegistry(protocol, makeAddr("treasury"), 100, 1000);
         mockVault    = new MockVaultERC1155FM();
 
-        ComponentRegistry impl = new ComponentRegistry();
-        address proxy = LibClone.deployERC1967(address(impl));
-        componentRegistry = ComponentRegistry(proxy);
-        componentRegistry.initialize(protocol);
-
-        factory = new ERC1155Factory(
-            address(mockRegistry), mockGMR, address(componentRegistry), address(0xBEEF)
-        );
+        factory = new ERC1155Factory(IMiyaRegistry(address(registry)), address(0xBEEF));
+        registry.setFactory(address(factory), true);
+        registry.setVaultFactory(protocol, true);
+        registry.registerVault(address(mockVault));
         vm.stopPrank();
     }
 
@@ -65,13 +58,14 @@ contract ERC1155FreeMintTest is Test {
                 metadataURI: "ipfs://meta",
                 creator: creator,
                 vault: address(mockVault),
+                alignmentBps: 1900,
                 styleUri: "",
                 gatingModule: address(0),
                 freeMint: FreeMintParams({allocation: alloc, scope: scope})
             })
         );
         vm.stopPrank();
-        return ERC1155Instance(inst);
+        return ERC1155Instance(payable(inst));
     }
 
     function _addEdition(ERC1155Instance inst, uint256 supply) internal returns (uint256 editionId) {

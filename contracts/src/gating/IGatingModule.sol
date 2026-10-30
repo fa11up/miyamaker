@@ -13,7 +13,7 @@ enum GatingScope {
 
 /// @notice Pluggable gating interface for ms2.fun instances (ERC404 and ERC1155).
 /// address(0) means open gating — no module deployed.
-/// Implementations are registered in ComponentRegistry under tag keccak256("gating").
+/// Implementations are approved in MiyaRegistry (setComponent); factory feature tag keccak256("gating").
 interface IGatingModule is IComponentModule {
     /// @notice Returns (allowed, permanent).
     ///         When permanent == true, the caller MUST set gatingActive = false —

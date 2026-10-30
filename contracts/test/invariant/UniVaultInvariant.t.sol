@@ -9,9 +9,9 @@ import {TestableUniAlignmentVault} from "../helpers/TestableUniAlignmentVault.so
 import {MockEXECToken} from "../mocks/MockEXECToken.sol";
 import {MockZRouter} from "../mocks/MockZRouter.sol";
 import {MockVaultPriceValidator} from "../mocks/MockVaultPriceValidator.sol";
-import {MockAlignmentRegistry} from "../mocks/MockAlignmentRegistry.sol";
+import {MiyaRegistry} from "../../src/registry/MiyaRegistry.sol";
 import {IVaultPriceValidator} from "../../src/interfaces/IVaultPriceValidator.sol";
-import {IAlignmentRegistry} from "../../src/master/interfaces/IAlignmentRegistry.sol";
+import {IMiyaRegistry} from "../../src/registry/interfaces/IMiyaRegistry.sol";
 import {Currency} from "v4-core/types/Currency.sol";
 import {PoolKey} from "v4-core/types/PoolKey.sol";
 import {IHooks} from "v4-core/interfaces/IHooks.sol";
@@ -22,22 +22,23 @@ contract UniVaultInvariantTest is StdInvariant, Test {
     MockEXECToken public alignmentToken;
     MockZRouter public mockZRouter;
     MockVaultPriceValidator public mockValidator;
-    MockAlignmentRegistry public mockAlignmentRegistry;
+    MiyaRegistry public alignmentRegistry;
     UniVaultHandler public handler;
 
     address public owner = address(this);
     address public treasury = address(0x99);
     address[] public actors;
 
-    uint256 constant TARGET_ID = 1;
+    uint256 constant TARGET_ID = 0;
 
     function setUp() public {
         alignmentToken = new MockEXECToken(10_000_000e18);
         mockZRouter = new MockZRouter();
         mockValidator = new MockVaultPriceValidator();
-        mockAlignmentRegistry = new MockAlignmentRegistry();
-        mockAlignmentRegistry.setTargetActive(TARGET_ID, true);
-        mockAlignmentRegistry.setTokenInTarget(TARGET_ID, address(alignmentToken), true);
+        alignmentRegistry = new MiyaRegistry(address(this), address(0xFEE), 100, 1000);
+        address[] memory targetTokens = new address[](1);
+        targetTokens[0] = address(alignmentToken);
+        alignmentRegistry.addTarget("Test target", targetTokens);
 
         vm.deal(address(mockZRouter), 1000 ether);
         alignmentToken.transfer(address(mockZRouter), 1_000_000e18);
@@ -53,7 +54,7 @@ contract UniVaultInvariantTest is StdInvariant, Test {
             3000,
             60,
             IVaultPriceValidator(address(mockValidator)),
-            IAlignmentRegistry(address(mockAlignmentRegistry)),
+            IMiyaRegistry(address(alignmentRegistry)),
             TARGET_ID
         );
 

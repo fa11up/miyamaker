@@ -17,7 +17,7 @@ import {LiquidityAmounts} from "../../libraries/v4/LiquidityAmounts.sol";
 import {TickMath} from "v4-core/libraries/TickMath.sol";
 import {IAlignmentVault} from "../../interfaces/IAlignmentVault.sol";
 import {IVaultPriceValidator} from "../../interfaces/IVaultPriceValidator.sol";
-import {IAlignmentRegistry} from "../../master/interfaces/IAlignmentRegistry.sol";
+import {IMiyaRegistry} from "../../registry/interfaces/IMiyaRegistry.sol";
 
 interface IzRouterV4 {
     function swapV4(
@@ -152,7 +152,7 @@ contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignm
     IVaultPriceValidator public priceValidator;
 
     // Alignment target binding (set once at initialize)
-    IAlignmentRegistry public alignmentRegistry;
+    IMiyaRegistry public registry;
     uint256 public alignmentTargetId;
 
     // Clone guard
@@ -209,7 +209,7 @@ contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignm
     /// @param _zRouterFee Fee tier for zRouter swaps
     /// @param _zRouterTickSpacing Tick spacing for zRouter swaps
     /// @param _priceValidator Oracle/TWAP price validator for manipulation protection
-    /// @param _alignmentRegistry Registry that manages approved alignment targets
+    /// @param _registry MiyaRegistry that manages approved alignment targets
     /// @param _alignmentTargetId ID of the alignment target this vault serves
     // slither-disable-next-line events-maths
     function initialize(
@@ -222,7 +222,7 @@ contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignm
         uint24  _zRouterFee,
         int24   _zRouterTickSpacing,
         IVaultPriceValidator _priceValidator,
-        IAlignmentRegistry _alignmentRegistry,
+        IMiyaRegistry _registry,
         uint256 _alignmentTargetId
     ) external {
         if (_initialized) revert AlreadyInitialized();
@@ -233,9 +233,9 @@ contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignm
         if (_weth == address(0)) revert InvalidAddress();
         if (_poolManager == address(0)) revert InvalidAddress();
         if (_alignmentToken == address(0)) revert InvalidAddress();
-        if (address(_alignmentRegistry) == address(0)) revert InvalidAddress();
-        if (!_alignmentRegistry.isAlignmentTargetActive(_alignmentTargetId)) revert TargetNotActive();
-        if (!_alignmentRegistry.isTokenInTarget(_alignmentTargetId, _alignmentToken)) revert TokenNotInTarget();
+        if (address(_registry) == address(0)) revert InvalidAddress();
+        if (!_registry.isAlignmentTargetActive(_alignmentTargetId)) revert TargetNotActive();
+        if (!_registry.isTokenInTarget(_alignmentTargetId, _alignmentToken)) revert TokenNotInTarget();
 
         weth = _weth;
         poolManager = _poolManager;
@@ -244,7 +244,7 @@ contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignm
         zRouterFee = _zRouterFee;
         zRouterTickSpacing = _zRouterTickSpacing;
         priceValidator = _priceValidator;
-        alignmentRegistry = _alignmentRegistry;
+        registry = _registry;
         alignmentTargetId = _alignmentTargetId;
 
         // Initialize defaults that can't use declaration initializers with clones
@@ -844,12 +844,12 @@ contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignm
     // ========== Configuration ==========
 
     /// @notice Change the alignment token (must be in the vault's alignment target)
-    /// @dev All pending ETH must be converted first. Validates against AlignmentRegistry.
+    /// @dev All pending ETH must be converted first. Validates against MiyaRegistry.
     /// @param newToken New ERC20 token address to buy and LP
     function setAlignmentToken(address newToken) external onlyOwner {
         if (newToken == address(0)) revert InvalidAddress();
         if (totalPendingETH != 0) revert PendingETHNotConverted();
-        if (!alignmentRegistry.isTokenInTarget(alignmentTargetId, newToken)) revert TokenNotInTarget();
+        if (!registry.isTokenInTarget(alignmentTargetId, newToken)) revert TokenNotInTarget();
 
         address oldToken = alignmentToken;
         alignmentToken = newToken;

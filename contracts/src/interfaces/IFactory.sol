@@ -3,7 +3,7 @@ pragma solidity ^0.8.20;
 
 /// @title IFactory
 /// @notice Minimal interface every factory must implement.
-///         MasterRegistry verifies protocol() at registration time.
+///         MiyaRegistry.setFactory (owner) is the approval gate.
 ///         Revenue split mechanics are factory-specific — governance verifies during approval.
 interface IFactory {
     /// @notice Returns the protocol authority address
@@ -11,9 +11,9 @@ interface IFactory {
     function protocol() external view returns (address);
 
     /// @notice Returns the component tag categories this factory supports.
-    ///         Each bytes32 is a keccak256 tag matching a ComponentRegistry category
+    ///         Each bytes32 is a keccak256 tag naming a component category
     ///         (e.g. keccak256("gating"), keccak256("agent")).
-    ///         The frontend intersects this list with ComponentRegistry to build wizard steps.
+    ///         The frontend intersects this list with approved components to build wizard steps.
     /// @return Array of supported component tag hashes (may be empty)
     function features() external view returns (bytes32[] memory);
 

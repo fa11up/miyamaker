@@ -6,10 +6,6 @@ import {StdInvariant} from "forge-std/StdInvariant.sol";
 import {ERC1155Instance} from "../../src/factories/erc1155/ERC1155Instance.sol";
 import {ERC1155EditionHandler} from "./handlers/ERC1155EditionHandler.sol";
 
-contract MockGlobalMessageRegistry {
-    function postForAction(address, address, bytes calldata) external {}
-}
-
 contract MockAlignmentVault {
     receive() external payable {}
     function receiveContribution(bytes32, uint256, address) external payable {}
@@ -22,15 +18,12 @@ contract ERC1155EditionInvariantTest is StdInvariant, Test {
     address public owner = address(0x1);
     address public protocolTreasury = address(0xFEE);
     address public mockVault;
-    address public mockGlobalMsgRegistry;
-    address public mockMasterRegistry = address(0x400);
 
     address[] public actors;
 
     uint256 constant EDITION_SUPPLY = 100;
 
     function setUp() public {
-        mockGlobalMsgRegistry = address(new MockGlobalMessageRegistry());
         mockVault = address(new MockAlignmentVault());
 
         vm.startPrank(owner);
@@ -42,14 +35,13 @@ contract ERC1155EditionInvariantTest is StdInvariant, Test {
             mockVault,
             "", // styleUri
             ERC1155Instance.InstanceInit({
-                globalMessageRegistry: mockGlobalMsgRegistry,
                 protocolTreasury: protocolTreasury,
-                masterRegistry: mockMasterRegistry,
+                protocolFeeBps: 100,
+                alignmentBps: 1900,
                 gatingModule: address(0),
                 dynamicPricingModule: address(0),
                 weth: address(0xBEEF)
-            }),
-            false
+            })
         );
 
         // Add a limited edition (supply = 100)

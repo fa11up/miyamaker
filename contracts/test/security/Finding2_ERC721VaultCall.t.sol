@@ -5,23 +5,9 @@ import {Test} from "forge-std/Test.sol";
 import {ERC721AuctionInstance} from "../../src/factories/erc721/ERC721AuctionInstance.sol";
 import {MockRevertingVault} from "../mocks/MockRevertingVault.sol";
 
-contract MockGMR2 {
-    function postForAction(address, address, bytes calldata) external {}
-}
-
-contract MockMRStub2 {
-    function isAgent(address) external pure returns (bool) { return false; }
-    function migrateVault(address, address) external {}
-    function getInstanceVaults(address) external pure returns (address[] memory) {
-        return new address[](0);
-    }
-}
-
 contract Finding2_ERC721VaultCallTest is Test {
     ERC721AuctionInstance public instance;
     MockRevertingVault public revertVault;
-    MockGMR2 public gmr;
-    MockMRStub2 public registry;
 
     address public artist   = address(0xA1);
     address public bidder   = address(0xB1);
@@ -30,13 +16,13 @@ contract Finding2_ERC721VaultCallTest is Test {
 
     function setUp() public {
         revertVault = new MockRevertingVault();
-        gmr = new MockGMR2();
-        registry = new MockMRStub2();
 
         instance = new ERC721AuctionInstance(
             ERC721AuctionInstance.ConstructorParams({
                 vault: address(revertVault),
                 protocolTreasury: treasury,
+                protocolFeeBps: 100,
+                alignmentBps: 1900,
                 owner: artist,
                 name: "Test",
                 symbol: "TST",
@@ -44,8 +30,6 @@ contract Finding2_ERC721VaultCallTest is Test {
                 baseDuration: 1 hours,
                 timeBuffer: 5 minutes,
                 bidIncrement: 0.01 ether,
-                globalMessageRegistry: address(gmr),
-                masterRegistry: address(registry),
                 factory: address(this),
                 weth: weth
             })

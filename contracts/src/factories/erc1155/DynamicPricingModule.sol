@@ -8,7 +8,7 @@ import {IDynamicPricingModule} from "./interfaces/IDynamicPricingModule.sol";
 /// @title DynamicPricingModule
 /// @notice Exponential pricing math for ERC1155 LIMITED_DYNAMIC editions.
 ///         Extracted from ERC1155Instance to avoid inlining rpow into every deployed instance.
-///         Deploy once, approve in ComponentRegistry, set as factory default.
+///         Deploy once, approve in MiyaRegistry (setComponent), set as factory default.
 contract DynamicPricingModule is Ownable, IDynamicPricingModule {
     using FixedPointMathLib for uint256;
 
