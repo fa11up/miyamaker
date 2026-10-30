@@ -10,7 +10,7 @@ import { IMiyaRegistry } from "./interfaces/IMiyaRegistry.sol";
  *         - set the treasury, the protocol fee (capped) and the minimum alignment share for FUTURE launches;
  *         - add and deactivate alignment targets;
  *         - approve and revoke add-on components;
- *         - register and unregister factories.
+ *         - register and unregister factories and vault factories.
  *         It cannot touch deployed collections, their fee terms, their vaults, or any pool. Collections snapshot
  *         their fee terms at launch.
  */
@@ -34,6 +34,8 @@ contract MiyaRegistry is Ownable, IMiyaRegistry {
 
     mapping(address => bool) public isApprovedComponent;
     mapping(address => bool) public isFactoryRegistered;
+    mapping(address => bool) public isVaultFactoryRegistered;
+    mapping(address => bool) public isVault;
 
     mapping(address instance => address) public vaultOf;
     mapping(address instance => address) public factoryOf;
@@ -45,6 +47,8 @@ contract MiyaRegistry is Ownable, IMiyaRegistry {
     event TargetActiveSet(uint256 indexed targetId, bool active);
     event ComponentSet(address indexed component, bool approved);
     event FactorySet(address indexed factory, bool registered);
+    event VaultFactorySet(address indexed factory, bool registered);
+    event VaultRegistered(address indexed vault, address indexed factory);
     event InstanceRegistered(address indexed instance, address indexed factory, address indexed vault, address creator);
 
     error InvalidAddress();
@@ -52,6 +56,7 @@ contract MiyaRegistry is Ownable, IMiyaRegistry {
     error InvalidAlignment();
     error UnknownTarget();
     error NotFactory();
+    error NotVaultFactory();
     error AlreadyRegistered();
 
     constructor(address owner_, address treasury_, uint16 protocolFeeBps_, uint16 minAlignmentBps_) {
@@ -130,6 +135,22 @@ contract MiyaRegistry is Ownable, IMiyaRegistry {
         if (factory == address(0)) revert InvalidAddress();
         isFactoryRegistered[factory] = registered;
         emit FactorySet(factory, registered);
+    }
+
+    function setVaultFactory(address factory, bool registered) external onlyOwner {
+        if (factory == address(0)) revert InvalidAddress();
+        isVaultFactoryRegistered[factory] = registered;
+        emit VaultFactorySet(factory, registered);
+    }
+
+    // ── vaults ──────────────────────────────────────────────────────────────
+
+    function registerVault(address vault) external {
+        if (!isVaultFactoryRegistered[msg.sender]) revert NotVaultFactory();
+        if (vault == address(0)) revert InvalidAddress();
+        if (isVault[vault]) revert AlreadyRegistered();
+        isVault[vault] = true;
+        emit VaultRegistered(vault, msg.sender);
     }
 
     // ── collections ─────────────────────────────────────────────────────────

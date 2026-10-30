@@ -28,6 +28,13 @@ interface IMiyaRegistry {
 
     function isFactoryRegistered(address factory) external view returns (bool);
 
+    // ── vaults ──────────────────────────────────────────────────────────────
+    /// @notice True if `vault` was deployed by a registered vault factory.
+    function isVault(address vault) external view returns (bool);
+
+    /// @notice Called by a registered vault factory when it deploys a vault.
+    function registerVault(address vault) external;
+
     // ── collections ─────────────────────────────────────────────────────────
     /// @notice Called by a registered factory when it deploys a collection.
     function registerInstance(address instance, address vault, address creator) external;
