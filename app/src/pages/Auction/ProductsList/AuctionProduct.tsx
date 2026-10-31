@@ -1,5 +1,8 @@
+import { useEffect } from 'react'
 import styled from 'styled-components/macro'
 
+import type { Artwork } from '@/components/ArtViewer'
+import { toArtwork } from '@/components/ArtViewer'
 import { NormalButton } from '@/components/Button/NormalButton'
 import ImageWrapper from '@/pages/Auction/ImageWrapper'
 import { useToken } from '@/pages/Auction/useToken'
@@ -27,13 +30,22 @@ const ImageDetail = styled.div`
   }
 `
 
-const Wrapper = styled.div`
+const Wrapper = styled.button`
   width: 100%;
   height: 80%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: zoom-in;
 
   display: flex;
   justify-content: center;
   align-items: center;
+
+  :focus-visible {
+    outline: 1px dotted #14101f;
+    outline-offset: 2px;
+  }
 `
 
 const Image = styled.img`
@@ -53,10 +65,25 @@ const Description = styled.div`
   font-weight: bolder;
 `
 
-export default function AuctionProduct({ tokenId, tokenURI }: { tokenId: number; tokenURI: string }) {
+export default function AuctionProduct({
+  tokenId,
+  tokenURI,
+  onArtwork,
+  onView,
+}: {
+  tokenId: number
+  tokenURI: string
+  onArtwork?: (tokenId: number, artwork: Artwork) => void
+  onView?: (tokenId: number) => void
+}) {
   const dispatch = useAppDispatch()
 
   const { name, description, image, externalURL, attributes } = useToken({ tokenURI, isFetch: true })
+
+  useEffect(() => {
+    if (image) onArtwork?.(tokenId, toArtwork({ name, description, image, externalURL, attributes }))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tokenId, name, description, image, externalURL])
 
   const handleBid = () => {
     dispatch(
@@ -71,7 +98,7 @@ export default function AuctionProduct({ tokenId, tokenURI }: { tokenId: number;
     <ProductWrapper>
       <ImageWrapper style={{ padding: '0.75rem', height: '80%' }}>
         <ImageDetail>
-          <Wrapper>
+          <Wrapper type="button" title={`View ${name || 'artwork'}`} onClick={() => onView?.(tokenId)}>
             <Image src={image} alt={name} />
           </Wrapper>
           <Description>{name}</Description>

@@ -1,8 +1,8 @@
-import type { BalanceData } from '@/context/AccountProvider'
 import Countdown, { zeroPad } from 'react-countdown'
 import styled from 'styled-components/macro'
 import { useWindowSize } from 'usehooks-ts'
 
+import type { BalanceData } from '@/context/AccountProvider'
 import AuctionButton from '@/pages/Auction/AuctionButton'
 import type { Attribute, TokenMetadata } from '@/store/collections/reducer'
 import { getTokenAttribute } from '@/utils/getTokenAttribute'

@@ -39,10 +39,18 @@ const Icon = styled.img`
   }
 `
 
-const Images = styled.div`
+const Images = styled.button`
   width: 100%;
   height: 90%;
+  padding: 0;
   border: none;
+  background: transparent;
+  cursor: zoom-in;
+
+  :focus-visible {
+    outline: 1px dotted #14101f;
+    outline-offset: 2px;
+  }
 
   > img {
     border: none;
@@ -62,7 +70,7 @@ const Counter = styled.div`
   font-size: 0.65rem;
 `
 
-export default function ImagesList({ images }: { images: string[] }) {
+export default function ImagesList({ images, onView }: { images: string[]; onView?: (index: number) => void }) {
   const totalImages = images.length
   const previousButtonRef = useRef<HTMLButtonElement>(null)
   const nextButtonRef = useRef<HTMLButtonElement>(null)
@@ -110,8 +118,8 @@ export default function ImagesList({ images }: { images: string[] }) {
   return (
     <ImagesListWrapper>
       <ImageWrapper>
-        <Images>
-          <img src={images[currentCounter - 1]} alt="Images" />
+        <Images type="button" title="View artwork" onClick={() => onView?.(currentCounter - 1)}>
+          <img src={images[currentCounter - 1]} alt="Artwork" />
         </Images>
         <Counter>
           {currentCounter} of {totalImages}

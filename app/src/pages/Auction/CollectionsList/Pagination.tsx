@@ -2,6 +2,7 @@ import ChevronLeftIcon from 'assets/chevron-left-icon.svg'
 import ChevronRightIcon from 'assets/chevron-right-icon.svg'
 import { useEffect, useRef } from 'react'
 import styled from 'styled-components/macro'
+
 import { NormalButton } from '@/components/Button/NormalButton'
 
 const PaginateWrapper = styled.div`

@@ -1,12 +1,13 @@
-import type { BalanceData } from '@/context/AccountProvider'
 import { get } from 'lodash'
 import { useEffect, useState } from 'react'
 import styled from 'styled-components/macro'
 import type { Address } from 'viem'
 import { formatUnits } from 'viem'
 import { useAccount, useEnsName } from 'wagmi'
-import { useWaitForTransaction } from '@/hooks/useWaitForTransaction'
 
+import ArtViewer, { toArtwork } from '@/components/ArtViewer'
+import type { BalanceData } from '@/context/AccountProvider'
+import { useWaitForTransaction } from '@/hooks/useWaitForTransaction'
 import BidContainer from '@/pages/Auction/ProductDetail/BidContainer'
 import ImagesList from '@/pages/Auction/ProductDetail/ImagesList'
 import { useAuctionData } from '@/pages/Auction/useAuctionData'
@@ -117,6 +118,7 @@ export default function ProductDetail({
   const [transacting, setTransacting] = useState(false)
   const [txHash, setTxHash] = useState('')
   const [bidAmount, setBidAmount] = useState('0.0')
+  const [viewing, setViewing] = useState(false)
 
   // Get contract data
   const { currentBid, endTime, bidder, refetch } = useAuctionData({
@@ -184,7 +186,24 @@ export default function ProductDetail({
   return (
     <ProductDetailWrapper>
       <ImagesListWrapper>
-        <ImagesList images={[currentAuctionToken.image || image]} />
+        <ImagesList images={[currentAuctionToken.image || image]} onView={() => setViewing(true)} />
+        {viewing && (
+          <ArtViewer
+            onClose={() => setViewing(false)}
+            items={[
+              toArtwork(
+                {
+                  name: currentAuctionToken.name || name,
+                  description: currentAuctionToken.description || description,
+                  image: currentAuctionToken.image || image,
+                  external_url: currentAuctionToken.external_url,
+                  attributes: currentAuctionToken.attributes.length > 0 ? currentAuctionToken.attributes : attributes,
+                },
+                [['Final bid', currentBid ? `${formatUnits(currentBid, 18)} ETH` : undefined]]
+              ),
+            ]}
+          />
+        )}
       </ImagesListWrapper>
       <ImageDetailWrapper>
         <DetailWrapper>
