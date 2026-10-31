@@ -175,7 +175,7 @@ const Meta = styled.div`
   align-items: center;
   justify-content: space-between;
   gap: ${space[2]};
-  font-size: ${text.xs};
+  font-size: ${text.sm};
   color: ${color.inkMuted};
   button {
     border: none;
@@ -214,7 +214,8 @@ const Line = styled.div`
   display: flex;
   justify-content: space-between;
   gap: ${space[2]};
-  font-size: ${text.xs};
+  font-size: ${text.sm};
+  line-height: 1.3;
   color: ${color.inkMuted};
   strong {
     color: ${color.ink};
@@ -230,7 +231,7 @@ const Settings = styled(Well)`
   align-items: center;
   flex-wrap: wrap;
   gap: ${space[2]};
-  font-size: ${text.xs};
+  font-size: ${text.sm};
   button {
     min-width: 48px;
     height: 28px;
@@ -253,6 +254,19 @@ const Settings = styled(Well)`
     box-shadow: ${bevel.field};
     font-size: ${text.xs};
     text-align: right;
+  }
+`
+
+/* On phones the primary action stays reachable while the review details scroll. */
+const ActionDock = styled.div`
+  .narrow & {
+    position: sticky;
+    bottom: 0;
+    z-index: 2;
+    margin: 0 -${space[3]};
+    padding: ${space[2]} ${space[3]};
+    background: ${color.face};
+    box-shadow: inset 0 1px 0 ${color.highlight}, 0 -2px 0 ${color.shadow};
   }
 `
 
@@ -672,14 +686,16 @@ export default function SwapPage() {
             </Review>
           )}
 
-          <BigButton
-            type="button"
-            className={'className' in action ? action.className : undefined}
-            disabled={!!action.disabled}
-            onClick={'onClick' in action ? action.onClick : undefined}
-          >
-            {action.label}
-          </BigButton>
+          <ActionDock>
+            <BigButton
+              type="button"
+              className={'className' in action ? action.className : undefined}
+              disabled={!!action.disabled}
+              onClick={'onClick' in action ? action.onClick : undefined}
+            >
+              {action.label}
+            </BigButton>
+          </ActionDock>
 
           {exec.approveHash && exec.approving && (
             <StatusBox tone="info" role="status">

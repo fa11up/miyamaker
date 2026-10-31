@@ -157,8 +157,8 @@ const Row = styled.button<{ selected?: boolean }>`
 const Note = styled.div<{ tone?: 'warn' }>`
   margin: 0 ${space[2]} ${space[2]};
   padding: ${space[2]};
-  font-size: ${text.xs};
-  line-height: 1.4;
+  font-size: ${text.sm};
+  line-height: 1.35;
   background: ${({ tone }) => (tone === 'warn' ? '#fff3cd' : color.well)};
   box-shadow: ${bevel.sunken};
   color: ${({ tone }) => (tone === 'warn' ? color.warning : color.inkMuted)};

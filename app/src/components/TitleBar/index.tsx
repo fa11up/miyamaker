@@ -89,6 +89,9 @@ const ChromeButton = styled.button`
   }
 
   @media (max-width: 768px) {
+    &.hide-mobile {
+      display: none;
+    }
     width: 36px;
     height: 30px;
     svg {

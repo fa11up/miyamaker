@@ -124,6 +124,7 @@ export default defineConfig(({ mode }) => ({
           },
         ],
         navigateFallback: 'index.html',
+        navigateFallbackDenylist: [/^\/api\//],
         cleanupOutdatedCaches: true,
       },
     }),
