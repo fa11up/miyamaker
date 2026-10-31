@@ -93,6 +93,9 @@ export const DEFAULT_PAIR: Record<SwapChainId, [SwapToken, SwapToken]> = {
 
 export const DEFAULT_SLIPPAGE_BPS = 50
 export const SLIPPAGE_PRESETS_BPS = [10, 50, 100] as const
+/** The proxy accepts 10..300 bps (0.1%..3%). */
+export const SLIPPAGE_MIN_BPS = 10
+export const SLIPPAGE_MAX_BPS = 300
 /** Firm quotes older than this are refreshed before sending. */
 export const QUOTE_MAX_AGE_MS = 30_000
 /** ETH kept back by the Max button to pay gas. */

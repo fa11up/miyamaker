@@ -107,6 +107,7 @@ export type DesktopApp = { id: PageKey; label: string; src: string | undefined }
 
 const DESKTOP_ICONS: DesktopApp[] = [
   { id: 'mint', label: Pages.mint?.label || 'Mint', src: Pages.mint?.icon?.src },
+  { id: 'swap', label: Pages.swap?.label || 'Swap', src: Pages.swap?.icon?.src },
   { id: 'home', label: 'Net Explorer', src: MiyaLogo },
   { id: 'launch', label: 'Launch', src: CreateNew[0]?.src },
   { id: 'manager', label: Pages.manager?.label || 'Manager', src: Pages.manager?.icon?.src },

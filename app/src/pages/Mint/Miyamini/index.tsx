@@ -22,7 +22,7 @@ import {
   StatusBox,
   Stepper,
   Well,
-} from './ui'
+} from '@/components/Retro'
 import { describeError, useMiyaminiMint, useMiyaminiState, useTokenMeta } from './useMiyamini'
 
 /** Product choice: cap a single transaction at 10 tokens (the contract itself has no per-tx limit we rely on). */
