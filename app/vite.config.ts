@@ -1,6 +1,7 @@
 import react from '@vitejs/plugin-react'
 import path from 'path'
-import { defineConfig } from 'vite'
+import type { Plugin } from 'vite'
+import { defineConfig, loadEnv } from 'vite'
 import macrosPlugin from 'vite-plugin-babel-macros'
 import dynamicImport from 'vite-plugin-dynamic-import'
 import imagePresets, { widthPreset } from 'vite-plugin-image-presets'
@@ -8,9 +9,38 @@ import { nodePolyfills } from 'vite-plugin-node-polyfills'
 import { VitePWA } from 'vite-plugin-pwa'
 import svgr from 'vite-plugin-svgr'
 
-export default defineConfig({
+import { handleZeroExRequest, PROXY_PREFIX } from './api/_lib/zeroex'
+
+/**
+ * Dev-only stand-in for the Vercel functions in api/0x: same validation and key injection
+ * (api/_lib/zeroex.ts). ZEROX_API_KEY / SWAP_FEE_* are read from the shell or app/.env.local and
+ * are never exposed to the client bundle (no VITE_ prefix).
+ */
+function zeroExDevProxy(env: Record<string, string>): Plugin {
+  return {
+    name: 'miya-0x-dev-proxy',
+    configureServer(server) {
+      server.middlewares.use(PROXY_PREFIX, async (req, res) => {
+        const response = await handleZeroExRequest(
+          { method: req.method || 'GET', url: `${PROXY_PREFIX}${req.url || ''}` },
+          {
+            ZEROX_API_KEY: process.env.ZEROX_API_KEY || env.ZEROX_API_KEY,
+            SWAP_FEE_BPS: process.env.SWAP_FEE_BPS || env.SWAP_FEE_BPS,
+            SWAP_FEE_RECIPIENT: process.env.SWAP_FEE_RECIPIENT || env.SWAP_FEE_RECIPIENT,
+          }
+        )
+        res.statusCode = response.status
+        response.headers.forEach((value, key) => res.setHeader(key, value))
+        res.end(await response.text())
+      })
+    },
+  }
+}
+
+export default defineConfig(({ mode }) => ({
   base: '',
   plugins: [
+    zeroExDevProxy(loadEnv(mode, __dirname, ['ZEROX_', 'SWAP_FEE_'])),
     react(),
     dynamicImport(),
     svgr(),
@@ -116,4 +146,4 @@ export default defineConfig({
   optimizeDeps: {
     disabled: 'build',
   },
-})
+}))

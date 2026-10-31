@@ -40,7 +40,7 @@
       "@/*": ["./src/*"]
     }
   },
-  "include": ["src", "vite.config.ts", "wagmi.config.ts", "codegen.ts"],
+  "include": ["src", "api", "vite.config.ts", "wagmi.config.ts", "codegen.ts"],
   "exclude": ["node_modules/**/*.d.ts"],
   "references": [
     {
