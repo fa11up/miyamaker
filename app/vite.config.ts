@@ -13,7 +13,7 @@ import { handleZeroExRequest, PROXY_PREFIX } from './api/_lib/zeroex'
 
 /**
  * Dev-only stand-in for the Vercel functions in api/0x: same validation and key injection
- * (api/_lib/zeroex.ts). ZEROX_API_KEY / SWAP_FEE_* are read from the shell or app/.env.local and
+ * (api/_lib/zeroex.ts). ZEROX_API_KEY is read from the shell or app/.env.local and
  * are never exposed to the client bundle (no VITE_ prefix).
  */
 function zeroExDevProxy(env: Record<string, string>): Plugin {
@@ -21,13 +21,12 @@ function zeroExDevProxy(env: Record<string, string>): Plugin {
     name: 'miya-0x-dev-proxy',
     configureServer(server) {
       server.middlewares.use(PROXY_PREFIX, async (req, res) => {
+        const headers = new Headers()
+        for (const [k, v] of Object.entries(req.headers)) if (typeof v === 'string') headers.set(k, v)
+        const host = req.headers.host || 'localhost'
         const response = await handleZeroExRequest(
-          { method: req.method || 'GET', url: `${PROXY_PREFIX}${req.url || ''}` },
-          {
-            ZEROX_API_KEY: process.env.ZEROX_API_KEY || env.ZEROX_API_KEY,
-            SWAP_FEE_BPS: process.env.SWAP_FEE_BPS || env.SWAP_FEE_BPS,
-            SWAP_FEE_RECIPIENT: process.env.SWAP_FEE_RECIPIENT || env.SWAP_FEE_RECIPIENT,
-          }
+          { method: req.method || 'GET', url: `http://${host}${PROXY_PREFIX}${req.url || ''}`, headers },
+          { ZEROX_API_KEY: process.env.ZEROX_API_KEY || env.ZEROX_API_KEY }
         )
         res.statusCode = response.status
         response.headers.forEach((value, key) => res.setHeader(key, value))
@@ -40,7 +39,7 @@ function zeroExDevProxy(env: Record<string, string>): Plugin {
 export default defineConfig(({ mode }) => ({
   base: '',
   plugins: [
-    zeroExDevProxy(loadEnv(mode, __dirname, ['ZEROX_', 'SWAP_FEE_'])),
+    zeroExDevProxy(loadEnv(mode, __dirname, ['ZEROX_'])),
     react(),
     dynamicImport(),
     svgr(),

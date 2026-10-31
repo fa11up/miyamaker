@@ -6,6 +6,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview --port 8174",
+    "test": "node --test tests/",
     "prepare:local": "wagmi generate",
     "generate:types": "json2ts -i './src/abis/**/*.json' "
   },

@@ -1,140 +1,155 @@
 /**
- * Server-side proxy for the 0x Swap API v2 (AllowanceHolder flow).
+ * Server-side proxy for the 0x Swap API v2 (AllowanceHolder flow). Rules mirror the imdUSD swap
+ * worker (infer-pilot web/worker/swap.js):
  *
- * Shared by the Vercel functions in `api/0x/...` (production) and the Vite dev middleware
- * (`vite.config.ts`), so dev and prod enforce exactly the same rules:
- *   - only GET /api/0x/swap/allowance-holder/{price,quote}
- *   - only chainId 1 (Ethereum) and 4663 (Robinhood Chain)
- *   - only known query params pass through, each validated
- *   - the API key (ZEROX_API_KEY) and the optional integrator fee
- *     (SWAP_FEE_BPS + SWAP_FEE_RECIPIENT) are injected here; the client cannot set fees
- *   - the upstream status and body are forwarded as-is
+ * - Only GET /api/0x/swap/allowance-holder/{price,quote}, same-origin only.
+ * - Only allowlisted query params; anything else (including any fee field) is refused, not forwarded.
+ *   Duplicates are refused. Every field is validated.
+ * - chainId 1 (Ethereum) and 4663 (Robinhood Chain).
+ * - The fee is set HERE, never by the page: 0.1% to the imdUSD Treasury, taken in the token bought,
+ *   on Ethereum, on every swap where neither side is imdUSD.
+ * - The key (ZEROX_API_KEY) is injected here. An upstream 401/403 is reported as "unavailable",
+ *   never echoing anything about the key.
  *
- * This file lives in `api/_lib` (underscore = not a route on Vercel) and must never be imported
- * from browser code: it reads server secrets from the environment.
+ * Shared by the Vercel functions (api/0x/...) and the Vite dev middleware (vite.config.ts).
+ * `api/_lib` is not a route on Vercel (underscore prefix). Do not import this from browser code.
+ * This file has no imports so `node --test` can load it directly (tests/zeroex.test.mts).
  */
 
-export const ZEROX_BASE_URL = 'https://api.0x.org'
+export const ZEROX_BASE_URL = 'https://api.0x.org/swap/allowance-holder/'
 export const PROXY_PREFIX = '/api/0x'
-export const ALLOWED_ENDPOINTS = ['/swap/allowance-holder/price', '/swap/allowance-holder/quote'] as const
+export const ROUTE_PREFIX = `${PROXY_PREFIX}/swap/allowance-holder/`
+
+/** Native token placeholder in 0x v2 (docs: "Handle Native Tokens"). */
+export const ETH = '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE'
+/** imdUSD on Ethereum: trades with imdUSD on either side carry no fee. */
+export const IMDUSD = '0x61aAF8a992A3143e2B0C9cB0030b9fE702854a25'
+export const FEE_BPS = 10 // 0.1%
+
+/**
+ * Fee recipient per chain. Only chains listed here charge a fee.
+ * TODO(robinhood): add 4663 once an imdUSD Treasury exists on Robinhood Chain. The mainnet
+ * Treasury (0x6Ac8...27Bc) is only known to exist on chain 1, so 4663 sends no fee params for now.
+ */
+export const FEE_TREASURY: Record<string, string | undefined> = {
+  '1': '0x6Ac8fF96Fb8DCF5d79A8eF1E59D9AC23f2BD27Bc',
+}
+
 export const ALLOWED_CHAIN_IDS = ['1', '4663'] as const
-
+const ALLOWED_PARAMS = ['chainId', 'sellToken', 'buyToken', 'sellAmount', 'slippageBps', 'taker'] as const
 const ADDRESS = /^0x[0-9a-fA-F]{40}$/
-const UINT = /^[0-9]{1,78}$/
 
-/** Query params the client may send, with a validator for each. Anything else is dropped. */
-const PASSTHROUGH: Record<string, (v: string) => boolean> = {
-  chainId: (v) => (ALLOWED_CHAIN_IDS as readonly string[]).includes(v),
-  sellToken: (v) => ADDRESS.test(v),
-  buyToken: (v) => ADDRESS.test(v),
-  sellAmount: (v) => UINT.test(v) && v !== '0',
-  taker: (v) => ADDRESS.test(v),
-  slippageBps: (v) => /^[0-9]{1,5}$/.test(v) && Number(v) <= 10_000,
-}
-const REQUIRED = ['chainId', 'sellToken', 'buyToken', 'sellAmount'] as const
+export type Kind = 'price' | 'quote'
 
-export type ProxyEnv = {
-  ZEROX_API_KEY?: string
-  SWAP_FEE_BPS?: string
-  SWAP_FEE_RECIPIENT?: string
+/** True when no fee applies: either side is imdUSD. */
+export const feeFree = (sellToken: string, buyToken: string) =>
+  [sellToken, buyToken].some((t) => String(t).toLowerCase() === IMDUSD.toLowerCase())
+
+/** Fee params 0x should get for this trade, or undefined. */
+export function feeFor(chainId: string, sellToken: string, buyToken: string) {
+  const recipient = FEE_TREASURY[chainId]
+  if (!recipient || feeFree(sellToken, buyToken)) return undefined
+  return { swapFeeRecipient: recipient, swapFeeBps: String(FEE_BPS), swapFeeToken: buyToken }
 }
 
-const json = (status: number, body: unknown) =>
+/**
+ * The query 0x is asked, from the page's query: `{ query }` or `{ error }`. Pure, so the rules
+ * are unit-tested.
+ */
+export function zeroXQuery(
+  kind: string,
+  params: URLSearchParams | Record<string, string>
+): { query: URLSearchParams; error?: undefined } | { query?: undefined; error: string } {
+  if (kind !== 'price' && kind !== 'quote') return { error: 'Unknown swap route.' }
+  const p = params instanceof URLSearchParams ? params : new URLSearchParams(params)
+  for (const k of p.keys()) if (!(ALLOWED_PARAMS as readonly string[]).includes(k)) return { error: `${k} is not accepted.` }
+  for (const k of new Set(p.keys())) if (p.getAll(k).length > 1) return { error: `${k} is given twice.` }
+
+  const chainId = p.get('chainId') ?? ''
+  if (!(ALLOWED_CHAIN_IDS as readonly string[]).includes(chainId))
+    return { error: 'Only Ethereum (chainId=1) and Robinhood Chain (chainId=4663) are served.' }
+  const sellToken = p.get('sellToken') ?? ''
+  const buyToken = p.get('buyToken') ?? ''
+  if (!ADDRESS.test(sellToken)) return { error: 'sellToken must be a token address.' }
+  if (!ADDRESS.test(buyToken)) return { error: 'buyToken must be a token address.' }
+  if (sellToken.toLowerCase() === buyToken.toLowerCase()) return { error: 'sellToken and buyToken are the same.' }
+  const sellAmount = p.get('sellAmount') ?? ''
+  if (!/^[1-9][0-9]{0,77}$/.test(sellAmount)) return { error: 'sellAmount must be a positive whole number of base units.' }
+  const taker = p.get('taker')
+  if (kind === 'quote' && taker === null) return { error: "A quote needs the taker's address." }
+  if (taker !== null && (!ADDRESS.test(taker) || /^0x0{40}$/.test(taker))) return { error: 'taker must be an address.' }
+  const slippage = p.get('slippageBps')
+  if (slippage !== null && !(/^[0-9]{2,3}$/.test(slippage) && Number(slippage) >= 10 && Number(slippage) <= 300))
+    return { error: 'slippageBps must be a whole number from 10 to 300.' }
+
+  const query = new URLSearchParams({ chainId, sellToken, buyToken, sellAmount })
+  if (taker !== null) query.set('taker', taker)
+  if (slippage !== null) query.set('slippageBps', slippage)
+  const fee = feeFor(chainId, sellToken, buyToken)
+  if (fee) for (const [k, v] of Object.entries(fee)) query.set(k, v)
+  return { query }
+}
+
+export type ProxyEnv = { ZEROX_API_KEY?: string }
+
+const json = (status: number, body: unknown, extra: Record<string, string> = {}) =>
   new Response(JSON.stringify(body), {
     status,
-    headers: { 'content-type': 'application/json', 'cache-control': 'no-store' },
+    headers: { 'content-type': 'application/json', 'cache-control': 'no-store', ...extra },
   })
 
-/** Fee config from env, or undefined when not (validly) configured. 0x caps swapFeeBps at 1000. */
-export function integratorFee(env: ProxyEnv): { bps: string; recipient: string } | undefined {
-  const bps = env.SWAP_FEE_BPS?.trim()
-  const recipient = env.SWAP_FEE_RECIPIENT?.trim()
-  if (!bps || !recipient) return undefined
-  if (!/^[0-9]{1,4}$/.test(bps) || Number(bps) <= 0 || Number(bps) > 1000) return undefined
-  if (!ADDRESS.test(recipient)) return undefined
-  return { bps, recipient }
+/** A request from another site: a browser says so in Sec-Fetch-Site or Origin. */
+function crossSite(headers: Headers | undefined, url: URL) {
+  if (!headers) return false
+  const site = headers.get('sec-fetch-site')
+  if (site && site !== 'same-origin') return true
+  const origin = headers.get('origin')
+  return !!origin && origin !== url.origin
 }
 
-export type UpstreamPlan =
-  | { ok: true; url: string; headers: Record<string, string> }
-  | { ok: false; status: number; body: { name: string; message: string } }
-
-/** Validate an incoming proxy request and build the upstream 0x request. Pure; no network. */
-export function planUpstream(method: string, requestUrl: string, env: ProxyEnv): UpstreamPlan {
-  const url = new URL(requestUrl, 'http://localhost')
-  if (method !== 'GET') {
-    return { ok: false, status: 405, body: { name: 'METHOD_NOT_ALLOWED', message: 'Only GET is allowed.' } }
-  }
-
-  const path = url.pathname.startsWith(PROXY_PREFIX) ? url.pathname.slice(PROXY_PREFIX.length) : url.pathname
-  if (!(ALLOWED_ENDPOINTS as readonly string[]).includes(path)) {
-    return { ok: false, status: 404, body: { name: 'NOT_FOUND', message: 'Unknown swap endpoint.' } }
-  }
-
-  const params = new URLSearchParams()
-  for (const [key, validate] of Object.entries(PASSTHROUGH)) {
-    const value = url.searchParams.get(key)
-    if (value === null || value === '') continue
-    if (!validate(value)) {
-      const message =
-        key === 'chainId' ? 'Swaps are only available on Ethereum and Robinhood Chain.' : `Invalid ${key}.`
-      return { ok: false, status: 400, body: { name: 'INPUT_INVALID', message } }
-    }
-    params.set(key, value)
-  }
-  const missing = REQUIRED.filter((key) => !params.has(key))
-  if (missing.length) {
-    return { ok: false, status: 400, body: { name: 'INPUT_INVALID', message: `Missing ${missing.join(', ')}.` } }
-  }
-
-  const key = env.ZEROX_API_KEY?.trim()
-  if (!key) {
-    return {
-      ok: false,
-      status: 503,
-      body: { name: 'SWAP_NOT_CONFIGURED', message: 'Swap service not configured (missing ZEROX_API_KEY).' },
-    }
-  }
-
-  const fee = integratorFee(env)
-  if (fee) {
-    params.set('swapFeeBps', fee.bps)
-    params.set('swapFeeRecipient', fee.recipient)
-  }
-
-  return {
-    ok: true,
-    url: `${ZEROX_BASE_URL}${path}?${params.toString()}`,
-    headers: { '0x-api-key': key, '0x-version': 'v2', accept: 'application/json' },
-  }
-}
-
-/** Full proxy: validate, call 0x, forward status + body. */
+/**
+ * Full proxy. Error bodies are `{ name, message }`; `name: "SWAP_NOT_CONFIGURED"` means no key
+ * (or 0x refused it), which the page shows as "Swap service not configured".
+ */
 export async function handleZeroExRequest(
-  request: { method: string; url: string },
+  request: { method: string; url: string; headers?: Headers },
   env: ProxyEnv,
   fetchImpl: typeof fetch = fetch
 ): Promise<Response> {
-  const plan = planUpstream(request.method, request.url, env)
-  if (!plan.ok) return json(plan.status, plan.body)
+  const url = new URL(request.url, 'http://localhost')
+  const kind = url.pathname.startsWith(ROUTE_PREFIX) ? url.pathname.slice(ROUTE_PREFIX.length) : ''
+  if (kind !== 'price' && kind !== 'quote') return json(404, { name: 'NOT_FOUND', message: 'Not found.' })
+  if (request.method !== 'GET') return json(405, { name: 'METHOD_NOT_ALLOWED', message: 'GET only.' }, { allow: 'GET' })
+  if (crossSite(request.headers, url)) return json(403, { name: 'FORBIDDEN', message: 'Same-origin only.' })
 
+  const { query, error } = zeroXQuery(kind, url.searchParams)
+  if (error) return json(400, { name: 'INPUT_INVALID', message: error })
+
+  const key = env.ZEROX_API_KEY?.trim()
+  if (!key) return json(503, { name: 'SWAP_NOT_CONFIGURED', message: 'Swap service not configured.' })
+
+  let res: Response
   try {
-    const upstream = await fetchImpl(plan.url, { headers: plan.headers })
-    const body = await upstream.text()
-    return new Response(body, {
-      status: upstream.status,
-      headers: {
-        'content-type': upstream.headers.get('content-type') || 'application/json',
-        'cache-control': 'no-store',
-      },
+    res = await fetchImpl(`${ZEROX_BASE_URL}${kind}?${query}`, {
+      headers: { '0x-api-key': key, '0x-version': 'v2', accept: 'application/json' },
+      signal: AbortSignal.timeout(10_000),
     })
   } catch {
-    return json(502, { name: 'UPSTREAM_UNREACHABLE', message: 'Could not reach the 0x API.' })
+    return json(502, { name: 'UPSTREAM_UNREACHABLE', message: 'The swap router could not be reached.' })
   }
+  const text = await res.text()
+  let body: unknown
+  try {
+    body = JSON.parse(text)
+  } catch {
+    return json(502, { name: 'UPSTREAM_INVALID', message: `The swap router answered ${res.status} without JSON.` })
+  }
+  // A 401/403 from 0x means the key is wrong: say "not configured", never echo anything about the key.
+  if (res.status === 401 || res.status === 403) {
+    console.log(`swap: 0x refused the key (${res.status})`)
+    return json(503, { name: 'SWAP_NOT_CONFIGURED', message: 'Swap service not configured.', reason: 'upstream' })
+  }
+  return json(res.status, body)
 }
 
-export const envFromProcess = (): ProxyEnv => ({
-  ZEROX_API_KEY: process.env.ZEROX_API_KEY,
-  SWAP_FEE_BPS: process.env.SWAP_FEE_BPS,
-  SWAP_FEE_RECIPIENT: process.env.SWAP_FEE_RECIPIENT,
-})
+export const envFromProcess = (): ProxyEnv => ({ ZEROX_API_KEY: process.env.ZEROX_API_KEY })
