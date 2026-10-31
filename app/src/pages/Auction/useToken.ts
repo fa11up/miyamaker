@@ -1,6 +1,7 @@
 import { useFetch } from 'usehooks-ts'
 
 import type { TokenMetadata } from '@/store/collections/reducer'
+import { resolveUri } from '@/utils/resolveUri'
 
 export function useToken({ tokenURI, isFetch }: { tokenURI: string; isFetch: boolean }) {
   if (!isFetch) {
@@ -20,13 +21,7 @@ export function useToken({ tokenURI, isFetch }: { tokenURI: string; isFetch: boo
     return { name: '', description: '', image: '', externalURL: '', attributes: [] }
   }
 
-  let imageUri = tokenMetadata?.image || ''
-  if (imageUri.includes('ipfs://')) {
-    imageUri = (tokenMetadata?.image || '').replace('ipfs://', '')
-    const cid = imageUri.split('/')[0]
-    const imageFile = imageUri.split('/')[1]
-    imageUri = `https://${cid}.ipfs.nftstorage.link/${imageFile}`
-  }
+  const imageUri = resolveUri(tokenMetadata?.image)
 
   return {
     name: tokenMetadata?.name || '',

@@ -80,7 +80,7 @@ export default function AuctionPage() {
                 auctionContract={auctionContract as Address}
               />
             </ExplorerWrapper>
-            <ExplorerWrapper style={{ height: width > 640 ? '40%' : '30%' }} title={'Active lots'}>
+            <ExplorerWrapper style={{ height: width > 640 ? '40%' : '30%' }} title={'Lots'}>
               <ProductsList auctionContract={auctionContract as Address} />
             </ExplorerWrapper>
           </>

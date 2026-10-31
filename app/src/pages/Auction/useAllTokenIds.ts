@@ -3,6 +3,8 @@ import type { Address } from 'viem'
 import { formatUnits, parseAbi } from 'viem'
 import { useReadContract, useReadContracts } from 'wagmi'
 
+import { resolveUri } from '@/utils/resolveUri'
+
 import { abi } from './constants'
 
 const TOKEN_URI_ABI = parseAbi(['function tokenURI(uint256 tokenId) view returns (string)'])
@@ -30,12 +32,7 @@ export function useAllTokenIds({ nft, address }: { nft: Address; address: Addres
   })
 
   const tokenURIList = (tokenURIData?.map(({ result }) => result) as string[]) || []
-  const tokenURIs = tokenURIList.map((item: string) => {
-    const uri = item.replace('ipfs://', '')
-    const cid = uri.split('/')[0]
-    const tokenFile = uri.split('/')[1]
-    return `https://${cid}.ipfs.nftstorage.link/${tokenFile}`
-  })
+  const tokenURIs = tokenURIList.map((item: string) => resolveUri(item))
 
   return {
     tokenIds: [...ids] as number[],

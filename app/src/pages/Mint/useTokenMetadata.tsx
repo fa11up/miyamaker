@@ -3,6 +3,7 @@ import type { Address } from 'viem'
 
 import { useTokenURI } from '@/pages/Mint/useTokenURI'
 import type { TokenMetadata } from '@/store/collections/reducer'
+import { resolveUri } from '@/utils/resolveUri'
 
 export function useTokenMetadata({ address, tokenId }: { address: Address; tokenId: string }) {
   const [NFTMetadata, setNFTMetadata] = useState<TokenMetadata>({
@@ -17,17 +18,7 @@ export function useTokenMetadata({ address, tokenId }: { address: Address; token
   const fetchData = useCallback(async () => {
     if (tokenURI && status === 'success') {
       try {
-        const uri = tokenURI as string
-        let link = uri
-        if (uri.includes('ipfs://')) {
-          const cid = uri.replace('ipfs://', '')
-          link = `https://nftstorage.link/ipfs/${cid}`
-        }
-
-        if (uri.includes('ar://')) {
-          const cid = uri.replace('ar://', '')
-          link = `https://gateway.irys.xyz/${cid}`
-        }
+        const link = resolveUri(tokenURI as string)
 
         const response = await fetch(link)
         const data = await response.json()
@@ -48,16 +39,7 @@ export function useTokenMetadata({ address, tokenId }: { address: Address; token
     fetchData()
   }, [])
 
-  let imageUri = NFTMetadata?.image || ''
-  if (imageUri.includes('ipfs://')) {
-    const cid = imageUri.replace('ipfs://', '')
-    imageUri = `https://nftstorage.link/ipfs/${cid}`
-  }
-
-  if (imageUri.includes('ar://')) {
-    const cid = imageUri.replace('ar://', '')
-    imageUri = `https://gateway.irys.xyz/${cid}`
-  }
+  const imageUri = resolveUri(NFTMetadata?.image)
 
   return {
     name: NFTMetadata?.name || '',

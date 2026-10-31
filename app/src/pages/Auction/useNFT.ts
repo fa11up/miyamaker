@@ -3,6 +3,7 @@ import type { Address } from 'viem'
 import { useReadContracts } from 'wagmi'
 
 import type { ContractMetadata } from '@/store/collections/reducer'
+import { resolveUri } from '@/utils/resolveUri'
 
 export function useNFT({ address }: { address: Address }) {
   const { data } = useReadContracts({
@@ -46,12 +47,7 @@ export function useNFT({ address }: { address: Address }) {
   let contractUri = (data?.[0]?.result as string) || ''
   const symbol = (data?.[1]?.result as string) || ''
 
-  if (contractUri.includes('ipfs://')) {
-    const uri = contractUri.replace('ipfs://', '')
-    const cid = uri.split('/')[0]
-    const contractFile = uri.split('/')[1]
-    contractUri = `https://${cid}.ipfs.nftstorage.link/${contractFile}`
-  }
+  contractUri = resolveUri(contractUri)
 
   const { data: contractMetadata, error } = useFetch<ContractMetadata>(contractUri)
 
@@ -59,13 +55,7 @@ export function useNFT({ address }: { address: Address }) {
     return { name: '', symbol: '', description: '', image: '', externalLink: '', collaborators: [] }
   }
 
-  let imageUri = contractMetadata?.image || ''
-  if (imageUri.includes('ipfs://')) {
-    imageUri = (contractMetadata?.image || '').replace('ipfs://', '')
-    const cid = imageUri.split('/')[0]
-    const imageFile = imageUri.split('/')[1]
-    imageUri = `https://${cid}.ipfs.nftstorage.link/${imageFile}`
-  }
+  const imageUri = resolveUri(contractMetadata?.image)
 
   return {
     name: contractMetadata?.name || '',
