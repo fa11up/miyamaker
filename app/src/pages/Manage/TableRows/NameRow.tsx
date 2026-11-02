@@ -1,10 +1,10 @@
 import { useState } from 'react'
 import type { Address } from 'viem'
 import { mainnet, sepolia } from 'viem/chains'
-import { useWaitForTransaction } from '@/hooks/useWaitForTransaction'
 import { z } from 'zod'
 
 import { ConnectedButton } from '@/components/Button'
+import { useWaitForTransaction } from '@/hooks/useWaitForTransaction'
 
 import { useName } from '../useName'
 import TableInput from './TableInput'

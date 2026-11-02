@@ -1,5 +1,6 @@
 import { type Address } from 'viem'
 import { useReadContract } from 'wagmi'
+
 import { useContractWrite } from '@/hooks/useContractWrite'
 
 export function useAllocation({ address }: { address?: Address }) {

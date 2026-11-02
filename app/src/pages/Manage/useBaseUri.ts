@@ -1,5 +1,6 @@
 import type { Address } from 'viem'
 import { useReadContracts } from 'wagmi'
+
 import { useContractWrite } from '@/hooks/useContractWrite'
 
 export function useBaseUri({ address }: { address?: Address }) {

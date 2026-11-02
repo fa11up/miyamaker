@@ -4,9 +4,8 @@ import { createContext, useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import styled from 'styled-components/macro'
 import type { Address } from 'viem'
-import { useAccount, useReadContract } from 'wagmi'
 import { mainnet, sepolia } from 'viem/chains'
-import { useWaitForTransaction } from '@/hooks/useWaitForTransaction'
+import { useAccount, useReadContract } from 'wagmi'
 
 import { ConnectedButton, HighlightButton } from '@/components/Button'
 import FormInput from '@/components/FormInput'
@@ -15,6 +14,7 @@ import Tabs from '@/components/Tabs'
 import TitleBar from '@/components/TitleBar'
 import WindowWrapper from '@/components/WindowWrapper'
 import Pages from '@/constants/pages'
+import { useWaitForTransaction } from '@/hooks/useWaitForTransaction'
 import { updateManagedCollection } from '@/store/experience/actions'
 import { useAppDispatch, useAppSelector } from '@/store/hooks'
 import { closeWindow, minimizeWindow } from '@/store/windows/actions'
@@ -339,26 +339,47 @@ export default function ManagePage() {
     collaborators: metadata.collaborators,
   })
 
+  // The form starts empty while contractURI loads. Fill it once loaded (and again when the collection changes), but
+  // never over the user's edits; Update stays disabled until then so empty fields can't overwrite real metadata.
+  const [formDirty, setFormDirty] = useState(false)
+  useEffect(() => setFormDirty(false), [collection])
+  useEffect(() => {
+    if (!metadata.loaded || formDirty) return
+    setForm({
+      name: metadata.name,
+      description: metadata.description,
+      image: metadata.image,
+      external_link: metadata.external_link,
+      collaborators: metadata.collaborators,
+    })
+  }, [metadata.loaded, metadata.name, metadata.description, metadata.image, metadata.external_link, collection])
+
   const handleInputName = (input: string) => {
+    setFormDirty(true)
     setForm((prev) => ({ ...prev, name: input }))
   }
 
   const handleInputDescription = (input: string) => {
+    setFormDirty(true)
     setForm((prev) => ({ ...prev, description: input }))
   }
 
   const handleInputImage = (input: string) => {
+    setFormDirty(true)
     setForm((prev) => ({ ...prev, image: input }))
   }
 
   const handleInputExternalLink = (input: string) => {
+    setFormDirty(true)
     setForm((prev) => ({ ...prev, external_link: input }))
   }
 
   const handleUpdateMetadata = async () => {
     setTransacting('metadata')
     try {
-      const contractURI = `data:application/json;utf8,${encodeURIComponent(JSON.stringify(form))}`
+      const contractURI = `data:application/json;utf8,${encodeURIComponent(
+        JSON.stringify({ ...metadata.raw, ...form })
+      )}`
 
       const result = await metadata.setContractUri(contractURI)
       setTxHash(result.hash)
@@ -410,7 +431,7 @@ export default function ManagePage() {
             justifyContent: 'center',
             gap: '8px',
           }}
-          disabled={!!transacting}
+          disabled={!!transacting || !metadata.loaded}
           onClick={() => handleUpdateMetadata()}
           withChain={[mainnet.id, sepolia.id]}
         >
@@ -418,7 +439,7 @@ export default function ManagePage() {
         </ConnectedButton>
       </div>
     )
-  }, [form.description, form.external_link, form.image, form.name, transacting])
+  }, [form.description, form.external_link, form.image, form.name, transacting, metadata.loaded])
 
   const [collectionInput, setCollectionInput] = useState('')
 

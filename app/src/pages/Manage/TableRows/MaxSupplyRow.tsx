@@ -1,11 +1,11 @@
 import { useMemo, useState } from 'react'
-import { formatUnits, parseUnits } from 'viem'
 import type { Address } from 'viem'
+import { formatUnits, parseUnits } from 'viem'
 import { mainnet, sepolia } from 'viem/chains'
-import { useWaitForTransaction } from '@/hooks/useWaitForTransaction'
 import { z } from 'zod'
 
 import { ConnectedButton } from '@/components/Button'
+import { useWaitForTransaction } from '@/hooks/useWaitForTransaction'
 
 import { useMaxSupply } from '../useMaxSupply'
 import { useTotalSupply } from '../useTotalSupply'

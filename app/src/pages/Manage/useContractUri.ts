@@ -15,7 +15,7 @@ type ContractMetadata = {
 }
 
 export function useContractUri({ address }: { address?: Address }) {
-  const { data: contractUri } = useReadContract({
+  const { data: contractUri, isFetched: uriFetched } = useReadContract({
     address,
     query: { enabled: !!address },
     functionName: 'contractURI',
@@ -51,7 +51,7 @@ export function useContractUri({ address }: { address?: Address }) {
   const uri = typeof contractUri === 'string' ? contractUri : ''
   const inline = uri.trim().toLowerCase().startsWith('data:')
   const remoteUrl = inline ? '' : resolveMetadataUri(uri)
-  const { data: remote } = useQuery({
+  const { data: remote, isFetched: remoteFetched } = useQuery({
     queryKey: ['contractUri', remoteUrl],
     enabled: !!remoteUrl,
     queryFn: async () => {
@@ -71,6 +71,10 @@ export function useContractUri({ address }: { address?: Address }) {
     image: typeof meta.image === 'string' ? meta.image : '',
     external_link: typeof meta.external_link === 'string' ? meta.external_link : '',
     collaborators: Array.isArray(meta.collaborators) ? meta.collaborators : [],
+    /** The whole parsed document, so an update can keep fields this form doesn't edit. */
+    raw: meta as Record<string, unknown>,
+    /** True once the current contractURI has been read (and fetched, if remote), even if it was empty or broken. */
+    loaded: uriFetched && (!remoteUrl || remoteFetched),
     setContractUri,
   }
 }
