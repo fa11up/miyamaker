@@ -1,14 +1,16 @@
+import type { KeyboardEvent } from 'react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import styled, { keyframes } from 'styled-components/macro'
 import { useAccount } from 'wagmi'
 
-import { BigButton } from '@/components/Retro'
+import MiladyFace from '@/assets/milady_pixelated.png'
 import TitleBar from '@/components/TitleBar'
 import WindowWrapper from '@/components/WindowWrapper'
 import Pages from '@/constants/pages'
 import { useRadio, useRadioClock } from '@/context/RadioProvider'
 import { formatDuration } from '@/music/audio'
 import { MUSIC_CHAINS, musicConfig } from '@/music/config'
+import { matchPreset } from '@/music/eq'
 import { positionLabel } from '@/music/queue'
 import { musicDropsSource, stationSource } from '@/music/sources'
 import type { PlaylistSource } from '@/music/types'
@@ -17,71 +19,128 @@ import { useAppDispatch } from '@/store/hooks'
 import { closeWindow, minimizeWindow } from '@/store/windows/actions'
 import { useFullscreen } from '@/store/windows/hooks'
 import type { PageKey } from '@/store/windows/reducer'
-import { bevel, color, font, space, text } from '@/theme/tokens'
+import { font } from '@/theme/tokens'
 
+import Equalizer from './Equalizer'
 import { Glyph } from './Glyph'
+import { Key, Lcd, Led, PanelFrame, Slider, SliderLabel, Strip, wingHeart } from './parts'
+import Playlist, { playlistSummary } from './Playlist'
+import SegmentTime from './SegmentTime'
+import type { PanelState, RadioLayout } from './skins'
+import { loadLayout, nextSkin, saveLayout, skinById } from './skins'
 import Visualizer from './Visualizer'
 
 const pageId = 'radio' as PageKey
 
-const Body = styled.div`
+// ── layout ────────────────────────────────────────────────────────────────────
+
+const Root = styled.div`
+  position: relative;
+  isolation: isolate;
   display: flex;
   flex-direction: column;
-  gap: ${space[2]};
-  padding: ${space[2]};
+  gap: 3px;
+  padding: 3px;
   min-height: 0;
-  overflow: hidden;
-`
-
-const Deck = styled.div`
-  display: grid;
-  grid-template-columns: 132px minmax(0, 1fr);
-  grid-template-rows: auto auto;
-  gap: ${space[1]} ${space[2]};
-  padding: ${space[2]};
-  background: ${color.dark};
-  box-shadow: ${bevel.sunken};
-  color: ${color.light};
-  font-family: ${font.mono};
-`
-
-const Clock = styled.button`
-  all: unset;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  gap: ${space[1]};
-  font-size: 30px;
-  line-height: 1;
-  letter-spacing: 0.04em;
-  color: ${color.accent};
-  text-shadow: 0 0 6px rgba(217, 122, 218, 0.55);
-  font-variant-numeric: tabular-nums;
-  &:focus-visible {
-    outline: 1px dotted ${color.accent};
+  overflow-x: hidden;
+  overflow-y: auto;
+  font-family: ${font.ui};
+  background: repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.04) 0 2px, transparent 2px 6px), var(--rk-seam);
+  &:focus {
+    outline: none;
+  }
+  /* Milady watermark in the empty space left when panels are shaded or hidden. */
+  > .watermark {
+    position: absolute;
+    z-index: -1;
+    left: 0;
+    right: 0;
+    bottom: 28px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    pointer-events: none;
+    color: var(--rk-frame);
+    font-size: 12px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    opacity: 0.35;
+  }
+  > .watermark img {
+    width: 128px;
+    height: 128px;
+    image-rendering: pixelated;
+    filter: invert(1);
+    mix-blend-mode: screen;
+    opacity: 0.6;
   }
 `
 
-const State = styled.span`
-  display: inline-flex;
-  width: 12px;
-  color: ${color.light};
+const Display = styled(Lcd)`
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr);
+  grid-template-areas:
+    'time marquee'
+    'viz info';
+  gap: 6px 10px;
+  padding: 8px 8px 7px;
+  @media (max-width: 480px) {
+    grid-template-columns: 132px minmax(0, 1fr);
+  }
+`
+
+const TimeBtn = styled.button`
+  all: unset;
+  box-sizing: border-box;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  color: inherit;
+  grid-area: time;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  color: var(--rk-lcd-ink);
+  &:focus-visible {
+    outline: 1px dotted var(--rk-lcd-ink);
+    outline-offset: 2px;
+  }
+  .state {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    width: 12px;
+    filter: drop-shadow(0 0 2px var(--rk-lcd-glow));
+  }
+  .state i {
+    width: 10px;
+    height: 2px;
+    background: var(--rk-lcd-dim);
+  }
+  .state i.on {
+    background: var(--rk-lcd-ink);
+  }
 `
 
 const VizBox = styled.div`
-  grid-column: 1;
-  height: 56px;
-  box-shadow: inset 0 0 0 1px #2c2342;
+  grid-area: viz;
+  position: relative;
+  z-index: 1;
+  height: 44px;
+  box-shadow: 0 0 0 1px var(--rk-lcd-dim);
 `
 
 const Info = styled.div`
-  grid-column: 2;
-  grid-row: 1 / span 2;
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
+  grid-area: info;
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 50px;
+  gap: 6px;
   min-width: 0;
-  gap: ${space[1]};
 `
 
 const scroll = keyframes`
@@ -90,262 +149,310 @@ const scroll = keyframes`
 `
 
 const MarqueeBox = styled.div`
+  grid-area: marquee;
+  position: relative;
+  z-index: 1;
+  align-self: center;
   overflow: hidden;
   white-space: nowrap;
-  padding: 3px 4px;
-  background: #0d0a16;
-  box-shadow: inset 0 0 0 1px #2c2342;
-  color: #f5c6f6;
-  font-size: ${text.xs};
-  letter-spacing: 0.06em;
+  padding: 3px 5px;
+  background: rgba(0, 0, 0, 0.35);
+  box-shadow: inset 0 0 0 1px var(--rk-lcd-dim);
+  color: var(--rk-lcd-ink);
+  font-size: 15px;
+  line-height: 18px;
+  letter-spacing: 0.04em;
+  text-shadow: 0 0 5px var(--rk-lcd-glow);
   > span {
     display: inline-block;
-    padding-right: 0;
   }
   &.run > span {
     animation: ${scroll} var(--marquee-s, 14s) linear infinite;
   }
+  &.mini {
+    flex: 1 1 auto;
+    min-width: 0;
+    padding: 1px 4px;
+    font-size: 13px;
+    line-height: 16px;
+  }
   @media (prefers-reduced-motion: reduce) {
     &.run > span {
+      display: inline;
       animation: none;
     }
     text-overflow: ellipsis;
   }
 `
 
-const Meta = styled.div`
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px ${space[2]};
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: #9d95c4;
-  b {
-    color: ${color.light};
-    font-weight: 400;
-  }
-`
-
-const Range = styled.input.attrs({ type: 'range' })`
-  -webkit-appearance: none;
-  appearance: none;
-  width: 100%;
-  height: 16px;
-  margin: 0;
-  background: transparent;
-  cursor: pointer;
-  &::-webkit-slider-runnable-track {
-    height: 8px;
-    background: ${color.well};
-    box-shadow: ${bevel.sunken};
-  }
-  &::-moz-range-track {
-    height: 8px;
-    background: ${color.well};
-    box-shadow: ${bevel.sunken};
-  }
-  &::-webkit-slider-thumb {
-    -webkit-appearance: none;
-    width: 22px;
-    height: 14px;
-    margin-top: -3px;
-    background: ${color.face};
-    box-shadow: ${bevel.raised};
-    border: none;
-  }
-  &::-moz-range-thumb {
-    width: 22px;
-    height: 14px;
-    border: none;
-    border-radius: 0;
-    background: ${color.face};
-    box-shadow: ${bevel.raised};
-  }
-  &:focus-visible {
-    outline: 1px dotted ${color.dark};
-  }
-  &:disabled {
-    cursor: not-allowed;
-    opacity: 0.6;
-  }
-`
-
-const Controls = styled.div`
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: ${space[1]};
-`
-
-const Key = styled.button<{ $on?: boolean }>`
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  min-width: 34px;
-  height: 28px;
-  padding: 0 6px;
-  border: none;
-  border-radius: 0;
-  background: ${({ $on }) => ($on ? color.faceLight : color.face)};
-  color: ${({ $on }) => ($on ? color.accentDark : color.ink)};
-  box-shadow: ${({ $on }) => ($on ? bevel.pressed : bevel.raised)};
-  font-size: ${text.xs};
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  cursor: pointer;
-  &:hover:not(:disabled) {
-    background: ${color.faceLight};
-  }
-  &:active:not(:disabled) {
-    box-shadow: ${bevel.pressed};
-  }
-  &:focus-visible {
-    outline: 1px dotted ${color.dark};
-    outline-offset: -4px;
-  }
-  &:disabled {
-    color: ${color.shadow};
-    cursor: not-allowed;
-  }
-  svg {
-    width: 12px;
-    height: 12px;
-  }
-`
-
-const Volume = styled.label`
-  display: flex;
-  align-items: center;
-  gap: ${space[1]};
-  flex: 1 1 120px;
-  min-width: 110px;
-  font-size: ${text.xs};
-  color: ${color.inkMuted};
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-`
-
-const PlaylistBox = styled.div`
-  flex: 1 1 auto;
-  min-height: 120px;
+const Readouts = styled.div`
   display: flex;
   flex-direction: column;
-  background: ${color.dark};
-  box-shadow: ${bevel.sunken};
-  padding: 3px;
-`
-
-const List = styled.ol`
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow-y: auto;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  font-family: ${font.mono};
-  font-size: 12px;
-`
-
-const Row = styled.li<{ $active?: boolean }>`
-  display: grid;
-  grid-template-columns: 28px minmax(0, 1fr) auto 22px;
-  align-items: center;
-  gap: 6px;
-  padding: 3px 4px;
-  color: ${({ $active }) => ($active ? color.highlight : '#b9b2dc')};
-  background: ${({ $active }) => ($active ? '#3b2a5a' : 'transparent')};
-  cursor: pointer;
-  &:hover {
-    background: ${({ $active }) => ($active ? '#3b2a5a' : '#221a35')};
+  justify-content: space-between;
+  gap: 3px;
+  min-width: 0;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--rk-lcd-soft);
+  .row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 3px 8px;
+    min-width: 0;
   }
-  &:focus-visible {
-    outline: 1px dotted ${color.accent};
-    outline-offset: -2px;
+  b {
+    font-weight: 400;
+    color: var(--rk-lcd-ink);
+    text-shadow: 0 0 4px var(--rk-lcd-glow);
   }
-  .n {
-    color: #6f6894;
-    text-align: right;
+  .lamp {
+    color: var(--rk-lcd-dim);
   }
-  .t {
+  .lamp.on {
+    color: var(--rk-lcd-ink);
+    text-shadow: 0 0 4px var(--rk-lcd-glow);
+  }
+  .msg {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    min-height: 13px;
   }
-  .d {
-    color: #9d95c4;
-    font-variant-numeric: tabular-nums;
+  .msg.err {
+    color: #ff6f8f;
   }
-  button {
-    all: unset;
-    cursor: pointer;
-    text-align: center;
-    color: #6f6894;
-    &:hover,
-    &:focus-visible {
-      color: ${color.accent};
+`
+
+const bob = keyframes`
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-2px); }
+`
+const rise = keyframes`
+  0% { transform: translate(0, 0) scale(0.6); opacity: 0; }
+  20% { opacity: 1; }
+  100% { transform: translate(var(--dx, 4px), -26px) scale(1); opacity: 0; }
+`
+
+/** "miya cam": the pixel milady face, glowing in the skin colour, bouncing to the bass. */
+const Cam = styled.div`
+  --lvl: 0;
+  position: relative;
+  align-self: end;
+  width: 50px;
+  height: 50px;
+  box-shadow: inset 0 0 0 1px var(--rk-lcd-dim);
+  background: radial-gradient(circle at 50% 60%, var(--rk-lcd-dim), transparent 70%), var(--rk-lcd);
+  overflow: hidden;
+  isolation: isolate;
+  /* tint the (inverted, screened) face in the skin's phosphor colour */
+  &::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: var(--rk-lcd-ink);
+    mix-blend-mode: multiply;
+    pointer-events: none;
+  }
+  img {
+    position: absolute;
+    left: 3px;
+    top: 5px;
+    width: 44px;
+    height: 44px;
+    image-rendering: pixelated;
+    filter: invert(1);
+    mix-blend-mode: screen;
+    transform: translateY(calc(var(--lvl) * -5px)) scale(calc(1 + var(--lvl) * 0.1));
+    transition: transform 60ms linear;
+  }
+  .rec {
+    position: absolute;
+    left: 3px;
+    top: 3px;
+    width: 4px;
+    height: 4px;
+    background: var(--rk-lcd-dim);
+  }
+  .heart {
+    position: absolute;
+    bottom: 4px;
+    width: 5px;
+    height: 5px;
+    opacity: 0;
+    color: var(--rk-lcd-ink);
+  }
+  &.on .rec {
+    background: #ff4f7b;
+    box-shadow: 0 0 4px #ff4f7b;
+  }
+  &.on.idle img {
+    animation: ${bob} 0.9s steps(2) infinite;
+  }
+  &.on .heart {
+    animation: ${rise} 2.4s linear infinite;
+  }
+  &.on .heart:nth-of-type(2) {
+    --dx: -6px;
+    left: 8px;
+    animation-delay: 0.8s;
+  }
+  &.on .heart:nth-of-type(3) {
+    --dx: 3px;
+    right: 6px;
+    animation-delay: 1.6s;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    &.on.idle img,
+    &.on .heart {
+      animation: none;
+    }
+    img {
+      transform: none;
+      transition: none;
     }
   }
 `
 
-const Empty = styled.div`
-  flex: 1 1 auto;
+const Deck = styled.div`
   display: flex;
   flex-direction: column;
+  gap: 5px;
+  margin-top: 6px;
+`
+
+const Row = styled.div`
+  display: flex;
   align-items: center;
-  justify-content: center;
-  gap: ${space[3]};
-  padding: ${space[4]};
-  text-align: center;
-  color: ${color.light};
-  p {
-    margin: 0;
-    font-size: ${text.sm};
-    line-height: 1.4;
+  gap: 4px;
+  min-width: 0;
+  &.sliders {
+    gap: 10px;
   }
-  small {
-    color: #9d95c4;
-    font-size: ${text.xs};
+  .grow {
+    flex: 1 1 auto;
+  }
+  .spacer {
+    flex: 1 1 0;
+  }
+  .cluster {
+    flex: 0 0 auto;
+    display: inline-flex;
+    gap: 2px;
+    padding: 2px;
+    background: var(--rk-seam);
+    box-shadow: 0 1px 0 var(--rk-frame-hi);
+  }
+  @media (max-width: 480px) {
+    flex-wrap: wrap;
+    &.sliders {
+      gap: 6px 10px;
+    }
+    .cluster.transport,
+    .vol {
+      flex: 1 1 100%;
+    }
+    .cluster.transport > button {
+      flex: 1 1 0;
+    }
   }
 `
 
-const Footer = styled.div`
+const SkinButton = styled.button`
+  all: unset;
+  box-sizing: border-box;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  color: inherit;
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 30px;
+  cursor: pointer;
+  img {
+    width: 34px;
+    height: 34px;
+    image-rendering: pixelated;
+    filter: drop-shadow(0 0 3px var(--rk-btn-on));
+    transition: transform 120ms ease;
+  }
+  &:hover img {
+    transform: scale(1.1) rotate(-4deg);
+  }
+  &:focus-visible {
+    outline: 1px dotted var(--rk-frame-ink);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    img {
+      transition: none;
+    }
+  }
+`
+
+const ShadeRow = styled.div`
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: ${space[1]};
-  select {
-    height: 28px;
-    min-width: 0;
-    flex: 1 1 150px;
-    border: none;
-    border-radius: 0;
-    background: ${color.well};
-    box-shadow: ${bevel.field};
-    font-size: ${text.xs};
+  gap: 4px;
+  min-width: 0;
+  .cluster {
+    flex: 0 0 auto;
+    display: inline-flex;
+    gap: 2px;
+    padding: 2px;
+    background: var(--rk-seam);
+  }
+  .cluster button {
+    min-width: 24px;
     padding: 0 4px;
   }
+  .lcd {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 5px;
+  }
+  .lcd > * {
+    position: relative;
+    z-index: 1;
+  }
+  .viz {
+    flex: 0 0 56px;
+    height: 18px;
+  }
+  @media (max-width: 480px) {
+    .viz {
+      display: none;
+    }
+  }
 `
 
-const Status = styled.div<{ tone?: 'error' }>`
-  min-height: 16px;
-  font-size: ${text.xs};
-  color: ${({ tone }) => (tone === 'error' ? color.danger : color.inkMuted)};
+const SrOnly = styled.span`
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
 `
 
-function Marquee({ value }: { value: string }) {
-  const run = value.length > 30
+function Marquee({ value, mini }: { value: string; mini?: boolean }) {
+  const run = value.length > (mini ? 24 : 34)
+  const cls = [run ? 'run' : '', mini ? 'mini' : ''].join(' ').trim() || undefined
   return (
-    <MarqueeBox
-      className={run ? 'run' : undefined}
-      style={{ ['--marquee-s' as string]: `${Math.max(8, value.length / 4)}s` }}
-    >
-      <span aria-hidden={run}>{run ? `${value}   ***   ${value}   ***   ` : value}</span>
-      {run && <span style={{ position: 'absolute', left: -9999 }}>{value}</span>}
+    <MarqueeBox className={cls} style={{ ['--marquee-s' as string]: `${Math.max(8, value.length / 4)}s` }}>
+      <span aria-hidden="true">{run ? `${value}  ✦ ✦ ✦  ${value}  ✦ ✦ ✦  ` : value}</span>
+      <SrOnly>{value}</SrOnly>
     </MarqueeBox>
   )
 }
+
+const HEART = 'M1 1h1v1H1zM3 1h1v1H3zM0 2h5v1H0zM1 3h3v1H1zM2 4h1v1H2z'
+
+const isTyping = (el: EventTarget | null) =>
+  el instanceof HTMLElement && (/^(INPUT|SELECT|TEXTAREA)$/.test(el.tagName) || el.isContentEditable)
 
 export default function RadioWindow() {
   const radio = useRadio()
@@ -359,6 +466,16 @@ export default function RadioWindow() {
   const [scrub, setScrub] = useState<number | undefined>()
   const [status, setStatus] = useState<{ text: string; tone?: 'error' }>()
   const [busy, setBusy] = useState(false)
+  const [layout, setLayout] = useState<RadioLayout>(loadLayout)
+  const camRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => saveLayout(layout), [layout])
+  const patch = (p: Partial<RadioLayout>) => setLayout((l) => ({ ...l, ...p }))
+  const togglePanel = (key: 'eq' | 'pl') =>
+    patch({ [key]: (layout[key] === 'hidden' ? 'open' : 'hidden') as PanelState })
+  const shadePanel = (key: 'eq' | 'pl') => patch({ [key]: (layout[key] === 'shade' ? 'open' : 'shade') as PanelState })
+
+  const skin = skinById(layout.skin)
 
   // Adapters: on-chain music drops per supported chain, plus the curated stations file.
   const sources = useMemo<PlaylistSource[]>(
@@ -377,12 +494,7 @@ export default function RadioWindow() {
     ? `${nowIndex + 1}. ${current.artist ? `${current.artist} - ` : ''}${current.title} (${formatDuration(
         duration || undefined
       )})`
-    : 'miya radio *** no track loaded'
-
-  const listRef = useRef<HTMLOListElement>(null)
-  useEffect(() => {
-    listRef.current?.querySelector('[data-active="true"]')?.scrollIntoView?.({ block: 'nearest' })
-  }, [nowIndex])
+    : 'miya radio ✦ no track loaded ✦ add a source below'
 
   const loadSource = async () => {
     const source = sources.find((s) => s.id === sourceId) || sources[0]
@@ -418,7 +530,93 @@ export default function RadioWindow() {
     })
   }
 
+  const play = () => {
+    if (radio.playing) radio.seek(0)
+    else radio.play()
+  }
+
+  const pause = () => {
+    if (current) radio.toggle()
+  }
+
+  // Classic player hotkeys while the radio window has focus: Z prev, X play, C pause, V stop, B next.
+  const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (e.altKey || e.ctrlKey || e.metaKey || isTyping(e.target)) return
+    const map: Record<string, (() => void) | undefined> = {
+      z: current ? radio.prev : undefined,
+      x: queue.tracks.length ? play : undefined,
+      c: pause,
+      v: current ? radio.stop : undefined,
+      b: current ? radio.next : undefined,
+    }
+    const fn = map[e.key.toLowerCase()]
+    if (fn) {
+      e.preventDefault()
+      fn()
+    }
+  }
+
   const playingGlyph = radio.loading && radio.playing ? 'wait' : radio.playing ? 'play' : current ? 'pause' : 'stop'
+  const paused = !!current && !radio.playing && clock.time > 0
+  const live = radio.fx && !!current
+  const preset = matchPreset(radio.eq)
+  const repeatLabel = queue.repeat === 'one' ? 'Rep 1' : 'Rep'
+  const seekMax = duration || 1
+  const seekValue = Math.min(shown, seekMax)
+
+  const message = radio.error
+    ? radio.error
+    : radio.loading && radio.playing
+    ? 'Buffering…'
+    : current?.token
+    ? `Token #${current.token.tokenId}`
+    : radio.visualizer === 'reduced'
+    ? 'Visuals still (reduced motion)'
+    : current && radio.visualizer === 'unavailable'
+    ? 'Plain audio · no live visuals'
+    : ''
+
+  const transport = (small?: boolean) => (
+    <span className="cluster transport">
+      <Key type="button" aria-label="Previous" title="Previous (Z)" onClick={radio.prev} disabled={!current}>
+        <Glyph kind="prev" />
+      </Key>
+      <Key
+        type="button"
+        aria-label="Play"
+        title="Play (X)"
+        onClick={play}
+        disabled={!queue.tracks.length}
+        $wide={!small}
+      >
+        <Glyph kind="play" />
+      </Key>
+      <Key type="button" aria-label="Pause" aria-pressed={paused} title="Pause (C)" onClick={pause} disabled={!current}>
+        <Glyph kind="pause" />
+      </Key>
+      <Key type="button" aria-label="Stop" title="Stop (V)" onClick={radio.stop} disabled={!current}>
+        <Glyph kind="stop" />
+      </Key>
+      <Key type="button" aria-label="Next" title="Next (B)" onClick={radio.next} disabled={!current}>
+        <Glyph kind="next" />
+      </Key>
+    </span>
+  )
+
+  const clockButton = (height: number) => (
+    <TimeBtn
+      type="button"
+      onClick={() => setRemaining((r) => !r)}
+      title={remaining ? 'Showing time remaining (click for elapsed)' : 'Showing elapsed time (click for remaining)'}
+      aria-label={`Time ${timeText}${remaining ? ' remaining' : ''}. Click to switch elapsed and remaining.`}
+    >
+      <span className="state" aria-hidden="true">
+        <Glyph kind={playingGlyph} />
+        {height > 20 && <i className={live ? 'on' : undefined} />}
+      </span>
+      <SegmentTime value={timeText} height={height} blink={paused} />
+    </TimeBtn>
+  )
 
   return (
     <WindowWrapper>
@@ -439,206 +637,255 @@ export default function RadioWindow() {
       >
         {Pages.radio?.label}
       </TitleBar>
-      <Body>
-        <Deck aria-label="Now playing">
-          <Clock
-            type="button"
-            onClick={() => setRemaining((r) => !r)}
-            title={
-              remaining ? 'Showing time remaining (click for elapsed)' : 'Showing elapsed time (click for remaining)'
-            }
-            aria-label={`Time ${timeText}`}
-          >
-            <State aria-hidden="true">
-              <Glyph kind={playingGlyph} />
-            </State>
-            <span>{timeText}</span>
-          </Clock>
-          <VizBox>
-            <Visualizer mode={radio.visualizer} playing={radio.playing} getAnalyser={radio.getAnalyser} />
-          </VizBox>
-          <Info>
-            <Marquee value={title} />
-            <Meta>
-              <span>
-                Track <b>{positionLabel(queue)}</b>
-              </span>
-              <span>
-                Src <b>{current ? current.source : '—'}</b>
-              </span>
-              <span>
-                Viz <b>{radio.visualizer === 'live' ? 'live' : radio.visualizer === 'reduced' ? 'still' : 'off'}</b>
-              </span>
-            </Meta>
-            {radio.error ? (
-              <Meta style={{ color: '#ff9db0' }} role="alert">
-                {radio.error}
-              </Meta>
-            ) : (
-              <Meta>
-                {radio.loading && radio.playing
-                  ? 'Buffering…'
-                  : current?.token
-                  ? `Token #${current.token.tokenId}`
-                  : ' '}
-              </Meta>
-            )}
-          </Info>
-        </Deck>
-
-        <Range
-          aria-label="Seek"
-          min={0}
-          max={duration || 1}
-          step={0.1}
-          value={Math.min(shown, duration || 1)}
-          disabled={!current || !duration}
-          onChange={(e) => setScrub(Number(e.target.value))}
-          onPointerUp={() => {
-            if (scrub !== undefined) radio.seek(scrub)
-            setScrub(undefined)
-          }}
-          onKeyUp={() => {
-            if (scrub !== undefined) radio.seek(scrub)
-            setScrub(undefined)
-          }}
-        />
-
-        <Controls>
-          <Key type="button" aria-label="Previous" title="Previous" onClick={radio.prev} disabled={!current}>
-            <Glyph kind="prev" />
-          </Key>
-          <Key
-            type="button"
-            aria-label={radio.playing ? 'Pause' : 'Play'}
-            title={radio.playing ? 'Pause' : 'Play'}
-            onClick={radio.toggle}
-            disabled={!queue.tracks.length}
-          >
-            <Glyph kind={radio.playing ? 'pause' : 'play'} />
-          </Key>
-          <Key type="button" aria-label="Stop" title="Stop" onClick={radio.stop} disabled={!current}>
-            <Glyph kind="stop" />
-          </Key>
-          <Key type="button" aria-label="Next" title="Next" onClick={radio.next} disabled={!current}>
-            <Glyph kind="next" />
-          </Key>
-          <Key
-            type="button"
-            $on={queue.shuffle}
-            aria-pressed={queue.shuffle}
-            title="Shuffle"
-            onClick={radio.toggleShuffle}
-          >
-            Shuf
-          </Key>
-          <Key
-            type="button"
-            $on={queue.repeat !== 'off'}
-            aria-label={`Repeat: ${queue.repeat}`}
-            title="Repeat: off / all / one"
-            onClick={radio.cycleRepeat}
-          >
-            Rep{queue.repeat === 'one' ? ' 1' : queue.repeat === 'all' ? ' all' : ''}
-          </Key>
-          <Volume>
-            Vol
-            <Range
-              aria-label="Volume"
-              min={0}
-              max={1}
-              step={0.01}
-              value={radio.volume}
-              onChange={(e) => radio.setVolume(Number(e.target.value))}
-            />
-          </Volume>
-        </Controls>
-
-        <PlaylistBox aria-label="Playlist">
-          {queue.tracks.length === 0 ? (
-            <Empty>
-              <p>No tracks yet — drop music to fill the radio</p>
-              <small>Music drops minted on-chain show up here. Load them below, or release your own.</small>
-              <BigButton
-                type="button"
-                style={{ maxWidth: 240, minHeight: 40, fontSize: text.sm }}
-                onClick={() => openApp('dropmusic')}
-              >
-                Drop Music
-              </BigButton>
-            </Empty>
+      <Root style={skin.vars} onKeyDown={onKeyDown} data-skin={skin.id}>
+        <div className="watermark" aria-hidden="true">
+          <img src={MiladyFace} alt="" />
+          <span>double-click a strip to roll it down</span>
+        </div>
+        {/* ── main player ── */}
+        <PanelFrame className={layout.main === 'shade' ? 'shaded' : undefined} aria-label="Player">
+          <Strip
+            label="miya radio"
+            extra={layout.main === 'shade' ? undefined : 'v98'}
+            shaded={layout.main === 'shade'}
+            onShade={() => patch({ main: layout.main === 'shade' ? 'open' : 'shade' })}
+            panelId="radio-main"
+          />
+          {layout.main === 'shade' ? (
+            <ShadeRow id="radio-main">
+              <Lcd className="lcd">
+                {clockButton(16)}
+                <Marquee value={title} mini />
+                <div className="viz">
+                  <Visualizer
+                    compact
+                    mode={radio.visualizer}
+                    playing={radio.playing}
+                    getAnalyser={radio.getAnalyser}
+                    skin={skin.id}
+                  />
+                </div>
+              </Lcd>
+              {transport(true)}
+            </ShadeRow>
           ) : (
-            <List ref={listRef}>
-              {queue.tracks.map((t, i) => {
-                const active = i === nowIndex
-                return (
-                  <Row
-                    key={t.id}
-                    $active={active}
-                    data-active={active}
-                    tabIndex={0}
-                    aria-current={active ? 'true' : undefined}
-                    onDoubleClick={() => radio.jumpTo(i)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') radio.jumpTo(i)
-                      if (e.key === 'Delete' || e.key === 'Backspace') radio.remove(i)
-                    }}
-                    onClick={(e) => {
-                      // Single tap plays on touch screens (no double-click there).
-                      if ((e.nativeEvent as PointerEvent).pointerType === 'touch') radio.jumpTo(i)
-                    }}
-                    title={`${t.artist ? `${t.artist} - ` : ''}${t.title} (double-click to play)`}
-                  >
-                    <span className="n">{i + 1}.</span>
-                    <span className="t">
-                      {t.artist ? `${t.artist} - ` : ''}
-                      {t.title}
-                    </span>
-                    <span className="d">{formatDuration(t.duration)}</span>
-                    <button
-                      type="button"
-                      aria-label={`Remove ${t.title}`}
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        radio.remove(i)
-                      }}
+            <div id="radio-main">
+              <Display aria-label="Now playing">
+                {clockButton(30)}
+                <Marquee value={title} />
+                <VizBox>
+                  <Visualizer
+                    mode={radio.visualizer}
+                    playing={radio.playing}
+                    getAnalyser={radio.getAnalyser}
+                    skin={skin.id}
+                    levelTarget={camRef}
+                  />
+                </VizBox>
+                <Info>
+                  <Readouts>
+                    <div className="row">
+                      <span>
+                        kHz <b>{live && radio.sampleRate ? Math.round(radio.sampleRate / 1000) : '--'}</b>
+                      </span>
+                      <span>
+                        Trk <b>{positionLabel(queue)}</b>
+                      </span>
+                      <span>
+                        Src <b>{current ? current.source : '—'}</b>
+                      </span>
+                    </div>
+                    <div className="row" aria-label="Indicators">
+                      <span className={`lamp${live ? ' on' : ''}`}>Live</span>
+                      <span className={`lamp${live && radio.eq.enabled ? ' on' : ''}`}>EQ</span>
+                      <span className={`lamp${queue.shuffle ? ' on' : ''}`}>Shuf</span>
+                      <span className={`lamp${queue.repeat !== 'off' ? ' on' : ''}`}>
+                        {queue.repeat === 'one' ? 'Rep1' : 'Rep'}
+                      </span>
+                    </div>
+                    <div
+                      className={`msg${radio.error ? ' err' : ''}`}
+                      role={radio.error ? 'alert' : undefined}
+                      title={message}
                     >
-                      ×
-                    </button>
-                  </Row>
-                )
-              })}
-            </List>
-          )}
-        </PlaylistBox>
+                      {message || ' '}
+                    </div>
+                  </Readouts>
+                  <Cam
+                    ref={camRef}
+                    aria-hidden="true"
+                    className={[radio.playing ? 'on' : '', radio.visualizer !== 'live' ? 'idle' : ''].join(' ').trim()}
+                  >
+                    <span className="rec" />
+                    <img src={MiladyFace} alt="" />
+                    {[0, 1, 2].map((i) => (
+                      <svg key={i} className="heart" viewBox="0 0 5 5" fill="currentColor" style={{ left: 18 }}>
+                        <path d={HEART} />
+                      </svg>
+                    ))}
+                  </Cam>
+                </Info>
+              </Display>
 
-        <Footer>
-          <select aria-label="Playlist source" value={sourceId} onChange={(e) => setSourceId(e.target.value)}>
-            {sources.map((src) => (
-              <option key={src.id} value={src.id}>
-                {src.label}
-              </option>
-            ))}
-          </select>
-          <Key type="button" onClick={loadSource} disabled={busy}>
-            {busy ? 'Loading…' : 'Load'}
-          </Key>
-          <Key type="button" onClick={radio.clear} disabled={!queue.tracks.length}>
-            Clear
-          </Key>
-          <Key type="button" onClick={() => openApp('dropmusic')}>
-            Drop Music
-          </Key>
-          {import.meta.env.DEV && (
-            <Key type="button" onClick={loadTestTone} title="Dev only: play the synthetic test tone fixture">
-              Test tone
-            </Key>
+              <Deck>
+                <Row className="sliders">
+                  <SliderLabel className="grow vol" style={{ flexGrow: 2 }}>
+                    <span>Vol</span>
+                    <Slider
+                      aria-label="Volume"
+                      aria-valuetext={`${Math.round(radio.volume * 100)}%`}
+                      title={`Volume ${Math.round(radio.volume * 100)}%`}
+                      min={0}
+                      max={1}
+                      step={0.01}
+                      value={radio.volume}
+                      style={{ ['--p' as string]: radio.volume }}
+                      onChange={(e) => radio.setVolume(Number(e.target.value))}
+                    />
+                  </SliderLabel>
+                  <SliderLabel className="grow">
+                    <span>Bal</span>
+                    <Slider
+                      $center
+                      aria-label="Balance"
+                      aria-valuetext={
+                        radio.balance === 0
+                          ? 'centre'
+                          : `${Math.round(Math.abs(radio.balance) * 100)}% ${radio.balance < 0 ? 'left' : 'right'}`
+                      }
+                      title="Balance (double-click to centre)"
+                      min={-1}
+                      max={1}
+                      step={0.02}
+                      value={radio.balance}
+                      onChange={(e) => radio.setBalance(Number(e.target.value))}
+                      onDoubleClick={() => radio.setBalance(0)}
+                    />
+                  </SliderLabel>
+                  <span className="cluster">
+                    <Key
+                      type="button"
+                      aria-pressed={layout.eq !== 'hidden'}
+                      onClick={() => togglePanel('eq')}
+                      title="Show or hide the equalizer"
+                    >
+                      <Led $on={layout.eq !== 'hidden'} /> EQ
+                    </Key>
+                    <Key
+                      type="button"
+                      aria-pressed={layout.pl !== 'hidden'}
+                      onClick={() => togglePanel('pl')}
+                      title="Show or hide the playlist"
+                    >
+                      <Led $on={layout.pl !== 'hidden'} /> PL
+                    </Key>
+                  </span>
+                </Row>
+
+                <Slider
+                  aria-label="Seek"
+                  aria-valuetext={`${formatDuration(seekValue)} of ${formatDuration(duration || undefined)}`}
+                  min={0}
+                  max={seekMax}
+                  step={0.1}
+                  value={seekValue}
+                  style={{ ['--p' as string]: seekValue / seekMax }}
+                  disabled={!current || !duration}
+                  onChange={(e) => setScrub(Number(e.target.value))}
+                  onPointerUp={() => {
+                    if (scrub !== undefined) radio.seek(scrub)
+                    setScrub(undefined)
+                  }}
+                  onKeyUp={() => {
+                    if (scrub !== undefined) radio.seek(scrub)
+                    setScrub(undefined)
+                  }}
+                />
+
+                <Row>
+                  {transport()}
+                  <span className="cluster">
+                    <Key type="button" aria-pressed={queue.shuffle} title="Shuffle" onClick={radio.toggleShuffle}>
+                      <Led $on={queue.shuffle} /> Shuf
+                    </Key>
+                    <Key
+                      type="button"
+                      aria-pressed={queue.repeat !== 'off'}
+                      aria-label={`Repeat: ${queue.repeat}`}
+                      title="Repeat: off / all / one"
+                      onClick={radio.cycleRepeat}
+                    >
+                      <Led $on={queue.repeat !== 'off'} /> {repeatLabel}
+                    </Key>
+                  </span>
+                  <span className="spacer" />
+                  <SkinButton
+                    type="button"
+                    onClick={() => patch({ skin: nextSkin(skin.id) })}
+                    aria-label={`Skin: ${skin.label}. Click for the next skin.`}
+                    title={`Skin: ${skin.label} (click to change)`}
+                  >
+                    <img src={wingHeart?.src} srcSet={wingHeart?.srcset} alt="" />
+                  </SkinButton>
+                </Row>
+              </Deck>
+            </div>
           )}
-        </Footer>
-        <Status tone={status?.tone} role="status">
-          {status?.text || ' '}
-        </Status>
-      </Body>
+        </PanelFrame>
+
+        {/* ── equalizer ── */}
+        {layout.eq !== 'hidden' && (
+          <PanelFrame className={layout.eq === 'shade' ? 'shaded' : undefined} aria-label="Equalizer">
+            <Strip
+              label="Equalizer"
+              extra={`${radio.eq.enabled ? 'on' : 'off'} · ${preset ? preset.label : 'custom'}`}
+              shaded={layout.eq === 'shade'}
+              onShade={() => shadePanel('eq')}
+              onHide={() => patch({ eq: 'hidden' })}
+              panelId="radio-eq"
+            />
+            {layout.eq === 'open' && (
+              <div id="radio-eq">
+                <Equalizer radio={radio} />
+              </div>
+            )}
+          </PanelFrame>
+        )}
+
+        {/* ── playlist ── */}
+        {layout.pl !== 'hidden' && (
+          <PanelFrame
+            className={layout.pl === 'shade' ? 'shaded' : 'grow'}
+            aria-label="Playlist editor"
+            style={{ minHeight: layout.pl === 'shade' ? undefined : 200 }}
+          >
+            <Strip
+              label="Playlist"
+              extra={layout.pl === 'shade' && current ? `${nowIndex + 1}. ${current.title}` : playlistSummary(radio)}
+              shaded={layout.pl === 'shade'}
+              onShade={() => shadePanel('pl')}
+              onHide={() => patch({ pl: 'hidden' })}
+              panelId="radio-pl"
+            />
+            {layout.pl === 'open' && (
+              <div id="radio-pl" style={{ display: 'flex', flexDirection: 'column', flex: '1 1 auto', minHeight: 0 }}>
+                <Playlist
+                  radio={radio}
+                  nowIndex={nowIndex}
+                  sources={sources}
+                  sourceId={sourceId}
+                  setSourceId={setSourceId}
+                  busy={busy}
+                  onLoad={loadSource}
+                  onDropMusic={() => openApp('dropmusic')}
+                  onTestTone={import.meta.env.DEV ? loadTestTone : undefined}
+                  status={status}
+                />
+              </div>
+            )}
+          </PanelFrame>
+        )}
+      </Root>
     </WindowWrapper>
   )
 }

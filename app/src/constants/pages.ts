@@ -140,8 +140,8 @@ const Pages: Record<string, Page> = {
     label: 'miya radio',
     icon: RadioIcon[0],
     minSize: {
-      width: 460,
-      height: 600,
+      width: 480,
+      height: 680,
     },
   },
   dropmusic: {
