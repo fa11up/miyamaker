@@ -1,0 +1,21 @@
+{
+  // miyatv chat: Worker router + one Durable Object per chat room. See README.md for deploy steps.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "miyatv-chat",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "durable_objects": {
+    "bindings": [{ "name": "ROOMS", "class_name": "ChatRoom" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["ChatRoom"] }],
+  "vars": {
+    "ALLOWED_ORIGINS": "https://miyamaker.com,https://www.miyamaker.com,http://localhost:5331,http://localhost:5173",
+    "MOD_ADDRESSES": "",
+    "RPC_URL": "https://ethereum-rpc.publicnode.com"
+  },
+  // Secrets (not in this file): SESSION_SECRET  ->  npx wrangler secret put SESSION_SECRET
+  // Custom domain (uncomment after the zone is on Cloudflare):
+  // "routes": [{ "pattern": "chat.miyamaker.com", "custom_domain": true }],
+  "observability": { "enabled": true }
+}
