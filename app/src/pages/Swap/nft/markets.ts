@@ -121,7 +121,21 @@ export function formatAmount(amount: bigint, decimals: number, maxFraction = 4):
   return `${neg ? '-' : ''}${w.toLocaleString('en-US')}${f ? `.${f}` : ''}`
 }
 
-export const formatPrice = (p: Price | undefined) => (p ? `${formatAmount(p.amount, p.decimals)} ${p.symbol}` : '–')
+/** Dollar tokens: shown to the cent. */
+const DOLLARS = /^(imdUSD|USDC|USDG|USDT|DAI)$/i
+
+/**
+ * Decimals worth showing: dollar tokens 2; otherwise by size, 0 from 1,000 up (2,163 IMD), 2 from 10 up, else 4
+ * (0.7113 ETH).
+ */
+export function priceDecimals(p: Price): number {
+  if (DOLLARS.test(p.symbol)) return 2
+  const whole = p.amount / 10n ** BigInt(p.decimals)
+  return whole >= 1000n ? 0 : whole >= 10n ? 2 : 4
+}
+
+export const formatPrice = (p: Price | undefined) =>
+  p ? `${formatAmount(p.amount, p.decimals, priceDecimals(p))} ${p.symbol}` : '–'
 
 /** ETH and WETH are the same money for comparing. */
 const family = (symbol: string) => symbol.toUpperCase().replace(/^W(?=ETH$)/, '')

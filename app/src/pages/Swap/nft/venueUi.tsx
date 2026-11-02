@@ -162,6 +162,23 @@ export const Best = styled.div`
     font-weight: 400;
     color: ${color.inkMuted};
   }
+  /* A MiyaPool line: the label stays on the left, the price (and its sell side below it) on the right. */
+  .line.pool {
+    flex-wrap: nowrap;
+    align-items: flex-start;
+  }
+  .line.pool > span:first-child {
+    flex: 0 0 auto;
+    white-space: nowrap;
+    padding-top: 3px;
+  }
+  .line.pool strong {
+    min-width: 0;
+    text-align: right;
+  }
+  .sub {
+    display: block;
+  }
 `
 
 const Switch = styled.div`

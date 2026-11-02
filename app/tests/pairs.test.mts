@@ -4,7 +4,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { bestQuote, formatPrice } from '../src/pages/Swap/nft/markets.ts'
+import { bestQuote, formatPrice, priceDecimals } from '../src/pages/Swap/nft/markets.ts'
 import type { PriceAnswer, PriceRequest } from '../src/pages/Swap/nft/pairs.ts'
 import {
   askFromProbe,
@@ -81,6 +81,7 @@ test('one pool token priced in ETH: sell 1 for the bid, then probe the ask with 
   assert.equal(q.bid, (69n * E18) / 100n)
   // 0.69 ETH bought 0.97 tokens → about 0.7113 ETH per token.
   assert.equal(formatPrice({ amount: q.ask!, decimals: 18, symbol: 'ETH' }), '0.7113 ETH')
+  assert.equal(formatPrice({ amount: q.bid, decimals: 18, symbol: 'ETH' }), '0.69 ETH')
 })
 
 test('no route for a pair is an answer, not an error, and costs one call', async () => {
@@ -110,4 +111,17 @@ test('a pool priced in ETH competes with OpenSea in the cheapest line', () => {
   const offer = { venue: 'OpenSea', price: { amount: (65n * E18) / 100n, decimals: 18, symbol: 'WETH' } }
   const bid = { venue: 'MiyaPool (Pick)', price: { amount: (69n * E18) / 100n, decimals: 18, symbol: 'ETH' } }
   assert.equal(bestQuote([offer, bid], 'highest')!.venue, 'MiyaPool (Pick)')
+})
+
+test('prices show sensible decimals: dollars to the cent, big amounts whole', () => {
+  const p = (n: bigint, symbol: string, decimals = 18) => ({ amount: n, decimals, symbol })
+  assert.equal(formatPrice(p((21632653n * E18) / 10000n, 'imdUSD')), '2,163.27 imdUSD')
+  assert.equal(formatPrice(p(5n * E18, 'imdUSD')), '5 imdUSD')
+  assert.equal(formatPrice(p(1_500_000n, 'USDG', 6)), '1.5 USDG')
+  assert.equal(formatPrice(p((21632653n * E18) / 10000n, 'IMD')), '2,163 IMD')
+  assert.equal(formatPrice(p(1_234_567n * E18, 'INFER')), '1,234,567 INFER')
+  assert.equal(formatPrice(p((12345n * E18) / 1000n, 'INFER')), '12.35 INFER')
+  assert.equal(formatPrice(p((71134n * E18) / 100000n, 'ETH')), '0.7113 ETH')
+  assert.equal(priceDecimals(p(1n, 'imdUSD')), 2)
+  assert.equal(formatPrice(p(1n, 'imdUSD')), '<0.01 imdUSD')
 })

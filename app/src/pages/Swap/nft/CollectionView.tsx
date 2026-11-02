@@ -179,7 +179,7 @@ function PoolPriceLine({
         {ask && pool.held > 0n ? (
           <>
             ≈ {formatPrice(ask)} <span className="where">to buy one</span>
-            {bid && <span className="where"> · sell one ≈ {formatPrice(bid)}</span>}
+            {bid && <span className="where sub">sell one in ≈ {formatPrice(bid)}</span>}
           </>
         ) : (
           bid && (
@@ -192,7 +192,7 @@ function PoolPriceLine({
     )
   })()
   return (
-    <div className="line" data-pool-price={pool.address}>
+    <div className="line pool" data-pool-price={pool.address}>
       <span>{label}</span>
       <strong aria-live="polite">{body}</strong>
     </div>
@@ -252,16 +252,23 @@ export default function CollectionView({
   const shownPrices = usePoolPrices(chainId, poolAddresses, shownPair)
   const poolsWithNfts = pools.pools.filter((p) => p.held > 0n)
   const poolVenue = (p: Pool) => `MiyaPool (${MODE_LABEL[p.mode]})`
+  // `where` reads after the price: an OpenSea listing or offer is "on OpenSea"; a pool's bid is a sale into it.
 
   const floor: Price | undefined = os.stats?.floor || listings.listings?.[0]?.price
   const cheapest = bestQuote([
-    { venue: 'OpenSea', price: floor },
-    ...poolsWithNfts.map((p) => ({ venue: poolVenue(p), price: poolSide(ethPrices[p.address.toLowerCase()], 'ask') })),
+    { where: 'on OpenSea', price: floor },
+    ...poolsWithNfts.map((p) => ({
+      where: `on ${poolVenue(p)}`,
+      price: poolSide(ethPrices[p.address.toLowerCase()], 'ask'),
+    })),
   ])
   const topOffer = bestQuote(
     [
-      { venue: 'OpenSea', price: os.bestOffer?.price },
-      ...pools.pools.map((p) => ({ venue: poolVenue(p), price: poolSide(ethPrices[p.address.toLowerCase()], 'bid') })),
+      { where: 'on OpenSea', price: os.bestOffer?.price },
+      ...pools.pools.map((p) => ({
+        where: `sell into ${poolVenue(p)}`,
+        price: poolSide(ethPrices[p.address.toLowerCase()], 'bid'),
+      })),
     ],
     'highest'
   )
@@ -315,7 +322,7 @@ export default function CollectionView({
               <div className="line">
                 <span>Cheapest</span>
                 <strong>
-                  {formatPrice(cheapest.price)} <span className="where">on {cheapest.venue}</span>
+                  {formatPrice(cheapest.price)} <span className="where">{cheapest.where}</span>
                 </strong>
               </div>
             )}
@@ -323,7 +330,7 @@ export default function CollectionView({
               <div className="line">
                 <span>Best offer</span>
                 <strong>
-                  {formatPrice(topOffer.price)} <span className="where">on {topOffer.venue}</span>
+                  {formatPrice(topOffer.price)} <span className="where">{topOffer.where}</span>
                 </strong>
               </div>
             )}
