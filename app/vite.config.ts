@@ -9,7 +9,8 @@ import { nodePolyfills } from 'vite-plugin-node-polyfills'
 import { VitePWA } from 'vite-plugin-pwa'
 import svgr from 'vite-plugin-svgr'
 
-import { handleZeroExRequest, PROXY_PREFIX } from './api/_lib/zeroex'
+import { handleOpenSeaRequest, OPENSEA_PROXY_PATH } from './api/_lib/opensea'
+import { clientKey, createRateLimiter, handleZeroExRequest, PROXY_PREFIX, sameOrigin } from './api/_lib/zeroex'
 
 /**
  * Dev-only stand-in for the Vercel functions in api/0x: same validation and key injection
@@ -36,10 +37,48 @@ function zeroExDevProxy(env: Record<string, string>): Plugin {
   }
 }
 
+/** Dev-only stand-in for api/opensea.ts (api/_lib/opensea.ts). OPENSEA_API_KEY from the shell or app/.env.local. */
+function openSeaDevProxy(env: Record<string, string>): Plugin {
+  const guards = {
+    sameOrigin,
+    clientKey,
+    readLimiter: createRateLimiter({ capacity: 120, perSecond: 2 }),
+    fillLimiter: createRateLimiter({ capacity: 10, perSecond: 0.2 }),
+  }
+  return {
+    name: 'miya-opensea-dev-proxy',
+    configureServer(server) {
+      server.middlewares.use(OPENSEA_PROXY_PATH, async (req, res) => {
+        const headers = new Headers()
+        for (const [k, v] of Object.entries(req.headers)) if (typeof v === 'string') headers.set(k, v)
+        let body = ''
+        if (req.method === 'POST') {
+          for await (const chunk of req) {
+            body += chunk
+            if (body.length > 4096) break
+          }
+        }
+
+        const host = req.headers.host || 'localhost'
+        const rest = req.url && req.url !== '/' ? req.url.replace(/^\/(?=\?)/, '') : ''
+        const response = await handleOpenSeaRequest(
+          { method: req.method || 'GET', url: `http://${host}${OPENSEA_PROXY_PATH}${rest}`, headers, body },
+          { OPENSEA_API_KEY: process.env.OPENSEA_API_KEY || env.OPENSEA_API_KEY },
+          guards
+        )
+        res.statusCode = response.status
+        response.headers.forEach((value, key) => res.setHeader(key, value))
+        res.end(await response.text())
+      })
+    },
+  }
+}
+
 export default defineConfig(({ mode }) => ({
   base: '/',
   plugins: [
     zeroExDevProxy(loadEnv(mode, __dirname, ['ZEROX_'])),
+    openSeaDevProxy(loadEnv(mode, __dirname, ['OPENSEA_'])),
     react(),
     dynamicImport(),
     svgr(),

@@ -17,7 +17,7 @@ import { color, space, text } from '@/theme/tokens'
 import NftTrade from './nft/NftTrade'
 import type { SwapPreset } from './TokenSwap'
 import TokenSwap from './TokenSwap'
-import type { TradeMode } from './tradePath'
+import type { CollectionRef, TradeMode } from './tradePath'
 import { parseTradePath, TRADE_PATH, tradePath } from './tradePath'
 
 const page = Pages.swap
@@ -113,9 +113,11 @@ const MODES: { id: TradeMode; label: string }[] = [
 ]
 
 /**
- * Trade (was "miya swaps"): Tokens swaps ERC-20s through 0x; NFTs trades NFTs through the zero-fee MiyaPool pools.
+ * Trade (was "miya swaps"): Tokens swaps ERC-20s through 0x; NFTs trades NFTs through the zero-fee MiyaPool pools
+ * and shows every other market a collection trades on (OpenSea in-app, Blur and Magic Eden as links).
  * Both tabs stay mounted so switching never loses a trade in progress. The tab and pool live in the path
- * (/trade, /trade/nfts, /trade/nfts/<pool>) so they can be shared and Back works.
+ * (/trade, /trade/nfts, /trade/nfts/<pool>, /trade/nfts/collection/<chain>/<address>[/<id>]) so they can be shared
+ * and Back works.
  */
 export default function TradePage() {
   const [fullscreen, toggleFullscreen] = useFullscreen('swap')
@@ -132,14 +134,19 @@ export default function TradePage() {
   const initial = useRef(parseTradePath(location.pathname))
   const [mode, setMode] = useState<TradeMode>(initial.current.mode)
   const [pool, setPool] = useState<`0x${string}` | undefined>(initial.current.pool)
+  const [collection, setCollection] = useState<CollectionRef | undefined>(initial.current.collection)
   const [offline, setOffline] = useState(false)
   const [preset, setPreset] = useState<SwapPreset>()
   const tabRefs = useRef<(HTMLButtonElement | null)[]>([])
 
-  const go = (nextMode: TradeMode, nextPool?: `0x${string}`) => {
+  const go = (nextMode: TradeMode, nextPool?: `0x${string}`, nextCollection?: CollectionRef) => {
     setMode(nextMode)
-    setPool(nextMode === 'nfts' ? nextPool : pool)
-    const path = tradePath(nextMode, nextMode === 'nfts' ? nextPool : undefined)
+    if (nextMode === 'nfts') {
+      setPool(nextPool)
+      setCollection(nextPool ? undefined : nextCollection)
+    }
+    const path =
+      nextMode === 'nfts' ? tradePath(nextMode, nextPool, nextPool ? undefined : nextCollection) : tradePath(nextMode)
     if (location.pathname !== path) navigate(path)
   }
 
@@ -150,14 +157,17 @@ export default function TradePage() {
     const next = parseTradePath(location.pathname)
     if (location.pathname === TRADE_PATH && navigationType !== 'POP') return
     setMode(next.mode)
-    if (next.mode === 'nfts') setPool(next.pool)
+    if (next.mode === 'nfts') {
+      setPool(next.pool)
+      setCollection(next.collection)
+    }
   }, [location.pathname, navigationType])
 
   const onTabKey = (e: KeyboardEvent, index: number) => {
     if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return
     e.preventDefault()
     const next = (index + (e.key === 'ArrowRight' ? 1 : MODES.length - 1)) % MODES.length
-    go(MODES[next]!.id, pool)
+    go(MODES[next]!.id, pool, collection)
     tabRefs.current[next]?.focus()
   }
 
@@ -196,7 +206,7 @@ export default function TradePage() {
                 aria-selected={mode === m.id}
                 aria-controls={`trade-panel-${m.id}`}
                 tabIndex={mode === m.id ? 0 : -1}
-                onClick={() => go(m.id, pool)}
+                onClick={() => go(m.id, pool, collection)}
                 onKeyDown={(e) => onTabKey(e, i)}
                 data-trade-tab={m.id}
               >
@@ -217,7 +227,9 @@ export default function TradePage() {
         <Panel id="trade-panel-nfts" role="tabpanel" aria-labelledby="trade-tab-nfts" hidden={mode !== 'nfts'}>
           <NftTrade
             pool={pool}
+            collection={collection}
             onOpenPool={(p) => go('nfts', p)}
+            onOpenCollection={(c) => go('nfts', undefined, c)}
             onSwapToken={(p) => {
               setPreset({ ...p, key: Date.now() })
               go('tokens')
