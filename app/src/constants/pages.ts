@@ -120,8 +120,8 @@ const Pages: Record<string, Page> = {
     label: 'Display Properties',
     icon: DisplayIcon[0],
     minSize: {
-      width: 400,
-      height: 600,
+      width: 420,
+      height: 460,
     },
   },
   tv: {
