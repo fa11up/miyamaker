@@ -78,13 +78,11 @@ interface IAlignmentVault {
 
     /**
      * @notice Claim accumulated fees for caller
-     * @dev Must calculate proportional share based on benefactor's contribution
-     *      Formula: claimable = (accumulatedFees × benefactorShares[caller]) ÷ totalShares
-     *
-     *      Multi-claim support:
-     *      - Track shareValueAtLastClaim[benefactor] for delta calculation
-     *      - Only pay unclaimed amount since last claim
-     *      - Update shareValueAtLastClaim after transfer
+     * @dev Must pay the caller's pro-rata share of fees earned WHILE they held shares.
+     *      Recommended accounting (MasterChef-style): accFeePerShare grows by fees ÷ totalShares on every
+     *      fee distribution; each benefactor tracks rewardDebt = shares × accFeePerShare and pending fees
+     *      are settled before ANY change to their shares, so new shares neither dilute nor erase fees
+     *      earned earlier.
      *
      * @return ethClaimed Amount of ETH transferred to caller
      */
@@ -93,10 +91,10 @@ interface IAlignmentVault {
     /**
      * @notice Calculate claimable amount for benefactor without claiming
      * @dev Read-only version of claimFees() for UI/integration queries
-     *      Should return total proportional share (not delta)
+     *      Returns what claimFees() would pay now from fees already collected
      *
      * @param benefactor Address to query
-     * @return Amount of ETH claimable by this benefactor (total, not delta)
+     * @return Amount of ETH currently claimable by this benefactor
      */
     function calculateClaimableAmount(address benefactor) external view returns (uint256);
 
@@ -116,7 +114,7 @@ interface IAlignmentVault {
      * @notice Get benefactor's current share balance
      * @dev Shares represent proportional ownership of vault fees
      *      Share units are vault-specific (not standardized)
-     *      Used for calculating fee claims: (accumulatedFees × shares) ÷ totalShares
+     *      Used for pro-rata fee accounting (see claimFees)
      *
      * @param benefactor Address to query
      * @return Share balance in vault-specific units
@@ -149,8 +147,8 @@ interface IAlignmentVault {
 
     /**
      * @notice Get total accumulated fees in vault
-     * @dev Represents total ETH available for benefactor claims
-     *      Increases when yield is generated, decreases when fees claimed
+     * @dev Lifetime ETH fees distributed to benefactors (monotonic)
+     *      Increases when yield is distributed; claims do not reduce it
      *
      * @return Total ETH fees accumulated (in wei)
      */

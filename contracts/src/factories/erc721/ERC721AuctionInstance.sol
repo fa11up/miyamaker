@@ -35,6 +35,8 @@ error TokenDoesNotExist();
 error InvalidLine();
 error Unauthorized();
 error InvalidSplit();
+error NotEscrowedWinner();
+error RenounceDisabled();
 
 /**
  * @title ERC721AuctionInstance
@@ -99,6 +101,10 @@ contract ERC721AuctionInstance is ERC721, Ownable, ReentrancyGuard, IInstanceLif
     /// @dev Vault cuts that could not be sent (vault reverted). Retry via flushPendingVaultCut().
     uint256 public pendingVaultCut;
 
+    /// @notice Winner of a settled auction whose token is held here because the safe mint to them failed
+    ///         (contract winner without a working onERC721Received). Claim with claimEscrowedToken().
+    mapping(uint24 => address) public escrowedWinner;
+
     // ┌─────────────────────────┐
     // │         Events          │
     // └─────────────────────────┘
@@ -110,6 +116,8 @@ contract ERC721AuctionInstance is ERC721, Ownable, ReentrancyGuard, IInstanceLif
     event UnsoldReclaimed(uint24 indexed tokenId, uint256 forfeitedDeposit);
     event BidMessage(uint24 indexed tokenId, address indexed bidder, string message);
     event VaultContributionFailed(address indexed vault, uint256 amount);
+    event WinnerTokenEscrowed(uint24 indexed tokenId, address indexed winner);
+    event EscrowedTokenClaimed(uint24 indexed tokenId, address indexed winner, address to);
 
     // ┌─────────────────────────┐
     // │      Constructor        │
@@ -293,10 +301,17 @@ contract ERC721AuctionInstance is ERC721, Ownable, ReentrancyGuard, IInstanceLif
 
         auction.settled = true;
 
-        // Mint NFT to winner — use _safeMint so contract winners without IERC721Receiver revert
-        // rather than receiving a permanently locked token.
+        // Mint NFT to winner with _safeMint. If the winner is a contract whose onERC721Received reverts
+        // (or is missing), settlement must not freeze: the token is minted to this contract instead and the
+        // winner pulls it to any address with claimEscrowedToken().
         // Reentrancy is safe: auction.settled = true is set above and nonReentrant guards this function.
-        _safeMint(auction.highBidder, tokenId);
+        address winner = auction.highBidder;
+        try this.safeMintWinner(winner, tokenId) {}
+        catch {
+            _mint(address(this), tokenId);
+            escrowedWinner[tokenId] = winner;
+            emit WinnerTokenEscrowed(tokenId, winner);
+        }
 
         // Refund creator's deposit (force-transfer so a non-receiving owner cannot permanently strand the bidder's funds)
         SafeTransferLib.forceSafeTransferETH(owner(), auction.minBid);
@@ -321,6 +336,24 @@ contract ERC721AuctionInstance is ERC721, Ownable, ReentrancyGuard, IInstanceLif
 
         // Advance line to next queued piece
         _advanceLine(tokenId);
+    }
+
+    /// @dev Self-call target so settleAuction can try/catch the receiver hook. Only callable by this contract.
+    function safeMintWinner(address to, uint24 tokenId) external {
+        if (msg.sender != address(this)) revert Unauthorized();
+        _safeMint(to, tokenId);
+    }
+
+    /**
+     * @notice Pull an auction-won token that was escrowed at settlement
+     * @param tokenId The escrowed token
+     * @param to Recipient (safe transfer: contracts must implement IERC721Receiver)
+     */
+    function claimEscrowedToken(uint24 tokenId, address to) external nonReentrant {
+        if (escrowedWinner[tokenId] != msg.sender) revert NotEscrowedWinner();
+        delete escrowedWinner[tokenId];
+        _safeTransfer(address(this), to, tokenId, "");
+        emit EscrowedTokenClaimed(tokenId, msg.sender, to);
     }
 
     // ┌─────────────────────────┐
@@ -443,6 +476,11 @@ contract ERC721AuctionInstance is ERC721, Ownable, ReentrancyGuard, IInstanceLif
     function getAuction(uint24 tokenId) external view returns (Auction memory) {
         if (auctions[tokenId].tokenId == 0) revert AuctionDoesNotExist();
         return auctions[tokenId];
+    }
+
+    /// @notice Disabled: the artist's share of every sale is sent to owner(), so renouncing would burn it.
+    function renounceOwnership() public payable override onlyOwner {
+        revert RenounceDisabled();
     }
 
     // Allow receiving ETH (for vault refunds etc.)

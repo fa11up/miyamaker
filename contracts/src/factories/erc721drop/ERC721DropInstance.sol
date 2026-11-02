@@ -64,7 +64,9 @@ contract ERC721DropInstance is ERC721, ERC2981, Ownable, ReentrancyGuard {
     bool public metadataLocked;
 
     Phase[] internal _phases;
-    mapping(uint256 phaseId => mapping(address minter => uint256)) public mintedInPhase;
+    /// @dev Bumped by every setPhases so per-wallet counters never carry over to a different phase list.
+    uint256 public phasesEpoch;
+    mapping(uint256 epoch => mapping(uint256 phaseId => mapping(address minter => uint256))) internal _minted;
 
     uint256 public totalSupply;
     uint256 public pendingVaultCut;
@@ -84,6 +86,7 @@ contract ERC721DropInstance is ERC721, ERC2981, Ownable, ReentrancyGuard {
     error WrongPayment();
     error Locked();
     error NothingToWithdraw();
+    error RenounceDisabled();
 
     constructor(
         InitParams memory p,
@@ -139,6 +142,11 @@ contract ERC721DropInstance is ERC721, ERC2981, Ownable, ReentrancyGuard {
         return _phases.length;
     }
 
+    /// @notice Tokens `minter` has minted in phase `phaseId` of the current phase list
+    function mintedInPhase(uint256 phaseId, address minter) external view returns (uint256) {
+        return _minted[phasesEpoch][phaseId][minter];
+    }
+
     function isPhaseActive(uint256 phaseId) public view returns (bool) {
         if (phaseId >= _phases.length) return false;
         Phase memory ph = _phases[phaseId];
@@ -160,10 +168,10 @@ contract ERC721DropInstance is ERC721, ERC2981, Ownable, ReentrancyGuard {
             bytes32 leaf = keccak256(bytes.concat(keccak256(abi.encode(msg.sender))));
             if (!MerkleProofLib.verifyCalldata(proof, ph.merkleRoot, leaf)) revert NotAllowlisted();
         }
-        uint256 already = mintedInPhase[phaseId][msg.sender];
+        uint256 already = _minted[phasesEpoch][phaseId][msg.sender];
         if (ph.maxPerWallet != 0 && already + quantity > ph.maxPerWallet) revert WalletLimit();
         if (msg.value != uint256(ph.price) * quantity) revert WrongPayment();
-        mintedInPhase[phaseId][msg.sender] = already + quantity;
+        _minted[phasesEpoch][phaseId][msg.sender] = already + quantity;
         uint256 first = _mintBatch(msg.sender, quantity);
         emit Minted(msg.sender, phaseId, first, quantity, msg.value);
     }
@@ -243,6 +251,12 @@ contract ERC721DropInstance is ERC721, ERC2981, Ownable, ReentrancyGuard {
         _setDefaultRoyalty(receiver, bps);
     }
 
+    /// @notice Disabled: mint proceeds are sent to owner() by the permissionless withdraw(), so renouncing would
+    ///         let anyone burn the artist's share.
+    function renounceOwnership() public payable override onlyOwner {
+        revert RenounceDisabled();
+    }
+
     /// @dev Accepts vault fee payouts (forwarded in `claimVaultFees`) and secondary royalties. Anything that
     ///      stays here is split by the next `withdraw()`.
     receive() external payable { }
@@ -265,6 +279,7 @@ contract ERC721DropInstance is ERC721, ERC2981, Ownable, ReentrancyGuard {
     function _setPhases(Phase[] memory newPhases) internal {
         if (newPhases.length > MAX_PHASES) revert InvalidParams();
         delete _phases;
+        ++phasesEpoch;
         for (uint256 i; i < newPhases.length; ++i) {
             Phase memory ph = newPhases[i];
             if (ph.end != 0 && ph.end <= ph.start) revert InvalidParams();

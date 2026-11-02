@@ -3,7 +3,7 @@ pragma solidity ^0.8.24;
 
 import {Test, console} from "forge-std/Test.sol";
 import {ERC721AuctionFactory} from "../../../src/factories/erc721/ERC721AuctionFactory.sol";
-import {ERC721AuctionInstance, DepositRequired, URIRequired, BidBelowMinimum, BidTooLow, AuctionExpired, AuctionNotEnded, NoBids, HasBids} from "../../../src/factories/erc721/ERC721AuctionInstance.sol";
+import {ERC721AuctionInstance, DepositRequired, URIRequired, BidBelowMinimum, BidTooLow, AuctionExpired, AuctionNotEnded, NoBids, HasBids, NotEscrowedWinner, RenounceDisabled} from "../../../src/factories/erc721/ERC721AuctionInstance.sol";
 import {UniAlignmentVault} from "../../../src/vaults/uni/UniAlignmentVault.sol";
 import {MockEXECToken} from "../../mocks/MockEXECToken.sol";
 import {MockZRouter} from "../../mocks/MockZRouter.sol";
@@ -645,7 +645,9 @@ contract ERC721AuctionFactoryTest is Test {
     // │  Non-Receiver Safety    │
     // └─────────────────────────┘
 
-    function test_SettleAuction_ContractBidderWithoutERC721Receiver_Reverts() public {
+    /// Audit M6: a contract winner whose onERC721Received reverts must not freeze settlement (and with it the
+    /// artist's proceeds and the line's queue). The token is escrowed and the winner pulls it.
+    function test_SettleAuction_ContractBidderWithoutERC721Receiver_Escrows() public {
         ERC721AuctionInstance inst = _createDefaultInstance();
 
         vm.prank(artist);
@@ -661,8 +663,42 @@ contract ERC721AuctionFactoryTest is Test {
 
         vm.warp(auction.endTime);
 
-        vm.expectRevert();
+        uint256 artistBefore = artist.balance;
         inst.settleAuction(1);
+        assertTrue(inst.getAuction(1).settled, "settled");
+        assertGt(artist.balance, artistBefore, "artist paid");
+        assertEq(inst.ownerOf(1), address(inst), "token escrowed");
+        assertEq(inst.escrowedWinner(1), address(bidder));
+
+        // Only the winner can claim
+        vm.expectRevert(NotEscrowedWinner.selector);
+        inst.claimEscrowedToken(1, address(this));
+
+        address wallet = makeAddr("bidderWallet");
+        bidder.claim(address(inst), 1, wallet);
+        assertEq(inst.ownerOf(1), wallet);
+        assertEq(inst.escrowedWinner(1), address(0));
+    }
+
+    function test_SettleAuction_EOAWinnerMintedDirectly() public {
+        ERC721AuctionInstance inst = _createDefaultInstance();
+        vm.prank(artist);
+        inst.queuePiece{value: 0.1 ether}("ipfs://piece1");
+        address eoa = makeAddr("eoaBidder");
+        vm.deal(eoa, 1 ether);
+        vm.prank(eoa);
+        inst.createBid{value: 0.2 ether}(1, "");
+        vm.warp(inst.getAuction(1).endTime);
+        inst.settleAuction(1);
+        assertEq(inst.ownerOf(1), eoa);
+        assertEq(inst.escrowedWinner(1), address(0));
+    }
+
+    function test_RenounceOwnership_Disabled() public {
+        ERC721AuctionInstance inst = _createDefaultInstance();
+        vm.prank(artist);
+        vm.expectRevert(RenounceDisabled.selector);
+        inst.renounceOwnership();
     }
 }
 
@@ -670,6 +706,10 @@ contract ERC721AuctionFactoryTest is Test {
 contract NonReceiverBidder {
     function bid(address instance, uint24 tokenId, uint256 amount) external {
         ERC721AuctionInstance(payable(instance)).createBid{value: amount}(tokenId, "");
+    }
+
+    function claim(address instance, uint24 tokenId, address to) external {
+        ERC721AuctionInstance(payable(instance)).claimEscrowedToken(tokenId, to);
     }
 
     receive() external payable {}

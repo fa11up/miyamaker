@@ -2,7 +2,11 @@
 src = "src"
 out = "out"
 libs = ["lib"]
-solc = "0.8.28"
+# Compiler is auto-detected but capped at 0.8.28, so every source resolves to 0.8.28 except the one test that
+# imports v4-core's real PoolManager (pinned `=0.8.26`): test/vaults/UniAlignmentVaultRealV4.t.sol and its
+# imports compile as a separate 0.8.26 unit. Production artifacts are still built with 0.8.28.
+auto_detect_solc = true
+compilation_restrictions = [{ paths = "**", max_version = "0.8.28" }]
 optimizer = true
 optimizer_runs = 100
 via_ir = true

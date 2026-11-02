@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.24;
 
 import {ReentrancyGuard} from "solady/utils/ReentrancyGuard.sol";
 import {Ownable} from "solady/auth/Ownable.sol";
 import {SafeTransferLib} from "solady/utils/SafeTransferLib.sol";
+import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
 import {Currency, CurrencyLibrary} from "v4-core/types/Currency.sol";
 import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
 import {IUnlockCallback} from "v4-core/interfaces/callback/IUnlockCallback.sol";
@@ -74,18 +75,28 @@ contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignm
     error TransferFailed();
     error NotBenefactor();
     error NotDelegate();
-    error PendingETHNotConverted();
-    error RewardTooHigh();
-    error DeviationTooHigh();
-    error ExceedsMaxBps();
     error TreasuryNotSet();
     error AmountMismatch();
     error ContributionBelowMinimum();
     error TooManyConversionParticipants();
+    error PoolKeyAlreadySet();
+    error HooksNotAllowed();
 
     // ── Anti-DoS constants ────────────────────────────────────────────────
     uint256 public constant MIN_CONTRIBUTION = 0.001 ether;
     uint256 public constant MAX_CONVERSION_PARTICIPANTS = 500;
+
+    // ── Fee accounting ────────────────────────────────────────────────────
+    /// @dev Scale for accFeePerShare. Shares are V4 liquidity units, so a high scale keeps per-share
+    ///      rounding loss negligible (< totalShares / 1e36 wei per distribution).
+    uint256 internal constant ACC_PRECISION = 1e36;
+
+    /// @dev Transient slot set while the vault itself pulls ETH in (PoolManager.take of LP fees, zRouter
+    ///      token->ETH swap). receive() must not treat that ETH as a contribution: it would re-enter the
+    ///      nonReentrant contribution path and revert the whole collection.
+    ///      = keccak256("miyamaker.UniAlignmentVault.collecting")
+    uint256 private constant _COLLECTING_SLOT =
+        0x9fffd68a8e82dadd8810fe84758545b0fb4c40f84b514ef129e417c2e244d1a1;
 
     // ========== Data Structures ==========
 
@@ -102,8 +113,13 @@ contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignm
     // Track shares issued to benefactors (for fee claims)
     mapping(address => uint256) public benefactorShares;
 
-    // Track last claim state for multi-claim support
-    mapping(address => uint256) public shareValueAtLastClaim;
+    // MasterChef-style fee accounting: a benefactor is owed
+    //   settledFees[b] + benefactorShares[b] * (accFeePerShare - feeCheckpoint[b]) / ACC_PRECISION
+    // Pending fees are settled into settledFees (and the checkpoint advanced) before any change to the
+    // benefactor's shares. Checkpointing the per-share index rather than a rounded reward debt means each
+    // payout rounds down only once, so sum(payouts) can never exceed fees distributed.
+    mapping(address => uint256) public feeCheckpoint;
+    mapping(address => uint256) public settledFees;
     mapping(address => uint256) public lastClaimTimestamp;
 
     // Track pending contributions in current dragnet (reset after each conversion)
@@ -116,16 +132,20 @@ contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignm
 
     uint256 public totalShares;
     uint256 public totalPendingETH;
+    /// @notice Lifetime benefactor fees distributed (monotonic; claims do not reduce it)
     uint256 public accumulatedFees;
+    /// @notice Lifetime benefactor fees paid out
+    uint256 public totalFeesClaimed;
+    /// @notice Benefactor fees per share, scaled by ACC_PRECISION
+    uint256 public accFeePerShare;
     uint256 public totalLPUnits;
     uint256 public totalEthLocked;
     uint256 public totalUniqueBenefactors;
     uint256 public lastVaultFeeCollectionTime;
     uint256 public vaultFeeCollectionInterval = 1 days;
 
-    // Protocol yield cut
+    // Protocol yield cut (paid to registry.treasury(), see protocolTreasury())
     uint256 public protocolYieldCutBps = 100; // 1% of LP yield
-    address public protocolTreasury;
     uint256 public accumulatedProtocolFees;
 
     // Dust accumulation
@@ -148,7 +168,7 @@ contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignm
     uint24  public zRouterFee;
     int24   public zRouterTickSpacing;
 
-    // Peripherals (set once at initialize, owner can update)
+    // Peripherals (set once at initialize)
     IVaultPriceValidator public priceValidator;
 
     // Alignment target binding (set once at initialize)
@@ -160,9 +180,11 @@ contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignm
 
     // ========== Configuration ==========
 
-    uint256 public constant CONVERSION_BASE_GAS = 100_000;
-    uint256 public constant GAS_PER_BENEFACTOR = 15_000;
-    uint256 public standardConversionReward = 0.0012 ether;
+    /// @notice Flat reward for calling convertAndAddLiquidity, paid out of the pending ETH being converted
+    ///         (never from fee balances) and capped at MAX_CONVERSION_REWARD_BPS of it. No tx.gasprice term,
+    ///         so the caller cannot inflate it.
+    uint256 public constant CONVERSION_REWARD = 0.0012 ether;
+    uint256 public constant MAX_CONVERSION_REWARD_BPS = 100; // 1% of the batch
 
     uint24 public v3PreferredFee = 3000;
     uint256 public maxPriceDeviationBps = 500;
@@ -182,20 +204,14 @@ contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignm
     );
     event DustDistributed(address indexed recipient, uint256 dustShares);
 
-    event ConversionRewardPaid(address indexed caller, uint256 totalReward, uint256 gasCost, uint256 standardReward);
+    event ConversionRewardPaid(address indexed caller, uint256 reward);
+    /// @dev A rejected reward is distributed to benefactors as fees instead of being stranded.
     event ConversionRewardRejected(address indexed caller, uint256 rewardAmount);
-    event InsufficientRewardBalance(address indexed caller, uint256 rewardAmount, uint256 contractBalance);
 
     event ProtocolYieldCollected(uint256 amount);
-    event ProtocolYieldCutUpdated(uint256 newBps);
-    event ProtocolTreasuryUpdated(address indexed oldTreasury, address indexed newTreasury);
     event ProtocolFeesWithdrawn(uint256 amount);
 
-    event AlignmentTokenUpdated(address indexed oldToken, address indexed newToken);
     event V4PoolKeyUpdated(bytes32 indexed poolId);
-    event ConversionRewardUpdated(uint256 newReward);
-    event MaxPriceDeviationUpdated(uint256 newBps);
-    event DustDistributionThresholdUpdated(uint256 newThreshold);
     event BenefactorDelegateSet(address indexed benefactor, address indexed delegate);
 
     // ========== Initialize (clone pattern) ==========
@@ -249,7 +265,6 @@ contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignm
 
         // Initialize defaults that can't use declaration initializers with clones
         protocolYieldCutBps = 100;
-        standardConversionReward = 0.0012 ether;
         v3PreferredFee = 3000;
         maxPriceDeviationBps = 500;
         vaultFeeCollectionInterval = 1 days;
@@ -265,8 +280,24 @@ contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignm
     // ========== Fee Reception ==========
 
     /// @notice Accept direct ETH contributions, crediting msg.sender as the benefactor
+    /// @dev ETH arriving while the vault collects its own LP yield (PoolManager.take, zRouter swap output) is
+    ///      not a contribution; it is accounted by _collectAndAccumulateVaultFees. Kept cheap (one TLOAD) so
+    ///      2300-gas `transfer` senders still work.
     receive() external payable {
+        if (_isCollecting()) return;
         _receiveExternalContribution();
+    }
+
+    function _isCollecting() private view returns (bool collecting) {
+        assembly ("memory-safe") {
+            collecting := tload(_COLLECTING_SLOT)
+        }
+    }
+
+    function _setCollecting(bool collecting) private {
+        assembly ("memory-safe") {
+            tstore(_COLLECTING_SLOT, collecting)
+        }
     }
 
     function _receiveExternalContribution() private nonReentrant {
@@ -331,11 +362,18 @@ contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignm
         if (alignmentToken == address(0)) revert NoAlignmentTarget();
         if (Currency.unwrap(v4PoolKey.currency0) == address(0) && Currency.unwrap(v4PoolKey.currency1) == address(0)) revert PoolKeyNotSet();
 
+        // LP yield accrued so far belongs to the current shareholders: book it before new shares are minted
+        // (otherwise the modifyLiquidity below would also net those fees off silently, unaccounted).
+        _collectAndAccumulateVaultFees(true);
+
         int24 tickLower = TickMath.minUsableTick(v4PoolKey.tickSpacing);
         int24 tickUpper = TickMath.maxUsableTick(v4PoolKey.tickSpacing);
-        uint256 ethToAdd = totalPendingETH;
+        uint256 ethPending = totalPendingETH;
+        // Caller reward comes out of this batch, never out of fee balances.
+        uint256 callerReward = _conversionReward(ethPending);
+        uint256 ethToAdd = ethPending - callerReward;
 
-        priceValidator.validatePrice(alignmentToken, totalPendingETH);
+        priceValidator.validatePrice(alignmentToken, ethToAdd);
         uint256 proportionToSwap = priceValidator.calculateSwapProportion(
             alignmentToken, lastTickLower, lastTickUpper, poolManager,
             bytes32(PoolId.unwrap(v4PoolKey.toId()))
@@ -345,11 +383,17 @@ contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignm
         SwapLPResult memory r = _doSwapAndLP(ethToAdd, ethToSwap, minOutTarget, tickLower, tickUpper);
 
         address[] memory activeBenefactors = _getActiveBenefactors();
-        _distributeSharesAndCleanup(ethToAdd, r.liquidityUnitsAdded, activeBenefactors);
+        _distributeSharesAndCleanup(ethPending, ethToAdd, r.liquidityUnitsAdded, activeBenefactors);
 
         lpPositionValue = ethToSwap + r.targetTokenReceived;
-        uint256 callerReward = _payCallerReward(activeBenefactors.length);
+        _payCallerReward(callerReward);
         emit LiquidityAdded(ethToSwap, r.targetTokenReceived, lpPositionValue, r.liquidityUnitsAdded, callerReward);
+    }
+
+    /// @dev Caller reward for converting a pending batch of `ethPending` wei
+    function _conversionReward(uint256 ethPending) internal pure returns (uint256) {
+        uint256 cap = (ethPending * MAX_CONVERSION_REWARD_BPS) / 10000; // round down: favors benefactors
+        return cap < CONVERSION_REWARD ? cap : CONVERSION_REWARD;
     }
 
     // slither-disable-next-line arbitrary-send-eth,reentrancy-benign,unused-return
@@ -376,7 +420,8 @@ contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignm
 
     // slither-disable-next-line divide-before-multiply
     function _distributeSharesAndCleanup(
-        uint256 ethToAdd,
+        uint256 ethPending,
+        uint256 ethAdded,
         uint256 totalSharesIssued,
         address[] memory activeBenefactors
     ) private {
@@ -393,9 +438,11 @@ contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignm
                 largestContributor = benefactor;
             }
 
-            uint256 sharePercent = (contribution * 1e18) / ethToAdd; // round down: dust tracked separately
+            uint256 sharePercent = (contribution * 1e18) / ethPending; // round down: dust tracked separately
             uint256 sharesToIssue = (totalSharesIssued * sharePercent) / 1e18; // round down: dust accumulated and redistributed
 
+            // Book fees earned on the existing shares before the share balance changes.
+            _settleFees(benefactor);
             benefactorShares[benefactor] += sharesToIssue;
             totalShares += sharesToIssue;
             totalSharesActuallyIssued += sharesToIssue;
@@ -407,42 +454,69 @@ contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignm
 
         if (accumulatedDustShares >= dustDistributionThreshold) {
             uint256 dustToDistribute = accumulatedDustShares;
+            // Already settled in the loop above (it is an active benefactor); accFeePerShare is unchanged.
             benefactorShares[largestContributor] += dustToDistribute;
             totalShares += dustToDistribute;
             accumulatedDustShares = 0;
             emit DustDistributed(largestContributor, dustToDistribute);
         }
 
-        // Initialize watermarks so new shares cannot retroactively claim pre-existing fees.
-        // Must run after all share mutations (including dust distribution) are finalized.
-        if (accumulatedFees > 0 && totalShares > 0) {
-            for (uint256 i = 0; i < activeBenefactors.length; i++) {
-                address benefactor = activeBenefactors[i];
-                shareValueAtLastClaim[benefactor] =
-                    (accumulatedFees * benefactorShares[benefactor]) / totalShares;
-            }
-        }
-
-        totalEthLocked += ethToAdd;
+        totalEthLocked += ethAdded;
         totalPendingETH = 0;
         _clearConversionParticipants();
     }
 
     // slither-disable-next-line arbitrary-send-eth
-    function _payCallerReward(uint256 activeBenefactorsLen) private returns (uint256 callerReward) {
-        uint256 estimatedGas = CONVERSION_BASE_GAS + (activeBenefactorsLen * GAS_PER_BENEFACTOR);
-        uint256 gasCost = estimatedGas * tx.gasprice;
-        callerReward = gasCost + standardConversionReward;
+    function _payCallerReward(uint256 callerReward) private {
+        if (callerReward == 0) return;
+        (bool success, ) = payable(msg.sender).call{value: callerReward}("");
+        if (success) {
+            emit ConversionRewardPaid(msg.sender, callerReward);
+        } else {
+            _distributeFees(callerReward);
+            emit ConversionRewardRejected(msg.sender, callerReward);
+        }
+    }
 
-        if (address(this).balance >= callerReward && callerReward > 0) {
-            (bool success, ) = payable(msg.sender).call{value: callerReward}("");
-            if (success) {
-                emit ConversionRewardPaid(msg.sender, callerReward, gasCost, standardConversionReward);
-            } else {
-                emit ConversionRewardRejected(msg.sender, callerReward);
-            }
-        } else if (callerReward > 0) {
-            emit InsufficientRewardBalance(msg.sender, callerReward, address(this).balance);
+    // ========== Fee Accounting ==========
+
+    /// @dev Credit `amount` of ETH (already held by the vault) to current shareholders pro rata.
+    function _distributeFees(uint256 amount) internal {
+        if (amount == 0) return;
+        if (totalShares == 0) {
+            // No one to credit (only reachable for dust before the first conversion): keep it accounted.
+            accumulatedProtocolFees += amount;
+            emit ProtocolYieldCollected(amount);
+            return;
+        }
+        accFeePerShare += FixedPointMathLib.fullMulDiv(amount, ACC_PRECISION, totalShares); // round down: favors vault
+        accumulatedFees += amount;
+        emit FeesAccumulated(amount);
+    }
+
+    /// @dev Fees earned by the benefactor's current shares since their last checkpoint
+    function _feesSinceCheckpoint(address benefactor) internal view returns (uint256) {
+        return FixedPointMathLib.fullMulDiv(
+            benefactorShares[benefactor], accFeePerShare - feeCheckpoint[benefactor], ACC_PRECISION
+        ); // round down: favors vault
+    }
+
+    /// @dev Move fees earned since the last checkpoint into settledFees. Must run before shares change.
+    function _settleFees(address benefactor) internal {
+        uint256 owed = _feesSinceCheckpoint(benefactor);
+        if (owed != 0) settledFees[benefactor] += owed;
+        feeCheckpoint[benefactor] = accFeePerShare;
+    }
+
+    /// @dev Settle and zero the benefactor's fee balance, returning the amount to pay out.
+    function _harvest(address benefactor) internal returns (uint256 amount) {
+        _settleFees(benefactor);
+        amount = settledFees[benefactor];
+        if (amount != 0) {
+            settledFees[benefactor] = 0;
+            totalFeesClaimed += amount;
+            lastClaimTimestamp[benefactor] = block.timestamp;
+            emit FeesClaimed(benefactor, amount);
         }
     }
 
@@ -517,51 +591,44 @@ contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignm
     }
 
     // slither-disable-next-line incorrect-equality,reentrancy-benign,reentrancy-no-eth,timestamp
-    function _collectAndAccumulateVaultFees() internal {
-        if (block.timestamp >= lastVaultFeeCollectionTime + vaultFeeCollectionInterval
+    /// @param force Collect regardless of vaultFeeCollectionInterval (used before share changes)
+    function _collectAndAccumulateVaultFees(bool force) internal {
+        if (force || block.timestamp >= lastVaultFeeCollectionTime + vaultFeeCollectionInterval
             || lastVaultFeeCollectionTime == 0) {
 
+            _setCollecting(true);
             (uint256 ethCollected, uint256 tokenCollected) = _claimVaultFees();
             uint256 ethFromTokens = _convertVaultFeesToEth(tokenCollected);
+            _setCollecting(false);
 
             uint256 totalCollected = ethCollected + ethFromTokens;
             if (totalCollected > 0) {
                 uint256 protocolCut = (totalCollected * protocolYieldCutBps) / 10000; // round down: favors benefactors
                 uint256 benefactorAmount = totalCollected - protocolCut;
 
-                accumulatedFees += benefactorAmount;
+                _distributeFees(benefactorAmount);
                 accumulatedProtocolFees += protocolCut;
 
                 lastVaultFeeCollectionTime = block.timestamp;
-                emit FeesAccumulated(benefactorAmount);
                 if (protocolCut > 0) emit ProtocolYieldCollected(protocolCut);
             }
         }
     }
 
     /// @notice Claim accumulated LP yield fees for the caller
-    /// @dev Triggers vault fee collection first, then pays the caller's unclaimed delta.
+    /// @dev Triggers vault fee collection first, then pays everything owed to the caller.
     ///      Fees are routed to the benefactor's delegate if one is set.
     /// @return ethClaimed ETH transferred to caller (or their delegate)
     // slither-disable-next-line reentrancy-benign
     function claimFees() external override nonReentrant returns (uint256 ethClaimed) {
-        _collectAndAccumulateVaultFees();
+        _collectAndAccumulateVaultFees(false);
 
         address benefactor = msg.sender;
 
         if (benefactorShares[benefactor] == 0) revert NoShares();
-        if (accumulatedFees == 0) revert NoFeesToClaim();
 
-        uint256 currentShareValue = (accumulatedFees * benefactorShares[benefactor]) / totalShares; // round down: favors vault
-
-        ethClaimed = currentShareValue > shareValueAtLastClaim[benefactor]
-            ? currentShareValue - shareValueAtLastClaim[benefactor]
-            : 0;
-
+        ethClaimed = _harvest(benefactor);
         if (ethClaimed == 0) revert NoFeesToClaim();
-
-        shareValueAtLastClaim[benefactor] = currentShareValue;
-        lastClaimTimestamp[benefactor] = block.timestamp;
 
         address recipient = benefactorDelegate[benefactor];
         if (recipient == address(0)) recipient = benefactor;
@@ -570,19 +637,7 @@ contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignm
         (bool success, ) = payable(recipient).call{value: ethClaimed}("");
         if (!success) revert TransferFailed();
 
-        emit FeesClaimed(benefactor, ethClaimed);
-
         return ethClaimed;
-    }
-
-    // ========== Fee Accumulation ==========
-
-    /// @notice Manually record fees accumulated outside of V4 LP (owner-only)
-    /// @param feeAmount ETH amount to add to accumulatedFees
-    function recordAccumulatedFees(uint256 feeAmount) external onlyOwner {
-        if (feeAmount == 0) revert AmountMustBePositive();
-        accumulatedFees += feeAmount;
-        emit FeesAccumulated(feeAmount);
     }
 
     // ========== Internal Helpers ==========
@@ -694,6 +749,9 @@ contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignm
     function _validateV4Pool(PoolKey memory poolKey) internal view {
         if (Currency.unwrap(poolKey.currency0) == address(0) && Currency.unwrap(poolKey.currency1) == address(0)) revert InvalidPoolKey();
 
+        // A hook could take a cut of, block, or reprice every vault LP operation and fee collection.
+        if (address(poolKey.hooks) != address(0)) revert HooksNotAllowed();
+
         if (poolKey.fee != 500 && poolKey.fee != 3000 && poolKey.fee != 10000) revert InvalidFeeTier();
 
         if (poolKey.fee == 500) {
@@ -741,28 +799,30 @@ contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignm
         return benefactorShares[benefactor];
     }
 
+    /// @notice ETH the benefactor could claim now from fees already collected (excludes uncollected LP yield)
     function calculateClaimableAmount(address benefactor)
         external
         view
         override
         returns (uint256)
     {
-        if (totalShares == 0 || accumulatedFees == 0) return 0;
-        return (accumulatedFees * benefactorShares[benefactor]) / totalShares; // round down: favors vault
+        return getUnclaimedFees(benefactor);
     }
 
-    /// @notice Get the unclaimed fee delta for a benefactor since their last claim
+    /// @notice Get the fees owed to a benefactor and not yet claimed
     /// @param benefactor Address to query
     /// @return Unclaimed ETH amount
     function getUnclaimedFees(address benefactor)
-        external
+        public
         view
         returns (uint256)
     {
-        uint256 currentShareValue = (accumulatedFees * benefactorShares[benefactor]) / totalShares; // round down: favors vault
-        return currentShareValue > shareValueAtLastClaim[benefactor]
-            ? currentShareValue - shareValueAtLastClaim[benefactor]
-            : 0;
+        return settledFees[benefactor] + _feesSinceCheckpoint(benefactor);
+    }
+
+    /// @notice Address that receives the protocol's LP-yield cut: the registry treasury
+    function protocolTreasury() public view returns (address) {
+        return registry.treasury();
     }
 
     // ========== Vault Info (IAlignmentVault Interface) ==========
@@ -810,7 +870,7 @@ contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignm
     /// @return totalClaimed Total ETH sent to the caller (delegate)
     // slither-disable-next-line reentrancy-benign
     function claimFeesAsDelegate(address[] calldata benefactors) external override nonReentrant returns (uint256 totalClaimed) {
-        _collectAndAccumulateVaultFees();
+        _collectAndAccumulateVaultFees(false);
 
         for (uint256 i = 0; i < benefactors.length; i++) {
             address benefactor = benefactors[i];
@@ -818,20 +878,7 @@ contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignm
             if (benefactorDelegate[benefactor] != msg.sender) revert NotDelegate();
             if (benefactorShares[benefactor] == 0) revert NoShares();
 
-            if (accumulatedFees == 0) continue;
-
-            uint256 currentShareValue = (accumulatedFees * benefactorShares[benefactor]) / totalShares; // round down: favors vault
-
-            uint256 ethClaimed = currentShareValue > shareValueAtLastClaim[benefactor]
-                ? currentShareValue - shareValueAtLastClaim[benefactor]
-                : 0;
-
-            if (ethClaimed > 0) {
-                shareValueAtLastClaim[benefactor] = currentShareValue;
-                lastClaimTimestamp[benefactor] = block.timestamp;
-                totalClaimed += ethClaimed;
-                emit FeesClaimed(benefactor, ethClaimed);
-            }
+            totalClaimed += _harvest(benefactor);
         }
 
         if (totalClaimed == 0) revert NoFeesToClaim();
@@ -842,100 +889,43 @@ contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignm
     }
 
     // ========== Configuration ==========
+    //
+    // The factory owns every vault and exposes no owner passthrough, so tunables are fixed at initialize()
+    // and the pool key is set exactly once, by the factory, in the deploy transaction.
 
-    /// @notice Change the alignment token (must be in the vault's alignment target)
-    /// @dev All pending ETH must be converted first. Validates against MiyaRegistry.
-    /// @param newToken New ERC20 token address to buy and LP
-    function setAlignmentToken(address newToken) external onlyOwner {
-        if (newToken == address(0)) revert InvalidAddress();
-        if (totalPendingETH != 0) revert PendingETHNotConverted();
-        if (!registry.isTokenInTarget(alignmentTargetId, newToken)) revert TokenNotInTarget();
-
-        address oldToken = alignmentToken;
-        alignmentToken = newToken;
-
-        if (newToken.code.length > 0) {
-            try IERC20Metadata(newToken).decimals() returns (uint8 decimals) {
-                alignmentTokenDecimals = decimals;
-            } catch {
-                alignmentTokenDecimals = 18;
-            }
-        } else {
-            alignmentTokenDecimals = 18;
-        }
-
-        emit AlignmentTokenUpdated(oldToken, newToken);
-    }
-
-    /// @notice Set the Uniswap V4 pool key for liquidity operations
-    /// @dev Validates fee tier, tick spacing, currency ordering, and alignment token presence.
+    /// @notice Set the Uniswap V4 pool key for liquidity operations. Set-once.
+    /// @dev Validates fee tier, tick spacing, currency ordering, alignment token presence and that the pool
+    ///      has no hooks. Reverts if a key is already set, so LP can never be repointed to another pool.
     /// @param newPoolKey V4 PoolKey struct identifying the target pool
     function setV4PoolKey(PoolKey calldata newPoolKey) external onlyOwner {
+        // A validated key always has the alignment token as currency1 (native ETH sorts first).
+        if (Currency.unwrap(v4PoolKey.currency1) != address(0)) revert PoolKeyAlreadySet();
         _validateV4Pool(newPoolKey);
         v4PoolKey = newPoolKey;
         emit V4PoolKeyUpdated(keccak256(abi.encode(newPoolKey)));
     }
 
-    /// @notice Set the base reward paid to callers of convertAndAddLiquidity
-    /// @param newReward New reward amount in wei (max 0.1 ETH)
-    function setStandardConversionReward(uint256 newReward) external onlyOwner {
-        if (newReward > 0.1 ether) revert RewardTooHigh();
-        standardConversionReward = newReward;
-        emit ConversionRewardUpdated(newReward);
-    }
-
-    /// @notice Set maximum allowed price deviation for manipulation protection
-    /// @param newBps Deviation in basis points (max 2000 = 20%)
-    function setMaxPriceDeviationBps(uint256 newBps) external onlyOwner {
-        if (newBps > 2000) revert DeviationTooHigh();
-        maxPriceDeviationBps = newBps;
-        emit MaxPriceDeviationUpdated(newBps);
-    }
-
-    /// @notice Set the threshold at which accumulated dust shares are distributed
-    /// @param newThreshold Minimum accumulated dust before redistribution (must be > 0)
-    function setDustDistributionThreshold(uint256 newThreshold) external onlyOwner {
-        if (newThreshold == 0) revert AmountMustBePositive();
-        dustDistributionThreshold = newThreshold;
-        emit DustDistributionThresholdUpdated(newThreshold);
-    }
-
-    /// @notice Deposit ETH directly into the accumulated fees pool (owner-only)
-    /// @dev Used for manual fee injection outside of LP yield collection.
-    function depositFees() external payable onlyOwner {
+    /// @notice Donate ETH to current shareholders as fees (e.g. yield earned outside the V4 position)
+    /// @dev Permissionless: the donor only gives away their own ETH. Requires existing shares so the ETH
+    ///      cannot be stranded.
+    function depositFees() external payable nonReentrant {
         if (msg.value == 0) revert AmountMustBePositive();
-        accumulatedFees += msg.value;
-        emit FeesAccumulated(msg.value);
+        if (totalShares == 0) revert NoShares();
+        _distributeFees(msg.value);
     }
 
     // ========== Protocol Yield Cut ==========
 
-    /// @notice Set the protocol's share of LP yield in basis points
-    /// @param _bps Protocol cut in bps (max 1500 = 15%)
-    function setProtocolYieldCutBps(uint256 _bps) external onlyOwner {
-        if (_bps > 1500) revert ExceedsMaxBps();
-        protocolYieldCutBps = _bps;
-        emit ProtocolYieldCutUpdated(_bps);
-    }
-
-    /// @notice Set the protocol treasury address for yield cut withdrawals
-    /// @param _treasury New treasury address (must not be zero)
-    function setProtocolTreasury(address _treasury) external onlyOwner {
-        if (_treasury == address(0)) revert InvalidAddress();
-        address old = protocolTreasury;
-        protocolTreasury = _treasury;
-        emit ProtocolTreasuryUpdated(old, _treasury);
-    }
-
-    /// @notice Withdraw accumulated protocol yield cut to the treasury
-    /// @dev Callable by anyone. Sends accumulatedProtocolFees to protocolTreasury.
+    /// @notice Withdraw accumulated protocol yield cut to the registry treasury
+    /// @dev Callable by anyone. Sends accumulatedProtocolFees to protocolTreasury().
     // slither-disable-next-line arbitrary-send-eth,reentrancy-events
     function withdrawProtocolFees() external {
-        if (protocolTreasury == address(0)) revert TreasuryNotSet();
+        address treasury = protocolTreasury();
+        if (treasury == address(0)) revert TreasuryNotSet();
         uint256 amount = accumulatedProtocolFees;
         if (amount == 0) revert NoFeesToClaim();
         accumulatedProtocolFees = 0;
-        (bool success, ) = payable(protocolTreasury).call{value: amount}("");
+        (bool success, ) = payable(treasury).call{value: amount}("");
         if (!success) revert TransferFailed();
         emit ProtocolFeesWithdrawn(amount);
     }
