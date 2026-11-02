@@ -1,7 +1,6 @@
 /* eslint-disable @typescript-eslint/naming-convention */
 /* eslint-disable no-nested-ternary */
 import { createContext, useEffect, useMemo, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
 import styled from 'styled-components/macro'
 import type { Address } from 'viem'
 import { mainnet, sepolia } from 'viem/chains'
@@ -9,16 +8,9 @@ import { useAccount, useReadContract } from 'wagmi'
 
 import { ConnectedButton, HighlightButton } from '@/components/Button'
 import FormInput from '@/components/FormInput'
-import { Separator } from '@/components/Separator'
 import Tabs from '@/components/Tabs'
-import TitleBar from '@/components/TitleBar'
-import WindowWrapper from '@/components/WindowWrapper'
 import Pages from '@/constants/pages'
 import { useWaitForTransaction } from '@/hooks/useWaitForTransaction'
-import { updateManagedCollection } from '@/store/experience/actions'
-import { useAppDispatch, useAppSelector } from '@/store/hooks'
-import { closeWindow, minimizeWindow } from '@/store/windows/actions'
-import { useFullscreen } from '@/store/windows/hooks'
 
 import AllocationRow from './TableRows/AllocationRow'
 import BaseUriRow from './TableRows/BaseUriRow'
@@ -82,35 +74,16 @@ const SunkenPanel = styled.div`
   }
 `
 
-export default function ManagePage() {
-  // Network
-  const [params, setParams] = useSearchParams()
-  const [contextState, setContextState] = useState({
-    collection: (params.get('collection') as Address | null) || undefined,
-    errors: {},
-  })
-
-  const dispatch = useAppDispatch()
-  const collection = useAppSelector((state) => state.experience.managedCollection)
-
+/**
+ * Manage for legacy MiyaMints v1 (ERC721M) collections: the original Metadata / Properties / Actions tabs.
+ * The window chrome, picker and miyamints collections live in ./index.tsx.
+ */
+export default function LegacyManage({ collection, onChange }: { collection: Address; onChange: () => void }) {
+  const [contextState] = useState({ collection: collection as Address | undefined, errors: {} })
   const [tab, setTab] = useState('metadata')
-
-  useEffect(() => {
-    const paramsCollection = params.get('collection')
-    if (paramsCollection) dispatch(updateManagedCollection({ value: paramsCollection as Address }))
-  }, [params])
 
   // Account
   const { isConnected, address } = useAccount()
-
-  // Window mgmt
-  const [fullscreen, toggleFullscreen] = useFullscreen('manager')
-  const close = () => {
-    dispatch(closeWindow({ value: 'manager' }))
-    dispatch(updateManagedCollection({ value: undefined }))
-  }
-
-  const minimize = () => dispatch(minimizeWindow({ value: 'manager' }))
 
   const alignedNft = useAlignedNft({ address: collection })
   const symbol = useSymbol({ address: collection })
@@ -441,121 +414,36 @@ export default function ManagePage() {
     )
   }, [form.description, form.external_link, form.image, form.name, transacting, metadata.loaded])
 
-  const [collectionInput, setCollectionInput] = useState('')
-
-  const handleManageCollection = () => {
-    dispatch(updateManagedCollection({ value: collectionInput as Address }))
-    setParams((prev) => ({ ...prev, collection: collectionInput }))
-  }
-
-  const handleChangeCollection = () => {
-    dispatch(updateManagedCollection({ value: undefined }))
-    setCollectionInput('')
-    setParams((prev) => {
-      const next = new URLSearchParams(prev)
-      next.delete('collection')
-      return next
-    })
-  }
-
   const connectHint = !isConnected && <p>Connect your wallet to manage a collection you own.</p>
 
-  return (
-    <WindowWrapper>
-      <TitleBar
-        closeBtn
-        onClose={(e) => {
-          if (e.cancelable) e.stopPropagation()
-          close()
-        }}
-        fullscreen={fullscreen}
-        fullscreenBtn
-        onFullscreen={() => toggleFullscreen()}
-        minimizeBtn
-        onMinimize={(e) => {
-          if (e.cancelable) e.stopPropagation()
-          minimize()
-        }}
-      >
-        {page?.label}
-      </TitleBar>
-      <div
-        style={{
-          display: 'flex',
-          flexDirection: 'column',
-          padding: '0.5rem',
-          gap: '1rem',
-          height: '100%',
-        }}
-      >
-        {collection && isOwner && is721m ? (
-          <ManageContext.Provider value={contextState}>
-            <div style={{ display: 'flex', marginBottom: '0.5rem', flex: '1 0 auto' }}>
-              <Tabs
-                active={tab}
-                fillHeight
-                fillWidth
-                tabs={[
-                  {
-                    title: 'Metadata',
-                    id: 'metadata',
-                    children: MetadataTab,
-                  },
-                  {
-                    title: 'Properties',
-                    id: 'properties',
-                    children: PropertyTab,
-                  },
-                  {
-                    title: 'Actions',
-                    id: 'advanced',
-                    children: ActionTab,
-                  },
-                ]}
-                onChange={(t) => setTab(t)}
-              />
-            </div>
-            <Separator />
-            <div style={{ display: 'flex', justifyContent: 'end', alignItems: 'center', gap: '2rem' }}>
-              <HighlightButton className="heavy" onClick={() => close()}>
-                Cancel
-              </HighlightButton>
-            </div>
-          </ManageContext.Provider>
-        ) : collection ? (
-          <div style={{ textAlign: 'center' }}>
-            <p>No collection to manage.</p>
-            <b>Why are you seeing this message?</b>
-            <p>You might have input the wrong address.</p>
-            <p>You might be on the wrong chain.</p>
-            <p>You might not be the owner of this collection.</p>
-            {connectHint}
-            <HighlightButton style={{ marginTop: '8px' }} onClick={() => handleChangeCollection()}>
-              Change collection
-            </HighlightButton>
-          </div>
-        ) : (
-          <div>
-            <p>No collection selected</p>
-            {connectHint}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '16px', margin: '0 8px' }}>
-              <FormInput
-                label="Collection"
-                inputKey="collection"
-                value={collectionInput}
-                onChange={(e) => setCollectionInput(e.target.value)}
-                error={undefined}
-              />
-              <HighlightButton
-                style={{ height: 'fit-content', marginTop: '-4px' }}
-                onClick={() => handleManageCollection()}
-              >
-                Manage
-              </HighlightButton>
-            </div>
-          </div>
-        )}
+  if (!(isOwner && is721m)) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', padding: '8px' }}>
+        <b>Nothing to manage at this address.</b>
+        <p style={{ margin: 0 }}>It may be the wrong address or the wrong network, or this wallet may not own it.</p>
+        {connectHint}
+        <div>
+          <HighlightButton onClick={onChange}>Pick another collection</HighlightButton>
+        </div>
       </div>
-    </WindowWrapper>
+    )
+  }
+
+  return (
+    <ManageContext.Provider value={contextState}>
+      <div style={{ display: 'flex', flex: '1 0 auto' }}>
+        <Tabs
+          active={tab}
+          fillHeight
+          fillWidth
+          tabs={[
+            { title: 'Metadata', id: 'metadata', children: MetadataTab },
+            { title: 'Properties', id: 'properties', children: PropertyTab },
+            { title: 'Actions', id: 'advanced', children: ActionTab },
+          ]}
+          onChange={(t) => setTab(t)}
+        />
+      </div>
+    </ManageContext.Provider>
   )
 }
