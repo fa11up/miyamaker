@@ -1,7 +1,18 @@
 /* eslint-disable @typescript-eslint/naming-convention */
+import { useQuery } from '@tanstack/react-query'
 import type { Address } from 'viem'
 import { useReadContract } from 'wagmi'
+
 import { useContractWrite } from '@/hooks/useContractWrite'
+import { parseJsonDataUri, resolveMetadataUri } from '@/utils/resolveUri'
+
+type ContractMetadata = {
+  name: string
+  description: string
+  image: string
+  external_link: string
+  collaborators: Address[]
+}
 
 export function useContractUri({ address }: { address?: Address }) {
   const { data: contractUri } = useReadContract({
@@ -35,20 +46,31 @@ export function useContractUri({ address }: { address?: Address }) {
 
   const setContractUri = async (input: string) => writeAsync({ args: [input] })
 
-  type ContractMetadata = {
-    name: string
-    description: string
-    image: string
-    external_link: string
-    collaborators: Address[]
-  }
-  if (contractUri) {
-    const { name, description, image, external_link, collaborators } = JSON.parse(
-      (contractUri as string).split('data:application/json;utf8,')[1] as string
-    ) as ContractMetadata
+  // contractURI may be an inline data: URI (utf8 / percent-encoded / base64) or an ipfs:// or http(s) link.
+  // Never throw during render: malformed or unreachable metadata just shows empty fields.
+  const uri = typeof contractUri === 'string' ? contractUri : ''
+  const inline = uri.trim().toLowerCase().startsWith('data:')
+  const remoteUrl = inline ? '' : resolveMetadataUri(uri)
+  const { data: remote } = useQuery({
+    queryKey: ['contractUri', remoteUrl],
+    enabled: !!remoteUrl,
+    queryFn: async () => {
+      const response = await fetch(remoteUrl)
+      if (!response.ok) throw new Error(`contractURI fetch failed: ${response.status}`)
+      return (await response.json()) as Partial<ContractMetadata>
+    },
+  })
 
-    return { name, description, image, external_link, collaborators, setContractUri }
-  }
+  // `remote` stays undefined when there is no fetchable URL (the query is disabled).
+  const metadata = inline ? parseJsonDataUri<Partial<ContractMetadata>>(uri) : remote
+  const meta = metadata && typeof metadata === 'object' ? metadata : {}
 
-  return { name: '', description: '', image: '', external_link: '', collaborators: [], setContractUri }
+  return {
+    name: typeof meta.name === 'string' ? meta.name : '',
+    description: typeof meta.description === 'string' ? meta.description : '',
+    image: typeof meta.image === 'string' ? meta.image : '',
+    external_link: typeof meta.external_link === 'string' ? meta.external_link : '',
+    collaborators: Array.isArray(meta.collaborators) ? meta.collaborators : [],
+    setContractUri,
+  }
 }
