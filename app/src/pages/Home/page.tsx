@@ -464,9 +464,6 @@ export default function Home() {
             <Eyebrow>INFER contract</Eyebrow>
             <TokenLink address={INFER} />
           </Well>
-          <StatusBox tone="error" role="note">
-            <span>Other tokens use the INFER ticker. Only the address above is real. Check it before you buy.</span>
-          </StatusBox>
           <Row>
             <SmallButton type="button" onClick={() => navigate('/swap')}>
               Swap for INFER
