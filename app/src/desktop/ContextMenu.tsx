@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import styled from 'styled-components/macro'
 
-import { bevel, color, space, text } from '@/theme/tokens'
+import { bevel, color, MOBILE_BREAKPOINT, space, text } from '@/theme/tokens'
 
-import { setPrefs, startScreensaverPreview, useDesktopPrefs } from './prefs'
+import { DESKTOP_EVENTS, setPrefs, startScreensaverPreview, useDesktopPrefs } from './prefs'
+import { getPet, nextVariant } from './pet/registry'
 import { useOpenApp } from './useOpenApp'
 
 const Menu = styled.div`
@@ -61,7 +62,7 @@ export default function DesktopContextMenu() {
       if (e.clientY > window.innerHeight - taskbar) return
       e.preventDefault()
       const w = 220
-      const h = 150
+      const h = 200
       setPos({ x: Math.min(e.clientX, window.innerWidth - w - 4), y: Math.min(e.clientY, window.innerHeight - h - 4) })
     }
 
@@ -91,6 +92,12 @@ export default function DesktopContextMenu() {
   }, [pos])
 
   if (!pos) return null
+  const mobile = window.innerWidth <= MOBILE_BREAKPOINT
+  const pet = getPet(prefs.petId)
+  const looks = !!pet.variants?.length
+  // the pet layer marks the look on screen (a random one when none was chosen)
+  const currentLook =
+    prefs.petVariant || document.querySelector<HTMLElement>('[data-desktop-pet]')?.dataset.petVariant || undefined
   const run = (fn: () => void) => () => {
     setPos(undefined)
     fn()
@@ -98,9 +105,30 @@ export default function DesktopContextMenu() {
 
   return (
     <Menu ref={ref} role="menu" style={{ left: pos.x, top: pos.y }} data-desktop-menu="">
+      {!mobile && (
+        <>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={run(() => window.dispatchEvent(new CustomEvent(DESKTOP_EVENTS.arrangeIcons)))}
+          >
+            Arrange icons
+          </button>
+          <hr />
+        </>
+      )}
       <button type="button" role="menuitem" onClick={run(() => setPrefs({ petEnabled: !prefs.petEnabled }))}>
         {prefs.petEnabled ? 'Hide desktop pet' : 'Show desktop pet'}
       </button>
+      {prefs.petEnabled && looks && (
+        <button
+          type="button"
+          role="menuitem"
+          onClick={run(() => setPrefs({ petVariant: nextVariant(pet, currentLook)?.id || '' }))}
+        >
+          Next {pet.name} look
+        </button>
+      )}
       <button type="button" role="menuitem" onClick={run(() => window.setTimeout(startScreensaverPreview, 150))}>
         Start screen saver
       </button>

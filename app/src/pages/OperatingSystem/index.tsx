@@ -12,6 +12,7 @@ import OsLoader from '@/components/OsLoader'
 import TaskBar from '@/components/TaskBar'
 import Pages from '@/constants/pages'
 import { DesktopOverlays, DesktopPetLayer } from '@/desktop'
+import DesktopIconGrid from '@/desktop/icons/DesktopIconGrid'
 import { canonicalPath } from '@/pages/Swap/tradePath'
 import { useAppDispatch, useAppSelector } from '@/store/hooks'
 import { closeWindow, minimizeWindow, openWindow, setToFront } from '@/store/windows/actions'
@@ -21,7 +22,6 @@ import { MOBILE_BREAKPOINT } from '@/theme/tokens'
 
 import AppSwitcher from './AppSwitcher'
 import Background from './Background'
-import DesktopIcon from './DesktopIcon'
 import FourthWall from './FourthWall'
 import Windows from './Windows'
 
@@ -77,30 +77,6 @@ const Icons = styled.div`
   pointer-events: none;
   * {
     pointer-events: auto;
-  }
-`
-
-/* Desktop: icons flow top-to-bottom in columns, like a real desktop. Phones: a home-screen grid. */
-const IconGrid = styled.div`
-  display: grid;
-  grid-auto-flow: column;
-  grid-template-rows: repeat(auto-fill, 104px);
-  grid-auto-columns: 96px;
-  gap: 8px;
-  padding: 16px;
-  height: 100%;
-  width: max-content;
-  align-content: start;
-
-  @media (max-width: ${MOBILE_BREAKPOINT}px) {
-    grid-auto-flow: row;
-    grid-template-rows: none;
-    grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
-    grid-auto-columns: auto;
-    width: 100%;
-    height: auto;
-    padding: 24px 16px;
-    row-gap: 20px;
   }
 `
 
@@ -222,13 +198,7 @@ export default function OperatingSystem() {
       <Foreground>
         <WindowContainer mobile={isMobile}>{MemoizedWindows}</WindowContainer>
         <Icons>
-          <IconGrid>
-            {DESKTOP_ICONS.map((icon) => (
-              <DesktopIcon key={icon.id} normalState={icon.src} onClick={() => handleOpen(icon.id)}>
-                {icon.label}
-              </DesktopIcon>
-            ))}
-          </IconGrid>
+          <DesktopIconGrid icons={DESKTOP_ICONS} onOpen={handleOpen} />
         </Icons>
         <FourthWall />
         <DesktopPetLayer />

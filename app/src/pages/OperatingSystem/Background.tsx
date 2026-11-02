@@ -1,13 +1,12 @@
-import ShadertoyReact from 'shadertoy-react'
 import styled from 'styled-components/macro'
 import { useEnsName } from 'wagmi'
 
 import { useAccount } from '@/context/AccountProvider'
 import { useWaves } from '@/store/experience/hooks'
 
-// import { fs } from './webgl'
-import { fs } from './webgl'
 import { useClusterName } from '@/hooks/useClusterName'
+
+import WaveBackground from './wave/WaveBackground'
 
 const GradientBlock = styled.div`
   position: absolute;
@@ -59,7 +58,12 @@ export default function Background() {
     <BackgroundStyled>
       <ButtonContainer>
         <OSInfo>
-          <p>MiyaOS</p>
+          <p>
+            {/* the desktop pet likes to sit up here */}
+            <span data-pet-perch="perch" data-perch-id="miyaos">
+              MiyaOS
+            </span>
+          </p>
           <p>Version 1.0.0</p>
           {account?.isConnected && (
             <>
@@ -70,10 +74,8 @@ export default function Background() {
         </OSInfo>
       </ButtonContainer>
       <GradientBlock />
-      {/* render the shader only if the user has enabled it */}
-      {waves && (
-        <ShadertoyReact fs={fs} devicePixelRatio={0.5} style={{ opacity: 0.1, position: 'relative', zIndex: 1 }} />
-      )}
+      {/* render the wave only if the user has enabled it */}
+      {waves && <WaveBackground />}
     </BackgroundStyled>
   )
 }

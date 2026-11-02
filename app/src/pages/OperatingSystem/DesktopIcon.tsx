@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import type { ButtonHTMLAttributes, ReactNode } from 'react'
 import styled from 'styled-components/macro'
 
 import { color, space, text } from '@/theme/tokens'
@@ -65,14 +65,23 @@ export default function DesktopIcon({
   normalState,
   children,
   onClick,
+  perchId,
+  ...rest
 }: {
   normalState: string | undefined
   children: ReactNode
   onClick: () => void
-}) {
+  /** marks the icon art as somewhere the desktop pet can climb and sit */
+  perchId?: string
+} & Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'onClick' | 'children' | 'type'>) {
   return (
-    <IconButton type="button" onClick={onClick}>
-      <span className="icon" style={{ backgroundImage: normalState ? `url(${normalState})` : undefined }} />
+    <IconButton type="button" onClick={onClick} {...rest}>
+      <span
+        className="icon"
+        style={{ backgroundImage: normalState ? `url(${normalState})` : undefined }}
+        data-pet-perch={perchId ? 'icon' : undefined}
+        data-perch-id={perchId}
+      />
       <span className="label">{children}</span>
     </IconButton>
   )

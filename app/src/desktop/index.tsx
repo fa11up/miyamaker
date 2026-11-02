@@ -17,7 +17,7 @@ export function DesktopPetLayer() {
   const prefs = useDesktopPrefs()
   if (!prefs.petEnabled) return null
   const pet = getPet(prefs.petId)
-  return <DesktopPet key={pet.id} pet={pet} />
+  return <DesktopPet key={pet.id} pet={pet} variant={prefs.petVariant} />
 }
 
 export function DesktopOverlays() {
