@@ -82,7 +82,6 @@ export default function ItemView({
   const inPool = pools.pools.find((p) => same(p.address, ownerAddress))
   const collectionName = os.info?.name || 'NFT'
   const title = cleanText(item.nft?.name || meta.name, 80) || `${collectionName} #${tokenId}`
-  const optional = os.info?.fees.filter((f) => !f.required).reduce((s, f) => s + f.percent, 0) || 0
   const listingIsMine = !!item.listing && mine
 
   return (
@@ -143,7 +142,6 @@ export default function ItemView({
           contract={contract}
           tokenId={tokenId}
           title={collectionName}
-          optionalCreatorFee={optional}
           onClose={() => setReview(undefined)}
           onDone={() => {
             item.refetch()

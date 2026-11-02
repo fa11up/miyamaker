@@ -135,9 +135,11 @@ export function openSeaGet(params: URLSearchParams): Built | Refused {
 
 /**
  * The upstream request for a fulfillment POST. The page sends a flat, small body; the proxy builds OpenSea's body
- * from it, so the page cannot add fields (no custom recipient: NFTs and payment go to the fulfiller).
+ * from it, so the page cannot add fields (no custom recipient: NFTs and payment go to the fulfiller). Optional
+ * creator fees are never added: the body always says include_optional_creator_fees: false. Fees the order itself
+ * requires (OpenSea's fee, creator fees a collection enforces) are part of the signed order and still apply.
  *
- *   fulfill_listing: { chain, hash, protocol_address, fulfiller, include_optional_creator_fees? }
+ *   fulfill_listing: { chain, hash, protocol_address, fulfiller }
  *   fulfill_offer:   { chain, hash, protocol_address, fulfiller, contract, token_id }
  */
 export function openSeaPost(op: string, raw: unknown): Built | Refused {
@@ -145,7 +147,7 @@ export function openSeaPost(op: string, raw: unknown): Built | Refused {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { error: 'The request body must be an object.' }
   const b = raw as Record<string, unknown>
   const keys = op === 'fulfill_listing'
-    ? ['chain', 'hash', 'protocol_address', 'fulfiller', 'include_optional_creator_fees']
+    ? ['chain', 'hash', 'protocol_address', 'fulfiller']
     : ['chain', 'hash', 'protocol_address', 'fulfiller', 'contract', 'token_id']
   for (const k of Object.keys(b)) if (!keys.includes(k)) return { error: `${k} is not accepted.` }
   const str = (k: string) => (typeof b[k] === 'string' ? (b[k] as string) : '')
@@ -157,12 +159,9 @@ export function openSeaPost(op: string, raw: unknown): Built | Refused {
   const order = { chain: str('chain'), hash: str('hash'), protocol_address: str('protocol_address') }
   const fulfiller = { address: str('fulfiller') }
   if (op === 'fulfill_listing') {
-    const optional = b.include_optional_creator_fees
-    if (optional !== undefined && typeof optional !== 'boolean')
-      return { error: 'include_optional_creator_fees must be true or false.' }
     return {
       path: '/api/v2/listings/fulfillment_data',
-      body: JSON.stringify({ listing: order, fulfiller, include_optional_creator_fees: !!optional }),
+      body: JSON.stringify({ listing: order, fulfiller, include_optional_creator_fees: false }),
       keyless: false,
     }
   }

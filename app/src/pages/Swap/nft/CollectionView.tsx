@@ -16,12 +16,16 @@ import { bevel, color, space, text } from '@/theme/tokens'
 import { erc721Abi, poolFactoryAbi } from './abi'
 import type { OsOrder, Price } from './markets'
 import { bestQuote, collectionUrl, formatPrice, venuesFor } from './markets'
+import { DEFAULT_PAIR_SYMBOL, pickPair } from './pairs'
 import type { PoolMode } from './pool'
 import { KIND, MODE, MODE_HINT, MODE_LABEL } from './pool'
 import { Card, Chips, Field, Head, Hint, LinkButton, Mono, Prose, PushButton } from './ui'
 import { useOpenSeaCollection, useOpenSeaListings, useOpenSeaNftImage } from './useMarkets'
+import type { PoolPrice } from './usePoolPrices'
+import { pairsFor, poolSide, usePoolPrices } from './usePoolPrices'
+import type { Pool } from './usePools'
 import { poolFactoryFor, useNftMeta, usePoolsForCollection } from './usePools'
-import { Best, OutLink, VenueList, VenueRow } from './venueUi'
+import { Best, OutLink, PairSwitch, VenueList, VenueRow } from './venueUi'
 
 const Hero = styled.div`
   display: grid;
@@ -128,9 +132,75 @@ function ListingTile({
   )
 }
 
+/** One MiyaPool line in the best-price box: one pool token (= one NFT) priced in the chosen pair. */
+function PoolPriceLine({
+  pool,
+  price,
+  symbol,
+  swap,
+}: {
+  pool: Pool
+  price: PoolPrice | undefined
+  symbol?: string
+  swap: boolean
+}) {
+  const label = `In MiyaPool · ${MODE_LABEL[pool.mode]}`
+  const each = (
+    <>
+      1 {pool.symbol} <span className="where">each, 0% fees</span>
+    </>
+  )
+  const body = (() => {
+    // No swap on this chain (Sepolia): a pool token is the only price there is.
+    if (!swap || !price) return each
+    if (price.state === 'loading') return <span className="where">Pricing in {symbol}…</span>
+    if (price.state === 'unconfigured')
+      return (
+        <>
+          1 {pool.symbol} <span className="where">each; no {symbol} price (swap service off)</span>
+        </>
+      )
+    if (price.state === 'error')
+      return (
+        <>
+          1 {pool.symbol} <span className="where">each; no {symbol} price right now</span>
+        </>
+      )
+    if (price.status === 'no-route')
+      return (
+        <span className="where">
+          No {symbol} market for {pool.symbol} yet
+        </span>
+      )
+    const ask = poolSide(price, 'ask')
+    const bid = poolSide(price, 'bid')
+    return (
+      <>
+        {ask && pool.held > 0n ? (
+          <>
+            ≈ {formatPrice(ask)} <span className="where">to buy one</span>
+            {bid && <span className="where sub">sell one in ≈ {formatPrice(bid)}</span>}
+          </>
+        ) : (
+          bid && (
+            <>
+              ≈ {formatPrice(bid)} <span className="where">to sell one in</span>
+            </>
+          )
+        )}
+      </>
+    )
+  })()
+  return (
+    <div className="line pool" data-pool-price={pool.address}>
+      <span>{label}</span>
+      <strong aria-live="polite">{body}</strong>
+    </div>
+  )
+}
+
 /**
- * One collection in Trade → NFTs: the best price, every venue it trades on (MiyaPool first, then OpenSea, Blur,
- * Magic Eden) with what each one's API can tell us, and the cheapest OpenSea listings. Venue links always work;
+ * One collection in Trade → NFTs: the best price, every venue it trades on (MiyaPool first, then OpenSea and Blur) with what each one's API can tell us, and the cheapest OpenSea listings. Venue links always work;
  * prices need the OpenSea key on the server (a quiet note says so).
  */
 export default function CollectionView({
@@ -171,10 +241,38 @@ export default function CollectionView({
   const name = knownName || 'Unnamed collection'
   const venues = venuesFor(chainId)
 
-  const floor: Price | undefined = os.stats?.floor || listings.listings?.[0]?.price
-  const cheapest = bestQuote([{ venue: 'OpenSea', price: floor }])
-  const topOffer = bestQuote([{ venue: 'OpenSea', price: os.bestOffer?.price }], 'highest')
+  // MiyaPool prices: one pool token (= one NFT) through 0x, in ETH for the comparison and in the chosen pair to show.
+  const pairs = pairsFor(chainId)
+  const swap = pairs.length > 0
+  const [pairSymbol, setPairSymbol] = useState<string>(DEFAULT_PAIR_SYMBOL)
+  const ethPair = pickPair(pairs, 'ETH')
+  const shownPair = pickPair(pairs, pairSymbol)
+  const poolAddresses = pools.pools.map((p) => p.address)
+  const ethPrices = usePoolPrices(chainId, poolAddresses, ethPair)
+  const shownPrices = usePoolPrices(chainId, poolAddresses, shownPair)
   const poolsWithNfts = pools.pools.filter((p) => p.held > 0n)
+  const poolVenue = (p: Pool) => `MiyaPool (${MODE_LABEL[p.mode]})`
+  // `where` reads after the price: an OpenSea listing or offer is "on OpenSea"; a pool's bid is a sale into it.
+
+  const floor: Price | undefined = os.stats?.floor || listings.listings?.[0]?.price
+  const cheapest = bestQuote([
+    { where: 'on OpenSea', price: floor },
+    ...poolsWithNfts.map((p) => ({
+      where: `on ${poolVenue(p)}`,
+      price: poolSide(ethPrices[p.address.toLowerCase()], 'ask'),
+    })),
+  ])
+  const topOffer = bestQuote(
+    [
+      { where: 'on OpenSea', price: os.bestOffer?.price },
+      ...pools.pools.map((p) => ({
+        where: `sell into ${poolVenue(p)}`,
+        price: poolSide(ethPrices[p.address.toLowerCase()], 'bid'),
+      })),
+    ],
+    'highest'
+  )
+  const poolLines = swap ? pools.pools : poolsWithNfts
 
   const createPool = (mode: PoolMode) =>
     factory &&
@@ -218,13 +316,13 @@ export default function CollectionView({
           </div>
         </Hero>
 
-        {(cheapest || topOffer || poolsWithNfts.length > 0) && (
+        {(cheapest || topOffer || poolLines.length > 0) && (
           <Best aria-label="Best prices">
             {cheapest && (
               <div className="line">
                 <span>Cheapest</span>
                 <strong>
-                  {formatPrice(cheapest.price)} <span className="where">on {cheapest.venue}</span>
+                  {formatPrice(cheapest.price)} <span className="where">{cheapest.where}</span>
                 </strong>
               </div>
             )}
@@ -232,17 +330,26 @@ export default function CollectionView({
               <div className="line">
                 <span>Best offer</span>
                 <strong>
-                  {formatPrice(topOffer.price)} <span className="where">on {topOffer.venue}</span>
+                  {formatPrice(topOffer.price)} <span className="where">{topOffer.where}</span>
                 </strong>
               </div>
             )}
-            {poolsWithNfts.length > 0 && (
-              <div className="line">
-                <span>In MiyaPool</span>
-                <strong>
-                  1 {poolsWithNfts[0]!.symbol} <span className="where">each, 0% fees</span>
-                </strong>
-              </div>
+            {poolLines.map((p) => (
+              <PoolPriceLine
+                key={p.address}
+                pool={p}
+                swap={swap}
+                symbol={shownPair?.symbol}
+                price={shownPrices[p.address.toLowerCase()]}
+              />
+            ))}
+            {poolLines.length > 0 && (
+              <PairSwitch
+                label="Pool price in"
+                options={pairs.map((t) => t.symbol)}
+                value={shownPair?.symbol}
+                onChange={setPairSymbol}
+              />
             )}
           </Best>
         )}
@@ -253,10 +360,7 @@ export default function CollectionView({
         <VenueList>
           {venues.map((v) => {
             if (v.id === 'miyapool') {
-              if (!factory)
-                return (
-                  <VenueRow key={v.id} venue={v} note={`MiyaPool is not live on ${chain.name} yet.`} />
-                )
+              if (!factory) return <VenueRow key={v.id} venue={v} note={`MiyaPool is not live on ${chain.name} yet.`} />
               if (pools.loading) return <VenueRow key={v.id} venue={v} note="Looking for a pool…" />
               return (
                 <VenueRow
@@ -309,7 +413,8 @@ export default function CollectionView({
               const facts: { label: string; value: string }[] = []
               if (os.stats?.floor) facts.push({ label: 'Floor', value: formatPrice(os.stats.floor) })
               if (os.bestOffer) facts.push({ label: 'Best offer', value: formatPrice(os.bestOffer.price) })
-              if (os.stats?.sales7d !== undefined) facts.push({ label: 'Sold this week', value: String(os.stats.sales7d) })
+              if (os.stats?.sales7d !== undefined)
+                facts.push({ label: 'Sold this week', value: String(os.stats.sales7d) })
               return (
                 <VenueRow
                   key={v.id}
@@ -347,9 +452,7 @@ export default function CollectionView({
             )
           })}
         </VenueList>
-        {!os.supported && (
-          <Hint>OpenSea, Blur and Magic Eden do not trade on {chain.name}. Only MiyaPool does.</Hint>
-        )}
+        {!os.supported && <Hint>OpenSea and Blur do not trade on {chain.name}. Only MiyaPool does.</Hint>}
         {os.error && <Hint>Could not get OpenSea prices right now. The links still work.</Hint>}
         {create.tx.phase !== 'idle' && (
           <StatusBox tone={create.tx.phase === 'error' ? 'error' : create.tx.phase === 'done' ? 'ok' : 'info'}>
@@ -376,8 +479,8 @@ export default function CollectionView({
             </Tiles>
           ) : (
             <Tiles>
-              {listings.listings!
-                .filter((l) => l.tokenId)
+              {listings
+                .listings!.filter((l) => l.tokenId)
                 .map((l) => (
                   <ListingTile
                     key={l.hash}

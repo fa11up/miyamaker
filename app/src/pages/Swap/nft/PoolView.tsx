@@ -12,8 +12,10 @@ import { txWords, useTx } from '@/miyamints/useTx'
 import { color, space, text } from '@/theme/tokens'
 
 import type { SwapChainId, SwapToken } from '../constants'
-import { DEFAULT_PAIR, isSwapChain } from '../constants'
+import { isSwapChain } from '../constants'
 import { erc721Abi, erc1155Abi, poolAbi } from './abi'
+import { formatPrice } from './markets'
+import { DEFAULT_PAIR_SYMBOL, pairWords, pickPair } from './pairs'
 import type { CommitRow } from './pool'
 import {
   blocksToReveal,
@@ -47,6 +49,7 @@ import {
   Segmented,
   Stat,
 } from './ui'
+import { pairsFor, poolSide, usePoolPrices } from './usePoolPrices'
 import type { Pool } from './usePools'
 import {
   HELD_PAGE,
@@ -57,6 +60,7 @@ import {
   useOwnership,
   usePool,
 } from './usePools'
+import { PairSwitch } from './venueUi'
 
 type Wallet = {
   address?: Address
@@ -148,6 +152,11 @@ export default function PoolView({
   const [typedError, setTypedError] = useState<string>()
   const [manualIds, setManualIds] = useState<string[]>([])
   const [revealed, setRevealed] = useState<{ ids: bigint[]; rearmed?: boolean }>()
+  // Which pair "Buy / Sell <pool token>" uses on the Tokens tab, and prices the token in. ETH unless chosen.
+  const pairs = pairsFor(chainId)
+  const [pairSymbol, setPairSymbol] = useState<string>(DEFAULT_PAIR_SYMBOL)
+  const pair = pickPair(pairs, pairSymbol)
+  const pairPrice = usePoolPrices(chainId, info.pool ? [poolAddress] : [], pair)[poolAddress.toLowerCase()]
 
   const owned = useOwnedInCollection(chainId, pool?.collection, me)
   const ownedForPool = useMemo(
@@ -678,24 +687,46 @@ export default function PoolView({
         </StatusBox>
       )}
 
-      {swapChain && (
-        <Card aria-label={`${symbol} token`}>
+      {swapChain && pair && (
+        <Card aria-label={`${symbol} token`} data-pool-token>
           <Eyebrow>The {symbol} token</Eyebrow>
           <Prose>
-            {symbol} is a normal token. If it has a market, you can buy or sell it for ETH on the Tokens tab.
+            {symbol} is a normal token: 1 {symbol} takes one NFT out of the pool. If it has a market, buy or sell it for{' '}
+            {pairWords(pairs.map((t) => t.symbol))} on the Tokens tab.
           </Prose>
+          <PairSwitch
+            label="Pay with / get"
+            options={pairs.map((t) => t.symbol)}
+            value={pair.symbol}
+            onChange={setPairSymbol}
+          />
+          <Hint aria-live="polite" data-pool-pair-price>
+            {(() => {
+              const p = pairPrice
+              if (!p || p.state === 'loading') return `Pricing 1 ${symbol} in ${pair.symbol}…`
+              if (p.state === 'unconfigured') return `No ${pair.symbol} price: the swap service is off.`
+              if (p.state === 'error') return `Could not get a ${pair.symbol} price right now.`
+              if (p.status === 'no-route')
+                return `No ${pair.symbol} market for ${symbol} yet, so 0x has no route. Try another pair.`
+              const ask = poolSide(p, 'ask')
+              const bid = poolSide(p, 'bid')
+              return [ask && `Buy 1 ≈ ${formatPrice(ask)}`, bid && `sell 1 ≈ ${formatPrice(bid)}`]
+                .filter(Boolean)
+                .join(' · ')
+            })()}
+          </Hint>
           <div style={{ display: 'flex', gap: space[2], flexWrap: 'wrap' }}>
             <PushButton
               type="button"
               onClick={() =>
                 onSwapToken({
                   chainId: swapChain,
-                  sell: DEFAULT_PAIR[swapChain][0],
+                  sell: pair,
                   buy: poolSwapToken(pool, swapChain),
                 })
               }
             >
-              Buy {symbol}
+              Buy {symbol} with {pair.symbol}
             </PushButton>
             <PushButton
               type="button"
@@ -703,12 +734,12 @@ export default function PoolView({
                 onSwapToken({
                   chainId: swapChain,
                   sell: poolSwapToken(pool, swapChain),
-                  buy: DEFAULT_PAIR[swapChain][0],
+                  buy: pair,
                 })
               }
               disabled={!balance}
             >
-              Sell {symbol}
+              Sell {symbol} for {pair.symbol}
             </PushButton>
           </div>
         </Card>

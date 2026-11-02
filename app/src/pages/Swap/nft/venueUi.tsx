@@ -162,4 +162,99 @@ export const Best = styled.div`
     font-weight: 400;
     color: ${color.inkMuted};
   }
+  /* A MiyaPool line: the label stays on the left, the price (and its sell side below it) on the right. */
+  .line.pool {
+    flex-wrap: nowrap;
+    align-items: flex-start;
+  }
+  .line.pool > span:first-child {
+    flex: 0 0 auto;
+    white-space: nowrap;
+    padding-top: 3px;
+  }
+  .line.pool strong {
+    min-width: 0;
+    text-align: right;
+  }
+  .sub {
+    display: block;
+  }
 `
+
+const Switch = styled.div`
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: ${space[1]} ${space[2]};
+  margin-top: ${space[1]};
+  font-size: ${text.xs};
+  .label {
+    color: ${color.inkMuted};
+  }
+  .opts {
+    display: flex;
+    gap: 2px;
+  }
+  button {
+    min-width: 56px;
+    height: 28px;
+    padding: 0 ${space[2]};
+    border: none;
+    background: ${color.face};
+    box-shadow: ${bevel.raised};
+    color: ${color.ink};
+    font-size: ${text.xs};
+    cursor: pointer;
+    .narrow & {
+      height: 40px;
+      min-width: 0;
+      flex: 1;
+    }
+  }
+  button[aria-pressed='true'] {
+    box-shadow: ${bevel.pressed};
+    background: ${color.well};
+    font-weight: 700;
+  }
+  button:focus-visible {
+    outline: 1px dotted ${color.dark};
+    outline-offset: -4px;
+  }
+  .narrow & {
+    width: 100%;
+  }
+  .narrow & .opts {
+    flex: 1;
+  }
+`
+
+/** A small ETH / imdUSD / IMD / INFER switch (toggle buttons). Hidden when there is only one choice. */
+export function PairSwitch({
+  label,
+  options,
+  value,
+  onChange,
+  disabled,
+}: {
+  label: string
+  options: readonly string[]
+  value: string | undefined
+  onChange: (symbol: string) => void
+  disabled?: boolean
+}) {
+  if (options.length < 2) return null
+  return (
+    <Switch role="group" aria-label={label} data-pair-switch>
+      <span className="label" aria-hidden>
+        {label}
+      </span>
+      <span className="opts">
+        {options.map((s) => (
+          <button key={s} type="button" aria-pressed={s === value} onClick={() => onChange(s)} disabled={disabled}>
+            {s}
+          </button>
+        ))}
+      </span>
+    </Switch>
+  )
+}

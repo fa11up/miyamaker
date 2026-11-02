@@ -114,7 +114,7 @@ const MODES: { id: TradeMode; label: string }[] = [
 
 /**
  * Trade (was "miya swaps"): Tokens swaps ERC-20s through 0x; NFTs trades NFTs through the zero-fee MiyaPool pools
- * and shows every other market a collection trades on (OpenSea in-app, Blur and Magic Eden as links).
+ * and shows every other market a collection trades on (OpenSea in-app, Blur as a link).
  * Both tabs stay mounted so switching never loses a trade in progress. The tab and pool live in the path
  * (/trade, /trade/nfts, /trade/nfts/<pool>, /trade/nfts/collection/<chain>/<address>[/<id>]) so they can be shared
  * and Back works.
