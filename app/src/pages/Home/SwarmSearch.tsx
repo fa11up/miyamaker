@@ -2,9 +2,11 @@ import { useQuery } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
 import styled from 'styled-components/macro'
 
-import { Chip, Eyebrow, Panel, Skeleton, Well } from '@/components/Retro'
+import { Chip, Skeleton } from '@/components/Retro'
 import { LINKS } from '@/constants/miyanet'
 import { bevel, color, font, space, text } from '@/theme/tokens'
+
+import { PushButton, y2k } from './y2k'
 
 /**
  * Search the IdentityMD swarm from inside miyanet. Matching runs locally over INFER BOX's public skill list
@@ -18,68 +20,144 @@ type SwarmResponse = { health: SwarmHealth; skills: Skill[] }
 
 const SWARM_URL = `${LINKS.box}api/public/swarm`
 const MAX_RESULTS = 6
+const EXAMPLES = ['build a mint site', 'audit my contract', 'make a token logo']
+
+/** INFER BOX's public swarm health and skill list (shared by the search box and the ticker). */
+export function useSwarm() {
+  return useQuery({
+    queryKey: ['box-swarm'],
+    queryFn: async () => {
+      const res = await fetch(SWARM_URL)
+      if (!res.ok) throw new Error(`BOX ${res.status}`)
+      return (await res.json()) as SwarmResponse
+    },
+    staleTime: 60_000,
+    refetchInterval: 60_000,
+  })
+}
+
+const Engine = styled.div`
+  display: flex;
+  flex-direction: column;
+  gap: ${space[2]};
+  width: 100%;
+  max-width: 720px;
+  margin: 0 auto;
+  text-align: left;
+`
 
 const SearchForm = styled.form`
   display: grid;
-  grid-template-columns: 1fr auto;
-  height: 44px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: ${space[2]};
+  padding: ${space[2]};
+  background: ${color.face};
+  box-shadow: ${bevel.raised};
   input {
     min-width: 0;
+    height: 44px;
     border: none;
     border-radius: 0;
-    background: ${color.well};
+    background: #fff;
     box-shadow: ${bevel.field};
     padding: 0 ${space[3]};
     font-size: ${text.lg};
   }
   button {
-    border: none;
+    min-height: 44px;
     padding: 0 ${space[4]};
-    background: ${color.accent};
-    color: ${color.highlight};
-    font-family: ${font.display};
-    text-shadow: 1px 1px 0 ${color.accentDark};
-    box-shadow: inset -2px -2px ${color.accentDark}, inset 2px 2px #f5c6f6;
-    cursor: pointer;
+    font-weight: 700;
+  }
+  .narrow & {
+    grid-template-columns: minmax(0, 1fr);
+    input {
+      font-size: ${text.sm};
+    }
   }
 `
 
-const Results = styled.ul`
+const Hints = styled.div`
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: ${space[1]} ${space[3]};
+  font-size: ${text.sm};
+  color: ${color.highlight};
+  button {
+    border: none;
+    padding: 4px 0;
+    background: none;
+    color: #c9d4ff;
+    text-decoration: underline;
+    font-size: ${text.sm};
+    cursor: pointer;
+    .narrow & {
+      min-height: 44px;
+    }
+  }
+`
+
+const Results = styled.ol`
   list-style: none;
   margin: 0;
-  padding: 0;
+  padding: ${space[3]};
+  background: ${y2k.paper};
+  box-shadow: ${bevel.sunken};
   display: flex;
   flex-direction: column;
-  gap: ${space[2]};
+  gap: ${space[3]};
+  counter-reset: hit;
 `
 
-const Result = styled(Well).attrs({ as: 'li' })`
-  padding: ${space[2]} ${space[3]};
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  strong {
-    font-family: ${font.mono};
-    font-size: ${text.xs};
-    color: ${color.link};
+const Result = styled.li`
+  counter-increment: hit;
+  display: grid;
+  grid-template-columns: 2.2em minmax(0, 1fr);
+  font-family: ${font.body};
+  &::before {
+    content: counter(hit) '.';
+    font-weight: 700;
+    color: ${color.inkMuted};
   }
-  span {
-    font-family: ${font.body};
-    font-size: ${text.xs};
+  strong {
+    display: block;
+    font-family: ${font.ui};
+    font-size: ${text.sm};
+    color: ${color.link};
+    text-decoration: underline;
+    word-break: break-word;
+  }
+  p {
+    margin: 2px 0;
+    font-size: ${text.sm};
     line-height: 1.5;
     color: ${color.ink};
+  }
+  small {
+    font-size: ${text.xs};
+    color: ${color.success};
   }
 `
 
 const Meta = styled.div`
   display: flex;
-  gap: ${space[2]};
+  gap: ${space[2]} ${space[3]};
   flex-wrap: wrap;
   align-items: center;
-  font-size: ${text.xs};
-  color: ${color.inkMuted};
-  a {
-    color: ${color.link};
+  font-size: ${text.sm};
+  line-height: 1.5;
+  color: ${color.highlight};
+`
+
+const Panel = styled.div`
+  display: flex;
+  flex-direction: column;
+  gap: ${space[2]};
+  padding: ${space[3]};
+  background: ${y2k.paper};
+  box-shadow: ${bevel.raised};
+  ${Meta} {
+    color: ${color.ink};
   }
 `
 
@@ -105,19 +183,16 @@ export default function SwarmSearch() {
   const [input, setInput] = useState('')
   const [query, setQuery] = useState('')
   const [copied, setCopied] = useState(false)
-  const swarm = useQuery({
-    queryKey: ['box-swarm'],
-    queryFn: async () => {
-      const res = await fetch(SWARM_URL)
-      if (!res.ok) throw new Error(`BOX ${res.status}`)
-      return (await res.json()) as SwarmResponse
-    },
-    staleTime: 60_000,
-    refetchInterval: 60_000,
-  })
+  const swarm = useSwarm()
 
   const results = useMemo(() => rankSkills(swarm.data?.skills || [], query), [swarm.data, query])
   const h = swarm.data?.health
+
+  const search = (q: string) => {
+    setInput(q)
+    setQuery(q.trim())
+    setCopied(false)
+  }
 
   const openBox = async () => {
     try {
@@ -131,71 +206,86 @@ export default function SwarmSearch() {
   }
 
   return (
-    <Panel style={{ gridArea: 'search' }} aria-label="Search the swarm">
-      <Meta style={{ justifyContent: 'space-between' }}>
-        <Eyebrow>INFER BOX · ask the swarm</Eyebrow>
-        {swarm.isLoading ? (
-          <Chip tone="off">Connecting</Chip>
-        ) : swarm.isError ? (
-          <Chip tone="warn">BOX unreachable</Chip>
-        ) : (
-          <Chip tone="ok">{h?.agentsOnline.toLocaleString('en-US')} agents online</Chip>
-        )}
-      </Meta>
+    <Engine aria-label="Search the swarm">
       <SearchForm
         role="search"
         onSubmit={(e) => {
           e.preventDefault()
-          setQuery(input.trim())
-          setCopied(false)
+          search(input)
         }}
       >
         <input
           aria-label="What do you want built, answered or checked?"
-          placeholder="build a mint site, audit my contract, make a token logo…"
+          placeholder="What should the swarm build?"
           value={input}
           onChange={(e) => setInput(e.target.value)}
         />
-        <button type="submit">Search</button>
+        <PushButton type="submit">Search the swarm</PushButton>
       </SearchForm>
+
+      <Hints>
+        <span>Try:</span>
+        {EXAMPLES.map((q) => (
+          <button key={q} type="button" onClick={() => search(q)}>
+            {q}
+          </button>
+        ))}
+        <span style={{ marginLeft: 'auto' }}>
+          {swarm.isLoading ? (
+            <Chip tone="off">Connecting</Chip>
+          ) : swarm.isError ? (
+            <Chip tone="warn">BOX unreachable</Chip>
+          ) : (
+            <Chip tone="ok">{h?.agentsOnline.toLocaleString('en-US')} agents online</Chip>
+          )}
+        </span>
+      </Hints>
 
       {swarm.isLoading && query && <Skeleton h="48px" />}
       {query && !swarm.isLoading && (
-        <>
+        <Panel>
           {results.length ? (
-            <Results>
-              {results.map((s) => (
-                <Result key={s.id}>
-                  <strong>{s.id}</strong>
-                  <span>{s.description}</span>
-                  <Meta>
-                    {s.role} · accepted {s.attempts ? Math.round((s.accepted / s.attempts) * 100) : 0}% of{' '}
-                    {s.attempts.toLocaleString('en-US')} tries
-                  </Meta>
-                </Result>
-              ))}
-            </Results>
+            <>
+              <Meta>
+                <span>
+                  Skills that match <strong>&ldquo;{query}&rdquo;</strong>:
+                </span>
+              </Meta>
+              <Results>
+                {results.map((s) => (
+                  <Result key={s.id}>
+                    <div>
+                      <strong>{s.id}</strong>
+                      <p>{s.description}</p>
+                      <small>
+                        {s.role}, the swarm accepted {s.attempts ? Math.round((s.accepted / s.attempts) * 100) : 0}% of{' '}
+                        {s.attempts.toLocaleString('en-US')} tries
+                      </small>
+                    </div>
+                  </Result>
+                ))}
+              </Results>
+            </>
           ) : (
             <Meta>No skill matches those words. INFER BOX can still sharpen the idea with you.</Meta>
           )}
           <Meta>
-            <button type="button" onClick={openBox}>
+            <PushButton type="button" onClick={openBox}>
               Send to INFER BOX ↗
-            </button>
-            <span>
+            </PushButton>
+            <span style={{ flex: '1 1 240px' }}>
               {copied
-                ? 'Your idea is waiting in BOX (and copied). Sign in, evaluate, and pay in imdUSD if it passes.'
-                : 'BOX checks your idea, quotes it, and the swarm runs it once you pay in imdUSD.'}
+                ? 'Your idea is waiting in BOX (and copied). Sign in, check it, and pay in imdUSD if it passes.'
+                : 'BOX checks your idea and gives you a price. Pay in imdUSD and the swarm builds it.'}
             </span>
           </Meta>
-        </>
+        </Panel>
       )}
       {h && !query && (
-        <Meta>
-          {h.jobsDoneLastDay} jobs done and {h.acceptedLastDay.toLocaleString('en-US')} answers accepted in the last day
-          across {swarm.data?.skills.length} skills.
+        <Meta style={{ fontSize: text.xs, opacity: 0.85 }}>
+          The swarm finished {h.jobsDoneLastDay} jobs in the last day, across {swarm.data?.skills.length} skills.
         </Meta>
       )}
-    </Panel>
+    </Engine>
   )
 }
