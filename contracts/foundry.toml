@@ -14,7 +14,7 @@ evm_version = "cancun"
 test = "test"
 script = "script"
 broadcast = "broadcast"
-fs_permissions = [{ access = "read-write", path = "./deployments/" }]
+fs_permissions = [{ access = "read-write", path = "./deployments/" }, { access = "read", path = "./script/config/" }]
 remappings = [
     "forge-std/=lib/forge-std/src/",
     "solady/=lib/solady/src/",
