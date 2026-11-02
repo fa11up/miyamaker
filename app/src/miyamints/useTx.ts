@@ -1,6 +1,6 @@
 import { simulateContract, waitForTransactionReceipt, writeContract } from '@wagmi/core'
 import { useState } from 'react'
-import type { Hash } from 'viem'
+import type { Hash, TransactionReceipt } from 'viem'
 import { useAccount } from 'wagmi'
 
 import { wagmiConfig } from '@/config/wagmi'
@@ -12,6 +12,8 @@ export type TxState = {
   phase: 'idle' | 'wallet' | 'pending' | 'done' | 'error'
   hash?: Hash
   message?: string
+  /** Set when phase is 'done', for callers that read events from it. */
+  receipt?: TransactionReceipt
 }
 
 /**
@@ -36,7 +38,7 @@ export function useTx(onDone?: (id: string) => void) {
       setTx({ id, phase: 'pending', hash })
       const receipt = await waitForTransactionReceipt(wagmiConfig, { hash, chainId: call.chainId })
       if (receipt.status !== 'success') throw new Error('The transaction failed on-chain.')
-      setTx({ id, phase: 'done', hash })
+      setTx({ id, phase: 'done', hash, receipt })
       onDone?.(id)
     } catch (e) {
       setTx({ id, phase: 'error', message: describeError(e) })
