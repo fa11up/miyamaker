@@ -3,7 +3,7 @@ import { DurableObject } from 'cloudflare:workers'
 import { verifyToken } from './auth'
 import { BadgeResolver, viemHoldingReader } from './badges'
 import type { Env } from './env'
-import { modSet } from './env'
+import { modSet, rpcUrl } from './env'
 import type { Conn, ConnMeta } from './room-core'
 import { RoomCore } from './room-core'
 
@@ -20,7 +20,7 @@ export class ChatRoom extends DurableObject<Env> {
     super(ctx, env)
     // Answered by the runtime without waking the object.
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair('ping', 'pong'))
-    this.badges = new BadgeResolver(viemHoldingReader(env.RPC_URL), modSet(env))
+    this.badges = new BadgeResolver(viemHoldingReader(rpcUrl(env)), modSet(env))
     this.core = new RoomCore({
       storage: ctx.storage,
       now: () => Date.now(),

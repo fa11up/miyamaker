@@ -81,7 +81,7 @@ test('native chat: kick frames, X and external sites link out', () => {
   const kickSource = kick.kind === 'iframe' ? kick.sources[0] : undefined
   assert.deepEqual(nativeChatFor(kick, kickSource), {
     kind: 'iframe',
-    src: 'https://kick.com/popout/imdusd/chat',
+    src: 'https://kick.com/popout/xqc/chat',
     label: 'kick chat',
   })
   const sq = CHANNELS.find((c) => c.id === 'squeekchain')!

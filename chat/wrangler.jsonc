@@ -11,11 +11,12 @@
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["ChatRoom"] }],
   "vars": {
     "ALLOWED_ORIGINS": "https://miyamaker.com,https://www.miyamaker.com,http://localhost:5331,http://localhost:5173",
-    "MOD_ADDRESSES": "",
-    "RPC_URL": "https://ethereum-rpc.publicnode.com"
+    "MOD_ADDRESSES": "0x5167D014a056E43883e1BBEa5530c3c0dC993281"
   },
   // Secrets (not in this file): SESSION_SECRET  ->  npx wrangler secret put SESSION_SECRET
-  // Custom domain (uncomment after the zone is on Cloudflare):
-  // "routes": [{ "pattern": "chat.miyamaker.com", "custom_domain": true }],
+  //                            RPC_URL (optional, keyed mainnet RPC; public node otherwise) -> npx wrangler secret put RPC_URL
+  // miyagod.eth moderates. Served from imdusd.com (same Cloudflare account as box.imdusd.com) until miyamaker.com's
+  // zone is reachable from this account; then switch the pattern to chat.miyamaker.com.
+  "routes": [{ "pattern": "chat.imdusd.com", "custom_domain": true }],
   "observability": { "enabled": true }
 }

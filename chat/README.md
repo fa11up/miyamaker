@@ -63,7 +63,7 @@ Mod commands (sent as a normal `send`; non-mods get `forbidden`): `/del <id>`, `
 - Rate limits per room: 5 messages / 10 s per address and 10 / 10 s per IP (token buckets in DO memory; they reset if
   the room hibernates, which only makes them briefly more lenient). Slow mode applies per address; mods are exempt.
 - `/auth/*`: 20 requests / minute per IP, **best-effort**: in-memory per Worker isolate, not global. For a hard limit add a
-  Cloudflare WAF rate-limiting rule on `chat.miyamaker.com/auth/*`.
+  Cloudflare WAF rate-limiting rule on `chat.imdusd.com/auth/*`.
 - Nonces are stateless, so a signed sign-in can be replayed within its 10-minute window; that only re-issues a session for
   the same address that signed it.
 - Session tokens are `base64url(JSON{a, exp}).base64url(HMAC-SHA256)`, 6 h. Rotating `SESSION_SECRET` signs everyone out.
@@ -93,9 +93,9 @@ Then run the app with `VITE_CHAT_URL=http://127.0.0.1:8787` (see `app/.env.examp
    - `ALLOWED_ORIGINS` — exact origins of the deployed app (remove the localhost entries for production, or keep them
      only in a separate `env.dev`). Add any Vercel preview origin you want chat on.
    - `MOD_ADDRESSES` — comma-separated mod wallet addresses.
-   - `RPC_URL` — a mainnet RPC you trust (the public default is rate-limited).
+   - `RPC_URL` — optional; set it as a secret (`npx wrangler secret put RPC_URL`), never in vars. Defaults to a public node.
 4. Route: uncomment `routes` (`{ "pattern": "chat.miyamaker.com", "custom_domain": true }`) once `miyamaker.com` is a
    Cloudflare zone, or use the `*.workers.dev` URL.
 5. `npx wrangler deploy` (the `v1` migration creates the SQLite-backed `ChatRoom` class).
-6. In Vercel (app project) set `VITE_CHAT_URL=https://chat.miyamaker.com` and redeploy the app. Without it the chat
+6. In Vercel (app project) set `VITE_CHAT_URL=https://chat.imdusd.com` and redeploy the app. Without it the chat
    tab shows "chat offline".

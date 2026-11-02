@@ -94,9 +94,14 @@ export const CHANNELS: Channel[] = [
     name: 'kick · imdUSD markets',
     tagline: 'Kick streams with imdUSD markets (soon)',
     description: 'Kick creators, embedded with the official Kick player. Markets on these streams are coming soon.',
-    // TODO(kick): replace the placeholder with the real slug(s). Several entries show a creator picker.
-    sources: [{ provider: 'kick', slug: 'imdusd', label: 'imdUSD', placeholder: true }],
-    links: [{ label: 'kick.com', href: 'https://kick.com/imdusd' }],
+    // Picked 2026-11-01 to fit the market templates (chess results are settleable from public chess APIs); no
+    // casino streams. Kick follower counts then: xQc 1.47M, GMHikaru 214k, chessbrah 35k.
+    sources: [
+      { provider: 'kick', slug: 'xqc', label: 'xQc' },
+      { provider: 'kick', slug: 'gmhikaru', label: 'GMHikaru' },
+      { provider: 'kick', slug: 'chessbrah', label: 'chessbrah' },
+    ],
+    links: [{ label: 'kick.com', href: 'https://kick.com/' }],
     markets: true,
   },
 ]

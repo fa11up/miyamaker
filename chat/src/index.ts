@@ -5,7 +5,7 @@ import type { SignatureVerifier } from './auth'
 import { makeNonce, signToken, verifySiweLogin } from './auth'
 import { BadgeResolver, viemHoldingReader } from './badges'
 import type { Env } from './env'
-import { allowedOrigins, modSet } from './env'
+import { allowedOrigins, modSet, rpcUrl } from './env'
 import { ROOM_RE } from './protocol'
 import { RateLimiter } from './ratelimit'
 
@@ -51,7 +51,7 @@ function json(request: Request, env: Env, body: unknown, status = 200, extra: Re
 
 function getVerifier(env: Env): SignatureVerifier {
   if (!verifier) {
-    const client = createPublicClient({ chain: mainnet, transport: http(env.RPC_URL, { timeout: 8_000 }) })
+    const client = createPublicClient({ chain: mainnet, transport: http(rpcUrl(env), { timeout: 8_000 }) })
     // Handles EOAs locally and ERC-1271 / ERC-6492 smart accounts over RPC.
     verifier = ({ address, message, signature }) => client.verifyMessage({ address, message, signature })
   }
@@ -59,7 +59,7 @@ function getVerifier(env: Env): SignatureVerifier {
 }
 
 function getBadges(env: Env) {
-  badgeResolver ??= new BadgeResolver(viemHoldingReader(env.RPC_URL), modSet(env))
+  badgeResolver ??= new BadgeResolver(viemHoldingReader(rpcUrl(env)), modSet(env))
   return badgeResolver
 }
 
