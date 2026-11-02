@@ -3,7 +3,7 @@ import type { Address } from 'viem'
 import { useReadContracts } from 'wagmi'
 
 import type { ContractMetadata } from '@/store/collections/reducer'
-import { resolveUri } from '@/utils/resolveUri'
+import { resolveMetadataUri, resolveUri } from '@/utils/resolveUri'
 
 export function useNFT({ address }: { address: Address }) {
   const { data } = useReadContracts({
@@ -47,7 +47,7 @@ export function useNFT({ address }: { address: Address }) {
   let contractUri = (data?.[0]?.result as string) || ''
   const symbol = (data?.[1]?.result as string) || ''
 
-  contractUri = resolveUri(contractUri)
+  contractUri = resolveMetadataUri(contractUri)
 
   const { data: contractMetadata, error } = useFetch<ContractMetadata>(contractUri)
 

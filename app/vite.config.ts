@@ -37,7 +37,7 @@ function zeroExDevProxy(env: Record<string, string>): Plugin {
 }
 
 export default defineConfig(({ mode }) => ({
-  base: '',
+  base: '/',
   plugins: [
     zeroExDevProxy(loadEnv(mode, __dirname, ['ZEROX_'])),
     react(),
@@ -130,7 +130,8 @@ export default defineConfig(({ mode }) => ({
     }),
   ],
   build: {
-    sourcemap: true,
+    // No source maps in the deployed bundle: 'hidden' would still copy the .map files into dist/ (and so publish them).
+    sourcemap: false,
   },
   resolve: {
     alias: [

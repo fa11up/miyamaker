@@ -163,7 +163,8 @@ export default function LaunchPage() {
         collaborators: [],
       }
 
-      const contractURI = `data:application/json;utf8,${JSON.stringify(json)}`
+      // Percent-encode so '#', '%' and friends in user text cannot truncate or corrupt the data URI.
+      const contractURI = `data:application/json;utf8,${encodeURIComponent(JSON.stringify(json))}`
 
       return [
         success,

@@ -3,7 +3,7 @@ import type { Address } from 'viem'
 import { formatUnits, parseAbi } from 'viem'
 import { useReadContract, useReadContracts } from 'wagmi'
 
-import { resolveUri } from '@/utils/resolveUri'
+import { resolveMetadataUri } from '@/utils/resolveUri'
 
 import { abi } from './constants'
 
@@ -32,7 +32,7 @@ export function useAllTokenIds({ nft, address }: { nft: Address; address: Addres
   })
 
   const tokenURIList = (tokenURIData?.map(({ result }) => result) as string[]) || []
-  const tokenURIs = tokenURIList.map((item: string) => resolveUri(item))
+  const tokenURIs = tokenURIList.map((item: string) => resolveMetadataUri(item))
 
   return {
     tokenIds: [...ids] as number[],

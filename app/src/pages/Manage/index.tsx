@@ -358,7 +358,7 @@ export default function ManagePage() {
   const handleUpdateMetadata = async () => {
     setTransacting('metadata')
     try {
-      const contractURI = `data:application/json;utf8,${JSON.stringify(form)}`
+      const contractURI = `data:application/json;utf8,${encodeURIComponent(JSON.stringify(form))}`
 
       const result = await metadata.setContractUri(contractURI)
       setTxHash(result.hash)
@@ -426,6 +426,18 @@ export default function ManagePage() {
     dispatch(updateManagedCollection({ value: collectionInput as Address }))
     setParams((prev) => ({ ...prev, collection: collectionInput }))
   }
+
+  const handleChangeCollection = () => {
+    dispatch(updateManagedCollection({ value: undefined }))
+    setCollectionInput('')
+    setParams((prev) => {
+      const next = new URLSearchParams(prev)
+      next.delete('collection')
+      return next
+    })
+  }
+
+  const connectHint = !isConnected && <p>Connect your wallet to manage a collection you own.</p>
 
   return (
     <WindowWrapper>
@@ -496,10 +508,15 @@ export default function ManagePage() {
             <p>You might have input the wrong address.</p>
             <p>You might be on the wrong chain.</p>
             <p>You might not be the owner of this collection.</p>
+            {connectHint}
+            <HighlightButton style={{ marginTop: '8px' }} onClick={() => handleChangeCollection()}>
+              Change collection
+            </HighlightButton>
           </div>
         ) : (
           <div>
             <p>No collection selected</p>
+            {connectHint}
             <div style={{ display: 'flex', alignItems: 'center', gap: '16px', margin: '0 8px' }}>
               <FormInput
                 label="Collection"

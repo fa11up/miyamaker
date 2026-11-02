@@ -334,6 +334,9 @@ export default function SwapPage() {
   const [input, setInput] = useState('')
   const [slippageBps, setSlippageBps] = useState(DEFAULT_SLIPPAGE_BPS)
   const [customSlippage, setCustomSlippage] = useState('')
+  const customSlippageBps = Math.round(Number(customSlippage) * 100)
+  const customSlippageInvalid =
+    customSlippage !== '' && !(customSlippageBps >= SLIPPAGE_MIN_BPS && customSlippageBps <= SLIPPAGE_MAX_BPS)
   const [picker, setPicker] = useState<'sell' | 'buy' | undefined>()
 
   // Follow the wallet onto a supported chain.
@@ -440,7 +443,11 @@ export default function SwapPage() {
     }
     if (exec.needsApproval)
       return {
-        label: exec.approving ? `Approving ${sell.symbol}…` : `Approve ${sell.symbol}`,
+        label: exec.approving
+          ? `Approving ${sell.symbol}…`
+          : exec.needsAllowanceReset
+          ? `Reset ${sell.symbol} allowance (1/2)`
+          : `Approve ${sell.symbol}`,
         disabled: exec.approving,
         onClick: exec.approve,
       }
@@ -708,6 +715,11 @@ export default function SwapPage() {
               </span>
             </StatusBox>
           )}
+          {exec.requoted && firm && !busy && !exec.swapHash && (
+            <StatusBox tone="info" role="status">
+              <span>The quote had expired and was refreshed. Check the new amounts above, then press Swap again.</span>
+            </StatusBox>
+          )}
           {exec.awaitingWallet && (
             <StatusBox tone="info" role="status">
               <img src={LoadingHourglass} alt="" />
@@ -768,6 +780,8 @@ export default function SwapPage() {
                 inputMode="decimal"
                 placeholder="Custom"
                 aria-label="Custom slippage percent"
+                aria-invalid={customSlippageInvalid}
+                aria-describedby={customSlippageInvalid ? 'custom-slippage-error' : undefined}
                 value={customSlippage}
                 onChange={(e) => {
                   const v = e.target.value.replace(',', '.')
@@ -780,6 +794,11 @@ export default function SwapPage() {
               %
             </label>
             <span style={{ color: color.inkMuted }}>0.1% to 3%</span>
+            {customSlippageInvalid && (
+              <span id="custom-slippage-error" role="alert" style={{ color: color.danger }}>
+                {customSlippage}% is outside 0.1% to 3%; still using {slippageBps / 100}%.
+              </span>
+            )}
             {slippageBps >= 200 && <span style={{ color: color.warning }}>High slippage: you may get a worse price.</span>}
           </Settings>
 

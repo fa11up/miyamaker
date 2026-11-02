@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useDispatch } from 'react-redux'
 import styled from 'styled-components/macro'
 
@@ -136,6 +136,12 @@ export default function OsLoader() {
   const [booted, setBooted] = useState(false)
   const [currentLine, setLine] = useState(-1)
   const dispatch = useDispatch()
+  const rowRef = useRef<HTMLDivElement>(null)
+
+  // Take keyboard focus on mount so "Press S to Skip" works without clicking the screen first.
+  useEffect(() => {
+    rowRef.current?.focus({ preventScroll: true })
+  }, [])
 
   const close = (code?: string) => {
     if (code === 'KeyS') {
@@ -150,7 +156,7 @@ export default function OsLoader() {
 
   // we assign a key to the typewriter component so that it remounts when the line changes
   return (
-    <Row onKeyDownCapture={(e) => close(e.code)} tabIndex={0} onClick={() => close()}>
+    <Row ref={rowRef} onKeyDownCapture={(e) => close(e.code)} tabIndex={0} onClick={() => close()}>
       <Container>
         {asciiArt.map((line, i) => (
           <span

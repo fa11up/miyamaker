@@ -2,7 +2,8 @@
  * Server-side proxy for the 0x Swap API v2 (AllowanceHolder flow). Rules mirror the imdUSD swap
  * worker (infer-pilot web/worker/swap.js):
  *
- * - Only GET /api/0x/swap/allowance-holder/{price,quote}, same-origin only.
+ * - Only GET /api/0x/swap/allowance-holder/{price,quote}, same-origin only (a same-origin signal is
+ *   required, not just the absence of a cross-site one), rate-limited per IP (per instance).
  * - Only allowlisted query params; anything else (including any fee field) is refused, not forwarded.
  *   Duplicates are refused. Every field is validated.
  * - chainId 1 (Ethereum) and 4663 (Robinhood Chain).
@@ -98,13 +99,58 @@ const json = (status: number, body: unknown, extra: Record<string, string> = {})
     headers: { 'content-type': 'application/json', 'cache-control': 'no-store', ...extra },
   })
 
-/** A request from another site: a browser says so in Sec-Fetch-Site or Origin. */
-function crossSite(headers: Headers | undefined, url: URL) {
+/**
+ * Same-origin check. Browsers send Sec-Fetch-Site on every fetch (all current engines) and Origin on
+ * cross-origin ones, so a page on this site always carries at least one of them: Sec-Fetch-Site:
+ * same-origin, or an Origin equal to ours. A request with neither (curl, scripts, other servers) or with a
+ * foreign value is refused. Non-browser clients can forge these headers, so this only stops other sites
+ * from spending the key through visitors' browsers; the rate limit below is what bounds scripted use.
+ */
+export function sameOrigin(headers: Headers | undefined, url: URL) {
   if (!headers) return false
   const site = headers.get('sec-fetch-site')
-  if (site && site !== 'same-origin') return true
   const origin = headers.get('origin')
-  return !!origin && origin !== url.origin
+  if (site && site !== 'same-origin') return false
+  if (origin && origin !== url.origin) return false
+  return site === 'same-origin' || origin === url.origin
+}
+
+export type RateLimiter = (key: string, now?: number) => boolean
+
+/**
+ * In-memory token bucket per client key (IP): `capacity` requests in a burst, refilled at `perSecond`.
+ * NOTE: state lives in this process only. On Vercel every function instance (and every cold start) has
+ * its own buckets, so this is a first layer against a single noisy client, not a global quota; put a
+ * shared store (KV/Upstash) or the platform firewall in front for a hard limit.
+ */
+export function createRateLimiter({ capacity = 60, perSecond = 1, maxKeys = 10_000 } = {}): RateLimiter {
+  const buckets = new Map<string, { tokens: number; at: number }>()
+  return (key, now = Date.now()) => {
+    const prev = buckets.get(key)
+    const tokens = prev ? Math.min(capacity, prev.tokens + ((now - prev.at) / 1000) * perSecond) : capacity
+    if (!prev && buckets.size >= maxKeys) {
+      // Bound memory: drop the oldest half (a Map iterates in insertion order).
+      Array.from(buckets.keys())
+        .slice(0, Math.ceil(maxKeys / 2))
+        .forEach((k) => buckets.delete(k))
+    }
+
+    if (tokens < 1) {
+      buckets.set(key, { tokens, at: now })
+      return false
+    }
+
+    buckets.set(key, { tokens: tokens - 1, at: now })
+    return true
+  }
+}
+
+const defaultLimiter = createRateLimiter()
+
+/** Client IP as the platform reports it (Vercel sets x-real-ip / x-forwarded-for). */
+export function clientKey(headers: Headers | undefined) {
+  const forwarded = headers?.get('x-forwarded-for')?.split(',')[0]?.trim()
+  return headers?.get('x-real-ip')?.trim() || forwarded || 'unknown'
 }
 
 /**
@@ -114,13 +160,16 @@ function crossSite(headers: Headers | undefined, url: URL) {
 export async function handleZeroExRequest(
   request: { method: string; url: string; headers?: Headers },
   env: ProxyEnv,
-  fetchImpl: typeof fetch = fetch
+  fetchImpl: typeof fetch = fetch,
+  limiter: RateLimiter = defaultLimiter
 ): Promise<Response> {
   const url = new URL(request.url, 'http://localhost')
   const kind = url.pathname.startsWith(ROUTE_PREFIX) ? url.pathname.slice(ROUTE_PREFIX.length) : ''
   if (kind !== 'price' && kind !== 'quote') return json(404, { name: 'NOT_FOUND', message: 'Not found.' })
   if (request.method !== 'GET') return json(405, { name: 'METHOD_NOT_ALLOWED', message: 'GET only.' }, { allow: 'GET' })
-  if (crossSite(request.headers, url)) return json(403, { name: 'FORBIDDEN', message: 'Same-origin only.' })
+  if (!sameOrigin(request.headers, url)) return json(403, { name: 'FORBIDDEN', message: 'Same-origin only.' })
+  if (!limiter(clientKey(request.headers)))
+    return json(429, { name: 'RATE_LIMITED', message: 'Too many swap requests, slow down.' }, { 'retry-after': '5' })
 
   const { query, error } = zeroXQuery(kind, url.searchParams)
   if (error) return json(400, { name: 'INPUT_INVALID', message: error })

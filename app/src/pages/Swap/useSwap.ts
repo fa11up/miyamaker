@@ -7,6 +7,7 @@ import { useReadContract, useSendTransaction, useWaitForTransactionReceipt, useW
 import { SwapApiError, fetchPrice, fetchQuote } from './api'
 import type { SwapChainId } from './constants'
 import { isNative, QUOTE_MAX_AGE_MS } from './constants'
+import { ALLOWANCE_HOLDER, quoteProblem } from './quoteGuard'
 import type { SwapRequest, ZeroExQuote } from './types'
 
 /** Indicative price, refreshed while the user is looking at it. Call sites debounce the amount. */
@@ -38,20 +39,25 @@ export function describeTxError(error: unknown): { message: string; cancelled: b
 
 /**
  * Review -> (approve) -> swap.
- * - The firm quote is fetched only when the user asks to review, and re-fetched if older than 30s
- *   before sending.
- * - Approval goes to `issues.allowance.spender` (AllowanceHolder), never to `transaction.to` (Settler),
- *   for exactly the sell amount.
+ * - The firm quote is fetched only when the user asks to review. If it is older than 30s when the user presses
+ *   Swap, it is re-fetched and shown instead of being sent: the user confirms the new price with a second press.
+ * - Every firm quote is checked against the request and the pinned AllowanceHolder (quoteGuard.ts) and refused
+ *   on any mismatch. In the AllowanceHolder flow `issues.allowance.spender` and `transaction.to` are both
+ *   AllowanceHolder (it calls Settler itself); approval goes to the pinned address, for exactly the sell amount.
+ * - A nonzero allowance below the amount is reset to 0 first (USDT-style tokens revert on nonzero -> nonzero).
  */
 export function useSwapExecution({ chainId, taker }: { chainId: SwapChainId; taker?: Address }) {
   const [state, setState] = useState<QuoteState>()
   const [quoting, setQuoting] = useState(false)
   const [quoteError, setQuoteError] = useState<unknown>()
+  /** The quote was re-fetched because it went stale: shown to the user, not sent. */
+  const [requoted, setRequoted] = useState(false)
 
   const firm = state && state.quote.liquidityAvailable ? (state.quote as FirmQuote) : undefined
   const request = state?.request
   const sellsNative = isNative(request?.sellToken)
-  const spender = firm?.issues.allowance?.spender
+  // Pinned, not taken from the quote (quoteProblem() already refused quotes naming anything else).
+  const spender = firm ? (ALLOWANCE_HOLDER[chainId] as Address | undefined) : undefined
 
   const allowance = useReadContract({
     address: request?.sellToken,
@@ -68,6 +74,8 @@ export function useSwapExecution({ chainId, taker }: { chainId: SwapChainId; tak
     !sellsNative &&
     !!spender &&
     (allowance.data !== undefined ? allowance.data < (request?.sellAmount ?? 0n) : !!firm.issues.allowance)
+  // USDT and similar tokens revert on approve(nonzero) while the allowance is nonzero: reset to 0 first.
+  const needsAllowanceReset = needsApproval && allowance.data !== undefined && allowance.data > 0n
 
   const approve = useWriteContract()
   const approveReceipt = useWaitForTransactionReceipt({ hash: approve.data, chainId, query: { enabled: !!approve.data } })
@@ -80,6 +88,12 @@ export function useSwapExecution({ chainId, taker }: { chainId: SwapChainId; tak
     setQuoteError(undefined)
     try {
       const quote = await fetchQuote(req)
+      const problem = quote.liquidityAvailable ? quoteProblem(quote, req) : undefined
+      if (problem) {
+        setState(undefined)
+        throw new SwapApiError(`${problem} Swap refused for your safety.`, 'QUOTE_MISMATCH', 0)
+      }
+
       setState({ quote, fetchedAt: Date.now(), request: req })
       return quote
     } catch (e) {
@@ -103,16 +117,23 @@ export function useSwapExecution({ chainId, taker }: { chainId: SwapChainId; tak
       address: request.sellToken,
       abi: erc20Abi,
       functionName: 'approve',
-      args: [spender, request.sellAmount],
+      args: [spender, needsAllowanceReset ? 0n : request.sellAmount],
       chainId,
     })
   }
 
   const doSwap = async () => {
     if (!state) return
-    let current: ZeroExQuote | undefined = state.quote
-    if (Date.now() - state.fetchedAt > QUOTE_MAX_AGE_MS) current = await getQuote(state.request)
-    if (!current || !current.liquidityAvailable) return
+    if (Date.now() - state.fetchedAt > QUOTE_MAX_AGE_MS) {
+      // Never send a quote the user has not seen: show the refreshed one and wait for another press.
+      setRequoted(true)
+      await getQuote(state.request)
+      return
+    }
+
+    const current: ZeroExQuote = state.quote
+    if (!current.liquidityAvailable || quoteProblem(current, state.request)) return
+    setRequoted(false)
     const tx = current.transaction
     send.sendTransaction({
       to: tx.to,
@@ -126,6 +147,7 @@ export function useSwapExecution({ chainId, taker }: { chainId: SwapChainId; tak
   const reset = () => {
     setState(undefined)
     setQuoteError(undefined)
+    setRequoted(false)
     approve.reset()
     send.reset()
   }
@@ -138,6 +160,8 @@ export function useSwapExecution({ chainId, taker }: { chainId: SwapChainId; tak
     getQuote,
     reset,
     needsApproval,
+    needsAllowanceReset,
+    requoted,
     approve: doApprove,
     approveHash: approve.data as Hash | undefined,
     approving: approve.isPending || (!!approve.data && approveReceipt.isLoading),

@@ -230,7 +230,7 @@ export const ProgressBarUploader = ({ request, onRequest }: ProgressBarUploaderP
             </div>
             <FileButtonRow>
               {fileUrl && (
-                <LinkButton target="_blank" href={fileUrl} style={{ gap: '0.5rem' }}>
+                <LinkButton target="_blank" rel="noreferrer noopener" href={fileUrl} style={{ gap: '0.5rem' }}>
                   <img src={SearchDirectory} alt="Search file" style={{ width: '16px', border: 'none' }} /> Check upload
                 </LinkButton>
               )}
@@ -242,7 +242,7 @@ export const ProgressBarUploader = ({ request, onRequest }: ProgressBarUploaderP
         <ProgressBar width={progress} />
       </div>
       <ButtonContainer>
-        {message && <div className="text-red-500" dangerouslySetInnerHTML={{ __html: message }} />}
+        {message && <div className="text-red-500">{message}</div>}
         <ConnectedButton onClick={handleUpload} disabled={txProcessing}>
           {txProcessing ? (
             <>

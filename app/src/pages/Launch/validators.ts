@@ -48,10 +48,11 @@ export const priceValidate = z.union([
     .string()
     .regex(finalPriceRegex)
     .transform<bigint>((el) => parseEther(el)),
+  // Whole-ETH prices ("1") are ether too, not wei.
   z
     .string()
     .regex(integerRegex)
-    .transform<bigint>((el) => BigInt(el)),
+    .transform<bigint>((el) => parseEther(el)),
 ])
 
 // input validation for token price to be "" or any decimal number
@@ -63,7 +64,8 @@ export const setPriceValidate = z.union([
 ])
 
 const finalTwoDecimalRegex = /^\d+\.\d{1,2}$/
-const twoDecimalRegex = /^\d+\.\d{0,1,2}$/
+// input form: digits, a dot and up to two decimals while typing ("5.", "5.2", "5.25")
+const twoDecimalRegex = /^\d+\.\d{0,2}$/
 
 export const royaltyValidate = z.union([
   z.literal('').transform(() => 0n),
@@ -83,13 +85,19 @@ export const royaltyValidate = z.union([
 export const setRoyaltyValidate = z.union([
   z.literal(''),
   z.literal('0'),
-  z.string().regex(priceRegex),
+  z.string().regex(twoDecimalRegex),
   z.string().regex(integerRegex),
 ])
 
+// zod's .url() accepts any scheme (javascript:, data:, ...); only web URLs are allowed here.
+const httpUrl = z
+  .string()
+  .url()
+  .refine((el) => /^https?:\/\//i.test(el), 'Only http(s), ipfs:// or ar:// links are allowed')
+
 export const uriValidate = z.union([
   z.literal(''),
-  z.string().url(),
+  httpUrl,
   z.string().startsWith('ipfs://'),
   z.string().startsWith('ar://'),
 ])
@@ -106,17 +114,21 @@ export const vaultIdValidate = z
 
 export const setVaultIdValidate = z.union([z.literal(''), z.string().regex(integerRegex)])
 
+const ALLOCATION_ERROR = 'Allocation must be a percentage between 5% and 100%'
+// basis points: 5% (500) to 100% (10000)
+const allocationBps = z.bigint().min(500n, ALLOCATION_ERROR).max(10000n, ALLOCATION_ERROR)
+
 export const allocationValidate = z.union([
   z
     .string()
-    .regex(finalTwoDecimalRegex, 'Allocation must be a percentage between 5% and 100%')
+    .regex(finalTwoDecimalRegex, ALLOCATION_ERROR)
     .transform<bigint>((el) => parseUnits(el, 2))
-    .pipe(z.bigint().min(500n)),
+    .pipe(allocationBps),
   z
     .string()
-    .regex(integerRegex, 'Allocation must be a percentage between 5% and 100%')
+    .regex(integerRegex, ALLOCATION_ERROR)
     .transform<bigint>((el) => parseUnits(el, 2))
-    .pipe(z.bigint().min(500n)),
+    .pipe(allocationBps),
 ])
 
 export const setAllocationValidate = z.union([

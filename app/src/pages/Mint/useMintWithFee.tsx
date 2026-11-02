@@ -1,8 +1,9 @@
 import type { Address } from 'viem'
-import { parseEther } from 'viem'
+
 import { useContractWrite } from '@/hooks/useContractWrite'
 
-export function useMintWithFee({ address, payAmount = '0.01' }: { address: Address; payAmount: string }) {
+/** `value` is the total payment in wei (price * amount), computed in bigint so no float rounding reaches the tx. */
+export function useMintWithFee({ address, value }: { address: Address; value: bigint }) {
   const { writeAsync } = useContractWrite({
     address,
     functionName: 'mint',
@@ -21,7 +22,7 @@ export function useMintWithFee({ address, payAmount = '0.01' }: { address: Addre
         type: 'function',
       },
     ],
-    value: parseEther(payAmount),
+    value,
   })
 
   const mint = async (amount: number) => writeAsync({ args: [amount] })

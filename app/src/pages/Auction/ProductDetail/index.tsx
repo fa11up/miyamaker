@@ -88,9 +88,13 @@ const Detail = styled.div`
   width: 75%;
   padding-left: 1.5rem;
   line-height: 1rem;
+  min-width: 0;
+  /* long unbroken values (bidder addresses) wrap instead of running off a phone screen */
+  overflow-wrap: anywhere;
 
   @media only screen and (max-width: 640px) {
     width: 65%;
+    padding-left: 0.75rem;
   }
 `
 
@@ -117,7 +121,7 @@ export default function ProductDetail({
 
   const [transacting, setTransacting] = useState(false)
   const [txHash, setTxHash] = useState('')
-  const [bidAmount, setBidAmount] = useState('0.0')
+  const [bidAmount, setBidAmount] = useState('')
   const [viewing, setViewing] = useState(false)
 
   // Get contract data
@@ -126,7 +130,7 @@ export default function ProductDetail({
     tokenId: tokenId || tokenIds[0] || 1,
     address: auctionContract,
   })
-  const { placeBid } = usePlaceBid({ address: auctionContract, bidAmount })
+  const { placeBid, isValidBid } = usePlaceBid({ address: auctionContract, bidAmount })
   const { name, description, image, attributes } = useToken({ tokenURI: tokenURIs[0] || '', isFetch: !!tokenId })
 
   const highestBidderENS = useEnsName({
@@ -148,14 +152,16 @@ export default function ProductDetail({
     },
   })
 
+  // The input is controlled by bidAmount, so the value sent is always exactly what is shown. '' is allowed (clearing
+  // the field); edits that are not a decimal number are rejected and leave the field unchanged.
   const handleCheckBidAmount = (value: string) => {
-    const re = /(^[0-9]+\.?[0-9]*$)|(^\.[0-9]+$)/
-    if (!re.test(value)) return
+    const re = /(^[0-9]+\.?[0-9]*$)|(^\.[0-9]*$)/
+    if (value !== '' && !re.test(value)) return
     setBidAmount(value)
   }
 
   const handleBid = async () => {
-    if (!isConnected) return
+    if (!isConnected || !isValidBid) return
     setTransacting(true)
     try {
       const result = await placeBid(nftContract, tokenId)
@@ -270,6 +276,8 @@ export default function ProductDetail({
           </Detail>
         </DetailWrapper>
         <BidContainer
+          bidAmount={bidAmount}
+          bidDisabled={!isValidBid}
           handleCheckBidAmount={handleCheckBidAmount}
           handleBid={handleBid}
           isConnected={isConnected}

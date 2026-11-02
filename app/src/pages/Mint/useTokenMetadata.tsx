@@ -3,7 +3,7 @@ import type { Address } from 'viem'
 
 import { useTokenURI } from '@/pages/Mint/useTokenURI'
 import type { TokenMetadata } from '@/store/collections/reducer'
-import { resolveUri } from '@/utils/resolveUri'
+import { resolveMetadataUri, resolveUri } from '@/utils/resolveUri'
 
 export function useTokenMetadata({ address, tokenId }: { address: Address; tokenId: string }) {
   const [NFTMetadata, setNFTMetadata] = useState<TokenMetadata>({
@@ -18,7 +18,7 @@ export function useTokenMetadata({ address, tokenId }: { address: Address; token
   const fetchData = useCallback(async () => {
     if (tokenURI && status === 'success') {
       try {
-        const link = resolveUri(tokenURI as string)
+        const link = resolveMetadataUri(tokenURI as string)
 
         const response = await fetch(link)
         const data = await response.json()

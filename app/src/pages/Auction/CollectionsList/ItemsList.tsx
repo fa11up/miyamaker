@@ -5,6 +5,7 @@ import { AUCTION_PAGE_SECTION } from '@/pages/Auction/constants'
 import { useNFT } from '@/pages/Auction/useNFT'
 import { setCurrentNFT } from '@/store/collections/actions'
 import { useAppDispatch } from '@/store/hooks'
+import { safeHttpUrl } from '@/utils/resolveUri'
 
 const Items = styled.div`
   height: 25%;
@@ -104,6 +105,9 @@ export default function ItemsList({ nft, setPageSection }: { nft: string; setPag
 
   const { name, symbol, description, image, externalLink, collaborators } = useNFT({ address: nft as Address })
 
+  // external_link comes from on-chain metadata: only http(s) links are rendered as links.
+  const safeLink = safeHttpUrl(externalLink)
+
   const handleClick = () => {
     setPageSection(AUCTION_PAGE_SECTION.PRODUCT_SECTION)
     dispatch(
@@ -125,9 +129,13 @@ export default function ItemsList({ nft, setPageSection }: { nft: string; setPag
         </div>
       </ImageItem>
       <Item>{description}</Item>
-      <LinkItem href={externalLink} target="_blank" rel="noreferrer noopener">
-        {externalLink.replace('https://', '')}
-      </LinkItem>
+      {safeLink ? (
+        <LinkItem href={safeLink} target="_blank" rel="noreferrer noopener">
+          {externalLink.replace('https://', '')}
+        </LinkItem>
+      ) : (
+        <Item>{externalLink}</Item>
+      )}
     </Items>
   )
 }

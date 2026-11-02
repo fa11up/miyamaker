@@ -8,14 +8,20 @@ export default function AuctionButton({
   handleBid,
   isConnected,
   transacting,
+  disabled = false,
 }: {
   handleBid: MouseEventHandler
   isConnected: boolean
   transacting: boolean
+  disabled?: boolean
 }) {
   if (isConnected) {
     return (
-      <NormalButton disabled={transacting} onClick={handleBid} style={{ padding: '0.7rem', fontSize: '0.65rem' }}>
+      <NormalButton
+        disabled={transacting || disabled}
+        onClick={handleBid}
+        style={{ padding: '0.7rem', fontSize: '0.65rem' }}
+      >
         {transacting ? 'Transacting...' : `Place bid`}
       </NormalButton>
     )
