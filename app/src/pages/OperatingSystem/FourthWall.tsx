@@ -9,14 +9,15 @@ const FourthWallStyled = styled.div`
   justify-content: end;
   align-items: start;
   position: absolute;
-  z-index: ${100_000};
+  /* Rendered inside the desktop foreground: above the wallpaper and the icons (999), below windows (1000). */
+  z-index: 999;
   top: 0;
   width: 100%;
   height: 100%;
   overflow: hidden;
   top: 0;
   left: 0;
-  pointer-events: none;
+  pointer-events: none !important;
   > * {
     pointer-events: auto;
   }
@@ -26,8 +27,8 @@ const FourthWallStyled = styled.div`
   `}
 `
 
-// The note sits above every window on purpose (it is "stuck to the screen"), so only the paper itself may take
-// clicks: the image ignores the pointer and two hit areas clipped to the paper's outline sit on top of it.
+// The note is stuck to the desktop (windows cover it), and only the paper itself may take clicks: the image ignores
+// the pointer and two hit areas clipped to the paper's outline sit on top of it.
 // Polygons are the old image-map coords as percentages of the 400x360 image.
 const StickyNote = styled.div<{ fell?: boolean }>`
   position: relative;

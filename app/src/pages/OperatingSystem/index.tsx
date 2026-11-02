@@ -212,6 +212,7 @@ export default function OperatingSystem() {
             ))}
           </IconGrid>
         </Icons>
+        <FourthWall />
       </Foreground>
       <TaskBar
         active={windows}
@@ -237,7 +238,6 @@ export default function OperatingSystem() {
           onDismiss={() => setSwitcherOpen(false)}
         />
       )}
-      <FourthWall />
     </div>
   )
 }
