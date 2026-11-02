@@ -4,6 +4,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
 import {
+  createRateLimiter,
   ETH,
   FEE_BPS,
   FEE_TREASURY,
@@ -138,6 +139,42 @@ test('only GET, only the two routes, only same-origin', async () => {
     (await handleZeroExRequest(req(PRICE, { 'sec-fetch-site': '', origin: 'https://evil.example' }), env)).status,
     403
   )
+})
+
+test('a same-origin signal is required: no Sec-Fetch-Site and no Origin is refused', async () => {
+  const env = { ZEROX_API_KEY: 'k' }
+  const ok = (async () => new Response('{}', { status: 200 })) as typeof fetch
+  const bare = { method: 'GET', url: `https://miya.example${PRICE}`, headers: new Headers() }
+  assert.equal((await handleZeroExRequest(bare, env, ok)).status, 403)
+  assert.equal((await handleZeroExRequest({ method: 'GET', url: bare.url }, env, ok)).status, 403)
+  assert.equal((await handleZeroExRequest(req(PRICE, { 'sec-fetch-site': 'none' }), env, ok)).status, 403)
+  assert.equal((await handleZeroExRequest(req(PRICE, { 'sec-fetch-site': 'same-site' }), env, ok)).status, 403)
+  // Same-origin by either signal alone passes; a foreign Origin beside same-origin Sec-Fetch-Site does not.
+  assert.equal((await handleZeroExRequest(req(PRICE), env, ok, createRateLimiter())).status, 200)
+  const originOnly = { ...bare, headers: new Headers({ origin: 'https://miya.example' }) }
+  assert.equal((await handleZeroExRequest(originOnly, env, ok, createRateLimiter())).status, 200)
+  assert.equal((await handleZeroExRequest(req(PRICE, { origin: 'https://evil.example' }), env, ok)).status, 403)
+})
+
+test('requests are rate limited per client IP (token bucket)', async () => {
+  const env = { ZEROX_API_KEY: 'k' }
+  const ok = (async () => new Response('{}', { status: 200 })) as typeof fetch
+  const limiter = createRateLimiter({ capacity: 3, perSecond: 1 })
+  const from = (ip: string) => req(PRICE, { 'x-forwarded-for': `${ip}, 10.0.0.1` })
+  for (let i = 0; i < 3; i++) assert.equal((await handleZeroExRequest(from('1.1.1.1'), env, ok, limiter)).status, 200)
+  const limited = await handleZeroExRequest(from('1.1.1.1'), env, ok, limiter)
+  assert.equal(limited.status, 429)
+  assert.equal((await limited.json()).name, 'RATE_LIMITED')
+  // Another client has its own bucket.
+  assert.equal((await handleZeroExRequest(from('2.2.2.2'), env, ok, limiter)).status, 200)
+
+  // Tokens refill over time.
+  const bucket = createRateLimiter({ capacity: 2, perSecond: 1 })
+  assert.equal(bucket('ip', 0), true)
+  assert.equal(bucket('ip', 0), true)
+  assert.equal(bucket('ip', 0), false)
+  assert.equal(bucket('ip', 500), false)
+  assert.equal(bucket('ip', 1500), true)
 })
 
 test("the page's fee display matches what the proxy enforces", () => {
