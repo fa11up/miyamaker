@@ -128,8 +128,8 @@ export default function ItemsList({ nft, setPageSection }: { nft: string; setPag
             src={image || undefined}
             alt={name}
             fit="contain"
-            aspect="auto"
-            style={{ height: '100%' }}
+            aspect="1 / 1"
+            style={{ height: '100%', width: 'auto', maxWidth: '100%' }}
             eager
           />
         </ImageWrapper>

@@ -22,6 +22,7 @@ const ProductWrapper = styled.div`
 
 const ImageDetail = styled.div`
   height: 100%;
+  width: 100%; /* the image box has no intrinsic width; without this the centred column shrinks it */
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -88,14 +89,7 @@ export default function AuctionProduct({
       <ImageWrapper style={{ padding: '0.75rem', height: '80%' }}>
         <ImageDetail>
           <Wrapper type="button" title={`View ${name || 'artwork'}`} onClick={() => onView?.(tokenId)}>
-            <NftImage
-              variant="thumb"
-              src={image || undefined}
-              alt={name}
-              fit="contain"
-              aspect="auto"
-              style={{ height: '100%' }}
-            />
+            <NftImage variant="thumb" src={image || undefined} alt={name} fit="contain" aspect="1 / 1" />
           </Wrapper>
           <Description>{name}</Description>
           <Description>{getTokenAttribute(attributes, 'Artist')}</Description>
