@@ -1,5 +1,6 @@
 /* eslint-disable no-restricted-syntax, no-continue, no-await-in-loop, no-plusplus -- bounded, sequential RPC/parse loops read clearer as loops */
 import Angel from 'assets/angel.jpg?preset=art&resize=true'
+import Imd1616 from 'assets/imd-1616.png?preset=art&resize=true'
 import Ghiblady from 'assets/ghiblady.jpg?preset=art&resize=true'
 import Milady from 'assets/milady3.jpg?preset=art&resize=true'
 import Fumo from 'assets/pet/fumo-320.webp'
@@ -62,7 +63,8 @@ type Sprite = {
 
 type Star = { x: number; y: number; z: number; tw: number }
 
-const ART = [Milady, Pixelady, Angel, Ghiblady].map((a) => a[a.length - 1]?.src).filter(Boolean) as string[]
+// IMD identity.md NFT #1616 leads so it is always in the mix, even on phones.
+const ART = [Imd1616, Milady, Pixelady, Angel, Ghiblady].map((a) => a[a.length - 1]?.src).filter(Boolean) as string[]
 const PALETTE = ['#ffffff', color.faceLight, color.accent, '#b9a7ff', color.light]
 
 /** Size an art frame to its image's aspect ratio (same area as a size×size square), keeping it on screen. */
@@ -199,7 +201,7 @@ export default function Screensaver({ onDismiss }: { onDismiss: () => void }) {
       })
     }
 
-    ART.slice(0, small ? 2 : 4).forEach((src) => {
+    ART.slice(0, small ? 3 : ART.length).forEach((src) => {
       const s = rand(84, 118) * scale
       sprites.push({ img: load(src), kind: 'art', x: 0, y: 0, vx: speed(), vy: speed(), w: s, h: s, size: s, hue: 0 })
     })
