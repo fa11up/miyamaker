@@ -85,9 +85,11 @@ const Pages: Record<string, Page> = {
     },
   },
   swap: {
+    // Shown as "Trade" (was "miya swaps" at /swap). The id stays 'swap' so saved desktops keep the window;
+    // /swap links redirect to /trade (src/pages/Swap/tradePath.ts).
     id: 'swap',
-    path: '/swap',
-    label: 'miya swaps',
+    path: '/trade',
+    label: 'Trade',
     icon: SwapIcon[0],
     minSize: {
       width: 520,

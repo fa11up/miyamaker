@@ -439,7 +439,7 @@ export default function Home() {
             </Prose>
             <Contract label="INFER contract" address={INFER} />
             <LinkRow>
-              <PushButton type="button" onClick={() => navigate('/swap')}>
+              <PushButton type="button" onClick={() => navigate('/trade')}>
                 Swap for INFER
               </PushButton>
               <a {...ext} href={LINKS.tokenomics}>
@@ -455,7 +455,7 @@ export default function Home() {
             <Prose>
               <p>
                 <strong>imdUSD is a dollar, not an investment.</strong> It is the steady part of the miyanet. miyamaker
-                sends its 1% fee to the imdUSD Treasury. Swapping into or out of imdUSD in miya swaps has no miya swaps
+                sends its 1% fee to the imdUSD Treasury. Swapping into or out of imdUSD in Trade has no miyamaker
                 fee.
               </p>
               <p>
@@ -513,7 +513,7 @@ export default function Home() {
               </li>
               <li>
                 <strong>Trade</strong>
-                <span>Swap INFER and imdUSD in miya swaps. NFT pools are coming.</span>
+                <span>Swap INFER and imdUSD in Trade, or trade NFTs through zero-fee pools.</span>
               </li>
             </Flow>
             <Prose style={{ fontSize: text.xs }}>

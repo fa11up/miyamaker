@@ -3,7 +3,7 @@ import MiyaLogo from 'assets/134321870.png'
 import CreateNew from 'assets/miyamints1.png?preset=thumbnail&resize=true'
 import { Fragment, useEffect, useMemo, useState } from 'react'
 import { Helmet } from 'react-helmet-async'
-import { useLocation } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import styled from 'styled-components/macro'
 import { useWindowSize } from 'usehooks-ts'
 
@@ -12,6 +12,7 @@ import OsLoader from '@/components/OsLoader'
 import TaskBar from '@/components/TaskBar'
 import Pages from '@/constants/pages'
 import { DesktopOverlays, DesktopPetLayer } from '@/desktop'
+import { canonicalPath } from '@/pages/Swap/tradePath'
 import { useAppDispatch, useAppSelector } from '@/store/hooks'
 import { closeWindow, minimizeWindow, openWindow, setToFront } from '@/store/windows/actions'
 import { useWindows } from '@/store/windows/hooks'
@@ -108,7 +109,7 @@ export type DesktopApp = { id: PageKey; label: string; src: string | undefined }
 
 const DESKTOP_ICONS: DesktopApp[] = [
   { id: 'mint', label: Pages.mint?.label || 'Mint', src: Pages.mint?.icon?.src },
-  { id: 'swap', label: Pages.swap?.label || 'Swap', src: Pages.swap?.icon?.src },
+  { id: 'swap', label: Pages.swap?.label || 'Trade', src: Pages.swap?.icon?.src },
   { id: 'home', label: 'miyanet', src: MiyaLogo },
   { id: 'launch', label: 'Launch', src: CreateNew[0]?.src },
   { id: 'manager', label: Pages.manager?.label || 'Manager', src: Pages.manager?.icon?.src },
@@ -123,6 +124,7 @@ const DESKTOP_ICONS: DesktopApp[] = [
 
 export default function OperatingSystem() {
   const location = useLocation()
+  const navigate = useNavigate()
   /* Responsiveness stuff */
   const { width, height } = useWindowSize()
   const isMobile = width > 0 && width <= MOBILE_BREAKPOINT
@@ -153,6 +155,13 @@ export default function OperatingSystem() {
   }
 
   useEffect(() => {
+    // Renamed windows: an in-app link to an old path (/swap) lands on the new one (/trade).
+    const renamed = canonicalPath(`${location.pathname}${location.search}`)
+    if (renamed) {
+      navigate(renamed, { replace: true })
+      return
+    }
+
     // Sub-paths open their window too (e.g. /mint/miyamini opens Mint, which picks the view from the path).
     const page = Object.values(Pages).find(
       (p) => p.path === location.pathname || location.pathname.startsWith(`${p.path}/`)

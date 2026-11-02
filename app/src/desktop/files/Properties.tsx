@@ -280,7 +280,7 @@ export default function Properties({
             )}
             {selection.kind === 'token' && (
               <button type="button" onClick={() => openApp('swap')}>
-                Open in Swap
+                Open in Trade
               </button>
             )}
             <button type="button" className="primary" ref={okRef} onClick={onClose}>
