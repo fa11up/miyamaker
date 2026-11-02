@@ -12,11 +12,13 @@ import { useAppDispatch } from '@/store/hooks'
 import { getTokenAttribute } from '@/utils/getTokenAttribute'
 
 const ProductWrapper = styled.div`
-  width: 25%;
-  padding: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
 
-  @media only screen and (max-width: 640px) {
-    width: 50%;
+  &[hidden] {
+    display: none;
   }
 `
 
@@ -34,7 +36,9 @@ const ImageDetail = styled.div`
 
 const Wrapper = styled.button`
   width: 100%;
-  height: 80%;
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow: hidden;
   padding: 0;
   border: 0;
   background: transparent;
@@ -51,8 +55,13 @@ const Wrapper = styled.button`
 `
 
 const Description = styled.div`
+  max-width: 100%;
   font-size: 0.5rem;
   font-weight: bolder;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 `
 
 export default function AuctionProduct({
@@ -60,7 +69,9 @@ export default function AuctionProduct({
   tokenURI,
   onArtwork,
   onView,
+  hidden = false,
 }: {
+  hidden?: boolean
   tokenId: number
   tokenURI: string
   onArtwork?: (tokenId: number, artwork: Artwork) => void
@@ -85,20 +96,20 @@ export default function AuctionProduct({
   }
 
   return (
-    <ProductWrapper>
-      <ImageWrapper style={{ padding: '0.75rem', height: '80%' }}>
+    <ProductWrapper hidden={hidden}>
+      <ImageWrapper style={{ padding: '0.5rem', flex: '0 1 auto', minHeight: 0 }}>
         <ImageDetail>
           <Wrapper type="button" title={`View ${name || 'artwork'}`} onClick={() => onView?.(tokenId)}>
             <NftImage variant="thumb" src={image || undefined} alt={name} fit="contain" aspect="1 / 1" />
           </Wrapper>
-          <Description>{name}</Description>
+          <Description title={name}>{name}</Description>
           <Description>{getTokenAttribute(attributes, 'Artist')}</Description>
           {/* <Description> */}
           {/*  Current bid: {product.currentBid} {product.currency} */}
           {/* </Description> */}
         </ImageDetail>
       </ImageWrapper>
-      <NormalButton onClick={handleBid} style={{ width: '100%', marginTop: '0.25rem' }}>
+      <NormalButton onClick={handleBid} style={{ width: '100%', marginTop: '0.25rem', flex: 'none' }}>
         Bid
       </NormalButton>
     </ProductWrapper>

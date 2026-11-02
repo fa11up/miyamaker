@@ -11,17 +11,19 @@ const BidWrapper = styled.div`
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 0 1rem 0 1rem;
+  gap: 0.75rem;
 `
 
 const InputWrapper = styled.div`
-  width: 50%;
+  flex: 1 1 auto;
+  min-width: 0;
   display: flex;
 `
 
 const ActionWrapper = styled.div`
-  width: 50%;
+  flex: none;
   display: flex;
+  white-space: nowrap;
   justify-content: end;
   align-items: center;
 
@@ -71,6 +73,7 @@ const Timer = styled.div`
   align-items: center;
   padding: 0.7rem;
   font-size: 0.7rem;
+  white-space: nowrap;
   box-shadow: inset -1px -1px #fff, inset 1px 1px grey, inset -2px -2px #dfdfdf, inset 2px 2px #0a0a0a;
 `
 
@@ -140,7 +143,7 @@ export default function BidContainer({
   if (width > 640) {
     return (
       <>
-        <div style={{ width: '100%', fontSize: '0.75rem', textAlign: 'end', paddingRight: '1rem' }}>Time left:</div>
+        <div style={{ width: '100%', fontSize: '0.75rem', textAlign: 'end' }}>Time left:</div>
         <BidWrapper>
           <InputWrapper>
             <TextInput
@@ -167,7 +170,7 @@ export default function BidContainer({
             <Countdown date={endTime ? endTime * 1000 : 0} renderer={renderTimer} />
           </ActionWrapper>
         </BidWrapper>
-        <div style={{ width: '50%', fontSize: '0.75rem', textAlign: 'end' }}>
+        <div style={{ fontSize: '0.75rem', marginTop: '0.25rem' }}>
           Total offer amount: {balance ? Number(balance.formatted).toFixed(3) : 0.0} ETH
         </div>
       </>
@@ -176,7 +179,7 @@ export default function BidContainer({
 
   return (
     <>
-      <div style={{ width: '100%', fontSize: '0.75rem', textAlign: 'end', paddingRight: '1rem' }}>Time left:</div>
+      <div style={{ width: '100%', fontSize: '0.75rem', textAlign: 'end' }}>Time left:</div>
       <BidWrapper>
         <InputWrapper>
           <TextInput
@@ -197,7 +200,7 @@ export default function BidContainer({
           <Countdown date={endTime ? endTime * 1000 : 0} renderer={renderTimer} />
         </ActionWrapper>
       </BidWrapper>
-      <div style={{ width: '50%', fontSize: '0.75rem', textAlign: 'end' }}>
+      <div style={{ fontSize: '0.75rem', marginTop: '0.25rem' }}>
         Total offer amount: {balance ? Number(balance.formatted).toFixed(3) : 0.0} ETH
       </div>
       <div style={{ display: 'flex', justifyContent: 'center', paddingTop: '1rem' }}>
