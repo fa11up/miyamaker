@@ -9,6 +9,7 @@ import { BrowserRouter } from 'react-router-dom'
 import App from './App'
 import ErrorBoundary, { RootErrorFallback } from './components/ErrorBoundary'
 import { GlobalHistory } from './GlobalHistory'
+import { canonicalPath } from './pages/Swap/tradePath'
 
 window.Buffer = Buffer
 
@@ -21,6 +22,10 @@ if (import.meta.env.VITE_ANALYTICS_ID) {
 if (window.location.hash.startsWith('#/')) {
   window.history.replaceState(null, '', window.location.hash.slice(1))
 }
+
+// Renamed windows keep their old links: /swap (miya swaps) is now /trade.
+const renamed = canonicalPath(`${window.location.pathname}${window.location.search}${window.location.hash}`)
+if (renamed) window.history.replaceState(null, '', renamed)
 
 // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
 const rootElement = document.getElementById('app')!

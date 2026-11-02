@@ -3,9 +3,12 @@
 Vite + React frontend for miyamaker (`yarn`, `yarn dev`, `yarn build`). Copy `.env.example` to
 `.env.local` and fill in what you need; everything is optional for local browsing.
 
-## Swap window and the 0x API key
+## Trade window and the 0x API key
 
-The Swap window ("miya swaps") quotes and routes trades through the
+The Trade window (formerly "miya swaps", at `/trade`; old `/swap` links redirect) has two tabs.
+**NFTs** trades NFTs through the zero-fee MiyaPool pools (`contracts/src/pools`) of the `MiyaPoolFactory`
+set by `VITE_MIYA_POOL_FACTORY_<chainId>` or `contracts/deployments/<chainId>.json`; on a chain without one it
+says the pools are not there yet. **Tokens** quotes and routes trades through the
 [0x Swap API v2](https://docs.0x.org/evm/0x-swap-api/guides/swap-tokens-with-0x-swap-api)
 (AllowanceHolder flow). **The 0x key never reaches the browser.** The frontend only calls the
 same-origin path `/api/0x/swap/allowance-holder/{price,quote}`, and a server-side proxy

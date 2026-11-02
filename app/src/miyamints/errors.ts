@@ -11,6 +11,17 @@ const FRIENDLY: Record<string, string> = {
   InvalidPrice: 'The edition price must be more than 0.',
   Unauthorized: 'Only the collection owner can do that.',
   NotFactory: 'This factory is not registered with miya on this network.',
+  // MiyaPool / MiyaPoolFactory (Trade → NFTs)
+  NotHeld: 'That NFT is no longer in the pool. Someone may have just taken it. Pick another.',
+  InsufficientHeld: 'The pool does not have that many NFTs free right now.',
+  InsufficientBalance: 'Not enough pool tokens in this wallet.',
+  TooEarly: 'Too early: wait one more block, then reveal.',
+  UnknownCommit: 'That draw was already revealed.',
+  WrongMode: 'This pool does not work that way. Reload the pool.',
+  TransferNotReceived: 'The NFT did not arrive in the pool.',
+  PoolExists: 'A pool for this collection and mode already exists.',
+  UnsupportedCollection: 'That address is not an ERC-721 or ERC-1155 collection.',
+  RandomRequiresERC721: 'Random pools work only for ERC-721 collections.',
 }
 
 /** A wallet / contract error as one plain sentence. */
