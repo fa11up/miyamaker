@@ -8,6 +8,8 @@ const Manager = lazy(() => import('@/pages/Manage'))
 const Auction = lazy(() => import('@/pages/Auction'))
 const Mint = lazy(() => import('@/pages/Mint'))
 const Swap = lazy(() => import('@/pages/Swap'))
+const MyFiles = lazy(() => import('@/desktop/files/MyFiles'))
+const DisplayProperties = lazy(() => import('@/desktop/display/DisplayProperties'))
 
 export default function DynamicWrapper({ identifier }: { identifier: string }) {
   const component = useMemo(() => {
@@ -28,6 +30,10 @@ export default function DynamicWrapper({ identifier }: { identifier: string }) {
         return <Mint />
       case 'swap':
         return <Swap />
+      case 'files':
+        return <MyFiles />
+      case 'display':
+        return <DisplayProperties />
       default:
         return <></>
     }
