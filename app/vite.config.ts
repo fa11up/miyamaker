@@ -113,14 +113,73 @@ export default defineConfig(({ mode }) => ({
         ],
       },
       workbox: {
-        // Minimal app-shell cache: code, styles, fonts and icons. Artwork and chain data stay network-only.
+        // Minimal app-shell cache: code, styles, fonts and icons. Chain data (RPC) stays network-only.
         globPatterns: ['index.html', 'assets/*.css', 'fonts/**/*.{woff,woff2}', 'icons/*.png', 'favicon1.png'],
-        // JS chunks are hashed; cache them as they are fetched instead of precaching every wallet SDK chunk.
         runtimeCaching: [
+          // JS chunks are hashed; cache them as they are fetched instead of precaching every wallet SDK chunk.
           {
             urlPattern: ({ request, sameOrigin }) => sameOrigin && request.destination === 'script',
             handler: 'StaleWhileRevalidate',
             options: { cacheName: 'miyaos-js', expiration: { maxEntries: 120 } },
+          },
+          // Bundled images under /assets/ (thumbnails, icons) have hashed file names, so cache-first is safe.
+          {
+            urlPattern: ({ url, request, sameOrigin }) =>
+              sameOrigin && request.destination === 'image' && url.pathname.startsWith('/assets/'),
+            handler: 'CacheFirst',
+            options: { cacheName: 'miyaos-images', expiration: { maxEntries: 200, maxAgeSeconds: 60 * 60 * 24 * 60 } },
+          },
+          // NFT artwork on IPFS / Arweave is content-addressed: once fetched it never changes, so serve it from the
+          // cache. CORS responses only (NftImage/ArtViewer load IPFS with crossorigin) so the quota is not eaten by
+          // padded opaque responses. Expiry keeps the cache bounded (originals can be several MB each).
+          {
+            urlPattern: ({ url, request }) =>
+              request.destination === 'image' &&
+              (/\/ipfs\/[a-z0-9]{46,}/i.test(url.pathname) ||
+                /\.ipfs\./i.test(url.hostname) ||
+                /(^|\.)(arweave\.net|irys\.xyz)$/i.test(url.hostname)),
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'nft-art',
+              expiration: { maxEntries: 150, maxAgeSeconds: 60 * 60 * 24 * 30, purgeOnQuotaError: true },
+              cacheableResponse: { statuses: [200] },
+            },
+          },
+          // IPFS metadata JSON (tokenURI / contractURI): immutable too.
+          {
+            urlPattern: ({ url, request }) =>
+              request.destination === '' &&
+              (/\/ipfs\/[a-z0-9]{46,}/i.test(url.pathname) || /\.ipfs\./i.test(url.hostname)),
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'nft-metadata',
+              expiration: { maxEntries: 500, maxAgeSeconds: 60 * 60 * 24 * 30 },
+              cacheableResponse: { statuses: [200] },
+            },
+          },
+          // Mutable metadata on plain https hosts (e.g. koolskull.com/.../metadata/json/<id>): show the cached copy
+          // straight away and refresh it in the background.
+          {
+            urlPattern: ({ url, request, sameOrigin }) =>
+              !sameOrigin && request.destination === '' && /\/metadata\/|\.json$/i.test(url.pathname),
+            handler: 'StaleWhileRevalidate',
+            options: {
+              cacheName: 'nft-metadata-mutable',
+              expiration: { maxEntries: 300, maxAgeSeconds: 60 * 60 * 24 * 7 },
+              cacheableResponse: { statuses: [200] },
+            },
+          },
+          // Other NFT artwork hosts we show (MIYAMINI images on koolskull.com): no CORS there, so these are opaque
+          // responses; keep the entry count small.
+          {
+            urlPattern: ({ url, request }) =>
+              request.destination === 'image' && /(^|\.)koolskull\.com$/i.test(url.hostname),
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'nft-art-other',
+              expiration: { maxEntries: 40, maxAgeSeconds: 60 * 60 * 24 * 7, purgeOnQuotaError: true },
+              cacheableResponse: { statuses: [0, 200] },
+            },
           },
         ],
         navigateFallback: 'index.html',

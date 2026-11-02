@@ -1,13 +1,13 @@
-import { useFetch } from 'usehooks-ts'
 import type { Address } from 'viem'
 import { useReadContracts } from 'wagmi'
 
 import type { ContractMetadata } from '@/store/collections/reducer'
+import { useMetadata } from '@/utils/nftMetadata'
 import { resolveMetadataUri, resolveUri } from '@/utils/resolveUri'
 
 export function useNFT({ address }: { address: Address }) {
   const { data } = useReadContracts({
-    query: { enabled: !!address },
+    query: { enabled: !!address, staleTime: 10 * 60_000 },
     contracts: [
       {
         address,
@@ -49,11 +49,8 @@ export function useNFT({ address }: { address: Address }) {
 
   contractUri = resolveMetadataUri(contractUri)
 
-  const { data: contractMetadata, error } = useFetch<ContractMetadata>(contractUri)
-
-  if (error) {
-    return { name: '', symbol: '', description: '', image: '', externalLink: '', collaborators: [] }
-  }
+  // Cached across mounts (react-query; never stale for IPFS) and raced across gateways when the primary is slow.
+  const { data: contractMetadata } = useMetadata<ContractMetadata>(contractUri || undefined)
 
   const imageUri = resolveUri(contractMetadata?.image)
 

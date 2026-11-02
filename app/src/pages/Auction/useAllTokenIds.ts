@@ -22,7 +22,7 @@ export function useAllTokenIds({ nft, address }: { nft: Address; address: Addres
   const ids = values(list).map((id: bigint) => Number(formatUnits(id, 0)))
 
   const { data: tokenURIData } = useReadContracts({
-    query: { enabled: !!ids },
+    query: { enabled: ids.length > 0, staleTime: 10 * 60_000 },
     contracts: ids.map((item) => ({
       address: nft,
       abi: TOKEN_URI_ABI,

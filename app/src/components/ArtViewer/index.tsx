@@ -4,8 +4,11 @@ import { createPortal } from 'react-dom'
 import styled from 'styled-components/macro'
 
 import { NormalButton } from '@/components/Button/NormalButton'
+import { imageCandidates, prefetchImages } from '@/components/NftImage'
 import TitleBar from '@/components/TitleBar'
 import { bevel, color, font, space, text } from '@/theme/tokens'
+import { thumbFor } from '@/utils/artThumbs'
+import { ipfsPath } from '@/utils/ipfsGateways'
 
 export type Artwork = {
   src: string
@@ -228,6 +231,7 @@ export default function ArtViewer({
   const [dragging, setDragging] = useState(false)
   const [showLabel, setShowLabel] = useState(true)
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading')
+  const [attempt, setAttempt] = useState(0)
 
   const frameRef = useRef<HTMLDivElement>(null)
   const stageRef = useRef<HTMLDivElement>(null)
@@ -288,7 +292,19 @@ export default function ArtViewer({
   useEffect(() => {
     reset()
     setStatus('loading')
+    setAttempt(0)
   }, [index, reset])
+
+  // Sources for this artwork: the IPFS gateways in priority order (next one on error), or the URL as given.
+  const sources = item ? imageCandidates(item.src) : []
+  const src = sources[attempt] ?? (attempt === 0 ? item?.src : undefined)
+  const thumb = thumbFor(item?.src)
+
+  // Warm the cache for the neighbours so ‹ › feels instant.
+  useEffect(() => {
+    if (!multiple) return
+    prefetchImages([items[(index + 1) % items.length]?.src, items[(index - 1 + items.length) % items.length]?.src])
+  }, [index, items, multiple])
 
   // Focus the viewer, restore focus on close, and stop the page behind from scrolling.
   useEffect(() => {
@@ -431,21 +447,38 @@ export default function ArtViewer({
             onPointerCancel={onPointerUp}
             onDoubleClick={onDoubleClick}
           >
+            {thumb && status !== 'ready' && (
+              <Art
+                src={thumb}
+                alt=""
+                aria-hidden
+                draggable={false}
+                style={{
+                  filter: 'blur(4px)',
+                  boxShadow: 'none',
+                  width: 'calc(100% - 48px)',
+                  height: 'calc(100% - 48px)',
+                  objectFit: 'contain',
+                }}
+              />
+            )}
             <Art
-              key={item.src}
+              key={src}
               ref={artRef}
-              src={item.src}
+              src={src}
               alt={item.name}
               draggable={false}
+              decoding="async"
+              crossOrigin={ipfsPath(src) ? 'anonymous' : undefined}
               onLoad={() => setStatus('ready')}
-              onError={() => setStatus('error')}
+              onError={() => (attempt + 1 < sources.length ? setAttempt(attempt + 1) : setStatus('error'))}
               style={{
                 transform: `translate(${offset.x}px, ${offset.y}px) scale(${scale})`,
                 transition: dragging || gesture.current ? 'none' : 'transform 120ms ease-out',
                 opacity: status === 'ready' ? 1 : 0,
               }}
             />
-            {status === 'loading' && <StageNote>Loading artwork…</StageNote>}
+            {status === 'loading' && !thumb && <StageNote>Loading artwork…</StageNote>}
             {status === 'error' && <StageNote>This artwork could not be loaded.</StageNote>}
 
             {multiple && (

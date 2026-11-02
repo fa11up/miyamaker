@@ -1,6 +1,7 @@
 import styled from 'styled-components/macro'
 import type { Address } from 'viem'
 
+import NftImage from '@/components/NftImage'
 import { AUCTION_PAGE_SECTION } from '@/pages/Auction/constants'
 import { useNFT } from '@/pages/Auction/useNFT'
 import { setCurrentNFT } from '@/store/collections/actions'
@@ -122,7 +123,15 @@ export default function ItemsList({ nft, setPageSection }: { nft: string; setPag
     <Items onClick={handleClick}>
       <ImageItem>
         <ImageWrapper>
-          <img src={image} alt={name} />
+          <NftImage
+            variant="thumb"
+            src={image || undefined}
+            alt={name}
+            fit="contain"
+            aspect="auto"
+            style={{ height: '100%' }}
+            eager
+          />
         </ImageWrapper>
         <div>
           {name} ({symbol})

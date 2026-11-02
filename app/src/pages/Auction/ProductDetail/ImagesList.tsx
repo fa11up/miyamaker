@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import styled from 'styled-components/macro'
 
 import { NormalButton } from '@/components/Button/NormalButton'
+import NftImage, { prefetchImages } from '@/components/NftImage'
 import ImageWrapper from '@/pages/Auction/ImageWrapper'
 
 const ImagesListWrapper = styled.div`
@@ -115,11 +116,16 @@ export default function ImagesList({ images, onView }: { images: string[]; onVie
     }
   }, [])
 
+  // Warm the neighbours so stepping through is instant.
+  useEffect(() => {
+    prefetchImages([images[currentCounter], images[currentCounter - 2]])
+  }, [images, currentCounter])
+
   return (
     <ImagesListWrapper>
       <ImageWrapper>
         <Images type="button" title="View artwork" onClick={() => onView?.(currentCounter - 1)}>
-          <img src={images[currentCounter - 1]} alt="Artwork" />
+          <NftImage src={images[currentCounter - 1] || undefined} alt="Artwork" fit="contain" eager />
         </Images>
         <Counter>
           {currentCounter} of {totalImages}
