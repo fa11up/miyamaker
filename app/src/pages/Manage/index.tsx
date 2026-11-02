@@ -1,456 +1,126 @@
-/* eslint-disable @typescript-eslint/naming-convention */
-/* eslint-disable no-nested-ternary */
-import { createContext, useEffect, useMemo, useState } from 'react'
+import { useConnectModal } from '@rainbow-me/rainbowkit'
+import { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import styled from 'styled-components/macro'
 import type { Address } from 'viem'
-import { mainnet, sepolia } from 'viem/chains'
-import { useAccount, useReadContract } from 'wagmi'
+import { getAddress, isAddress, zeroAddress } from 'viem'
+import { useAccount, useReadContracts, useSwitchChain } from 'wagmi'
 
-import { ConnectedButton, HighlightButton } from '@/components/Button'
-import FormInput from '@/components/FormInput'
-import { Separator } from '@/components/Separator'
-import Tabs from '@/components/Tabs'
+import { Err, Field, SmallButton } from '@/components/LaunchKit'
+import LaunchList from '@/components/LaunchKit/LaunchList'
+import { BigButton, Chip, DisplayTitle, Eyebrow, Panel, StatusBox } from '@/components/Retro'
 import TitleBar from '@/components/TitleBar'
 import WindowWrapper from '@/components/WindowWrapper'
+import type { SupportedChainId } from '@/config/wagmi'
+import { chains, explorerUrl, mainnet } from '@/config/wagmi'
+import { miyamintsAddresses } from '@/constants/contracts'
 import Pages from '@/constants/pages'
-import { useWaitForTransaction } from '@/hooks/useWaitForTransaction'
+import { ownerAbi, registryAbi } from '@/miyamints/abi'
+import type { LaunchKind } from '@/miyamints/collections'
+import { keyOf, KIND_LABEL, kindFromFactory } from '@/miyamints/collections'
+import { rememberLaunch } from '@/miyamints/local'
+import { useMyLaunches } from '@/miyamints/useMyLaunches'
+import { setManageTarget, useManageTarget, useOpenManage } from '@/miyamints/useOpenManage'
+import { useOpenApp } from '@/music/useOpenApp'
 import { updateManagedCollection } from '@/store/experience/actions'
 import { useAppDispatch, useAppSelector } from '@/store/hooks'
 import { closeWindow, minimizeWindow } from '@/store/windows/actions'
 import { useFullscreen } from '@/store/windows/hooks'
+import { color, space, text } from '@/theme/tokens'
 
-import AllocationRow from './TableRows/AllocationRow'
-import BaseUriRow from './TableRows/BaseUriRow'
-import MaxSupplyRow from './TableRows/MaxSupplyRow'
-import NameRow from './TableRows/NameRow'
-import PriceRow from './TableRows/PriceRow'
-import ReferralRow from './TableRows/ReferralRow'
-import { useAlignedNft } from './useAlignedNft'
-import { useBaseUri } from './useBaseUri'
-import { useContractUri } from './useContractUri'
-import { useMintOpen } from './useMintOpen'
-import { useSymbol } from './useSymbol'
+import LegacyManage from './Legacy'
+import MiyamintsManage from './MiyamintsManage'
 
-const ManageContext = createContext<{ collection: Address | undefined; errors: Record<string, unknown> }>({
-  collection: undefined,
-  errors: {},
-})
-
-const page = Pages.manager
-
-const SunkenPanel = styled.div`
-  width: 100%;
-  box-sizing: border-box;
-  border: 2px groove transparent;
-  border-image: svg-load('./icon/sunken-panel-border.svg') 2;
-  overflow: auto;
-  background-color: #fff;
-
-  table {
-    border-collapse: collapse;
-    position: relative;
-    text-align: left;
-    white-space: nowrap;
-    background-color: #fff;
-  }
-
-  table > thead > tr > * {
-    position: sticky;
-    top: 0;
-    height: 20px;
-    box-shadow: inset -1px -1px #0a0a0a, inset 1px 1px #ffffff, inset -2px -2px #808080, inset 2px 2px #dfdfdf;
-    background: #9991c7;
-    font-weight: 900;
-    box-sizing: border-box;
-    font-weight: normal;
-    padding: 0 6px;
-  }
-
-  table.interactive > tbody > tr {
-    cursor: pointer;
-  }
-
-  table > tbody > tr.highlighted {
-    color: #fff;
-    background-color: #000080;
-  }
-
-  table > tbody > tr > * {
-    padding: 0 6px;
-    height: 21px;
-  }
+const Layout = styled.div`
+  height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
 `
 
+const Inner = styled.div`
+  display: flex;
+  flex-direction: column;
+  gap: ${space[3]};
+  padding: ${space[3]};
+  max-width: 920px;
+  margin: 0 auto;
+`
+
+const Head = styled.header`
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: ${space[2]};
+`
+
+const nameAbi = [
+  { type: 'function', name: 'name', stateMutability: 'view', inputs: [], outputs: [{ type: 'string' }] },
+] as const
+
 export default function ManagePage() {
-  // Network
-  const [params, setParams] = useSearchParams()
-  const [contextState, setContextState] = useState({
-    collection: (params.get('collection') as Address | null) || undefined,
-    errors: {},
-  })
-
   const dispatch = useAppDispatch()
-  const collection = useAppSelector((state) => state.experience.managedCollection)
+  const [fullscreen, toggleFullscreen] = useFullscreen('manager')
+  const [params, setParams] = useSearchParams()
+  const { address: wallet, isConnected, chainId: walletChainId } = useAccount()
+  const { openConnectModal } = useConnectModal()
+  const { switchChain } = useSwitchChain()
+  const openApp = useOpenApp()
+  const openManage = useOpenManage()
+  const target = useManageTarget()
+  const stored = useAppSelector((state) => state.experience.managedCollection)
+  const mine = useMyLaunches()
 
-  const [tab, setTab] = useState('metadata')
-
+  // Deep link: ?collection=0x… (legacy behaviour).
   useEffect(() => {
-    const paramsCollection = params.get('collection')
-    if (paramsCollection) dispatch(updateManagedCollection({ value: paramsCollection as Address }))
+    const p = params.get('collection')
+    if (p && isAddress(p)) dispatch(updateManagedCollection({ value: getAddress(p) }))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params])
 
-  // Account
-  const { isConnected, address } = useAccount()
+  const collection = target?.address || (stored && isAddress(stored) ? (getAddress(stored) as Address) : undefined)
+  const supportedWallet = chains.some((c) => c.id === walletChainId)
+  const chainId = (target?.chainId || (supportedWallet ? walletChainId : undefined) || mainnet.id) as SupportedChainId
+  const chain = chains.find((c) => c.id === chainId) || mainnet
+  const a = miyamintsAddresses(chainId)
 
-  // Window mgmt
-  const [fullscreen, toggleFullscreen] = useFullscreen('manager')
-  const close = () => {
-    dispatch(closeWindow({ value: 'manager' }))
-    dispatch(updateManagedCollection({ value: undefined }))
-  }
-
-  const minimize = () => dispatch(minimizeWindow({ value: 'manager' }))
-
-  const alignedNft = useAlignedNft({ address: collection })
-  const symbol = useSymbol({ address: collection })
-  const { uriLocked, lockUri, refetch: refetchUriLocked } = useBaseUri({ address: collection })
-  const { mintOpen, openMint, refetch: refetchMintOpen } = useMintOpen({ address: collection })
-
-  const is721m = useMemo(() => {
-    // check if it's a collection from factory
-    return !!alignedNft
-  }, [alignedNft])
-
-  const { data: owner, refetch: refetchOwner } = useReadContract({
-    functionName: 'owner',
-    address: collection,
-    abi: [
-      {
-        inputs: [],
-        name: 'owner',
-        outputs: [{ internalType: 'address', name: 'result', type: 'address' }],
-        stateMutability: 'view',
-        type: 'function',
-      },
+  const reads = useReadContracts({
+    allowFailure: true,
+    contracts: [
+      { address: a.registry, abi: registryAbi, functionName: 'factoryOf', args: [collection || zeroAddress], chainId },
+      { address: collection, abi: ownerAbi, functionName: 'owner', chainId },
+      { address: collection, abi: nameAbi, functionName: 'name', chainId },
     ],
-    query: { enabled: !!(collection && is721m) },
+    query: { enabled: !!collection },
   })
+  const factory = reads.data?.[0]?.result as string | undefined
+  const owner = reads.data?.[1]?.result as string | undefined
+  const name = reads.data?.[2]?.result as string | undefined
 
-  const isOwner = useMemo(() => {
-    refetchOwner()
-    return owner === address
-  }, [address, owner, refetchOwner])
+  const detected: LaunchKind | undefined = (() => {
+    if (target && target.kind !== 'unknown') return target.kind
+    if (!reads.data) return undefined
+    const k = kindFromFactory(factory && factory !== zeroAddress ? factory : undefined, a)
+    return k === 'unknown' ? 'legacy' : k
+  })()
+  const isOwner = !!owner && !!wallet && owner.toLowerCase() === wallet.toLowerCase()
+  const onWrongChain = isConnected && walletChainId !== chainId
 
-  const metadata = useContractUri({
-    address: collection,
-  })
-
-  const [openInput, setOpenInput] = useState('')
-
-  const PropertyTab = useMemo(() => {
-    if (!collection) return <></>
-    return (
-      <div>
-        <SunkenPanel>
-          <table className="interactive" style={{ width: '100%' }}>
-            <thead>
-              <tr>
-                <th>Property</th>
-                <th>Value</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              <NameRow
-                collection={collection}
-                active={openInput === 'realName'}
-                onActive={() => setOpenInput('realName')}
-              />
-              <tr>
-                <td>Symbol</td>
-                <td>{symbol}</td>
-                <td style={{ padding: 0 }}>
-                  <ConnectedButton
-                    style={{
-                      width: '100%',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      gap: '8px',
-                    }}
-                    disabled={true}
-                    onClick={() => null}
-                  >
-                    Locked
-                  </ConnectedButton>
-                </td>
-              </tr>
-              <tr>
-                <td>Parent</td>
-                <td>{alignedNft}</td>
-                <td style={{ padding: 0 }}>
-                  <ConnectedButton
-                    style={{
-                      width: '100%',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      gap: '8px',
-                    }}
-                    disabled={true}
-                    onClick={() => null}
-                  >
-                    Locked
-                  </ConnectedButton>
-                </td>
-              </tr>
-              <BaseUriRow
-                collection={collection}
-                active={openInput === 'baseUri'}
-                onActive={() => setOpenInput('baseUri')}
-              />
-              <MaxSupplyRow
-                collection={collection}
-                active={openInput === 'maxSupply'}
-                onActive={() => setOpenInput('maxSupply')}
-              />
-              <AllocationRow
-                collection={collection}
-                active={openInput === 'allocation'}
-                onActive={() => setOpenInput('allocation')}
-              />
-              <PriceRow collection={collection} active={openInput === 'price'} onActive={() => setOpenInput('price')} />
-              <ReferralRow
-                collection={collection}
-                active={openInput === 'referral'}
-                onActive={() => setOpenInput('referral')}
-              />
-            </tbody>
-          </table>
-        </SunkenPanel>
-      </div>
-    )
-  }, [alignedNft, collection, openInput, symbol])
-
-  const [transacting, setTransacting] = useState('')
-  const [txHash, setTxHash] = useState('')
-
-  useWaitForTransaction({
-    hash: (txHash as Address) || '0x',
-    enabled: !!txHash,
-    onSuccess: () => {
-      if (transacting === 'lockUri') {
-        refetchUriLocked()
-      }
-
-      if (transacting === 'openMint') {
-        refetchMintOpen()
-      }
-
-      setTransacting('')
-      setTxHash('')
-    },
-    onReplaced: () => {
-      setTransacting('')
-      setTxHash('')
-    },
-  })
-
-  const handleLockUri = async () => {
-    if (uriLocked) return
-    setTransacting('lockUri')
-    try {
-      const res = await lockUri()
-      setTxHash(res.hash)
-    } catch (e) {
-      setTransacting('')
-    }
-  }
-
-  const handleOpenMint = async () => {
-    if (mintOpen) return
-    setTransacting('openMint')
-    try {
-      const res = await openMint()
-      setTxHash(res.hash)
-    } catch (e) {
-      setTransacting('')
-    }
-  }
-
-  const ActionTab = useMemo(() => {
-    if (!collection) return <></>
-    return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-        <b>Warning: The following actions are permanent!</b>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-          <label>Lock Base URI</label>
-          <ConnectedButton
-            style={{
-              width: 'fit-content',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: '8px',
-            }}
-            disabled={!!transacting || uriLocked}
-            onClick={() => handleLockUri()}
-            withChain={[mainnet.id, sepolia.id]}
-          >
-            {transacting === 'lockUri' ? 'Updating...' : uriLocked ? 'Locked' : 'Lock'}
-          </ConnectedButton>
-          <small>Locks the current images to the nfts permanently.</small>
-        </div>
-
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-          <label>Open mint</label>
-          <ConnectedButton
-            style={{
-              width: 'fit-content',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: '8px',
-            }}
-            disabled={!!transacting || mintOpen}
-            onClick={() => handleOpenMint()}
-            withChain={[mainnet.id, sepolia.id]}
-          >
-            {transacting === 'openMint' ? 'Updating...' : mintOpen ? 'Already open' : 'Open'}
-          </ConnectedButton>
-          <small>Starts minting phase.</small>
-        </div>
-      </div>
-    )
-  }, [collection, mintOpen, transacting, uriLocked])
-
-  const [form, setForm] = useState<{
-    name: string
-    description: string
-    image: string
-    external_link: string
-    collaborators: Address[]
-  }>({
-    name: metadata.name,
-    description: metadata.description,
-    image: metadata.image,
-    external_link: metadata.external_link,
-    collaborators: metadata.collaborators,
-  })
-
-  // The form starts empty while contractURI loads. Fill it once loaded (and again when the collection changes), but
-  // never over the user's edits; Update stays disabled until then so empty fields can't overwrite real metadata.
-  const [formDirty, setFormDirty] = useState(false)
-  useEffect(() => setFormDirty(false), [collection])
   useEffect(() => {
-    if (!metadata.loaded || formDirty) return
-    setForm({
-      name: metadata.name,
-      description: metadata.description,
-      image: metadata.image,
-      external_link: metadata.external_link,
-      collaborators: metadata.collaborators,
-    })
-  }, [metadata.loaded, metadata.name, metadata.description, metadata.image, metadata.external_link, collection])
+    if (collection && detected === 'legacy' && isOwner) rememberLaunch(chainId, collection, 'legacy')
+  }, [collection, detected, isOwner, chainId])
 
-  const handleInputName = (input: string) => {
-    setFormDirty(true)
-    setForm((prev) => ({ ...prev, name: input }))
-  }
-
-  const handleInputDescription = (input: string) => {
-    setFormDirty(true)
-    setForm((prev) => ({ ...prev, description: input }))
-  }
-
-  const handleInputImage = (input: string) => {
-    setFormDirty(true)
-    setForm((prev) => ({ ...prev, image: input }))
-  }
-
-  const handleInputExternalLink = (input: string) => {
-    setFormDirty(true)
-    setForm((prev) => ({ ...prev, external_link: input }))
-  }
-
-  const handleUpdateMetadata = async () => {
-    setTransacting('metadata')
-    try {
-      const contractURI = `data:application/json;utf8,${encodeURIComponent(
-        JSON.stringify({ ...metadata.raw, ...form })
-      )}`
-
-      const result = await metadata.setContractUri(contractURI)
-      setTxHash(result.hash)
-    } catch (e) {
-      setTransacting('')
+  // Keep the session target in sync with what was detected (so the Start menu highlights it).
+  useEffect(() => {
+    if (collection && detected && (!target || target.address !== collection)) {
+      setManageTarget({ chainId, address: collection, kind: detected })
     }
-  }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [collection, detected])
 
-  const MetadataTab = useMemo(() => {
-    return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', maxWidth: '240px' }}>
-        <FormInput
-          label="Name"
-          inputKey="name"
-          value={form.name}
-          onChange={(e) => handleInputName(e.target.value)}
-          error={undefined}
-        />
-
-        <FormInput
-          label="Description"
-          inputKey="description"
-          value={form.description}
-          onChange={(e) => handleInputDescription(e.target.value)}
-          error={undefined}
-        />
-
-        <FormInput
-          label="Image"
-          inputKey="image"
-          value={form.image}
-          onChange={(e) => handleInputImage(e.target.value)}
-          error={undefined}
-        />
-
-        <FormInput
-          label="External Link"
-          inputKey="externalLink"
-          value={form.external_link}
-          onChange={(e) => handleInputExternalLink(e.target.value)}
-          error={undefined}
-        />
-
-        <ConnectedButton
-          style={{
-            width: 'fit-content',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: '8px',
-          }}
-          disabled={!!transacting || !metadata.loaded}
-          onClick={() => handleUpdateMetadata()}
-          withChain={[mainnet.id, sepolia.id]}
-        >
-          {transacting === 'metadata' ? 'Updating...' : 'Update'}
-        </ConnectedButton>
-      </div>
-    )
-  }, [form.description, form.external_link, form.image, form.name, transacting, metadata.loaded])
-
-  const [collectionInput, setCollectionInput] = useState('')
-
-  const handleManageCollection = () => {
-    dispatch(updateManagedCollection({ value: collectionInput as Address }))
-    setParams((prev) => ({ ...prev, collection: collectionInput }))
-  }
-
-  const handleChangeCollection = () => {
+  const clear = () => {
+    setManageTarget(undefined)
     dispatch(updateManagedCollection({ value: undefined }))
-    setCollectionInput('')
     setParams((prev) => {
       const next = new URLSearchParams(prev)
       next.delete('collection')
@@ -458,7 +128,15 @@ export default function ManagePage() {
     })
   }
 
-  const connectHint = !isConnected && <p>Connect your wallet to manage a collection you own.</p>
+  const close = () => {
+    dispatch(closeWindow({ value: 'manager' }))
+  }
+
+  const [paste, setPaste] = useState('')
+  const pasteOk = isAddress(paste.trim())
+
+  const explorer = explorerUrl(chainId)
+  const current = mine.launches.find((l) => collection && keyOf(l) === keyOf({ chainId, address: collection }))
 
   return (
     <WindowWrapper>
@@ -474,88 +152,153 @@ export default function ManagePage() {
         minimizeBtn
         onMinimize={(e) => {
           if (e.cancelable) e.stopPropagation()
-          minimize()
+          dispatch(minimizeWindow({ value: 'manager' }))
         }}
       >
-        {page?.label}
+        {Pages.manager?.label}
       </TitleBar>
-      <div
-        style={{
-          display: 'flex',
-          flexDirection: 'column',
-          padding: '0.5rem',
-          gap: '1rem',
-          height: '100%',
-        }}
-      >
-        {collection && isOwner && is721m ? (
-          <ManageContext.Provider value={contextState}>
-            <div style={{ display: 'flex', marginBottom: '0.5rem', flex: '1 0 auto' }}>
-              <Tabs
-                active={tab}
-                fillHeight
-                fillWidth
-                tabs={[
-                  {
-                    title: 'Metadata',
-                    id: 'metadata',
-                    children: MetadataTab,
-                  },
-                  {
-                    title: 'Properties',
-                    id: 'properties',
-                    children: PropertyTab,
-                  },
-                  {
-                    title: 'Actions',
-                    id: 'advanced',
-                    children: ActionTab,
-                  },
-                ]}
-                onChange={(t) => setTab(t)}
-              />
-            </div>
-            <Separator />
-            <div style={{ display: 'flex', justifyContent: 'end', alignItems: 'center', gap: '2rem' }}>
-              <HighlightButton className="heavy" onClick={() => close()}>
-                Cancel
-              </HighlightButton>
-            </div>
-          </ManageContext.Provider>
-        ) : collection ? (
-          <div style={{ textAlign: 'center' }}>
-            <p>No collection to manage.</p>
-            <b>Why are you seeing this message?</b>
-            <p>You might have input the wrong address.</p>
-            <p>You might be on the wrong chain.</p>
-            <p>You might not be the owner of this collection.</p>
-            {connectHint}
-            <HighlightButton style={{ marginTop: '8px' }} onClick={() => handleChangeCollection()}>
-              Change collection
-            </HighlightButton>
-          </div>
-        ) : (
-          <div>
-            <p>No collection selected</p>
-            {connectHint}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '16px', margin: '0 8px' }}>
-              <FormInput
-                label="Collection"
-                inputKey="collection"
-                value={collectionInput}
-                onChange={(e) => setCollectionInput(e.target.value)}
-                error={undefined}
-              />
-              <HighlightButton
-                style={{ height: 'fit-content', marginTop: '-4px' }}
-                onClick={() => handleManageCollection()}
-              >
-                Manage
-              </HighlightButton>
-            </div>
-          </div>
-        )}
-      </div>
+      <Layout data-manage>
+        <Inner>
+          {!collection ? (
+            <>
+              <Head>
+                <div>
+                  <Eyebrow style={{ color: color.highlight, textShadow: `1px 1px 0 ${color.dark}` }}>Manage</Eyebrow>
+                  <DisplayTitle>Pick a collection</DisplayTitle>
+                </div>
+              </Head>
+              <Panel aria-label="My launches">
+                <Eyebrow>My launches</Eyebrow>
+                {isConnected ? (
+                  <div role="menu" aria-label="My launches">
+                    <LaunchList
+                      launches={mine.launches}
+                      loading={mine.loading}
+                      error={mine.error}
+                      onRetry={() => mine.refetch()}
+                      onPick={(l) => openManage({ chainId: l.chainId, address: l.address, kind: l.kind })}
+                      onLaunch={() => openApp('launch')}
+                    />
+                  </div>
+                ) : (
+                  <>
+                    <p style={{ margin: 0, fontSize: text.sm }}>
+                      Connect a wallet to see the collections you launched.
+                    </p>
+                    <div>
+                      <BigButton
+                        type="button"
+                        style={{ width: 'auto', padding: `0 ${space[5]}` }}
+                        onClick={() => openConnectModal?.()}
+                      >
+                        Connect wallet
+                      </BigButton>
+                    </div>
+                  </>
+                )}
+              </Panel>
+              <details>
+                <summary style={{ cursor: 'pointer', fontSize: text.sm }}>Manage a collection by its address</summary>
+                <Panel style={{ marginTop: space[2] }}>
+                  <Field>
+                    Collection address on {chain.name}
+                    <input
+                      value={paste}
+                      placeholder="0x…"
+                      spellCheck={false}
+                      onChange={(e) => setPaste(e.target.value)}
+                    />
+                    <Err>
+                      {paste && !pasteOk ? 'That is not an address (0x followed by 40 characters).' : undefined}
+                    </Err>
+                    <small>Works for collections from Launch and for older MiyaMints v1 collections.</small>
+                  </Field>
+                  <div>
+                    <SmallButton
+                      type="button"
+                      disabled={!pasteOk}
+                      onClick={() => openManage({ chainId, address: getAddress(paste.trim()), kind: 'unknown' })}
+                    >
+                      Open
+                    </SmallButton>
+                  </div>
+                </Panel>
+              </details>
+            </>
+          ) : (
+            <>
+              <Head>
+                <div style={{ minWidth: 0 }}>
+                  <Eyebrow style={{ color: color.highlight, textShadow: `1px 1px 0 ${color.dark}` }}>
+                    Manage · {chain.name}
+                  </Eyebrow>
+                  <DisplayTitle>
+                    {name || current?.name || `${collection.slice(0, 6)}…${collection.slice(-4)}`}
+                  </DisplayTitle>
+                </div>
+                <div style={{ display: 'flex', gap: space[2], alignItems: 'center', flexWrap: 'wrap' }}>
+                  {detected && <Chip tone={isOwner ? 'ok' : 'off'}>{KIND_LABEL[detected]}</Chip>}
+                  <SmallButton type="button" onClick={clear}>
+                    Change collection
+                  </SmallButton>
+                </div>
+              </Head>
+              <div>
+                <SmallButton
+                  as="a"
+                  href={`${explorer}/address/${collection}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  title={collection}
+                  style={{ display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }}
+                >
+                  Contract {collection.slice(0, 6)}…{collection.slice(-4)} on {chain.name} ↗
+                </SmallButton>
+              </div>
+              {!isConnected && (
+                <StatusBox tone="info">
+                  <span>
+                    Connect the wallet that owns this collection to make changes.{' '}
+                    <SmallButton type="button" onClick={() => openConnectModal?.()}>
+                      Connect wallet
+                    </SmallButton>
+                  </span>
+                </StatusBox>
+              )}
+              {onWrongChain && (
+                <StatusBox tone="info">
+                  <span>
+                    This collection is on {chain.name}. Your wallet is on another network.{' '}
+                    <SmallButton type="button" onClick={() => switchChain({ chainId })}>
+                      Switch to {chain.name}
+                    </SmallButton>
+                  </span>
+                </StatusBox>
+              )}
+              {isConnected && owner && !isOwner && detected !== 'legacy' && (
+                <StatusBox tone="info">
+                  <span>This wallet does not own this collection, so you can look but not change things.</span>
+                </StatusBox>
+              )}
+              <Panel style={{ padding: space[2] }}>
+                {!detected ? (
+                  <span style={{ fontSize: text.sm }}>Loading…</span>
+                ) : detected === 'legacy' ? (
+                  <LegacyManage key={collection} collection={collection} onChange={clear} />
+                ) : (
+                  <MiyamintsManage
+                    key={`${chainId}:${collection}`}
+                    chainId={chainId}
+                    address={collection}
+                    kind={detected as 'drop' | 'auction' | 'editions'}
+                    isOwner={isOwner && !onWrongChain}
+                  />
+                )}
+              </Panel>
+            </>
+          )}
+        </Inner>
+      </Layout>
     </WindowWrapper>
   )
 }

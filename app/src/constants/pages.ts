@@ -50,8 +50,8 @@ const Pages: Record<string, Page> = {
     label: 'Launch',
     icon: LaunchIcon[0],
     minSize: {
-      width: 600,
-      height: 575,
+      width: 920,
+      height: 760,
     },
   },
   components: {
@@ -80,8 +80,8 @@ const Pages: Record<string, Page> = {
     label: 'Manager',
     icon: ManageIcon[0],
     minSize: {
-      width: 600,
-      height: 475,
+      width: 720,
+      height: 620,
     },
   },
   swap: {
