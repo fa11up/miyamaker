@@ -130,8 +130,8 @@ const family = (symbol: string) => symbol.toUpperCase().replace(/^W(?=ETH$)/, ''
 const scaled = (p: Price) => (p.decimals <= 18 ? p.amount * 10n ** BigInt(18 - p.decimals) : p.amount / 10n ** BigInt(p.decimals - 18))
 
 /**
- * The cheapest (`lowest`) or highest offer among venue quotes in the same money as the first priced one. MiyaPool
- * prices in its own pool token, so it is compared only against other pool-token prices.
+ * The cheapest (`lowest`) or highest offer among venue quotes in the same money as the first priced one (ETH and
+ * WETH count as one). MiyaPool joins with its pool token priced in ETH through 0x (pairs.ts).
  */
 export function bestQuote<T extends { price?: Price }>(quotes: T[], pick: 'lowest' | 'highest' = 'lowest'): T | undefined {
   const priced = quotes.filter((q): q is T & { price: Price } => !!q.price && q.price.amount > 0n)
@@ -472,7 +472,10 @@ export function planFill(resp: unknown, ctx: FillContext): FillPlan | { ok: fals
     const advItems = arr(advParams?.consideration).length
     const advOriginal = Number(unwrap(advParams?.totalOriginalConsiderationItems) ?? advItems)
     if (extraRecipients > originalRecipients || advItems > advOriginal)
-      return { ok: false, error: 'OpenSea added an optional fee to this fill. miyaOS only pays what the order requires.' }
+      return {
+        ok: false,
+        error: 'OpenSea added an optional fee to this fill. miyaOS only pays what the order requires.',
+      }
     const conduitKey = String(unwrap(input.fulfillerConduitKey) ?? unwrap(parameters?.fulfillerConduitKey) ?? `0x${'0'.repeat(64)}`)
     const args = seaportArgs(fn, input, ctx.aliases)
 
@@ -495,7 +498,10 @@ export function planFill(resp: unknown, ctx: FillContext): FillPlan | { ok: fals
         if (value < total) return { ok: false, error: 'The payment does not cover the price.' }
         // More ETH than the order asks for would be an optional extra; miyaOS never adds one.
         if (value > total)
-          return { ok: false, error: 'OpenSea asked for more than the order requires. miyaOS only pays what the order requires.' }
+          return {
+            ok: false,
+            error: 'OpenSea asked for more than the order requires. miyaOS only pays what the order requires.',
+          }
       } else if (value !== 0n) {
         return { ok: false, error: 'This token-priced order should not send ETH.' }
       }
