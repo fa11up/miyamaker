@@ -146,6 +146,16 @@ const PickRow = styled.button`
   .pic {
     width: 36px;
   }
+  .letter {
+    display: grid;
+    place-items: center;
+    width: 36px;
+    height: 36px;
+    background: ${color.light};
+    box-shadow: ${bevel.sunken};
+    font-weight: 700;
+    text-transform: uppercase;
+  }
   .name {
     min-width: 0;
     overflow: hidden;
@@ -194,8 +204,8 @@ function Pick({
   return (
     <li>
       <PickRow type="button" onClick={onOpen} disabled={busy} aria-label={`${name}, ${side}. See every market`}>
-        <span className="pic">
-          <NftImage src={image} alt="" variant="thumb" fallback={name.slice(0, 2)} />
+        <span className="pic" aria-hidden>
+          {image ? <NftImage src={image} alt="" variant="thumb" /> : <span className="letter">{name.slice(0, 1)}</span>}
         </span>
         <span className="name">{name}</span>
         <span className="side">{side}</span>

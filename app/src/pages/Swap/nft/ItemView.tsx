@@ -26,10 +26,11 @@ const Layout = styled.div`
   gap: ${space[3]};
   align-items: start;
   .narrow & {
-    grid-template-columns: 1fr;
+    grid-template-columns: 112px 1fr;
   }
   .pic {
     max-width: 240px;
+    min-width: 0;
   }
   .meta {
     display: flex;
@@ -93,7 +94,7 @@ export default function ItemView({
       <Card aria-label={title} data-item-view>
         <Layout>
           <div className="pic">
-            <NftImage src={item.nft?.image || meta.image} alt={title} fallback={`#${tokenId}`} fit="contain" />
+            <NftImage src={item.nft?.image || meta.image} alt={title} fit="contain" />
           </div>
           <div className="meta">
             <Head>

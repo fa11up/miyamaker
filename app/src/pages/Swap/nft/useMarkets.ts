@@ -75,9 +75,33 @@ const common = { staleTime: 30_000, retry, refetchOnWindowFocus: false } as cons
 
 const needsKey = (...errors: unknown[]) => errors.some((e) => e instanceof MarketError && e.needsKey)
 
+/**
+ * Whether the server has an OpenSea key. Asked once; keyed requests wait for it and are skipped without one, so a
+ * keyless site makes no failing calls. A host with no /api route (static preview) counts as "no key".
+ */
+export function useOpenSeaConfigured() {
+  const q = useQuery({
+    queryKey: ['os-status'],
+    staleTime: Infinity,
+    retry: false,
+    refetchOnWindowFocus: false,
+    queryFn: async ({ signal }) => {
+      try {
+        const j = (await get({ op: 'status' }, signal)) as { configured?: unknown }
+        return j?.configured === true
+      } catch (e) {
+        if ((e as Error).name === 'AbortError') throw e
+        return false
+      }
+    },
+  })
+  return { configured: q.data === true, known: q.data !== undefined }
+}
+
 /** A collection on OpenSea by contract: slug, details and stats. */
 export function useOpenSeaCollection(chainId: number, address: string | undefined, slugHint?: string) {
   const chain = OPENSEA_CHAIN[chainId]
+  const { configured, known } = useOpenSeaConfigured()
   const slugQ = useQuery({
     queryKey: ['os-contract', chain, address?.toLowerCase()],
     enabled: !!chain && !!address && !slugHint,
@@ -105,7 +129,7 @@ export function useOpenSeaCollection(chainId: number, address: string | undefine
   })
   const offer = useQuery({
     queryKey: ['os-offer', slug],
-    enabled: !!slug,
+    enabled: !!slug && configured,
     ...common,
     queryFn: async ({ signal }): Promise<{ price: Price; count: number } | null> =>
       parseOfferAggregate(await orNone(get({ op: 'offers', slug: slug! }, signal))) || null,
@@ -119,45 +143,53 @@ export function useOpenSeaCollection(chainId: number, address: string | undefine
     /** OpenSea answered: this contract is not a collection there. */
     missing: slugQ.data === null,
     loading: slugQ.isLoading || info.isLoading || stats.isLoading,
-    offerLoading: offer.isLoading,
-    needsKey: needsKey(slugQ.error, stats.error),
-    offersNeedKey: needsKey(offer.error),
+    offerLoading: offer.isLoading && configured,
+    /** The server has no key: show link-outs and the quiet note. */
+    needsKey: (known && !configured) || needsKey(slugQ.error, stats.error, offer.error),
     error: [slugQ.error, info.error, stats.error].find((e) => e && !needsKey(e)) as Error | undefined,
   }
 }
 
 /** The cheapest OpenSea listings of a collection (price ascending). */
 export function useOpenSeaListings(slug: string | undefined, limit = 6) {
+  const { configured, known } = useOpenSeaConfigured()
   const q = useQuery({
     queryKey: ['os-listings', slug, limit],
-    enabled: !!slug,
+    enabled: !!slug && configured,
     ...common,
     queryFn: async ({ signal }): Promise<OsOrder[]> =>
       parseListings(await orNone(get({ op: 'listings', slug: slug!, limit: String(limit) }, signal))),
   })
-  return { listings: q.data, loading: q.isLoading && !!slug, needsKey: needsKey(q.error), error: q.error, refetch: q.refetch }
+  return {
+    listings: q.data,
+    loading: !!slug && (!known || (configured && q.isLoading)),
+    needsKey: (known && !configured) || needsKey(q.error),
+    error: q.error,
+    refetch: q.refetch,
+  }
 }
 
 /** One NFT on OpenSea: details, its best listing and best offer. */
 export function useOpenSeaItem(chainId: number, address: string | undefined, slug: string | undefined, id: string | undefined) {
   const chain = OPENSEA_CHAIN[chainId]
+  const { configured, known } = useOpenSeaConfigured()
   const nft = useQuery({
     queryKey: ['os-nft', chain, address?.toLowerCase(), id],
-    enabled: !!chain && !!address && !!id,
+    enabled: !!chain && !!address && !!id && configured,
     ...common,
     queryFn: async ({ signal }): Promise<OsNft | null> =>
       parseNft(await orNone(get({ op: 'nft', chain: chain!, address: address!, id: id! }, signal))) || null,
   })
   const listing = useQuery({
     queryKey: ['os-nft-listing', slug, id],
-    enabled: !!slug && !!id,
+    enabled: !!slug && !!id && configured,
     ...common,
     queryFn: async ({ signal }): Promise<OsOrder | null> =>
       parseOrder(await orNone(get({ op: 'nft_listing', slug: slug!, id: id! }, signal))) || null,
   })
   const offer = useQuery({
     queryKey: ['os-nft-offer', slug, id],
-    enabled: !!slug && !!id,
+    enabled: !!slug && !!id && configured,
     ...common,
     queryFn: async ({ signal }): Promise<OsOrder | null> =>
       parseOrder(await orNone(get({ op: 'nft_offer', slug: slug!, id: id! }, signal))) || null,
@@ -166,8 +198,8 @@ export function useOpenSeaItem(chainId: number, address: string | undefined, slu
     nft: nft.data ?? undefined,
     listing: listing.data ?? undefined,
     offer: offer.data ?? undefined,
-    loading: listing.isLoading || offer.isLoading,
-    needsKey: needsKey(listing.error, offer.error),
+    loading: !known || (configured && (listing.isLoading || offer.isLoading)),
+    needsKey: (known && !configured) || needsKey(listing.error, offer.error),
     refetch: () => {
       listing.refetch()
       offer.refetch()
@@ -176,15 +208,31 @@ export function useOpenSeaItem(chainId: number, address: string | undefined, slu
   }
 }
 
+/** One NFT's picture from OpenSea (its cached copy works where the metadata host blocks browsers). */
+export function useOpenSeaNftImage(chainId: number, address: string | undefined, id: string | undefined) {
+  const chain = OPENSEA_CHAIN[chainId]
+  const { configured } = useOpenSeaConfigured()
+  const q = useQuery({
+    queryKey: ['os-nft', chain, address?.toLowerCase(), id],
+    enabled: !!chain && !!address && !!id && configured,
+    ...common,
+    queryFn: async ({ signal }): Promise<OsNft | null> =>
+      parseNft(await orNone(get({ op: 'nft', chain: chain!, address: address!, id: id! }, signal))) || null,
+  })
+  return q.data?.image
+}
+
 /** Collection search by name on OpenSea (needs the key). Waits for typing to pause. */
 export function useOpenSeaSearch(chainId: number, query: string) {
   const chain = OPENSEA_CHAIN[chainId]
+  const { configured, known } = useOpenSeaConfigured()
   const [q, setQ] = useState(query)
   useEffect(() => {
     const t = setTimeout(() => setQ(query.trim()), 350)
     return () => clearTimeout(t)
   }, [query])
-  const enabled = !!chain && q.length >= 2 && !/^0x/i.test(q)
+  const wanted = !!chain && q.length >= 2 && !/^0x/i.test(q)
+  const enabled = wanted && configured
   const r = useQuery({
     queryKey: ['os-search', chain, q.toLowerCase()],
     enabled,
@@ -192,20 +240,29 @@ export function useOpenSeaSearch(chainId: number, query: string) {
     staleTime: 5 * 60_000,
     queryFn: async ({ signal }): Promise<OsSearchHit[]> => parseSearch(await orNone(get({ op: 'search', query: q, chain: chain! }, signal))),
   })
-  return { hits: enabled ? r.data || [] : [], loading: enabled && r.isLoading, needsKey: needsKey(r.error) }
+  return {
+    hits: enabled ? r.data || [] : [],
+    loading: enabled && r.isLoading,
+    needsKey: wanted && ((known && !configured) || needsKey(r.error)),
+  }
 }
 
 /** The wallet's NFTs on this chain from OpenSea, grouped per collection (needs the key). */
 export function useOpenSeaOwned(chainId: number, owner: string | undefined) {
   const chain = OPENSEA_CHAIN[chainId]
+  const { configured, known } = useOpenSeaConfigured()
   const r = useQuery({
     queryKey: ['os-owned', chain, owner?.toLowerCase()],
-    enabled: !!chain && !!owner,
+    enabled: !!chain && !!owner && configured,
     ...common,
     queryFn: async ({ signal }): Promise<OwnedGroup[]> =>
       groupAccountNfts(await orNone(get({ op: 'account_nfts', chain: chain!, address: owner! }, signal))),
   })
-  return { groups: r.data, loading: r.isLoading && !!chain && !!owner, needsKey: needsKey(r.error) }
+  return {
+    groups: r.data,
+    loading: r.isLoading && !!chain && !!owner && configured,
+    needsKey: (known && !configured) || needsKey(r.error),
+  }
 }
 
 /** Resolve a slug (from search) to the contract on this chain. */

@@ -19,7 +19,7 @@ import { bestQuote, collectionUrl, formatPrice, venuesFor } from './markets'
 import type { PoolMode } from './pool'
 import { KIND, MODE, MODE_HINT, MODE_LABEL } from './pool'
 import { Card, Chips, Field, Head, Hint, LinkButton, Mono, Prose, PushButton } from './ui'
-import { useOpenSeaCollection, useOpenSeaListings } from './useMarkets'
+import { useOpenSeaCollection, useOpenSeaListings, useOpenSeaNftImage } from './useMarkets'
 import { poolFactoryFor, useNftMeta, usePoolsForCollection } from './usePools'
 import { Best, OutLink, VenueList, VenueRow } from './venueUi'
 
@@ -33,6 +33,15 @@ const Hero = styled.div`
     box-shadow: ${bevel.sunken};
     padding: 2px;
     background: ${color.well};
+  }
+  .letter {
+    display: grid;
+    place-items: center;
+    aspect-ratio: 1 / 1;
+    background: ${color.light};
+    font-size: ${text.xl};
+    font-weight: 700;
+    text-transform: uppercase;
   }
   .meta {
     display: flex;
@@ -104,11 +113,12 @@ function ListingTile({
   onOpen: () => void
 }) {
   const id = listing.tokenId!
-  const meta = useNftMeta(chainId, contract, KIND.ERC721, BigInt(id))
+  const osImage = useOpenSeaNftImage(chainId, contract, id)
+  const meta = useNftMeta(chainId, osImage ? undefined : contract, KIND.ERC721, BigInt(id))
   return (
     <li>
       <TileButton type="button" onClick={onOpen} aria-label={`#${id}, ${formatPrice(listing.price)} on OpenSea. Open`}>
-        <NftImage src={meta.image} alt="" variant="thumb" fallback={`#${id}`} />
+        <NftImage src={osImage || meta.image} alt="" variant="thumb" />
         <span className="label">
           <span>#{id}</span>
           <b>{formatPrice(listing.price)}</b>
@@ -156,9 +166,10 @@ export default function CollectionView({
   const [lookup, setLookup] = useState('')
   const create = useTx(() => pools.refetch())
 
-  const name = os.info?.name || cleanText(onchainName.data as string | undefined, 80) || shortAddress(address)
+  const knownName = os.info?.name || cleanText(onchainName.data as string | undefined, 80)
+  const named = !!knownName
+  const name = knownName || 'Unnamed collection'
   const venues = venuesFor(chainId)
-  const showNeedsKey = os.supported && (os.needsKey || listings.needsKey)
 
   const floor: Price | undefined = os.stats?.floor || listings.listings?.[0]?.price
   const cheapest = bestQuote([{ venue: 'OpenSea', price: floor }])
@@ -183,8 +194,12 @@ export default function CollectionView({
 
       <Card aria-label={`${name} collection`} data-collection-view>
         <Hero>
-          <div className="pic">
-            <NftImage src={os.info?.image} alt="" variant="thumb" fallback={name.slice(0, 2)} />
+          <div className="pic" aria-hidden>
+            {os.info?.image ? (
+              <NftImage src={os.info.image} alt="" variant="thumb" />
+            ) : (
+              <span className="letter">{named ? name.slice(0, 1) : '?'}</span>
+            )}
           </div>
           <div className="meta">
             <Head>
@@ -306,7 +321,7 @@ export default function CollectionView({
                       : os.missing
                       ? 'OpenSea does not list this contract (yet).'
                       : os.needsKey
-                      ? 'Prices need an API key. The link works.'
+                      ? 'Listings and offers need an API key. The link works.'
                       : listings.listings?.length
                       ? 'Buy listed NFTs right here, below.'
                       : undefined
@@ -334,11 +349,6 @@ export default function CollectionView({
         </VenueList>
         {!os.supported && (
           <Hint>OpenSea, Blur and Magic Eden do not trade on {chain.name}. Only MiyaPool does.</Hint>
-        )}
-        {showNeedsKey && (
-          <Hint data-needs-key>
-            Prices from other markets need an OpenSea API key on the server. Every link above still works.
-          </Hint>
         )}
         {os.error && <Hint>Could not get OpenSea prices right now. The links still work.</Hint>}
         {create.tx.phase !== 'idle' && (

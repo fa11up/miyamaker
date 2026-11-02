@@ -272,7 +272,7 @@ export function NftTile({
       title={title}
       aria-label={`${title}${units !== undefined && units > 1n ? `, ${units} in the pool` : ''}`}
     >
-      <NftImage src={image || meta.image} alt="" variant="thumb" fallback={label} />
+      <NftImage src={image || meta.image} alt="" variant="thumb" />
       <span className="label">
         <span>{label}</span>
         {units !== undefined && units > 1n && <span>×{units.toString()}</span>}

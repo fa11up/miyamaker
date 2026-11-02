@@ -124,6 +124,12 @@ test('proxy: no key = keyless ops forwarded without a key, the rest 503 without 
   assert.equal(r2.status, 503)
   assert.equal((await r2.json()).name, 'MARKET_NOT_CONFIGURED')
   assert.equal(calls.length, 1)
+  // status is answered locally and says whether a key is set, never what it is.
+  assert.deepEqual(await (await handleOpenSeaRequest(req('op=status'), {}, guards(), fetchImpl)).json(), { configured: false })
+  const on = await handleOpenSeaRequest(req('op=status'), { OPENSEA_API_KEY: 'k-secret' }, guards(), fetchImpl)
+  assert.equal(await on.text(), '{"configured":true}')
+  assert.equal(calls.length, 1)
+  assert.match(openSeaGet(new URLSearchParams({ op: 'status', slug: 'x' })).error!, /slug is not accepted/)
 })
 
 test('proxy: key injected; 401 → not configured; 404 → NOT_FOUND; cross-site refused; fills rate-limited', async () => {

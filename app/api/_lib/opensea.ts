@@ -49,7 +49,11 @@ type GetOp = {
 const e = encodeURIComponent
 
 /** Every GET the page may ask for. */
+const STATUS_PATH = 'status'
+
 export const GET_OPS: Record<string, GetOp> = {
+  // Whether a key is set (no upstream call).
+  status: { params: {}, keyless: true, path: () => STATUS_PATH },
   // Contract → collection slug.
   contract: {
     params: { chain: isChain, address: isAddress },
@@ -284,6 +288,9 @@ export async function handleOpenSeaRequest(
   if (built.error !== undefined) return json(400, { name: 'INPUT_INVALID', message: built.error })
 
   const key = env.OPENSEA_API_KEY?.trim()
+  // Answered here, never upstream: lets the page skip keyed requests (and their 503s) when no key is set.
+  if (built.path === STATUS_PATH)
+    return json(200, { configured: !!key }, { 'cache-control': 'public, max-age=60, s-maxage=300' })
   if (!key && !built.keyless) return json(503, NOT_CONFIGURED)
 
   const target = `${OPENSEA_API}${built.path}${built.query ? `?${built.query}` : ''}`

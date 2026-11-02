@@ -31,7 +31,28 @@ the public bundle. Proxy rules are unit-tested: `yarn test`.
 **Local dev:** put `ZEROX_API_KEY=...` in `app/.env.local` (gitignored) or export it in your shell,
 then `yarn dev`. A Vite dev middleware (`vite.config.ts`) runs the same proxy code.
 
+### NFTs: every market a collection trades on (OpenSea key)
+
+Open a collection in Trade → NFTs (search by name, paste an address, tap one of your NFTs' collections, or a pool)
+and it lists every venue: **MiyaPool** (our pools, 0% fees, on-chain), **OpenSea** (floor, best offer, sales this
+week, the cheapest listings), **Blur** and **Magic Eden** (links only: no public price API). Each NFT has its own
+page too (`/trade/nfts/collection/<chainId>/<address>/<tokenId>`): its OpenSea listing and best offer, whether a
+MiyaPool holds it, and links to it everywhere. OpenSea listings can be **bought in-app** and offers **accepted
+in-app** after a review that shows the price, the OpenSea fee and creator earnings; the order comes from OpenSea's
+fulfillment API and is checked in the page before the wallet opens (Seaport 1.6/1.5 address only, this chain, this
+NFT, goods to the wallet, fixed price; `planFill` in `src/pages/Swap/nft/markets.ts`) and simulated. OpenSea serves
+Ethereum and Robinhood Chain; Sepolia has only MiyaPool (OpenSea closed its testnets).
+
+The OpenSea key stays server-side, same as 0x: the page calls `/api/opensea?op=...` and `api/_lib/opensea.ts` adds
+`X-API-KEY`. It allows only its listed ops and params (same-origin, rate-limited, fills POST with a body the proxy
+rebuilds, so the page cannot pick a recipient). **Get a free key** on
+[docs.opensea.io/reference/api-keys](https://docs.opensea.io/reference/api-keys): opensea.io → Settings →
+Developer → Create key (needs a verified email), or for a quick test the instant key
+(`curl -X POST https://api.opensea.io/api/v2/auth/keys`, free tier, expires after 7 days, low limits). Put it in
+`app/.env.local` as `OPENSEA_API_KEY=...` (no `VITE_` prefix) or in Vercel's Environment Variables. Without it the
+venue cards still show with working links and a quiet "prices need an API key" note.
+
 **Vercel:** set the project's Root Directory to `app` (framework preset: Vite), then add
-`ZEROX_API_KEY` under
+`ZEROX_API_KEY` (and `OPENSEA_API_KEY`) under
 Project Settings -> Environment Variables for Production/Preview, and redeploy. The functions in
-`app/api/0x/swap/allowance-holder/{price,quote}.ts` serve the proxy.
+`app/api/0x/swap/allowance-holder/{price,quote}.ts` serve the 0x proxy and `app/api/opensea.ts` the OpenSea one.
