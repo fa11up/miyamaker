@@ -1,7 +1,7 @@
 import react from '@vitejs/plugin-react'
 import path from 'path'
 import type { Plugin } from 'vite'
-import { defineConfig, loadEnv } from 'vite'
+import { defineConfig, loadEnv, searchForWorkspaceRoot } from 'vite'
 import macrosPlugin from 'vite-plugin-babel-macros'
 import dynamicImport from 'vite-plugin-dynamic-import'
 import imagePresets, { widthPreset } from 'vite-plugin-image-presets'
@@ -146,5 +146,11 @@ export default defineConfig(({ mode }) => ({
   },
   optimizeDeps: {
     disabled: 'build',
+  },
+  server: {
+    fs: {
+      // constants/contracts.ts bundles ../contracts/deployments/<chainId>.json (miyamints addresses).
+      allow: [searchForWorkspaceRoot(process.cwd()), path.resolve(__dirname, '../contracts/deployments')],
+    },
   },
 }))
