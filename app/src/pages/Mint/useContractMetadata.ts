@@ -1,11 +1,11 @@
 import { useFetch } from 'usehooks-ts'
 
 import type { ContractMetadata } from '@/store/collections/reducer'
-import { resolveUri } from '@/utils/resolveUri'
+import { resolveMetadataUri, resolveUri } from '@/utils/resolveUri'
 
 export function useContractMetadata({ metadataUri }: { metadataUri: string }) {
   let contractUri = metadataUri
-  contractUri = resolveUri(contractUri)
+  contractUri = resolveMetadataUri(contractUri)
 
   const { data: contractMetadata, error } = useFetch<ContractMetadata>(contractUri)
 
