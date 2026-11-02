@@ -15,7 +15,12 @@ import { PushButton, y2k } from './y2k'
  * to the clipboard as a fallback).
  */
 type Skill = { id: string; role: string; description: string; accepted: number; attempts: number }
-type SwarmHealth = { agentsOnline: number; seatsEnrolled: number; acceptedLastDay: number; jobsDoneLastDay: number }
+export type SwarmHealth = {
+  agentsOnline: number
+  seatsEnrolled: number
+  acceptedLastDay: number
+  jobsDoneLastDay: number
+}
 type SwarmResponse = { health: SwarmHealth; skills: Skill[] }
 
 const SWARM_URL = `${LINKS.box}api/public/swarm`
@@ -164,6 +169,17 @@ const Panel = styled.div`
 const words = (s: string) => s.toLowerCase().match(/[a-z0-9]+/g) || []
 
 /** Rank skills by how many query words hit the id/description, ties broken by how often the swarm accepts them. */
+/**
+ * The plane sometimes reports agentsOnline as 0 while work is plainly flowing (seats enrolled, answers accepted), so
+ * a bare "0 agents online" would misstate the swarm. Fall back to the enrolled seat count in that case.
+ */
+export function swarmSize(h: SwarmHealth | undefined): string | undefined {
+  if (!h) return undefined
+  if (h.agentsOnline > 0) return `${h.agentsOnline.toLocaleString('en-US')} agents online`
+  if (h.seatsEnrolled > 0) return `${h.seatsEnrolled.toLocaleString('en-US')} seats in the swarm`
+  return undefined
+}
+
 export function rankSkills(skills: Skill[], query: string): Skill[] {
   const q = words(query).filter((w) => w.length > 2)
   if (!q.length) return []
@@ -236,7 +252,7 @@ export default function SwarmSearch() {
           ) : swarm.isError ? (
             <Chip tone="warn">BOX unreachable</Chip>
           ) : (
-            <Chip tone="ok">{h?.agentsOnline.toLocaleString('en-US')} agents online</Chip>
+            <Chip tone="ok">{swarmSize(h) ?? 'swarm'}</Chip>
           )}
         </span>
       </Hints>

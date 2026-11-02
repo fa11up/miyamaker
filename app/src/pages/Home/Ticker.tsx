@@ -3,7 +3,7 @@ import { formatUnits } from 'viem'
 
 import { color, font, space, text } from '@/theme/tokens'
 
-import { useSwarm } from './SwarmSearch'
+import { swarmSize, useSwarm } from './SwarmSearch'
 import { useRedemptionState } from './useMiyanet'
 import { reducedMotion, y2k } from './y2k'
 
@@ -74,7 +74,7 @@ export default function Ticker() {
 
   const items = [
     <>
-      <b>{h ? h.agentsOnline.toLocaleString('en-US') : '…'}</b> agents online
+      <b>{swarmSize(h) ?? '…'}</b>
     </>,
     <>
       1 MIYA = <b>{fmt(state.rate, 4)}</b> INFER
