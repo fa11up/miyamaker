@@ -345,6 +345,7 @@ export default function DropMusicWindow() {
   const coverInput = useRef<HTMLInputElement>(null)
   const tabRefs = useRef<(HTMLButtonElement | null)[]>([])
   const stageRef = useRef<HTMLDivElement>(null)
+  const sessionRef = useRef<HTMLElement>(null)
 
   const set = (k: keyof Form) => (e: { target: { value: string } }) => setForm((f) => ({ ...f, [k]: e.target.value }))
 
@@ -353,6 +354,12 @@ export default function DropMusicWindow() {
     const to = SECTIONS.findIndex((s) => s.id === next)
     setDir(to >= from ? 1 : -1)
     setSection(next)
+    // Coming from a long panel: bring the tabs back into view so the new step starts at its top.
+    const el = sessionRef.current
+    const box = el?.closest('[data-scroll]')
+    if (el && box && el.getBoundingClientRect().top < box.getBoundingClientRect().top) {
+      el.scrollIntoView({ block: 'start', behavior: reduced ? 'auto' : 'smooth' })
+    }
   }
 
   useEffect(() => {
@@ -665,7 +672,11 @@ export default function DropMusicWindow() {
   const sticker = done
     ? { big: 'out', small: `now! #${drop.launched.editionId?.toString()}`, gold: true }
     : priceWords
-    ? { big: priceWords.replace(' ETH', 'Ξ'), small: supply.ok && supply.supply ? `of ${supply.supply}` : 'open ed.' }
+    ? {
+        big: formatEther((price as { wei: bigint }).wei),
+        small: 'ETH',
+        tiny: supply.ok && supply.supply ? `${supply.supply} only` : 'open',
+      }
     : hasTrack
     ? { big: 'new', small: 'single' }
     : undefined
@@ -732,7 +743,7 @@ export default function DropMusicWindow() {
       >
         {Pages.dropmusic?.label}
       </TitleBar>
-      <Layout ref={layoutRef} className={narrow ? 'narrow' : wide ? 'wide' : undefined}>
+      <Layout ref={layoutRef} data-scroll className={narrow ? 'narrow' : wide ? 'wide' : undefined}>
         <Wrap>
           <Head>
             <div>
@@ -772,7 +783,7 @@ export default function DropMusicWindow() {
             />
           </div>
 
-          <Session aria-label="Release setup">
+          <Session ref={sessionRef} aria-label="Release setup">
             <TabRow role="tablist" aria-label="Release setup">
               {SECTIONS.map((s, i) => (
                 <Tab

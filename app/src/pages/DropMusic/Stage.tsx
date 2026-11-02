@@ -499,6 +499,10 @@ const Sticker = styled.span<{ $gold: boolean }>`
   b {
     font-size: 13px;
   }
+  .tiny {
+    font-size: 9px;
+    white-space: nowrap;
+  }
   .still & {
     animation: none;
   }
@@ -653,7 +657,7 @@ export type StageProps = {
   coverUrl?: string
   title: string
   artist: string
-  sticker?: { big: string; small: string; gold?: boolean }
+  sticker?: { big: string; small: string; tiny?: string; gold?: boolean }
   hasTrack: boolean
   trackLabel?: string
   player: StudioPlayer
@@ -763,6 +767,7 @@ export default function Stage(p: StageProps) {
               <Sticker key={`${p.sticker.big}${p.sticker.gold}`} $gold={!!p.sticker.gold} aria-hidden>
                 <b>{p.sticker.big}</b>
                 <span>{p.sticker.small}</span>
+                {p.sticker.tiny && <span className="tiny">{p.sticker.tiny}</span>}
               </Sticker>
             )}
           </div>
@@ -803,7 +808,7 @@ export default function Stage(p: StageProps) {
             )}
             {p.onSendToRadio && (
               <DeckButton type="button" onClick={p.onSendToRadio} title="Play it in miya radio">
-                → radio
+                Play in radio
               </DeckButton>
             )}
           </>
