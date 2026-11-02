@@ -88,6 +88,10 @@ export function useDesktopPrefs(): DesktopPrefs {
 export const DESKTOP_EVENTS = {
   screensaverPreview: 'miyaos:screensaver-preview',
   openWindow: 'miyaos:open-window',
+  /** desktop icons moved (drag, keyboard, arrange): anything measuring them should re-read rects */
+  iconsMoved: 'miyaos:icons-moved',
+  /** context menu "Arrange icons": back to the default grid */
+  arrangeIcons: 'miyaos:arrange-icons',
 } as const
 
 export function startScreensaverPreview() {
