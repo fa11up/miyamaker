@@ -4,6 +4,8 @@ import ExecutableIcon from 'assets/create_new.png?preset=icon&resize=true'
 import GearIcon from 'assets/executable_gear.png?preset=icon&resize=true'
 import FilesIcon from 'assets/folder.png?preset=icon&resize=true'
 import AuctionIcon from 'assets/icon/auction.png?preset=icon&resize=true'
+import DropMusicIcon from 'assets/icon/drop_music.png?preset=icon&resize=true'
+import RadioIcon from 'assets/icon/radio.png?preset=icon&resize=true'
 import MintIcon from 'assets/launchpad_logo.png?preset=icon&resize=true'
 import ManageIcon from 'assets/miya_website_logo_2-removebg-preview.png?preset=icon&resize=true'
 import LaunchIcon from 'assets/miyamints1.png?preset=icon&resize=true'
@@ -129,6 +131,26 @@ const Pages: Record<string, Page> = {
     icon: TvIcon[0],
     minSize: {
       width: 1100,
+      height: 700,
+    },
+  },
+  radio: {
+    id: 'radio',
+    path: '/radio',
+    label: 'miya radio',
+    icon: RadioIcon[0],
+    minSize: {
+      width: 460,
+      height: 600,
+    },
+  },
+  dropmusic: {
+    id: 'dropmusic',
+    path: '/drop-music',
+    label: 'Drop Music',
+    icon: DropMusicIcon[0],
+    minSize: {
+      width: 640,
       height: 700,
     },
   },

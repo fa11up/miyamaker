@@ -9,6 +9,7 @@ import { useWaves } from '@/store/experience/hooks'
 import { bevel, color, text } from '@/theme/tokens'
 
 import { ButtonIcon, HighlightButton } from '../Button'
+import RadioTray from '../RadioTray'
 import { VerticalSeparator } from '../Separator'
 import StartButton from './StartButton'
 
@@ -149,6 +150,7 @@ export default function TaskBar({
         <Row>
           <VerticalSeparator />
           <InsetContainer>
+            <RadioTray showTitle={!mobile} />
             <ButtonIcon onClick={() => toggleWaves()}>
               <img
                 src={waves ? Waves[0]?.src : WavesBw[0]?.src}

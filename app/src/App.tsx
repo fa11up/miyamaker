@@ -12,6 +12,7 @@ import { wagmiConfig } from './config/wagmi'
 import { GRAPHQL_URL } from './constants/indexer'
 import AccountProvider from './context/AccountProvider'
 import ClustersProvider from './context/ClustersProvider'
+import RadioProvider from './context/RadioProvider'
 import Router from './Router'
 import store from './store'
 import ThemeProvider, { ThemedGlobalStyle } from './theme'
@@ -63,7 +64,9 @@ export default function App() {
                 <RainbowKitProvider theme={readTheme} appInfo={{ appName: 'miyamaker' }}>
                   <ThemeProvider>
                     <ThemedGlobalStyle />
-                    <Router />
+                    <RadioProvider>
+                      <Router />
+                    </RadioProvider>
                   </ThemeProvider>
                 </RainbowKitProvider>
               </ClustersProvider>

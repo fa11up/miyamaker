@@ -14,6 +14,7 @@ import CollectionInfo from '@/pages/Mint/Collection'
 import Collections from '@/pages/Mint/Collections'
 import { EXPLORER_PAGE_SECTION } from '@/pages/Mint/constants'
 import MiyaminiMint from '@/pages/Mint/Miyamini'
+import MusicDrops from '@/pages/Mint/Music'
 import NFTDetail from '@/pages/Mint/NFT'
 import type { Collection } from '@/pages/Mint/types/collection'
 import type { TokenMetadata } from '@/store/collections/reducer'
@@ -103,6 +104,10 @@ export default function MintPage() {
     setErrorMessage('')
   }
 
+  // Sections built on the type scale (not the legacy all-Revalia browser).
+  const modernSection =
+    pageSection === EXPLORER_PAGE_SECTION.MIYAMINI_SECTION || pageSection === EXPLORER_PAGE_SECTION.MUSIC_SECTION
+
   const renderSection = () => {
     switch (pageSection) {
       case EXPLORER_PAGE_SECTION.MIYAMINI_SECTION:
@@ -111,8 +116,11 @@ export default function MintPage() {
             onBrowseCollections={
               INDEXER_ENABLED ? () => setPageSection(EXPLORER_PAGE_SECTION.COLLECTIONS_SECTION) : undefined
             }
+            onBrowseMusic={() => setPageSection(EXPLORER_PAGE_SECTION.MUSIC_SECTION)}
           />
         )
+      case EXPLORER_PAGE_SECTION.MUSIC_SECTION:
+        return <MusicDrops onBack={() => setPageSection(EXPLORER_PAGE_SECTION.MIYAMINI_SECTION)} />
       case EXPLORER_PAGE_SECTION.COLLECTIONS_SECTION:
         return (
           <Collections
@@ -156,8 +164,8 @@ export default function MintPage() {
       >
         {page?.label}
       </TitleBar>
-      <Background className={pageSection === EXPLORER_PAGE_SECTION.MIYAMINI_SECTION ? 'miyamini' : 'legacy'}>
-        <Container style={pageSection === EXPLORER_PAGE_SECTION.MIYAMINI_SECTION ? { padding: 0 } : undefined}>
+      <Background className={modernSection ? 'miyamini' : 'legacy'}>
+        <Container style={modernSection ? { padding: 0 } : undefined}>
           {renderSection()}
           {errorMessage && (
             <ErrorWrapper>
