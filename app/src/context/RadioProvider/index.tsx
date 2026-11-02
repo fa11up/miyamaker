@@ -2,6 +2,8 @@ import type { ReactNode } from 'react'
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 
 import { safeUri } from '@/music/audio'
+import type { EqState } from '@/music/eq'
+import { clampBalance, dbToGain, effectiveGains, EQ_BANDS, sanitizeEq } from '@/music/eq'
 import type { QueueState } from '@/music/queue'
 import * as Q from '@/music/queue'
 import type { Track } from '@/music/types'
@@ -28,6 +30,16 @@ export type RadioApi = {
   /** Whether the visualizer can show live data for the current track. */
   visualizer: VisualizerMode
   getAnalyser: () => AnalyserNode | null
+  /** 10-band equalizer + preamp. Applied whenever the track plays through WebAudio (`fx`). */
+  eq: EqState
+  setEq: (eq: Partial<EqState>) => void
+  /** Stereo balance, -1 (left) … 1 (right). Applied through WebAudio like the EQ. */
+  balance: number
+  setBalance: (v: number) => void
+  /** True while the current track is routed through WebAudio, i.e. EQ, balance and live visuals work. */
+  fx: boolean
+  /** Output sample rate of the audio graph (Hz), once it exists. */
+  sampleRate: number | undefined
   play: () => void
   pause: () => void
   toggle: () => void
@@ -105,6 +117,23 @@ function save(queue: QueueState, volume: number) {
   }
 }
 
+const FX_KEY = 'miya-radio:fx:v1'
+
+function restoreFx(): { eq: EqState; balance: number } {
+  try {
+    const saved = JSON.parse(window.localStorage.getItem(FX_KEY) || 'null') as {
+      eq?: unknown
+      balance?: unknown
+    } | null
+    return {
+      eq: sanitizeEq(saved?.eq),
+      balance: typeof saved?.balance === 'number' ? clampBalance(saved.balance) : 0,
+    }
+  } catch {
+    return { eq: sanitizeEq(null), balance: 0 }
+  }
+}
+
 // ── environment ───────────────────────────────────────────────────────────────
 
 const isIOS = () =>
@@ -147,12 +176,23 @@ export default function RadioProvider({ children }: { children: ReactNode }) {
   const [clock, setClock] = useState<RadioClock>({ time: 0, duration: 0 })
   const [usingFx, setUsingFx] = useState(false)
   const [reducedMotion, setReducedMotion] = useState(prefersReducedMotion)
+  const initialFx = useMemo(restoreFx, [])
+  const [eq, setEqState] = useState<EqState>(initialFx.eq)
+  const eqRef = useRef(eq)
+  eqRef.current = eq
+  const [balance, setBalanceState] = useState(initialFx.balance)
+  const balanceRef = useRef(balance)
+  balanceRef.current = balance
+  const [sampleRate, setSampleRate] = useState<number | undefined>()
 
   const fxRef = useRef<HTMLAudioElement | null>(null)
   const plainRef = useRef<HTMLAudioElement | null>(null)
   const activeRef = useRef<HTMLAudioElement | null>(null)
   const ctxRef = useRef<AudioContext | null>(null)
   const analyserRef = useRef<AnalyserNode | null>(null)
+  const preampRef = useRef<GainNode | null>(null)
+  const filtersRef = useRef<BiquadFilterNode[]>([])
+  const pannerRef = useRef<StereoPannerNode | null>(null)
   const fxBrokenRef = useRef(false)
   const noCorsRef = useRef(new Set<string>())
   const wantPlayRef = useRef(false)
@@ -184,6 +224,17 @@ export default function RadioProvider({ children }: { children: ReactNode }) {
     !prefersReducedMotion() &&
     !!(window.AudioContext || (window as unknown as { webkitAudioContext?: AudioCtor }).webkitAudioContext)
 
+  // Push the current EQ/balance values into the graph (no-op until it exists).
+  const applyFxRef = useRef(() => {
+    const ctx = ctxRef.current
+    if (!ctx) return
+    const now = ctx.currentTime
+    const gains = effectiveGains(eqRef.current)
+    preampRef.current?.gain.setTargetAtTime(dbToGain(gains.preamp), now, 0.02)
+    filtersRef.current.forEach((f, i) => f.gain.setTargetAtTime(gains.bands[i] || 0, now, 0.02))
+    pannerRef.current?.pan.setTargetAtTime(balanceRef.current, now, 0.02)
+  })
+
   const ensureGraph = useCallback(() => {
     const fx = fxRef.current
     if (!fx || analyserRef.current) {
@@ -198,10 +249,30 @@ export default function RadioProvider({ children }: { children: ReactNode }) {
       const analyser = ctx.createAnalyser()
       analyser.fftSize = 2048
       analyser.smoothingTimeConstant = 0.78
-      source.connect(analyser)
+      // source → preamp → 10 shelf/peaking filters → balance → analyser → speakers
+      const preamp = ctx.createGain()
+      const filters = EQ_BANDS.map((hz, i) => {
+        const f = ctx.createBiquadFilter()
+        f.type = i === 0 ? 'lowshelf' : i === EQ_BANDS.length - 1 ? 'highshelf' : 'peaking'
+        f.frequency.value = hz
+        f.Q.value = 1.1
+        return f
+      })
+      let chain: AudioNode = source.connect(preamp)
+      filters.forEach((f) => {
+        chain = chain.connect(f)
+      })
+      const panner = typeof ctx.createStereoPanner === 'function' ? ctx.createStereoPanner() : null
+      if (panner) chain = chain.connect(panner)
+      chain.connect(analyser)
       analyser.connect(ctx.destination)
       ctxRef.current = ctx
       analyserRef.current = analyser
+      preampRef.current = preamp
+      filtersRef.current = filters
+      pannerRef.current = panner
+      applyFxRef.current()
+      setSampleRate(ctx.sampleRate)
       if (ctx.state === 'suspended') ctx.resume().catch(() => undefined)
     } catch {
       fxBrokenRef.current = true
@@ -466,6 +537,33 @@ export default function RadioProvider({ children }: { children: ReactNode }) {
   }, [commit])
   const toggleShuffle = useCallback(() => commit(Q.setShuffle(queueRef.current, !queueRef.current.shuffle)), [commit])
   const cycleRepeat = useCallback(() => commit(Q.cycleRepeat(queueRef.current)), [commit])
+  const setEq = useCallback((patch: Partial<EqState>) => {
+    setEqState((prev) => {
+      const next = sanitizeEq({ ...prev, ...patch })
+      eqRef.current = next
+      return next
+    })
+  }, [])
+
+  const setBalance = useCallback((v: number) => {
+    // Snap to centre near zero so the slider has a detent.
+    const b = Math.abs(v) < 0.06 ? 0 : clampBalance(v)
+    balanceRef.current = b
+    setBalanceState(b)
+  }, [])
+
+  useEffect(() => {
+    applyFxRef.current()
+    const t = setTimeout(() => {
+      try {
+        window.localStorage.setItem(FX_KEY, JSON.stringify({ eq, balance }))
+      } catch {
+        // ignore
+      }
+    }, 300)
+    return () => clearTimeout(t)
+  }, [eq, balance])
+
   const getAnalyser = useCallback(() => (usingFx ? analyserRef.current : null), [usingFx])
 
   // ── persistence ─────────────────────────────────────────────────────────────
@@ -564,6 +662,12 @@ export default function RadioProvider({ children }: { children: ReactNode }) {
       volume,
       visualizer,
       getAnalyser,
+      eq,
+      setEq,
+      balance,
+      setBalance,
+      fx: usingFx,
+      sampleRate,
       play,
       pause,
       toggle,
@@ -589,6 +693,12 @@ export default function RadioProvider({ children }: { children: ReactNode }) {
       volume,
       visualizer,
       getAnalyser,
+      eq,
+      setEq,
+      balance,
+      setBalance,
+      usingFx,
+      sampleRate,
       play,
       pause,
       toggle,
