@@ -291,7 +291,7 @@ export default function MusicDrops({ onBack }: { onBack: () => void }) {
           </div>
           <div style={{ display: 'flex', gap: space[2], flexWrap: 'wrap' }}>
             <Small type="button" onClick={onBack}>
-              ← MIYAMINI
+              ← All mints
             </Small>
             <Small type="button" onClick={() => openApp('radio')}>
               Open miya radio
