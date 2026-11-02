@@ -1,6 +1,6 @@
 import WarningIcon from 'assets/icon/warning.png'
-import { useEffect, useState } from 'react'
-import { useWindowSize } from 'usehooks-ts'
+import { useEffect, useRef, useState } from 'react'
+import styled from 'styled-components/macro'
 import type { Address } from 'viem'
 import { mainnet } from 'viem/chains'
 import { useAccount as useWagmiAccount } from 'wagmi'
@@ -19,16 +19,39 @@ import ProductDetail from '@/pages/Auction/ProductDetail'
 import ProductsList from '@/pages/Auction/ProductsList'
 import { useNFTsList } from '@/pages/Auction/useNFTsList'
 import { setNFTsList } from '@/store/collections/actions'
-import { useAppDispatch } from '@/store/hooks'
+import { useAppDispatch, useAppSelector } from '@/store/hooks'
 import { closeWindow, minimizeWindow } from '@/store/windows/actions'
 import type { PageKey } from '@/store/windows/reducer'
+
+/* Desktop: the window is a fixed size and the two panels share it. Phones: the panels take their natural height and
+   the window body is the one scrolling surface (no scroll boxes inside it). */
+const Body = styled.div`
+  display: flex;
+  flex-direction: column;
+  padding: 0.5rem;
+  gap: 1rem;
+  height: 100%;
+  min-height: 0;
+
+  > fieldset {
+    min-height: 0;
+  }
+
+  @media only screen and (max-width: 640px) {
+    overflow-y: auto;
+
+    > fieldset {
+      flex: none !important;
+      height: auto !important;
+    }
+  }
+`
 
 const page = Pages.auction
 const pageId = page?.id as PageKey
 
 export default function AuctionPage() {
   // Window mgmt
-  const { width } = useWindowSize()
   const dispatch = useAppDispatch()
   const close = () => dispatch(closeWindow({ value: pageId }))
   const minimize = () => dispatch(minimizeWindow({ value: pageId }))
@@ -38,6 +61,13 @@ export default function AuctionPage() {
   const [errorMessage, setErrorMessage] = useState('')
   const [errorName, setErrorName] = useState('MiyaAuction Error')
   const [pageSection, setPageSection] = useState(AUCTION_PAGE_SECTION.COLLECTIONS_SECTION)
+
+  // On phones the body scrolls; picking a lot further down brings its detail (at the top) back into view.
+  const bodyRef = useRef<HTMLDivElement>(null)
+  const currentToken = useAppSelector((state) => state.collections.currentToken)
+  useEffect(() => {
+    bodyRef.current?.scrollTo?.({ top: 0, behavior: 'smooth' })
+  }, [currentToken, pageSection])
 
   // Network
   const { chain } = useWagmiAccount()
@@ -68,11 +98,7 @@ export default function AuctionPage() {
       case AUCTION_PAGE_SECTION.PRODUCT_SECTION:
         return (
           <>
-            <ExplorerWrapper
-              style={{ height: width > 640 ? '60%' : '70%' }}
-              title={'Collections > Detail'}
-              setPageSection={setPageSection}
-            >
+            <ExplorerWrapper style={{ flex: '3 1 0' }} title={'Collections > Detail'} setPageSection={setPageSection}>
               <ProductDetail
                 balance={balance}
                 setErrorMessage={setErrorMessage}
@@ -80,7 +106,7 @@ export default function AuctionPage() {
                 auctionContract={auctionContract as Address}
               />
             </ExplorerWrapper>
-            <ExplorerWrapper style={{ height: width > 640 ? '40%' : '30%' }} title={'Lots'}>
+            <ExplorerWrapper style={{ flex: '2 1 0' }} title={'Lots'}>
               <ProductsList auctionContract={auctionContract as Address} />
             </ExplorerWrapper>
           </>
@@ -110,15 +136,7 @@ export default function AuctionPage() {
       >
         {page?.label}
       </TitleBar>
-      <div
-        style={{
-          display: 'flex',
-          flexDirection: 'column',
-          padding: '0.5rem',
-          gap: '1rem',
-          height: '100%',
-        }}
-      >
+      <Body ref={bodyRef}>
         {renderSection()}
         {errorMessage && (
           <ErrorWrapper>
@@ -137,7 +155,7 @@ export default function AuctionPage() {
             </ErrorWindow>
           </ErrorWrapper>
         )}
-      </div>
+      </Body>
     </WindowWrapper>
   )
 }

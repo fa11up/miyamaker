@@ -20,7 +20,7 @@ export default function AuctionButton({
       <NormalButton
         disabled={transacting || disabled}
         onClick={handleBid}
-        style={{ padding: '0.7rem', fontSize: '0.65rem' }}
+        style={{ padding: '0.7rem', fontSize: '0.65rem', whiteSpace: 'nowrap' }}
       >
         {transacting ? 'Transacting...' : `Place bid`}
       </NormalButton>
@@ -53,7 +53,7 @@ export default function AuctionButton({
                     <HighlightButton
                       onClick={openConnectModal}
                       className="free-height free-width"
-                      style={{ height: '100%', padding: '0.7rem', fontSize: '0.65rem' }}
+                      style={{ height: '100%', padding: '0.7rem', fontSize: '0.65rem', whiteSpace: 'nowrap' }}
                     >
                       <span style={{ marginTop: -1 }}>Connect wallet</span>
                     </HighlightButton>
@@ -65,7 +65,7 @@ export default function AuctionButton({
                     <HighlightButton
                       onClick={openChainModal}
                       className="free-height free-width"
-                      style={{ height: '100%', padding: '0.7rem', fontSize: '0.65rem' }}
+                      style={{ height: '100%', padding: '0.7rem', fontSize: '0.65rem', whiteSpace: 'nowrap' }}
                     >
                       <span style={{ marginTop: -1 }}>Wrong network</span>
                     </HighlightButton>
@@ -76,7 +76,7 @@ export default function AuctionButton({
                   <div style={{ height: '100%' }}>
                     <HighlightButton
                       className="free-height free-width"
-                      style={{ height: '100%', padding: '0.7rem', fontSize: '0.65rem' }}
+                      style={{ height: '100%', padding: '0.7rem', fontSize: '0.65rem', whiteSpace: 'nowrap' }}
                     >
                       <span style={{ marginTop: -1 }}>Connect wallet</span>
                     </HighlightButton>
