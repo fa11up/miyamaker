@@ -1,5 +1,4 @@
 import { useConnectModal } from '@rainbow-me/rainbowkit'
-import type { ReactNode } from 'react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import styled from 'styled-components/macro'
 import { useElementSize } from 'usehooks-ts'
@@ -7,12 +6,25 @@ import { formatEther } from 'viem'
 import { useAccount } from 'wagmi'
 
 import LoadingHourglass from '@/assets/loading_hourglass.gif'
+import {
+  DropZone as Drop,
+  Err,
+  Field,
+  Row2,
+  Segmented as Tabs,
+  SmallButton,
+  SplitMeter,
+  STEP_DOT as DOT,
+  StepList as Steps,
+  Thumb as Cover,
+} from '@/components/LaunchKit'
 import { BigButton, Chip, DisplayTitle, Eyebrow, Panel, StatusBox, Well } from '@/components/Retro'
 import TitleBar from '@/components/TitleBar'
 import WindowWrapper from '@/components/WindowWrapper'
 import { explorerUrl } from '@/config/wagmi'
 import Pages from '@/constants/pages'
 import { useRadio } from '@/context/RadioProvider'
+import { useOpenManage } from '@/miyamints/useOpenManage'
 import type { FileCheck } from '@/music/audio'
 import {
   AUDIO_ACCEPT,
@@ -32,11 +44,10 @@ import { useAppDispatch } from '@/store/hooks'
 import { closeWindow, minimizeWindow } from '@/store/windows/actions'
 import { useFullscreen } from '@/store/windows/hooks'
 import type { PageKey } from '@/store/windows/reducer'
-import { bevel, color, font, space, text } from '@/theme/tokens'
+import { color, font, space, text } from '@/theme/tokens'
 import { formatBytes } from '@/utils/formatBytes'
 import { resolveUri } from '@/utils/resolveUri'
 
-import type { StepState } from './useDropMusic'
 import { STEPS, useDropMusic, useMusicChain } from './useDropMusic'
 
 const pageId = 'dropmusic' as PageKey
@@ -74,148 +85,6 @@ const Head = styled.header`
   }
 `
 
-const Field = styled.label`
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  font-size: ${text.sm};
-  min-width: 0;
-  input,
-  textarea,
-  select {
-    width: 100%;
-    min-width: 0;
-    border: none;
-    border-radius: 0;
-    padding: 4px 6px;
-    background: ${color.well};
-    box-shadow: ${bevel.field};
-    font-size: ${text.sm};
-    color: ${color.ink};
-    font-family: inherit;
-  }
-  input,
-  select {
-    height: 30px;
-  }
-  textarea {
-    min-height: 64px;
-    resize: vertical;
-  }
-  input:focus,
-  textarea:focus,
-  select:focus {
-    outline: 1px dotted ${color.dark};
-    outline-offset: -4px;
-  }
-  small {
-    font-size: ${text.xs};
-    color: ${color.inkMuted};
-  }
-  .err {
-    color: ${color.danger};
-  }
-`
-
-const Row2 = styled.div`
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: ${space[2]};
-`
-
-const Drop = styled.div<{ $over?: boolean }>`
-  display: flex;
-  align-items: center;
-  gap: ${space[2]};
-  padding: ${space[2]};
-  background: ${({ $over }) => ($over ? color.faceLight : color.well)};
-  box-shadow: ${bevel.sunken};
-  outline: 1px dashed ${({ $over }) => ($over ? color.accentDark : color.shadow)};
-  outline-offset: -6px;
-  min-height: 64px;
-  font-size: ${text.sm};
-  .grow {
-    flex: 1 1 auto;
-    min-width: 0;
-    overflow-wrap: anywhere;
-  }
-  small {
-    display: block;
-    color: ${color.inkMuted};
-    font-size: ${text.xs};
-  }
-`
-
-const Cover = styled.div`
-  width: 56px;
-  height: 56px;
-  flex: 0 0 56px;
-  background: ${color.dark};
-  box-shadow: ${bevel.sunken};
-  padding: 2px;
-  img {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-    display: block;
-    border: none;
-    margin: 0;
-    max-width: none;
-  }
-`
-
-const SmallButton = styled.button`
-  border: none;
-  border-radius: 0;
-  background: ${color.face};
-  box-shadow: ${bevel.raised};
-  padding: 0 ${space[2]};
-  min-height: 28px;
-  font-size: ${text.xs};
-  cursor: pointer;
-  white-space: nowrap;
-  &:hover:not(:disabled) {
-    background: ${color.faceLight};
-  }
-  &:active:not(:disabled) {
-    box-shadow: ${bevel.pressed};
-  }
-  &:disabled {
-    color: ${color.shadow};
-    cursor: not-allowed;
-  }
-`
-
-const Tabs = styled.div`
-  display: flex;
-  gap: 2px;
-  button[aria-pressed='true'] {
-    box-shadow: ${bevel.pressed};
-    background: ${color.faceLight};
-  }
-`
-
-const Steps = styled.ol`
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  font-size: ${text.xs};
-  li {
-    display: flex;
-    gap: ${space[2]};
-    align-items: center;
-  }
-  .dot {
-    width: 10px;
-    height: 10px;
-    flex: 0 0 10px;
-    box-shadow: inset -1px -1px rgba(0, 0, 0, 0.35);
-  }
-`
-
 const Json = styled.pre`
   margin: 0;
   max-height: 160px;
@@ -226,14 +95,6 @@ const Json = styled.pre`
   white-space: pre-wrap;
   word-break: break-all;
 `
-
-const DOT: Record<StepState, string> = {
-  idle: color.shadow,
-  active: '#e0a100',
-  done: '#2fbf71',
-  error: color.danger,
-  skipped: color.light,
-}
 
 type Form = {
   title: string
@@ -268,15 +129,12 @@ const EMPTY: Form = {
 type AudioPick = { file: File; check: FileCheck; duration?: number; url: string; reading?: boolean; error?: string }
 type CoverPick = { file: File; check: FileCheck; url: string }
 
-function Err({ children }: { children?: ReactNode }) {
-  return children ? <small className="err">{children}</small> : null
-}
-
 export default function DropMusicWindow() {
   const dispatch = useAppDispatch()
   const [fullscreen, toggleFullscreen] = useFullscreen(pageId)
   const radio = useRadio()
   const openApp = useOpenApp()
+  const openManage = useOpenManage()
   const { isConnected, chain } = useAccount()
   const { openConnectModal } = useConnectModal()
   const music = useMusicChain()
@@ -730,6 +588,11 @@ export default function DropMusicWindow() {
                 {music.protocolFeeBps / 100}%. You keep the rest.
               </small>
             </Field>
+            <SplitMeter
+              protocolBps={music.protocolFeeBps || 100}
+              alignmentBps={align.ok ? align.bps : music.minAlignmentBps}
+              compact
+            />
 
             <Well>
               <Steps aria-label="Release steps">
@@ -822,6 +685,16 @@ export default function DropMusicWindow() {
                   </SmallButton>{' '}
                   <SmallButton type="button" onClick={() => openApp('mint')}>
                     Open Mint
+                  </SmallButton>{' '}
+                  <SmallButton
+                    type="button"
+                    onClick={() =>
+                      chain &&
+                      drop.launched.instance &&
+                      openManage({ chainId: chain.id, address: drop.launched.instance, kind: 'editions' })
+                    }
+                  >
+                    Open in Manage
                   </SmallButton>{' '}
                   <SmallButton
                     type="button"
