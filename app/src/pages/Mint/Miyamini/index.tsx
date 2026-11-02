@@ -195,7 +195,13 @@ const formatEth = (wei: bigint | undefined) => {
   return d ? `${i}.${d.slice(0, 4).replace(/0+$/, '') || '0'}` : i
 }
 
-export default function MiyaminiMint({ onBrowseCollections }: { onBrowseCollections?: () => void }) {
+export default function MiyaminiMint({
+  onBrowseCollections,
+  onBrowseMusic,
+}: {
+  onBrowseCollections?: () => void
+  onBrowseMusic?: () => void
+}) {
   const state = useMiyaminiState()
   const tx = useMiyaminiMint()
   const { openConnectModal } = useConnectModal()
@@ -441,6 +447,16 @@ export default function MiyaminiMint({ onBrowseCollections }: { onBrowseCollecti
           {onBrowseCollections && (
             <BigButton type="button" className="secondary" onClick={onBrowseCollections} style={{ minHeight: 36, fontSize: text.sm }}>
               Browse other collections
+            </BigButton>
+          )}
+          {onBrowseMusic && (
+            <BigButton
+              type="button"
+              className="secondary"
+              onClick={onBrowseMusic}
+              style={{ minHeight: 36, fontSize: text.sm }}
+            >
+              ♪ Music drops
             </BigButton>
           )}
         </MintPanel>
