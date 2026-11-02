@@ -9,7 +9,8 @@ import { bevel, color, font, space, text } from '@/theme/tokens'
 /**
  * Search the IdentityMD swarm from inside miyanet. Matching runs locally over INFER BOX's public skill list
  * (CORS-open, no sign-in). Evaluating and paying for a request needs a BOX sign-in on box.imdusd.com, which
- * refuses to be framed, so the last step hands the query over in a new tab (copied to the clipboard).
+ * refuses to be framed, so the last step hands the query over in a new tab as ?q= (BOX prefills its idea box after sign-in; also copied
+ * to the clipboard as a fallback).
  */
 type Skill = { id: string; role: string; description: string; accepted: number; attempts: number }
 type SwarmHealth = { agentsOnline: number; seatsEnrolled: number; acceptedLastDay: number; jobsDoneLastDay: number }
@@ -126,7 +127,7 @@ export default function SwarmSearch() {
       setCopied(false)
     }
 
-    window.open(LINKS.box, '_blank', 'noopener,noreferrer')
+    window.open(query ? `${LINKS.box}?q=${encodeURIComponent(query)}#box` : LINKS.box, '_blank', 'noopener,noreferrer')
   }
 
   return (
@@ -183,7 +184,7 @@ export default function SwarmSearch() {
             </button>
             <span>
               {copied
-                ? 'Query copied. Paste it into BOX, sign in, and pay in imdUSD if it passes.'
+                ? 'Your idea is waiting in BOX (and copied). Sign in, evaluate, and pay in imdUSD if it passes.'
                 : 'BOX checks your idea, quotes it, and the swarm runs it once you pay in imdUSD.'}
             </span>
           </Meta>
