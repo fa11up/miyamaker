@@ -129,8 +129,7 @@ function ListingTile({
 }
 
 /**
- * One collection in Trade → NFTs: the best price, every venue it trades on (MiyaPool first, then OpenSea, Blur,
- * Magic Eden) with what each one's API can tell us, and the cheapest OpenSea listings. Venue links always work;
+ * One collection in Trade → NFTs: the best price, every venue it trades on (MiyaPool first, then OpenSea and Blur) with what each one's API can tell us, and the cheapest OpenSea listings. Venue links always work;
  * prices need the OpenSea key on the server (a quiet note says so).
  */
 export default function CollectionView({
@@ -348,7 +347,7 @@ export default function CollectionView({
           })}
         </VenueList>
         {!os.supported && (
-          <Hint>OpenSea, Blur and Magic Eden do not trade on {chain.name}. Only MiyaPool does.</Hint>
+          <Hint>OpenSea and Blur do not trade on {chain.name}. Only MiyaPool does.</Hint>
         )}
         {os.error && <Hint>Could not get OpenSea prices right now. The links still work.</Hint>}
         {create.tx.phase !== 'idle' && (

@@ -14,6 +14,7 @@ import {
   formatPrice,
   groupAccountNfts,
   itemUrl,
+  otherMarkets,
   parseCollection,
   parseListings,
   parseOfferAggregate,
@@ -63,15 +64,17 @@ test('GET ops: only known ops and params, validated, never a page-chosen path', 
   assert.equal(s.keyless, false)
 })
 
-test('POST ops: the proxy builds OpenSea body; no recipient, no extra fields', () => {
+test('POST ops: the proxy builds OpenSea body; no recipient, no extra fields, never optional creator fees', () => {
   const base = { chain: 'ethereum', hash: HASH, protocol_address: SEAPORT, fulfiller: ME }
-  const l = openSeaPost('fulfill_listing', { ...base, include_optional_creator_fees: true })
+  const l = openSeaPost('fulfill_listing', base)
   assert.equal(l.path, '/api/v2/listings/fulfillment_data')
   assert.deepEqual(JSON.parse(l.body!), {
     listing: { chain: 'ethereum', hash: HASH, protocol_address: SEAPORT },
     fulfiller: { address: ME },
-    include_optional_creator_fees: true,
+    include_optional_creator_fees: false,
   })
+  // The page cannot ask for optional creator fees.
+  assert.match(openSeaPost('fulfill_listing', { ...base, include_optional_creator_fees: true }).error!, /include_optional_creator_fees is not accepted/)
   assert.match(openSeaPost('fulfill_listing', { ...base, recipient: SELLER }).error!, /recipient is not accepted/)
   assert.match(openSeaPost('fulfill_listing', { ...base, hash: '0x12' }).error!, /hash/)
   assert.match(openSeaPost('fulfill_listing', { ...base, fulfiller: `0x${'0'.repeat(40)}` }).error!, /fulfiller/)
@@ -189,7 +192,7 @@ test('collection and item paths round-trip', () => {
 })
 
 test('venues per chain, MiyaPool first; links work with no key', () => {
-  assert.deepEqual(venuesFor(1).map((v) => v.id), ['miyapool', 'opensea', 'blur', 'magiceden'])
+  assert.deepEqual(venuesFor(1).map((v) => v.id), ['miyapool', 'opensea', 'blur'])
   assert.deepEqual(venuesFor(4663).map((v) => v.id), ['miyapool', 'opensea'])
   assert.deepEqual(venuesFor(11155111).map((v) => v.id), ['miyapool'])
   assert.equal(collectionUrl('opensea', 1, MILADY, 'milady'), 'https://opensea.io/collection/milady')
@@ -198,7 +201,11 @@ test('venues per chain, MiyaPool first; links work with no key', () => {
   assert.equal(collectionUrl('blur', 4663, MILADY), undefined)
   assert.equal(collectionUrl('opensea', 11155111, MILADY), undefined)
   assert.equal(itemUrl('opensea', 1, MILADY, '7'), `https://opensea.io/item/ethereum/${MILADY}/7`)
-  assert.equal(itemUrl('magiceden', 1, MILADY, '7'), `https://magiceden.io/item-details/ethereum/${MILADY}/7`)
+  assert.equal(itemUrl('blur', 1, MILADY, '7'), `https://blur.io/eth/asset/${MILADY}/7`)
+  assert.equal(itemUrl('magiceden' as never, 1, MILADY, '7'), undefined)
+  assert.equal(otherMarkets(1), 'OpenSea and Blur')
+  assert.equal(otherMarkets(4663), 'OpenSea')
+  assert.equal(otherMarkets(11155111), '')
 })
 
 /* ---------- prices and parsing ---------- */
@@ -384,7 +391,7 @@ test('buying a listing: who gets what, and calldata that decodes back to the sam
   if (!plan.ok) return
   assert.equal(plan.total, PRICE)
   assert.equal(plan.currency.native, true)
-  assert.deepEqual(plan.lines.map((l) => l.label), ['To the seller', 'OpenSea fee', 'Creator earnings'])
+  assert.deepEqual(plan.lines.map((l) => l.label), ['To the seller', 'OpenSea fee', 'Creator fee (required)'])
   assert.equal(plan.lines[1]!.amount, OS_FEE)
   assert.equal(plan.conduitKey, OS_KEY)
   const data = encodeFunctionData({ abi: seaportAbi, functionName: plan.functionName as 'fulfillBasicOrder', args: plan.args as never })
@@ -396,10 +403,24 @@ test('buying a listing: who gets what, and calldata that decodes back to the sam
   assert.equal(p.additionalRecipients[1].recipient.toLowerCase(), CREATOR)
 })
 
-test('an optional creator tip shows as its own line', () => {
-  const plan = planFill(basicBuy({ value: String(PRICE + 1000n) }), ctx())
-  assert.equal(plan.ok && plan.total, PRICE + 1000n)
-  assert.equal(plan.ok && plan.lines.at(-1)!.label, 'Optional creator earnings')
+test('optional creator fees are never paid: extra ETH or tip recipients are refused', () => {
+  const err = (r: ReturnType<typeof planFill>) => (r.ok ? '' : r.error)
+  assert.match(err(planFill(basicBuy({ value: String(PRICE + 1000n) }), ctx())), /only pays what the order requires/)
+  // A basic order with a recipient past the signed ones (a tip).
+  const tipped = basicBuy({ value: String(PRICE + 1000n) })
+  tipped.fulfillment_data.transaction.input_data.parameters.additionalRecipients.push({ amount: '1000', recipient: CREATOR })
+  assert.match(err(planFill(tipped, ctx())), /optional fee/)
+  // An advanced order with a consideration item past the original count.
+  const adv = offerAccept()
+  const p = adv.fulfillment_data.transaction.input_data.advancedOrder.parameters
+  adv.fulfillment_data.transaction.input_data.advancedOrder.parameters = {
+    ...p,
+    consideration: [...p.consideration, { itemType: 1, token: WETH, identifierOrCriteria: '0', startAmount: '5', endAmount: '5', recipient: CREATOR }],
+  }
+  assert.match(err(planFill(adv, ctx({ side: 'sell' }))), /optional fee/)
+  // Required creator fees in the signed order still show, plainly.
+  const plan = planFill(basicBuy(), ctx())
+  assert.equal(plan.ok && plan.lines.find((l) => l.label === 'Creator fee (required)')!.amount, ROYALTY)
 })
 
 test('fills are refused when anything is off', () => {

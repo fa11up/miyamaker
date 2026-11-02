@@ -1,6 +1,6 @@
 import { useConnectModal } from '@rainbow-me/rainbowkit'
 import { useQuery } from '@tanstack/react-query'
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
 import styled from 'styled-components/macro'
 import type { Address } from 'viem'
 import { erc20Abi, zeroAddress } from 'viem'
@@ -53,21 +53,6 @@ const Lines = styled.dl`
   }
 `
 
-const Check = styled.label`
-  display: flex;
-  align-items: flex-start;
-  gap: ${space[2]};
-  font-size: ${text.sm};
-  line-height: 1.4;
-  cursor: pointer;
-  input {
-    margin-top: 3px;
-    width: 18px;
-    height: 18px;
-    flex: 0 0 auto;
-  }
-`
-
 const Buttons = styled.div`
   display: flex;
   flex-direction: column;
@@ -78,7 +63,8 @@ const Buttons = styled.div`
  * Review, then fill one OpenSea order in-app: buy a listing, or accept an offer on an NFT you hold.
  *
  * The page asks our proxy for OpenSea's fulfillment data, checks it with `planFill` (Seaport only, this chain, this
- * NFT, goods to you, fixed price), shows exactly what moves and who gets what, then: an approval if needed
+ * NFT, goods to you, fixed price, nothing beyond the signed order), shows exactly what moves and who gets what. Only
+ * fees the order requires are paid (OpenSea's fee, creator fees the collection enforces); no optional ones. Then: an approval if needed
  * (ERC-20 for token-priced listings, the NFT for offers), then the Seaport call. Every call is simulated before the
  * wallet opens (useTx).
  */
@@ -89,7 +75,6 @@ export default function FillReview({
   contract,
   tokenId,
   title,
-  optionalCreatorFee,
   onClose,
   onDone,
 }: {
@@ -99,8 +84,6 @@ export default function FillReview({
   contract: Address
   tokenId: string
   title: string
-  /** Percent of optional creator earnings the collection asks for (0 = none). */
-  optionalCreatorFee: number
   onClose: () => void
   onDone: () => void
 }) {
@@ -109,11 +92,10 @@ export default function FillReview({
   const { openConnectModal } = useConnectModal()
   const chain = chains.find((c) => c.id === chainId) || mainnet
   const wrongChain = isConnected && walletChain !== chainId
-  const [tip, setTip] = useState(false)
   const osChain = OPENSEA_CHAIN[chainId]
 
   const data = useQuery({
-    queryKey: ['os-fill', side, order.hash, me?.toLowerCase(), tip],
+    queryKey: ['os-fill', side, order.hash, me?.toLowerCase()],
     enabled: !!me && !!osChain,
     staleTime: 60_000,
     gcTime: 0,
@@ -128,7 +110,6 @@ export default function FillReview({
               hash: order.hash,
               protocol_address: order.protocolAddress,
               fulfiller: me!,
-              include_optional_creator_fees: tip,
             },
             signal
           )
@@ -295,7 +276,7 @@ export default function FillReview({
       </Stat>
 
       {!me ? (
-        <Prose>Connect a wallet to see the exact price, fees and creator earnings.</Prose>
+        <Prose>Connect a wallet to see the exact price and the fees this order requires.</Prose>
       ) : data.isLoading ? (
         <Skeleton h="96px" />
       ) : ok ? (
@@ -313,19 +294,10 @@ export default function FillReview({
               <dd>{fmt(ok.total)}</dd>
             </div>
           </Lines>
-          {side === 'buy' && ok.currency.native && optionalCreatorFee > 0 && (
-            <Check>
-              <input type="checkbox" checked={tip} onChange={(e) => setTip(e.target.checked)} disabled={tx.busy} />
-              <span>
-                Also pay the creator&apos;s optional {optionalCreatorFee}% earnings. It goes to the artist, on top of the
-                price.
-              </span>
-            </Check>
-          )}
           <Hint>
             {side === 'buy'
-              ? 'Fees and creator earnings come out of the price; the seller set it. Network gas is extra.'
-              : 'Fees and creator earnings come off the offer. Network gas is extra.'}
+              ? 'The seller set the price; the fees above come out of it. miyaOS never adds optional creator fees, only what the order requires. Network gas is extra.'
+              : 'The fees above come off the offer. miyaOS never adds optional creator fees, only what the order requires. Network gas is extra.'}
           </Hint>
           {short && (
             <Hint style={{ color: color.warning }}>

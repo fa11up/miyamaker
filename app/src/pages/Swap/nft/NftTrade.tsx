@@ -20,7 +20,7 @@ import type { CollectionRef } from '../tradePath'
 import { poolFactoryAbi } from './abi'
 import CollectionView from './CollectionView'
 import ItemView from './ItemView'
-import { OPENSEA_CHAIN } from './markets'
+import { OPENSEA_CHAIN, otherMarkets } from './markets'
 import type { PoolMode } from './pool'
 import { filterPools, MODE, MODE_HINT, MODE_LABEL, poolTitle } from './pool'
 import PoolView from './PoolView'
@@ -458,7 +458,7 @@ export default function NftTrade({
           <Prose>
             Pools let you sell an NFT for a token and buy one back, with no fees. They open here when the pool contract
             goes live on {chain.name}.
-            {marketsHere ? ' You can still see OpenSea, Blur and Magic Eden prices: search or paste an address above.' : ''}
+            {marketsHere ? ` You can still see ${otherMarkets(chainId)}: search or paste an address above.` : ''}
           </Prose>
           <PushButton type="button" onClick={onShowTokens}>
             Swap tokens instead
@@ -562,8 +562,8 @@ export default function NftTrade({
       <Footer>
         {factory ? `Pools on ${chain.name}: no fees, no owner, the contracts cannot be changed or paused. ` : ''}
         {marketsHere
-          ? 'Other markets: OpenSea, Blur and Magic Eden. Open any collection to compare them.'
-          : `OpenSea, Blur and Magic Eden do not trade on ${chain.name}.`}
+          ? `Other markets: ${otherMarkets(chainId)}. Open any collection to compare them.`
+          : `OpenSea and Blur do not trade on ${chain.name}.`}
       </Footer>
     </Body>
   )

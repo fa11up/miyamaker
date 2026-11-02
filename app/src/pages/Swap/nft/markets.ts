@@ -9,7 +9,6 @@
  *   OpenSea   API v2 through our proxy (/api/opensea): prices, listings, offers, in-app Seaport fills.
  *             Ethereum + Robinhood Chain. OpenSea closed its testnets, so no Sepolia.
  *   Blur      no public API: link out only (Ethereum).
- *   Magic Eden  its EVM API was built on Reservoir, which shut down; link out only (Ethereum).
  * Left out: Reservoir (api.reservoir.tools no longer resolves), LooksRare (API v2 answers 404), X2Y2 (API down).
  */
 
@@ -18,7 +17,7 @@ export type MarketChainKey = 'ethereum' | 'robinhood'
 /** OpenSea's chain identifier per chain id (undefined = OpenSea does not serve that chain). */
 export const OPENSEA_CHAIN: Record<number, MarketChainKey | undefined> = { 1: 'ethereum', 4663: 'robinhood' }
 
-export type VenueId = 'miyapool' | 'opensea' | 'blur' | 'magiceden'
+export type VenueId = 'miyapool' | 'opensea' | 'blur'
 
 export type Venue = {
   id: VenueId
@@ -34,12 +33,20 @@ export type Venue = {
 
 export const VENUES: Venue[] = [
   { id: 'miyapool', name: 'MiyaPool', fees: '0% fees', chains: [1, 11155111, 4663], data: 'onchain', inApp: true },
-  { id: 'opensea', name: 'OpenSea', fees: '1% fee + creator fee', chains: [1, 4663], data: 'opensea', inApp: true },
-  { id: 'blur', name: 'Blur', fees: '0% fee + creator fee', chains: [1], data: 'none', inApp: false },
-  { id: 'magiceden', name: 'Magic Eden', fees: 'fees vary', chains: [1], data: 'none', inApp: false },
+  // In-app OpenSea fills never add optional creator fees; only ones a collection enforces apply.
+  { id: 'opensea', name: 'OpenSea', fees: '1% fee + any required creator fee', chains: [1, 4663], data: 'opensea', inApp: true },
+  { id: 'blur', name: 'Blur', fees: '0% fee + creator fee set on Blur', chains: [1], data: 'none', inApp: false },
 ]
 
 export const venuesFor = (chainId: number) => VENUES.filter((v) => v.chains.includes(chainId))
+
+/** "OpenSea and Blur" (Ethereum), "OpenSea" (Robinhood Chain), "" where only MiyaPool trades. */
+export function otherMarkets(chainId: number): string {
+  const names = venuesFor(chainId)
+    .filter((v) => v.id !== 'miyapool')
+    .map((v) => v.name)
+  return names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names.at(-1)}` : names[0] || ''
+}
 
 /** The collection page on a venue, or undefined when it is not on that chain (MiyaPool is in-app). */
 export function collectionUrl(venue: VenueId, chainId: number, contract: string, slug?: string): string | undefined {
@@ -49,7 +56,6 @@ export function collectionUrl(venue: VenueId, chainId: number, contract: string,
   if (venue === 'opensea' && os)
     return slug ? `https://opensea.io/collection/${encodeURIComponent(slug)}` : `https://opensea.io/contract/${os}/${c}`
   if (venue === 'blur' && chainId === 1) return `https://blur.io/eth/collection/${c}`
-  if (venue === 'magiceden' && chainId === 1) return `https://magiceden.io/collections/ethereum/${c}`
   return undefined
 }
 
@@ -59,7 +65,6 @@ export function itemUrl(venue: VenueId, chainId: number, contract: string, token
   const os = OPENSEA_CHAIN[chainId]
   if (venue === 'opensea' && os) return `https://opensea.io/item/${os}/${c}/${tokenId}`
   if (venue === 'blur' && chainId === 1) return `https://blur.io/eth/asset/${c}/${tokenId}`
-  if (venue === 'magiceden' && chainId === 1) return `https://magiceden.io/item-details/ethereum/${c}/${tokenId}`
   return undefined
 }
 
@@ -408,12 +413,14 @@ export type FillContext = {
 const who = (recipient: string | undefined, offerer: string) =>
   recipient === offerer ? 'seller' : recipient === '0x0000a26b00c1f0df003000390027140000faa719' ? 'opensea' : 'creator'
 
-const LABEL = { seller: 'To the seller', opensea: 'OpenSea fee', creator: 'Creator earnings' } as const
+/** Every line is part of the signed order, so each one is required: no optional creator fees are ever added. */
+const LABEL = { seller: 'To the seller', opensea: 'OpenSea fee', creator: 'Creator fee (required)' } as const
 
 /**
  * Checks OpenSea's fulfillment_data before anything is signed, and works out what the person pays or gets.
  * Refuses (ok: false, with plain words) when the call is not to Seaport, not on this chain, not a known fill
- * function, not for this NFT, sends the goods elsewhere, or the price moves (auction).
+ * function, not for this NFT, sends the goods elsewhere, the price moves (auction), or it carries anything beyond
+ * the signed order (an optional creator fee or extra ETH).
  */
 export function planFill(resp: unknown, ctx: FillContext): FillPlan | { ok: false; error: string } {
   try {
@@ -457,6 +464,15 @@ export function planFill(resp: unknown, ctx: FillContext): FillPlan | { ok: fals
       return { ok: false, error: 'This price changes over time (an auction). Use the OpenSea link.' }
 
     const parameters = obj(input.parameters)
+    // Never pay optional extras (creator "tips"): Seaport lets the fulfiller append recipients past the signed
+    // order's own (basic orders) or consideration items past the original count (advanced orders). Refuse both.
+    const extraRecipients = arr(unwrap(parameters?.additionalRecipients)).length
+    const originalRecipients = Number(unwrap(parameters?.totalOriginalAdditionalRecipients) ?? extraRecipients)
+    const advParams = obj(adv?.parameters)
+    const advItems = arr(advParams?.consideration).length
+    const advOriginal = Number(unwrap(advParams?.totalOriginalConsiderationItems) ?? advItems)
+    if (extraRecipients > originalRecipients || advItems > advOriginal)
+      return { ok: false, error: 'OpenSea added an optional fee to this fill. miyaOS only pays what the order requires.' }
     const conduitKey = String(unwrap(input.fulfillerConduitKey) ?? unwrap(parameters?.fulfillerConduitKey) ?? `0x${'0'.repeat(64)}`)
     const args = seaportArgs(fn, input, ctx.aliases)
 
@@ -471,16 +487,15 @@ export function planFill(resp: unknown, ctx: FillContext): FillPlan | { ok: fals
       const native = pay[0]!.itemType === 0
       const sums = { seller: 0n, opensea: 0n, creator: 0n }
       for (const i of pay) sums[who(i.recipient, offerer)] += part(i.start)
-      let total = sums.seller + sums.opensea + sums.creator
+      const total = sums.seller + sums.opensea + sums.creator
       const lines: FillLine[] = (Object.keys(sums) as (keyof typeof sums)[])
         .filter((k) => sums[k] > 0n)
         .map((k) => ({ label: LABEL[k], amount: sums[k] }))
       if (native) {
         if (value < total) return { ok: false, error: 'The payment does not cover the price.' }
-        if (value > total) {
-          lines.push({ label: 'Optional creator earnings', amount: value - total })
-          total = value
-        }
+        // More ETH than the order asks for would be an optional extra; miyaOS never adds one.
+        if (value > total)
+          return { ok: false, error: 'OpenSea asked for more than the order requires. miyaOS only pays what the order requires.' }
       } else if (value !== 0n) {
         return { ok: false, error: 'This token-priced order should not send ETH.' }
       }
@@ -511,7 +526,7 @@ export function planFill(resp: unknown, ctx: FillContext): FillPlan | { ok: fals
 
     const fees = cuts.opensea + cuts.creator + cuts.seller
     if (cuts.opensea) lines.push({ label: 'OpenSea fee', amount: -cuts.opensea })
-    if (cuts.creator) lines.push({ label: 'Creator earnings', amount: -cuts.creator })
+    if (cuts.creator) lines.push({ label: LABEL.creator, amount: -cuts.creator })
     if (cuts.seller) lines.push({ label: 'Back to the bidder', amount: -cuts.seller })
     if (fees >= gross) return { ok: false, error: 'After fees this offer pays nothing.' }
     return { ok: true, functionName, to, value, args, currency: { native: false, token }, lines, total: gross - fees, conduitKey }
