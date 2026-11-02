@@ -10,6 +10,9 @@ import { useState } from 'react'
 import styled from 'styled-components/macro'
 import type { Address } from 'viem'
 import { formatUnits } from 'viem'
+import { useAccount } from 'wagmi'
+
+import { explorerUrl } from '@/config/wagmi'
 import { useWaitForTransaction } from '@/hooks/useWaitForTransaction'
 
 import { NormalButton } from '@/components/Button/NormalButton'
@@ -296,9 +299,11 @@ export default function CollectionDetail({
   const { image, description } = useContractMetadata({ metadataUri: selectedCollection.metadataUri })
   const { price } = useNFTPrice({ address: selectedCollection.address as Address })
 
+  const { chainId } = useAccount()
+  const payValue = Number.isSafeInteger(payMintAmount) && payMintAmount > 0 ? price * BigInt(payMintAmount) : 0n
   const { mint } = useMintWithFee({
     address: selectedCollection.address as Address,
-    payAmount: (payMintAmount * Number(formatUnits(price, 18))).toString(),
+    value: payValue,
   })
 
   useWaitForTransaction({
@@ -317,7 +322,7 @@ export default function CollectionDetail({
   })
 
   const calculateTotalPayment = () => {
-    return numeral(payMintAmount * Number(formatUnits(price, 18))).format('0,0.[00000]')
+    return numeral(formatUnits(payValue, 18)).format('0,0.[00000]')
   }
 
   const handlePayMint = async () => {
@@ -448,7 +453,7 @@ export default function CollectionDetail({
                   <NotificationMessage>
                     <div>
                       <div style={{ paddingRight: '0.5rem' }}>Mint success!</div>
-                      <a href={`https://sepolia.etherscan.io/tx/${hash}`} target="_blank" rel="noreferrer noopener">
+                      <a href={`${explorerUrl(chainId)}/tx/${hash}`} target="_blank" rel="noreferrer noopener">
                         Go to scan
                       </a>
                     </div>

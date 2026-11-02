@@ -3,9 +3,17 @@ import styled from 'styled-components/macro'
 
 const Wrapper = styled.fieldset`
   display: flex;
+  /* fieldsets default to min-width: min-content, which pushes the window wider than a phone screen */
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
   border: 1px solid #fff;
   box-shadow: rgb(128, 128, 128) 0 0 0 1.5px;
   padding: 0.5rem 1.5rem 1rem 1.5rem;
+
+  @media only screen and (max-width: 640px) {
+    padding: 0.5rem 0.5rem 0.75rem 0.5rem;
+  }
 
   > legend {
     font-size: 0.75rem;

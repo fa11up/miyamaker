@@ -83,6 +83,8 @@ const SettleWrapper = styled.div`
 `
 
 export default function BidContainer({
+  bidAmount,
+  bidDisabled,
   handleCheckBidAmount,
   handleBid,
   isConnected,
@@ -92,6 +94,8 @@ export default function BidContainer({
   currentAuctionToken,
   attributes,
 }: {
+  bidAmount: string
+  bidDisabled: boolean
   handleCheckBidAmount: (value: string) => void
   handleBid: () => void
   isConnected: boolean
@@ -140,6 +144,8 @@ export default function BidContainer({
         <BidWrapper>
           <InputWrapper>
             <TextInput
+              value={bidAmount}
+              inputMode="decimal"
               onChange={(event) => handleCheckBidAmount(event.target.value)}
               style={{ width: '70%' }}
               placeholder="Type price..."
@@ -152,7 +158,12 @@ export default function BidContainer({
             </Text>
           </InputWrapper>
           <ActionWrapper>
-            <AuctionButton handleBid={handleBid} isConnected={isConnected} transacting={transacting} />
+            <AuctionButton
+              handleBid={handleBid}
+              isConnected={isConnected}
+              transacting={transacting}
+              disabled={bidDisabled}
+            />
             <Countdown date={endTime ? endTime * 1000 : 0} renderer={renderTimer} />
           </ActionWrapper>
         </BidWrapper>
@@ -169,6 +180,8 @@ export default function BidContainer({
       <BidWrapper>
         <InputWrapper>
           <TextInput
+            value={bidAmount}
+            inputMode="decimal"
             onChange={(event) => handleCheckBidAmount(event.target.value)}
             style={{ width: '70%' }}
             placeholder="Type price..."
@@ -188,7 +201,12 @@ export default function BidContainer({
         Total offer amount: {balance ? Number(balance.formatted).toFixed(3) : 0.0} ETH
       </div>
       <div style={{ display: 'flex', justifyContent: 'center', paddingTop: '1rem' }}>
-        <AuctionButton handleBid={handleBid} isConnected={isConnected} transacting={transacting} />
+        <AuctionButton
+          handleBid={handleBid}
+          isConnected={isConnected}
+          transacting={transacting}
+          disabled={bidDisabled}
+        />
       </div>
     </>
   )
