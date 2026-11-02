@@ -8,6 +8,7 @@ import MintIcon from 'assets/launchpad_logo.png?preset=icon&resize=true'
 import ManageIcon from 'assets/miya_website_logo_2-removebg-preview.png?preset=icon&resize=true'
 import LaunchIcon from 'assets/miyamints1.png?preset=icon&resize=true'
 import SwapIcon from 'assets/miyaswaps1.png?preset=icon&resize=true'
+import TvIcon from 'assets/miyatv.png?preset=icon&resize=true'
 
 export type Page = {
   id: string
@@ -119,6 +120,16 @@ const Pages: Record<string, Page> = {
     minSize: {
       width: 400,
       height: 600,
+    },
+  },
+  tv: {
+    id: 'tv',
+    path: '/tv',
+    label: 'miyatv',
+    icon: TvIcon[0],
+    minSize: {
+      width: 1100,
+      height: 700,
     },
   },
 }

@@ -116,6 +116,7 @@ const DESKTOP_ICONS: DesktopApp[] = [
   { id: 'uploader', label: Pages.uploader?.label || 'Upload', src: Pages.uploader?.icon?.src },
   { id: 'files', label: Pages.files?.label || 'My Files', src: Pages.files?.icon?.src },
   { id: 'display', label: 'Display', src: Pages.display?.icon?.src },
+  { id: 'tv', label: Pages.tv?.label || 'miyatv', src: Pages.tv?.icon?.src },
 ]
 
 export default function OperatingSystem() {

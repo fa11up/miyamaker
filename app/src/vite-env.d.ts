@@ -48,4 +48,5 @@ interface ImportMetaEnv {
   readonly VITE_RPC_URL_1?: string
   readonly VITE_RPC_URL_11155111?: string
   readonly VITE_RPC_URL_4663?: string
+  readonly VITE_CHAT_URL?: string
 }
