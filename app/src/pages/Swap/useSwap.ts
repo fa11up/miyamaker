@@ -4,7 +4,7 @@ import type { Address, Hash } from 'viem'
 import { BaseError, erc20Abi } from 'viem'
 import { useReadContract, useSendTransaction, useWaitForTransactionReceipt, useWriteContract } from 'wagmi'
 
-import { SwapApiError, fetchPrice, fetchQuote } from './api'
+import { fetchPrice, fetchQuote, SwapApiError } from './api'
 import type { SwapChainId } from './constants'
 import { isNative, QUOTE_MAX_AGE_MS } from './constants'
 import { ALLOWANCE_HOLDER, quoteProblem } from './quoteGuard'
@@ -13,13 +13,49 @@ import type { SwapRequest, ZeroExQuote } from './types'
 /** Indicative price, refreshed while the user is looking at it. Call sites debounce the amount. */
 export function usePrice(req: SwapRequest | undefined) {
   return useQuery({
-    queryKey: ['0x-price', req?.chainId, req?.sellToken, req?.buyToken, req?.sellAmount.toString(), req?.taker, req?.slippageBps],
+    queryKey: [
+      '0x-price',
+      req?.chainId,
+      req?.sellToken,
+      req?.buyToken,
+      req?.sellAmount.toString(),
+      req?.taker,
+      req?.slippageBps,
+    ],
     queryFn: ({ signal }) => fetchPrice(req!, signal),
     enabled: !!req && req.sellAmount > 0n,
     refetchInterval: 20_000,
     staleTime: 10_000,
     retry: (count, error) => !(error instanceof SwapApiError && error.status >= 400 && error.status < 500) && count < 2,
   })
+}
+
+/**
+ * Price for a sliver (1/1000) of the same trade, used as the "no impact" reference for price impact. Fetched once
+ * per settled amount (no polling), without a taker, so it costs one extra price call per change.
+ */
+export function useReferencePrice(req: SwapRequest | undefined) {
+  const sliver = req ? req.sellAmount / 1000n : 0n
+  const ref = req && sliver > 0n ? { ...req, sellAmount: sliver, taker: undefined } : undefined
+  return useQuery({
+    queryKey: ['0x-ref-price', ref?.chainId, ref?.sellToken, ref?.buyToken, ref?.sellAmount.toString()],
+    queryFn: ({ signal }) => fetchPrice(ref!, signal),
+    enabled: !!ref,
+    staleTime: 60_000,
+    retry: false,
+  })
+}
+
+/** 1 - (rate for the trade / rate for a sliver), floored at 0. Undefined when either side is missing. */
+export function priceImpact(
+  trade: { sellAmount: string; buyAmount: string } | undefined,
+  reference: { sellAmount: string; buyAmount: string } | undefined
+): number | undefined {
+  if (!trade || !reference) return undefined
+  const r = Number(trade.buyAmount) / Number(trade.sellAmount)
+  const ref = Number(reference.buyAmount) / Number(reference.sellAmount)
+  if (!Number.isFinite(r) || !Number.isFinite(ref) || ref <= 0) return undefined
+  return Math.max(0, 1 - r / ref)
 }
 
 export type FirmQuote = Extract<ZeroExQuote, { liquidityAvailable: true }>
@@ -33,7 +69,8 @@ export function describeTxError(error: unknown): { message: string; cancelled: b
   const text = base?.shortMessage || (error as Error).message || 'Something went wrong.'
   const details = `${base?.details || ''} ${text}`
   if (/reject|denied|cancel/i.test(details)) return { message: 'Cancelled in wallet.', cancelled: true }
-  if (/insufficient funds/i.test(details)) return { message: 'Not enough ETH for this trade plus gas.', cancelled: false }
+  if (/insufficient funds/i.test(details))
+    return { message: 'Not enough ETH for this trade plus gas.', cancelled: false }
   return { message: text, cancelled: false }
 }
 
@@ -78,7 +115,11 @@ export function useSwapExecution({ chainId, taker }: { chainId: SwapChainId; tak
   const needsAllowanceReset = needsApproval && allowance.data !== undefined && allowance.data > 0n
 
   const approve = useWriteContract()
-  const approveReceipt = useWaitForTransactionReceipt({ hash: approve.data, chainId, query: { enabled: !!approve.data } })
+  const approveReceipt = useWaitForTransactionReceipt({
+    hash: approve.data,
+    chainId,
+    query: { enabled: !!approve.data },
+  })
 
   const send = useSendTransaction()
   const swapReceipt = useWaitForTransactionReceipt({ hash: send.data, chainId, query: { enabled: !!send.data } })
@@ -173,5 +214,6 @@ export function useSwapExecution({ chainId, taker }: { chainId: SwapChainId; tak
     confirmed: swapReceipt.isSuccess && swapReceipt.data?.status === 'success',
     reverted: swapReceipt.isSuccess && swapReceipt.data?.status === 'reverted',
     swapError: send.error || swapReceipt.error,
+    swapReceipt: swapReceipt.data,
   }
 }
