@@ -64,6 +64,9 @@ contract UniswapVaultPriceValidator is IVaultPriceValidator {
     error SwapProportionDeviationTooHigh();
 
     address public immutable weth;
+    /// @notice WETH a V2 pair must hold before its price is used as a reference (same floor as the V2-only route).
+    uint256 public constant MIN_V2_REFERENCE_WETH = 10 ether;
+
     address public immutable v2Factory;
     address public immutable v3Factory;
     address public immutable poolManager;
@@ -127,8 +130,12 @@ contract UniswapVaultPriceValidator is IVaultPriceValidator {
             return;
         }
 
+        // A V2 pair only counts as a price reference once it holds real liquidity. Anyone can create a dust pair for
+        // any token for almost nothing; trusting its price would let them block every conversion for that token.
+        bool v2IsReference = hasV2Pool && reserveWETH >= MIN_V2_REFERENCE_WETH;
+
         // Cross-check prices across all available pools for arbitrage/manipulation detection
-        if (hasV2Pool && hasV3Pool) {
+        if (v2IsReference && hasV3Pool) {
             (bool isAcceptable, ) = _checkPriceDeviation(priceV2, priceV3);
             if (!isAcceptable) revert PriceDeviationTooHigh();
         }
@@ -137,7 +144,7 @@ contract UniswapVaultPriceValidator is IVaultPriceValidator {
         // V4 slot0 is manipulable within a block; the TWAP guard prevents flash-loan attacks
         // on vault ETH. If no TWAP is available (new pool), skip validation — same behavior
         // as before, but mature pools with V3 history are now protected.
-        if (hasV4Pool && !hasV2Pool && !hasV3Pool && priceV4 != 0) {
+        if (hasV4Pool && !v2IsReference && !hasV3Pool && priceV4 != 0) {
             uint160 twapSqrtPrice = _getTwapSqrtPriceX96(token);
             if (twapSqrtPrice != 0) {
                 // Convert TWAP sqrtPriceX96 to the same price scale used by priceV4

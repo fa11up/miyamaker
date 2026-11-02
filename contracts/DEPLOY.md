@@ -45,7 +45,7 @@ produced identical addresses). Re-running with the same deployer and namespace r
 | Uniswap v4 PoolManager | `0x0000…8A90` | `0x8366…0951` | `0xE03A…3543` |
 | zRouter | `0x0000…00e4` (fee 10000 / ts 200) | `0x0000…00e4`, chain build (3000 / 60) | `0x0000…00e4` (3000 / 60) |
 | v3 factory | `0x1F98…F984` | `0x1f7d…2efa` | `0x0227…aC1c` |
-| v2 factory (validator) | **disabled** (see open issue) | none on chain | `0xF62c…80E6` |
+| v2 factory (validator) | `0x5C69…aA6f` (pairs under 10 WETH ignored) | none on chain | `0xF62c…80E6` |
 | CreateX / Permit2 | canonical, verified | canonical, verified | canonical, verified |
 | treasury | imdUSD Treasury `0x6Ac8…7Bc` | **unset: `TREASURY` required** | deployer if unset |
 | default alignment token | CULT `0x0000…eCa4` | USDG `0x5fc5…1168` (placeholder) | test token |
@@ -129,12 +129,12 @@ produced identical addresses). Re-running with the same deployer and namespace r
   from a registered factory, and no factory calls it, so a collection that picks it could never be configured.
   The app passes no gating module. Enable it only after that path exists.
 
-## Open issue found while writing this (not changed in `src/`)
+## Fixed: dust v2 pairs blocked vault conversion
 
-`UniswapVaultPriceValidator.validatePrice` reverts `PriceDeviationTooHigh` whenever a token has both a v2 pair and a
-v3 pool whose prices disagree. Mainnet CULT has a dust v2 pair (0.000004 WETH / 98 CULT), so with the real v2
-factory configured, the default vault could never convert. The config disables v2 (`v2Factory = 0`) and the fork
-test proves the vault then converts real ETH into the CULT/ETH v4 pool through the real zRouter. Anyone can create
-such a dust pair for any token for almost nothing, which is a cheap griefing vector against every vault. Fix
-before audit: ignore v2 below a reserve floor, or drop v2 from the validator. This is related to the open M2
-(sandwich) finding in AUDIT-NOTES.md.
+`UniswapVaultPriceValidator.validatePrice` used to revert `PriceDeviationTooHigh` whenever a token had both a v2 pair
+and a v3 pool whose prices disagreed. Mainnet CULT has a dust v2 pair (0.000004 WETH / 98 CULT), and anyone can make
+one for any token for almost nothing, so this was a cheap way to block every vault's conversions. Since 2026-11-02 a
+v2 pair only counts as a price reference once it holds `MIN_V2_REFERENCE_WETH` (10 ETH, the same floor as the v2-only
+route). The mainnet config uses the real v2 factory again, and the fork test converts real ETH through the CULT v4 pool
+with the dust pair present. A dust v3 pool is the same class of problem and stays with the open M2 (sandwich/TWAP)
+finding in AUDIT-NOTES.md.
