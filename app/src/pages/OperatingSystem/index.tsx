@@ -11,6 +11,7 @@ import DynamicWrapper from '@/components/DynamicWrapper'
 import OsLoader from '@/components/OsLoader'
 import TaskBar from '@/components/TaskBar'
 import Pages from '@/constants/pages'
+import { DesktopOverlays, DesktopPetLayer } from '@/desktop'
 import { useAppDispatch, useAppSelector } from '@/store/hooks'
 import { closeWindow, minimizeWindow, openWindow, setToFront } from '@/store/windows/actions'
 import { useWindows } from '@/store/windows/hooks'
@@ -113,6 +114,8 @@ const DESKTOP_ICONS: DesktopApp[] = [
   { id: 'manager', label: Pages.manager?.label || 'Manager', src: Pages.manager?.icon?.src },
   { id: 'auction', label: Pages.auction?.label || 'Auction', src: Pages.auction?.icon?.src },
   { id: 'uploader', label: Pages.uploader?.label || 'Upload', src: Pages.uploader?.icon?.src },
+  { id: 'files', label: Pages.files?.label || 'My Files', src: Pages.files?.icon?.src },
+  { id: 'display', label: 'Display', src: Pages.display?.icon?.src },
 ]
 
 export default function OperatingSystem() {
@@ -213,6 +216,7 @@ export default function OperatingSystem() {
           </IconGrid>
         </Icons>
         <FourthWall />
+        <DesktopPetLayer />
       </Foreground>
       <TaskBar
         active={windows}
@@ -238,6 +242,7 @@ export default function OperatingSystem() {
           onDismiss={() => setSwitcherOpen(false)}
         />
       )}
+      <DesktopOverlays />
     </div>
   )
 }

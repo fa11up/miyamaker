@@ -16,6 +16,8 @@ const Manager = lazy(() => import('@/pages/Manage'))
 const Auction = lazy(() => import('@/pages/Auction'))
 const Mint = lazy(() => import('@/pages/Mint'))
 const Swap = lazy(() => import('@/pages/Swap'))
+const MyFiles = lazy(() => import('@/desktop/files/MyFiles'))
+const DisplayProperties = lazy(() => import('@/desktop/display/DisplayProperties'))
 
 /** Shown in place of a window whose app threw while rendering. The rest of the desktop keeps working. */
 function CrashedWindow({ identifier, error, reset }: { identifier: string; error: Error; reset: () => void }) {
@@ -70,6 +72,10 @@ export default function DynamicWrapper({ identifier }: { identifier: string }) {
         return <Mint />
       case 'swap':
         return <Swap />
+      case 'files':
+        return <MyFiles />
+      case 'display':
+        return <DisplayProperties />
       default:
         return <></>
     }

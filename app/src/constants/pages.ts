@@ -1,6 +1,8 @@
 import MiyaLogo from 'assets/134321870.png?preset=icon&resize=true'
+import DisplayIcon from 'assets/computer.png?preset=icon&resize=true'
 import ExecutableIcon from 'assets/create_new.png?preset=icon&resize=true'
 import GearIcon from 'assets/executable_gear.png?preset=icon&resize=true'
+import FilesIcon from 'assets/folder.png?preset=icon&resize=true'
 import AuctionIcon from 'assets/icon/auction.png?preset=icon&resize=true'
 import MintIcon from 'assets/launchpad_logo.png?preset=icon&resize=true'
 import ManageIcon from 'assets/miya_website_logo_2-removebg-preview.png?preset=icon&resize=true'
@@ -97,6 +99,26 @@ const Pages: Record<string, Page> = {
     minSize: {
       width: 800,
       height: 720,
+    },
+  },
+  files: {
+    id: 'files',
+    path: '/files',
+    label: 'My Files',
+    icon: FilesIcon[0],
+    minSize: {
+      width: 640,
+      height: 520,
+    },
+  },
+  display: {
+    id: 'display',
+    path: '/display',
+    label: 'Display Properties',
+    icon: DisplayIcon[0],
+    minSize: {
+      width: 400,
+      height: 600,
     },
   },
 }
