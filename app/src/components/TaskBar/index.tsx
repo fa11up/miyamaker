@@ -151,7 +151,13 @@ export default function TaskBar({
           <VerticalSeparator />
           <InsetContainer>
             <RadioTray showTitle={!mobile} />
-            <ButtonIcon onClick={() => toggleWaves()}>
+            <ButtonIcon
+              onClick={() => toggleWaves()}
+              aria-label="Wave background"
+              aria-pressed={waves}
+              title={waves ? 'Wave: on' : 'Wave: off'}
+              data-pet-poke="wave"
+            >
               <img
                 src={waves ? Waves[0]?.src : WavesBw[0]?.src}
                 srcSet={waves ? Waves[0]?.srcset : WavesBw[0]?.srcset}
