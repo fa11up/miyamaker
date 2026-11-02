@@ -4,6 +4,7 @@ import styled from 'styled-components/macro'
 import type { Artwork } from '@/components/ArtViewer'
 import { toArtwork } from '@/components/ArtViewer'
 import { NormalButton } from '@/components/Button/NormalButton'
+import NftImage from '@/components/NftImage'
 import ImageWrapper from '@/pages/Auction/ImageWrapper'
 import { useToken } from '@/pages/Auction/useToken'
 import { setCurrentToken } from '@/store/collections/actions'
@@ -21,6 +22,7 @@ const ProductWrapper = styled.div`
 
 const ImageDetail = styled.div`
   height: 100%;
+  width: 100%; /* the image box has no intrinsic width; without this the centred column shrinks it */
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -45,18 +47,6 @@ const Wrapper = styled.button`
   :focus-visible {
     outline: 1px dotted #14101f;
     outline-offset: 2px;
-  }
-`
-
-const Image = styled.img`
-  height: auto;
-  width: auto;
-  max-height: 100%;
-  max-width: 100%;
-  border: none;
-
-  :hover {
-    border: none;
   }
 `
 
@@ -99,7 +89,7 @@ export default function AuctionProduct({
       <ImageWrapper style={{ padding: '0.75rem', height: '80%' }}>
         <ImageDetail>
           <Wrapper type="button" title={`View ${name || 'artwork'}`} onClick={() => onView?.(tokenId)}>
-            <Image src={image} alt={name} />
+            <NftImage variant="thumb" src={image || undefined} alt={name} fit="contain" aspect="1 / 1" />
           </Wrapper>
           <Description>{name}</Description>
           <Description>{getTokenAttribute(attributes, 'Artist')}</Description>

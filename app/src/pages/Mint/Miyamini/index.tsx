@@ -6,10 +6,6 @@ import { useElementSize } from 'usehooks-ts'
 import { formatEther } from 'viem'
 
 import LoadingHourglass from '@/assets/loading_hourglass.gif'
-import { explorerUrl } from '@/config/wagmi'
-import { MIYAMINI_CHAIN_ID, MIYAMINI_CONTRACT } from '@/constants/contracts'
-import { bevel, color, space, text } from '@/theme/tokens'
-
 import {
   BigButton,
   Chip,
@@ -23,6 +19,11 @@ import {
   Stepper,
   Well,
 } from '@/components/Retro'
+import { explorerUrl } from '@/config/wagmi'
+import { MIYAMINI_CHAIN_ID, MIYAMINI_CONTRACT } from '@/constants/contracts'
+import BackToMints from '@/pages/Mint/BackToMints'
+import { bevel, color, space, text } from '@/theme/tokens'
+
 import { describeError, useMiyaminiMint, useMiyaminiState, useTokenMeta } from './useMiyamini'
 
 /** Product choice: cap a single transaction at 10 tokens (the contract itself has no per-tx limit we rely on). */
@@ -196,11 +197,10 @@ const formatEth = (wei: bigint | undefined) => {
 }
 
 export default function MiyaminiMint({
-  onBrowseCollections,
-  onBrowseMusic,
+  onBack,
 }: {
-  onBrowseCollections?: () => void
-  onBrowseMusic?: () => void
+  /** Back to the Mint home (all live mints). */
+  onBack?: () => void
 }) {
   const state = useMiyaminiState()
   const tx = useMiyaminiMint()
@@ -244,9 +244,14 @@ export default function MiyaminiMint({
     if (state.isError) return { label: 'Unavailable', disabled: true, onClick: () => {} }
     if (soldOut) return { label: 'Sold out', disabled: true, onClick: () => {} }
     if (state.mintOpen === false) return { label: 'Mint closed', disabled: true, onClick: () => {} }
-    if (!tx.isConnected) return { label: 'Connect wallet', disabled: !openConnectModal, onClick: () => openConnectModal?.() }
+    if (!tx.isConnected)
+      return { label: 'Connect wallet', disabled: !openConnectModal, onClick: () => openConnectModal?.() }
     if (tx.wrongChain)
-      return { label: tx.isSwitching ? 'Switching…' : 'Switch to Ethereum', disabled: tx.isSwitching, onClick: tx.switchToMainnet }
+      return {
+        label: tx.isSwitching ? 'Switching…' : 'Switch to Ethereum',
+        disabled: tx.isSwitching,
+        onClick: tx.switchToMainnet,
+      }
     if (tx.isAwaitingWallet) return { label: 'Confirm in wallet…', disabled: true, onClick: () => {} }
     if (tx.isConfirming) return { label: 'Minting…', disabled: true, onClick: () => {} }
     if (insufficient) return { label: 'Not enough ETH', disabled: true, onClick: () => {} }
@@ -282,6 +287,7 @@ export default function MiyaminiMint({
             ) : (
               <Chip tone="warn">Mint closed</Chip>
             )}
+            {onBack && <BackToMints onBack={onBack} />}
           </div>
         </Head>
 
@@ -444,21 +450,6 @@ export default function MiyaminiMint({
               <span>Ethereum</span>
             </div>
           </Details>
-          {onBrowseCollections && (
-            <BigButton type="button" className="secondary" onClick={onBrowseCollections} style={{ minHeight: 36, fontSize: text.sm }}>
-              Browse other collections
-            </BigButton>
-          )}
-          {onBrowseMusic && (
-            <BigButton
-              type="button"
-              className="secondary"
-              onClick={onBrowseMusic}
-              style={{ minHeight: 36, fontSize: text.sm }}
-            >
-              ♪ Music drops
-            </BigButton>
-          )}
         </MintPanel>
 
         <RecentPanel aria-label="Recent mints">

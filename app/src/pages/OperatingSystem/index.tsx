@@ -153,7 +153,10 @@ export default function OperatingSystem() {
   }
 
   useEffect(() => {
-    const page = Object.values(Pages).find((p) => p.path === location.pathname)
+    // Sub-paths open their window too (e.g. /mint/miyamini opens Mint, which picks the view from the path).
+    const page = Object.values(Pages).find(
+      (p) => p.path === location.pathname || location.pathname.startsWith(`${p.path}/`)
+    )
     if (!page || !width) return
     if (!windows.includes(page.id)) {
       handleOpen(page.id)

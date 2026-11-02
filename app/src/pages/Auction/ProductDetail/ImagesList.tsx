@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import styled from 'styled-components/macro'
 
 import { NormalButton } from '@/components/Button/NormalButton'
+import NftImage from '@/components/NftImage'
 import ImageWrapper from '@/pages/Auction/ImageWrapper'
 
 const ImagesListWrapper = styled.div`
@@ -119,7 +120,7 @@ export default function ImagesList({ images, onView }: { images: string[]; onVie
     <ImagesListWrapper>
       <ImageWrapper>
         <Images type="button" title="View artwork" onClick={() => onView?.(currentCounter - 1)}>
-          <img src={images[currentCounter - 1]} alt="Artwork" />
+          <NftImage variant="thumb" src={images[currentCounter - 1] || undefined} alt="Artwork" fit="contain" eager />
         </Images>
         <Counter>
           {currentCounter} of {totalImages}

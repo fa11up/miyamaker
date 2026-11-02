@@ -17,6 +17,13 @@ import {
 
 export type PageKey = Extract<keyof typeof Pages, string>
 
+/** Navigate to a window's path, unless the address bar is already on a sub-path of it (/mint/miyamini for Mint). */
+function navigateToPage(path: string) {
+  const current = typeof window !== 'undefined' ? window.location.pathname : ''
+  if (current === path || current.startsWith(`${path}/`)) return
+  globalNavigate(path)
+}
+
 export interface UserState {
   active: PageKey[]
   zIndex: PageKey[]
@@ -44,7 +51,7 @@ export default createReducer(initialState, (builder) =>
       state.active.push(page)
       state.zIndex.push(page)
       const { path } = Pages[page]!
-      globalNavigate(path)
+      navigateToPage(path)
     })
     .addCase(closeWindow, (state, action) => {
       const { value } = action.payload
@@ -113,7 +120,7 @@ export default createReducer(initialState, (builder) =>
       state.zIndex.push(page)
 
       const { path } = Pages[page]!
-      globalNavigate(path)
+      navigateToPage(path)
     })
     .addCase(minimizeWindow, (state, action) => {
       const { value: page } = action.payload
