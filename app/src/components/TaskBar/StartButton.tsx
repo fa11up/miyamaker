@@ -8,7 +8,7 @@ export default function StartButton() {
   return (
     <>
       <ConnectButton.Custom>
-        {({ account, chain, openChainModal, openConnectModal, mounted }) => {
+        {({ account, chain, openAccountModal, openChainModal, openConnectModal, mounted }) => {
           const ready = mounted
           const connected = ready && account && chain
           return (
@@ -31,7 +31,7 @@ export default function StartButton() {
                     <HighlightButton
                       onClick={openConnectModal}
                       className="free-height free-width"
-                      style={{ height: '100%', paddingLeft: 6, paddingRight: 10 }}
+                      style={{ height: '100%', paddingLeft: 8, paddingRight: 12, fontWeight: 700 }}
                     >
                       <span style={{ marginTop: -1 }}>🖤 Start</span>
                     </HighlightButton>
@@ -53,8 +53,10 @@ export default function StartButton() {
                 return (
                   <div style={{ height: '100%' }}>
                     <HighlightButton
+                      onClick={openAccountModal}
+                      title={account.displayName}
                       className="free-height free-width"
-                      style={{ height: '100%', paddingLeft: 6, paddingRight: 10 }}
+                      style={{ height: '100%', paddingLeft: 8, paddingRight: 12, fontWeight: 700 }}
                     >
                       <span style={{ marginTop: -1 }}>🖤 Start</span>
                     </HighlightButton>

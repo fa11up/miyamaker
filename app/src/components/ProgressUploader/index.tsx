@@ -2,7 +2,7 @@
 // @ts-ignore
 import { useEffect, useState } from 'react'
 import styled from 'styled-components/macro'
-import { useNetwork } from 'wagmi'
+import { useAccount } from 'wagmi'
 
 import SearchDirectory from '@/assets/search_directory.png'
 import { ConnectedButton, LinkButton } from '@/components/Button'
@@ -70,7 +70,7 @@ export const ProgressBarUploader = ({ request, onRequest }: ProgressBarUploaderP
   // eslint-disable-next-line unused-imports/no-unused-vars
   const [uploadTxId, setUploadTxId] = useState<string | null>(null)
 
-  const { chain } = useNetwork()
+  const { chain } = useAccount()
 
   const GATEWAY_BASE = (import.meta.env.VITE_IRYS_GATEWAY || 'https://gateway.irys.xyz/').endsWith('/')
     ? import.meta.env.VITE_IRYS_GATEWAY || 'https://gateway.irys.xyz/'

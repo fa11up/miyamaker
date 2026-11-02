@@ -2,7 +2,8 @@ import WarningIcon from 'assets/icon/warning.png'
 import { useEffect, useState } from 'react'
 import { useWindowSize } from 'usehooks-ts'
 import type { Address } from 'viem'
-import { mainnet, useNetwork } from 'wagmi'
+import { mainnet } from 'viem/chains'
+import { useAccount as useWagmiAccount } from 'wagmi'
 
 import { NormalButton } from '@/components/Button/NormalButton'
 import { ErrorButtonWrapper, ErrorContent, ErrorMessage, ErrorWindow, ErrorWrapper } from '@/components/Errors'
@@ -39,7 +40,7 @@ export default function AuctionPage() {
   const [pageSection, setPageSection] = useState(AUCTION_PAGE_SECTION.COLLECTIONS_SECTION)
 
   // Network
-  const { chain } = useNetwork()
+  const { chain } = useWagmiAccount()
   const auctionContract = AUCTION_CONTRACT[chain?.id || mainnet.id] || AUCTION_CONTRACT[mainnet.id]!
 
   // Get contract data
@@ -79,7 +80,7 @@ export default function AuctionPage() {
                 auctionContract={auctionContract as Address}
               />
             </ExplorerWrapper>
-            <ExplorerWrapper style={{ height: width > 640 ? '40%' : '30%' }} title={'Active lots'}>
+            <ExplorerWrapper style={{ height: width > 640 ? '40%' : '30%' }} title={'Lots'}>
               <ProductsList auctionContract={auctionContract as Address} />
             </ExplorerWrapper>
           </>
@@ -115,7 +116,7 @@ export default function AuctionPage() {
           flexDirection: 'column',
           padding: '0.5rem',
           gap: '1rem',
-          height: 'calc(100% - 1.5rem)',
+          height: '100%',
         }}
       >
         {renderSection()}

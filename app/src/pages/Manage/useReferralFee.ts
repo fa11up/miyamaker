@@ -1,10 +1,11 @@
 import { type Address } from 'viem'
-import { useContractRead, useContractWrite } from 'wagmi'
+import { useReadContract } from 'wagmi'
+import { useContractWrite } from '@/hooks/useContractWrite'
 
 export function useReferralFee({ address }: { address?: Address }) {
-  const { data: referralFee, refetch } = useContractRead({
+  const { data: referralFee, refetch } = useReadContract({
     address,
-    enabled: !!address,
+    query: { enabled: !!address },
     functionName: 'referralFee',
     abi: [
       {
@@ -33,5 +34,5 @@ export function useReferralFee({ address }: { address?: Address }) {
 
   const setReferralFee = async (input: bigint) => writeAsync({ args: [input] })
 
-  return { referralFee: (referralFee as bigint) || 0n, setReferralFee, refetch }
+  return { referralFee: BigInt(referralFee ?? 0), setReferralFee, refetch }
 }

@@ -40,3 +40,12 @@ declare module '*&resize=true' {
 }
 
 declare module 'filereader-stream'
+
+interface ImportMetaEnv {
+  readonly VITE_WC_PROJECT_ID?: string
+  readonly VITE_GRAPHQL_URL?: string
+  readonly VITE_ANALYTICS_ID?: string
+  readonly VITE_RPC_URL_1?: string
+  readonly VITE_RPC_URL_11155111?: string
+  readonly VITE_RPC_URL_4663?: string
+}

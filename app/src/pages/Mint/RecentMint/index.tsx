@@ -1,6 +1,7 @@
 import { useQuery } from '@apollo/client'
 import type { CSSProperties } from 'react'
 import { useEffect, useState } from 'react'
+import { INDEXER_ENABLED } from '@/constants/indexer'
 import styled from 'styled-components/macro'
 import { useAccount } from 'wagmi'
 
@@ -71,6 +72,7 @@ export default function RecentMint({
       collectionAddress: selectedCollection.address,
       ownerAddress: address || '',
     },
+    skip: !INDEXER_ENABLED,
   })
 
   useEffect(() => {
@@ -84,13 +86,17 @@ export default function RecentMint({
   }, [data])
 
   useEffect(() => {
-    refetch()
+    if (INDEXER_ENABLED) refetch()
   }, [toggleFetchRecentMint])
 
   return (
     <Container style={style}>
       <Title>Recent Mints</Title>
-      {loading || error ? (
+      {!INDEXER_ENABLED || error ? (
+        <div style={{ padding: '24px 12px', textAlign: 'center', opacity: 0.8, fontSize: 12 }}>
+          {INDEXER_ENABLED ? 'Could not load recent mints.' : 'Recent mints need the indexer, which is offline.'}
+        </div>
+      ) : loading || !data ? (
         <div
           style={{
             display: 'flex',

@@ -2,30 +2,22 @@ import '@rainbow-me/rainbowkit/styles.css'
 
 import { ApolloClient, ApolloProvider, InMemoryCache } from '@apollo/client'
 import type { Theme } from '@rainbow-me/rainbowkit'
-import { connectorsForWallets, lightTheme, RainbowKitProvider } from '@rainbow-me/rainbowkit'
-import {
-  coinbaseWallet,
-  injectedWallet,
-  metaMaskWallet,
-  rabbyWallet,
-  rainbowWallet,
-  walletConnectWallet,
-} from '@rainbow-me/rainbowkit/wallets'
+import { lightTheme, RainbowKitProvider } from '@rainbow-me/rainbowkit'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import merge from 'lodash.merge'
 import { Provider } from 'react-redux'
-import { goerli, sepolia } from 'viem/chains'
-import { configureChains, createConfig, mainnet, WagmiConfig } from 'wagmi'
-import { publicProvider } from 'wagmi/providers/public'
+import { WagmiProvider } from 'wagmi'
 
+import { wagmiConfig } from './config/wagmi'
+import { GRAPHQL_URL } from './constants/indexer'
 import AccountProvider from './context/AccountProvider'
+import ClustersProvider from './context/ClustersProvider'
 import Router from './Router'
 import store from './store'
 import ThemeProvider, { ThemedGlobalStyle } from './theme'
-import ClustersProvider from './context/ClustersProvider'
 
-const { chains, publicClient } = configureChains([mainnet, goerli, sepolia], [publicProvider()], {
-  pollingInterval: 10_000,
-  stallTimeout: 5000,
+const queryClient = new QueryClient({
+  defaultOptions: { queries: { staleTime: 10_000, refetchOnWindowFocus: false, retry: 2 } },
 })
 
 const readTheme = merge(lightTheme(), {
@@ -54,60 +46,31 @@ const readTheme = merge(lightTheme(), {
   },
 } as Theme)
 
-const walletConfig = {
-  appName: 'miya.wtf',
-  projectId: import.meta.env.PROD ? import.meta.env.VITE_WC_KEY_PROD : import.meta.env.VITE_WC_KEY_DEV,
-  chains,
-}
-
-const recommendedConnectors = connectorsForWallets([
-  {
-    groupName: 'Recommended',
-    wallets: [
-      metaMaskWallet(walletConfig),
-      rabbyWallet(walletConfig),
-      coinbaseWallet(walletConfig),
-      injectedWallet(walletConfig),
-    ],
-  },
-  {
-    groupName: 'Other wallets',
-    wallets: [rainbowWallet(walletConfig), walletConnectWallet(walletConfig)],
-  },
-])
-const wagmiClient = createConfig({
-  autoConnect: true,
-  connectors: recommendedConnectors,
-  publicClient,
-})
-
 const client = new ApolloClient({
-  uri: import.meta.env.VITE_GRAPHQL_URL,
+  // Optional indexer; queries are skipped when it is not configured (see constants/indexer.ts).
+  uri: GRAPHQL_URL || 'http://indexer.invalid/graphql',
   cache: new InMemoryCache(),
 })
 
 export default function App() {
   return (
-    <>
-
-      <ApolloProvider client={client}>
+    <ApolloProvider client={client}>
       <Provider store={store}>
-        <WagmiConfig config={wagmiClient}>
-          <AccountProvider>
-            <ClustersProvider>
-              <RainbowKitProvider chains={chains} theme={readTheme}>
-                <ThemeProvider>
-                  <ThemedGlobalStyle />
-                  <Router />
-                </ThemeProvider>
-              </RainbowKitProvider>
-
-             </ClustersProvider>
+        <WagmiProvider config={wagmiConfig}>
+          <QueryClientProvider client={queryClient}>
+            <AccountProvider>
+              <ClustersProvider>
+                <RainbowKitProvider theme={readTheme} appInfo={{ appName: 'miyamaker' }}>
+                  <ThemeProvider>
+                    <ThemedGlobalStyle />
+                    <Router />
+                  </ThemeProvider>
+                </RainbowKitProvider>
+              </ClustersProvider>
             </AccountProvider>
-          </WagmiConfig>
-        </Provider>
-      </ApolloProvider>
-
-    </>
+          </QueryClientProvider>
+        </WagmiProvider>
+      </Provider>
+    </ApolloProvider>
   )
 }

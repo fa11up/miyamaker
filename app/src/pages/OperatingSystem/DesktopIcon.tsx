@@ -1,70 +1,79 @@
-import type { Property } from 'csstype'
 import type { ReactNode } from 'react'
-import { useMemo } from 'react'
 import styled from 'styled-components/macro'
 
-const BaseIcon = styled.div<{ normalState?: string }>`
-  background-image: url(${({ normalState }) => normalState || ''});
-  background-size: contain;
-  background-position: bottom center;
-  background-repeat: no-repeat;
-  height: 50px;
-  width: 60px;
-`
+import { color, space, text } from '@/theme/tokens'
 
-const BaseWrapper = styled.div`
-  cursor: pointer;
-  width: 100px;
+const IconButton = styled.button<{ hoverState?: string }>`
   display: flex;
   flex-direction: column;
   align-items: center;
+  gap: ${space[1]};
+  width: 96px;
+  padding: ${space[1]} 2px;
+  border: none;
+  background: transparent;
   cursor: pointer;
-  gap: 0.5rem;
-`
+  color: ${color.ink};
 
-const HoverIconWrapper = styled(BaseWrapper)<{ isActive?: boolean; hoverState?: string; normalState?: string }>`
-  ${BaseIcon} {
-    ${({ isActive, hoverState }) => isActive && `background-image: url(${hoverState || ''});`}
+  .icon {
+    height: 52px;
+    width: 60px;
+    background-size: contain;
+    background-position: bottom center;
+    background-repeat: no-repeat;
+    image-rendering: pixelated;
   }
-  &:hover ${BaseIcon} {
-    background-image: url(${({ hoverState }) => hoverState || ''});
-    ${({ isActive, normalState }) => isActive && `background-image: url(${normalState || ''});`}
+
+  .label {
+    padding: 1px ${space[1]};
+    font-size: ${text.sm};
+    line-height: 1.25;
+    text-align: center;
+    border: 1px dotted transparent;
+  }
+
+  &:hover .label,
+  &:focus-visible .label {
+    background: ${color.accent};
+    color: ${color.highlight};
+    border-color: ${color.highlight};
+  }
+
+  &:hover .icon,
+  &:focus-visible .icon {
+    filter: drop-shadow(0 0 0 ${color.accent}) brightness(1.06);
+  }
+
+  &:focus-visible {
+    outline: none;
+  }
+
+  &:active .icon {
+    transform: translateY(1px);
+  }
+
+  @media (max-width: 768px) {
+    width: 100%;
+    .icon {
+      height: 56px;
+      width: 56px;
+    }
   }
 `
 
 export default function DesktopIcon({
-  isActive,
-  hoverState,
   normalState,
   children,
   onClick,
-  realignment = '',
 }: {
-  isActive?: boolean
-  hoverState?: string | undefined
   normalState: string | undefined
   children: ReactNode
   onClick: () => void
-  realignment?: Property.Margin<string | number> | undefined
 }) {
-  const child = useMemo(
-    () => (
-      <>
-        <div>
-          <BaseIcon style={{ margin: realignment }} normalState={normalState} />
-        </div>
-        <div style={{ textAlign: 'center' }}>{children}</div>
-      </>
-    ),
-    [children, normalState]
+  return (
+    <IconButton type="button" onClick={onClick}>
+      <span className="icon" style={{ backgroundImage: normalState ? `url(${normalState})` : undefined }} />
+      <span className="label">{children}</span>
+    </IconButton>
   )
-
-  if (hoverState)
-    return (
-      <HoverIconWrapper isActive={isActive} hoverState={hoverState} normalState={normalState} onClick={onClick}>
-        {child}
-      </HoverIconWrapper>
-    )
-
-  return <BaseWrapper onClick={onClick}>{child}</BaseWrapper>
 }

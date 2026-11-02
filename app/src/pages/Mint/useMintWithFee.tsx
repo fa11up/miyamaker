@@ -1,6 +1,6 @@
 import type { Address } from 'viem'
 import { parseEther } from 'viem'
-import { useContractWrite } from 'wagmi'
+import { useContractWrite } from '@/hooks/useContractWrite'
 
 export function useMintWithFee({ address, payAmount = '0.01' }: { address: Address; payAmount: string }) {
   const { writeAsync } = useContractWrite({

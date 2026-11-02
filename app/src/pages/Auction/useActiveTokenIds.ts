@@ -1,14 +1,18 @@
 import { values } from 'lodash'
 import type { Address } from 'viem'
-import { formatUnits } from 'viem'
-import { useContractRead, useContractReads } from 'wagmi'
+import { formatUnits, parseAbi } from 'viem'
+import { useReadContract, useReadContracts } from 'wagmi'
+
+import { resolveUri } from '@/utils/resolveUri'
 
 import { abi } from './constants'
 
+const TOKEN_URI_ABI = parseAbi(['function tokenURI(uint256 tokenId) view returns (string)'])
+
 export function useActiveTokenIds({ nft, address }: { nft: Address; address: Address }) {
-  const { data } = useContractRead({
+  const { data } = useReadContract({
     address,
-    enabled: !!address,
+    query: { enabled: !!address },
     functionName: 'getActiveTokenIds',
     abi,
     args: [nft],
@@ -17,43 +21,18 @@ export function useActiveTokenIds({ nft, address }: { nft: Address; address: Add
   const list = data || []
   const ids = values(list).map((id: bigint) => Number(formatUnits(id, 0)))
 
-  const { data: tokenURIData } = useContractReads({
-    enabled: !!ids,
+  const { data: tokenURIData } = useReadContracts({
+    query: { enabled: !!ids },
     contracts: ids.map((item) => ({
       address: nft,
-      functionName: 'tokenURI',
-      abi: [
-        {
-          inputs: [
-            {
-              internalType: 'uint256',
-              name: 'tokenId',
-              type: 'uint256',
-            },
-          ],
-          name: 'tokenURI',
-          outputs: [
-            {
-              internalType: 'string',
-              name: '',
-              type: 'string',
-            },
-          ],
-          stateMutability: 'view',
-          type: 'function',
-        },
-      ],
-      args: [item],
+      abi: TOKEN_URI_ABI,
+      functionName: 'tokenURI' as const,
+      args: [BigInt(item)] as const,
     })),
   })
 
   const tokenURIList = (tokenURIData?.map(({ result }) => result) as string[]) || []
-  const tokenURIs = tokenURIList.map((item: string) => {
-    const uri = item.replace('ipfs://', '')
-    const cid = uri.split('/')[0]
-    const tokenFile = uri.split('/')[1]
-    return `https://${cid}.ipfs.nftstorage.link/${tokenFile}`
-  })
+  const tokenURIs = tokenURIList.map((item: string) => resolveUri(item))
 
   return {
     tokenIds: [...ids] as number[],

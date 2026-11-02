@@ -2,33 +2,45 @@ import { useConnectModal } from '@rainbow-me/rainbowkit'
 import PatternBg from 'assets/bg_pattern.png?preset=pattern&resize=true'
 import type { ReactNode } from 'react'
 import { useMemo } from 'react'
-import styled from 'styled-components/macro'
-import { useAccount, useNetwork, useSwitchNetwork } from 'wagmi'
+import styled, { css } from 'styled-components/macro'
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export const HighlightButton = styled.button<any>`
-  display: flex;
+import { bevel, color, space, text } from '@/theme/tokens'
+import { useAccount, useSwitchChain } from 'wagmi'
+
+export const retroButton = css`
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 4px;
+  gap: ${space[1]};
   cursor: pointer;
-  background-color: #a9a3c9;
+  background-color: ${color.face};
+  color: ${color.ink};
   border: none;
-  padding: 0 12px;
-  text-shadow: 0 0 #222;
-  min-height: 23px;
+  border-radius: 0;
+  padding: 0 ${space[3]};
+  min-height: 26px;
   min-width: 75px;
+  font-size: ${text.sm};
+  line-height: 1;
+  text-decoration: none;
+  user-select: none;
+  box-shadow: ${bevel.raised};
+  transition: background-color 80ms linear;
 
-  box-shadow: inset -1px -1px #0a0a0a, inset 1px 1px #fff, inset 1px 1px grey, inset -2px -2px grey,
-    inset 1px 1px #dfdfdf;
-  &:active {
-    box-shadow: inset -1px -1px #ffffff, inset 1px 1px #0a0a0a, inset -1px -1px #dfdfdf, inset 2px 2px #808080;
+  &:hover:not(:disabled) {
+    background-color: ${color.faceLight};
+  }
+
+  &:active:not(:disabled) {
+    box-shadow: ${bevel.pressed};
+    padding-top: 2px;
+    padding-left: calc(${space[3]} + 1px);
   }
 
   &.free-width {
     min-width: auto;
-    padding-left: unset;
-    padding-right: unset;
+    padding-left: ${space[1]};
+    padding-right: ${space[1]};
   }
 
   &.free-height {
@@ -36,85 +48,44 @@ export const HighlightButton = styled.button<any>`
   }
 
   &.heavy {
-    box-shadow: inset -2px -2px #0a0a0a, inset 1px 1px #0a0a0a, inset 1px 1px #fff, inset -2px -2px grey,
-      inset 2px 2px #dfdfdf;
-    &:active {
-      box-shadow: inset -1px -1px #ffffff, inset 1px 1px #0a0a0a, inset -2px -2px #dfdfdf, inset 2px 2px #808080;
+    outline: 1px solid ${color.dark};
+    outline-offset: -1px;
+    box-shadow: ${bevel.raised};
+  }
+
+  &.primary {
+    background-color: ${color.accent};
+    color: ${color.highlight};
+    text-shadow: 1px 1px 0 ${color.accentDark};
+    &:hover:not(:disabled) {
+      background-color: #e48fe5;
     }
   }
 
   &.focus-taskbar {
     background-image: url(${PatternBg[0]?.src});
     background-repeat: repeat;
-    box-shadow: inset -1px -1px #ffffff, inset 1px 1px #0a0a0a, inset -1px -1px #dfdfdf, inset 2px 2px #808080;
+    box-shadow: ${bevel.pressed};
+    font-weight: 700;
   }
 
-  &:disabled {
+  &:disabled,
+  &[aria-disabled='true'] {
     cursor: not-allowed;
-    color: #5a5a5a;
-    text-shadow: 1px 1px #fff;
-    &:active {
-      box-shadow: inset -1px -1px #0a0a0a, inset 1px 1px #fff, inset 1px 1px grey, inset -2px -2px grey,
-        inset 1px 1px #dfdfdf;
-    }
+    color: ${color.shadow};
+    text-shadow: 1px 1px 0 ${color.highlight};
+    background-color: ${color.face};
   }
 `
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const HighlightButton = styled.button<any>`
+  ${retroButton}
+`
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export const LinkButton = styled.a<any>`
-  color: unset;
-  text-decoration: unset;
-  font-size: 13.3px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  cursor: pointer;
-  background-color: #a9a3c9;
-  border: none;
-  padding: 0 12px;
-  text-shadow: 0 0 #222;
-  min-height: 23px;
-  min-width: 75px;
-
-  box-shadow: inset -1px -1px #0a0a0a, inset 1px 1px #fff, inset 1px 1px grey, inset -2px -2px grey,
-    inset 1px 1px #dfdfdf;
-  &:active {
-    box-shadow: inset -1px -1px #ffffff, inset 1px 1px #0a0a0a, inset -1px -1px #dfdfdf, inset 2px 2px #808080;
-  }
-
-  &.free-width {
-    min-width: auto;
-    padding-left: unset;
-    padding-right: unset;
-  }
-
-  &.free-height {
-    min-height: auto;
-  }
-
-  &.heavy {
-    box-shadow: inset -2px -2px #0a0a0a, inset 1px 1px #0a0a0a, inset 1px 1px #fff, inset -2px -2px grey,
-      inset 2px 2px #dfdfdf;
-    &:active {
-      box-shadow: inset -1px -1px #ffffff, inset 1px 1px #0a0a0a, inset -2px -2px #dfdfdf, inset 2px 2px #808080;
-    }
-  }
-
-  &.focus-taskbar {
-    background-image: url(${PatternBg[0]?.src});
-    background-repeat: repeat;
-    box-shadow: inset -1px -1px #ffffff, inset 1px 1px #0a0a0a, inset -1px -1px #dfdfdf, inset 2px 2px #808080;
-  }
-
-  &:disabled {
-    cursor: not-allowed;
-    color: #5a5a5a;
-    text-shadow: 1px 1px #fff;
-    &:active {
-      box-shadow: inset -1px -1px #0a0a0a, inset 1px 1px #fff, inset 1px 1px grey, inset -2px -2px grey,
-        inset 1px 1px #dfdfdf;
-    }
-  }
+  ${retroButton}
 `
 
 export const ButtonIcon = styled.button`
@@ -143,10 +114,8 @@ export const ConnectedButton = ({
   onClick: () => void
 }) => {
   const { openConnectModal } = useConnectModal()
-  const { isConnected } = useAccount()
-  const { chain, chains } = useNetwork()
-
-  const { switchNetwork } = useSwitchNetwork()
+  const { isConnected, chain } = useAccount()
+  const { chains, switchChain } = useSwitchChain()
   const correctChain = useMemo(() => {
     if (withChain !== undefined) {
       if (!chain?.id) return false
@@ -162,8 +131,8 @@ export const ConnectedButton = ({
       return
     }
 
-    if (withChain && !correctChain && switchNetwork) {
-      switchNetwork(withChain[0])
+    if (withChain && !correctChain && withChain[0] !== undefined) {
+      switchChain({ chainId: withChain[0] as (typeof chains)[number]['id'] })
       return
     }
 

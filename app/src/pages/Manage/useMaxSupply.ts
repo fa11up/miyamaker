@@ -1,10 +1,11 @@
 import { type Address } from 'viem'
-import { useContractRead, useContractWrite } from 'wagmi'
+import { useReadContract } from 'wagmi'
+import { useContractWrite } from '@/hooks/useContractWrite'
 
 export function useMaxSupply({ address }: { address?: Address }) {
-  const { data: maxSupply, refetch } = useContractRead({
+  const { data: maxSupply, refetch } = useReadContract({
     address,
-    enabled: !!address,
+    query: { enabled: !!address },
     functionName: 'maxSupply',
     abi: [
       {
@@ -33,5 +34,5 @@ export function useMaxSupply({ address }: { address?: Address }) {
 
   const decreaseSupply = async (input: bigint) => writeAsync({ args: [input] })
 
-  return { maxSupply: (maxSupply as bigint) || 0n, decreaseSupply, refetch }
+  return { maxSupply: BigInt(maxSupply ?? 0), decreaseSupply, refetch }
 }

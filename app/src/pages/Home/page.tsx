@@ -13,9 +13,14 @@ import Hero from '@/components/Home/Hero'
 import MiladyBox from '@/components/Home/MiladyBox'
 import License from '@/components/License'
 import { Bar, BorderContainer, MBox } from '@/theme/common'
+import { font } from '@/theme/tokens'
 
 const Bg = styled.div`
-  height: calc(100% - 26px);
+  height: 100%;
+  * {
+    font-family: ${font.body};
+    -webkit-font-smoothing: auto;
+  }
   background-image: linear-gradient(black, black, white, black, black);
   overflow: hidden;
 `

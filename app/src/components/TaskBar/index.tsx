@@ -6,6 +6,8 @@ import Pages from '@/constants/pages'
 import { useAccount } from '@/context/AccountProvider'
 import { useWaves } from '@/store/experience/hooks'
 
+import { bevel, color, text } from '@/theme/tokens'
+
 import { ButtonIcon, HighlightButton } from '../Button'
 import { VerticalSeparator } from '../Separator'
 import StartButton from './StartButton'
@@ -17,17 +19,38 @@ const NoScroll = styled.div`
 const TaskBarStyled = styled.div`
   position: relative;
   z-index: 10;
-  background-color: #a9a3c9;
-  height: 30px;
-  padding: 2px 4px;
+  background-color: ${color.face};
+  height: var(--taskbar-h);
+  padding: 4px 4px 3px;
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 4px;
-  font-weight: 600;
-  box-shadow: 0 0 0px 1px white, 0 1px 0px 1px #a9a3c9;
-  overflow: auto;
-  margin-top: 2px;
+  font-size: ${text.sm};
+  box-shadow: inset 0 1px 0 ${color.light}, inset 0 2px 0 ${color.highlight};
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: max(3px, env(safe-area-inset-bottom));
+`
+
+const TaskButton = styled(HighlightButton)`
+  height: 100%;
+  max-width: 180px;
+  min-width: 0;
+  justify-content: flex-start;
+  padding: 0 10px 0 6px;
+  span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+`
+
+const MobileButton = styled(HighlightButton)`
+  height: 100%;
+  min-width: 44px;
+  padding: 0 12px;
+  font-size: ${text.sm};
 `
 
 const Row = styled.div`
@@ -55,8 +78,8 @@ const InsetContainer = styled.div`
   justify-content: end;
   height: 100%;
   padding: 0 4px;
-  box-shadow: inset -1px -1px #ffffff, inset 1px 1px #0a0a0a, inset -1px -1px #dfdfdf, inset 2px 2px #808080;
-  font-size: 12px;
+  box-shadow: ${bevel.sunken};
+  font-size: ${text.xs};
 `
 
 const BlockNumber = styled.div`
@@ -67,10 +90,16 @@ export default function TaskBar({
   active,
   focus,
   onClick,
+  mobile,
+  onOpenSwitcher,
+  onHome,
 }: {
   active: string[]
   focus: string | undefined
   onClick: (id: string) => void
+  mobile?: boolean
+  onOpenSwitcher?: () => void
+  onHome?: () => void
 }) {
   const [waves, toggleWaves] = useWaves()
   const { block } = useAccount()
@@ -81,30 +110,41 @@ export default function TaskBar({
         <Row>
           <StartButton />
           <VerticalSeparator />
-          <ButtonContainer>
-            {active.map((id) => {
-              const page = Pages[id]!
-              return (
-                <HighlightButton
-                  key={`${id}-taskbar`}
-                  className={`free-height free-width ${focus === id ? 'focus-taskbar' : ''}`}
-                  style={{ height: '100%', paddingLeft: 6, paddingRight: 10 }}
-                  onClick={() => onClick(id)}
-                >
-                  <img
-                    src={page.icon?.src}
-                    srcSet={page.icon?.srcset}
-                    sizes="(min-width: 1px) 16px, 60px"
-                    width={16}
-                    height={16}
-                    style={{ minWidth: 16, width: 16, border: 'none' }}
-                    alt=""
-                  />
-                  {page.label}
-                </HighlightButton>
-              )
-            })}
-          </ButtonContainer>
+          {mobile ? (
+            <ButtonContainer>
+              <MobileButton className="free-height" onClick={onHome} aria-label="Show desktop">
+                Desktop
+              </MobileButton>
+              <MobileButton className="free-height" onClick={onOpenSwitcher} aria-label="Switch programs">
+                Programs{active.length ? ` (${active.length})` : ''}
+              </MobileButton>
+            </ButtonContainer>
+          ) : (
+            <ButtonContainer>
+              {active.map((id) => {
+                const page = Pages[id]!
+                return (
+                  <TaskButton
+                    key={`${id}-taskbar`}
+                    className={`free-height free-width ${focus === id ? 'focus-taskbar' : ''}`}
+                    onClick={() => onClick(id)}
+                    title={page.label}
+                  >
+                    <img
+                      src={page.icon?.src}
+                      srcSet={page.icon?.srcset}
+                      sizes="(min-width: 1px) 16px, 60px"
+                      width={16}
+                      height={16}
+                      style={{ minWidth: 16, width: 16, border: 'none', margin: 0 }}
+                      alt=""
+                    />
+                    <span>{page.label}</span>
+                  </TaskButton>
+                )
+              })}
+            </ButtonContainer>
+          )}
         </Row>
         <Row>
           <VerticalSeparator />
@@ -120,7 +160,7 @@ export default function TaskBar({
                 alt=""
               />
             </ButtonIcon>
-            {block && <BlockNumber>{block}</BlockNumber>}
+            {block && !mobile && <BlockNumber title="Latest block">{block}</BlockNumber>}
           </InsetContainer>
         </Row>
       </TaskBarStyled>

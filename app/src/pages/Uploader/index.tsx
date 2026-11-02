@@ -53,7 +53,7 @@ export default function MintPage() {
           flexDirection: 'column',
           padding: '0.5rem',
           gap: '1rem',
-          height: 'calc(100% - 1.5rem)',
+          height: '100%',
         }}
       >
         <ProgressBarUploader request={uploadRequest} onRequest={(value) => finalize(value)} />

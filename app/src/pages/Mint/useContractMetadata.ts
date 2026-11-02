@@ -1,15 +1,11 @@
 import { useFetch } from 'usehooks-ts'
 
 import type { ContractMetadata } from '@/store/collections/reducer'
+import { resolveUri } from '@/utils/resolveUri'
 
 export function useContractMetadata({ metadataUri }: { metadataUri: string }) {
   let contractUri = metadataUri
-  if (contractUri.includes('ipfs://')) {
-    const uri = contractUri.replace('ipfs://', '')
-    const cid = uri.split('/')[0]
-    const contractFile = uri.split('/')[1]
-    contractUri = `https://${cid}.ipfs.nftstorage.link/${contractFile}`
-  }
+  contractUri = resolveUri(contractUri)
 
   const { data: contractMetadata, error } = useFetch<ContractMetadata>(contractUri)
 
@@ -17,13 +13,7 @@ export function useContractMetadata({ metadataUri }: { metadataUri: string }) {
     return { name: '', symbol: '', description: '', image: '', externalLink: '', collaborators: [] }
   }
 
-  let imageUri = contractMetadata?.image || ''
-  if (imageUri.includes('ipfs://')) {
-    imageUri = (contractMetadata?.image || '').replace('ipfs://', '')
-    const cid = imageUri.split('/')[0]
-    const imageFile = imageUri.split('/')[1]
-    imageUri = `https://${cid}.ipfs.nftstorage.link/${imageFile}`
-  }
+  const imageUri = resolveUri(contractMetadata?.image)
 
   return {
     description: contractMetadata?.description || '',

@@ -1,10 +1,10 @@
 import { type Address } from 'viem'
-import { useContractRead } from 'wagmi'
+import { useReadContract } from 'wagmi'
 
 export function useTotalSupply({ address }: { address?: Address }) {
-  const { data: totalSupply } = useContractRead({
+  const { data: totalSupply } = useReadContract({
     address,
-    enabled: !!address,
+    query: { enabled: !!address },
     functionName: 'totalSupply',
     abi: [
       {

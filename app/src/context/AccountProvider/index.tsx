@@ -1,43 +1,40 @@
-import type { FetchBalanceResult, GetAccountResult } from '@wagmi/core'
-import { createContext, type ReactNode, useContext, useState } from 'react'
-import type { PublicClient } from 'wagmi'
-import { useAccount as useWagmiAccount, useBalance, useBlockNumber, useWatchPendingTransactions } from 'wagmi'
+import { useQueryClient } from '@tanstack/react-query'
+import { createContext, type ReactNode, useContext, useEffect } from 'react'
+import type { UseAccountReturnType, UseBalanceReturnType } from 'wagmi'
+import { useAccount as useWagmiAccount, useBalance, useBlockNumber } from 'wagmi'
+
+export type BalanceData = UseBalanceReturnType['data']
 
 type AccountContextType = {
   block: string
-  account: GetAccountResult<PublicClient> | undefined
-  balance: FetchBalanceResult | undefined
-  pendingTransactions: string[]
+  account: UseAccountReturnType | undefined
+  balance: BalanceData | undefined
 }
 
 const AccountContext = createContext<AccountContextType>({
   block: '',
   account: undefined,
   balance: undefined,
-  pendingTransactions: [],
 })
 
 export const useAccount = () => useContext(AccountContext)
 
 export default function AccountProvider({ children }: { children: ReactNode }) {
-  const [pendingTransactions, setPendingTransactions] = useState<string[]>([])
-
-  const block = useBlockNumber({ cacheTime: 10_000, watch: true })
   const account = useWagmiAccount()
+  const { data: block } = useBlockNumber({ watch: true })
   const balance = useBalance({
     address: account.address,
-    cacheTime: 10_000,
-    watch: true,
-    scopeKey: 'eth_balance',
-    enabled: !!account.address,
+    query: { enabled: !!account.address, staleTime: 10_000 },
   })
 
-  useWatchPendingTransactions({ listener: (hashes) => setPendingTransactions(hashes), enabled: !!account.address })
+  // wagmi v2 removed `watch` on useBalance: refresh the balance every new block instead.
+  const queryClient = useQueryClient()
+  useEffect(() => {
+    if (account.address) queryClient.invalidateQueries({ queryKey: balance.queryKey })
+  }, [block])
 
   return (
-    <AccountContext.Provider
-      value={{ block: block.data?.toString() || '', account, balance: balance.data, pendingTransactions }}
-    >
+    <AccountContext.Provider value={{ block: block?.toString() || '', account, balance: balance.data }}>
       {children}
     </AccountContext.Provider>
   )

@@ -2,9 +2,11 @@
 /* eslint-disable no-underscore-dangle */
 import { WebIrys } from '@irys/sdk'
 import { getAccount } from '@wagmi/core'
+import type { Address, Chain } from 'viem'
 import { createWalletClient, custom } from 'viem'
-import type { Address, Chain } from 'wagmi'
-import { mainnet } from 'wagmi'
+import { mainnet } from 'viem/chains'
+
+import { wagmiConfig } from '@/config/wagmi'
 
 interface WindowWithEthereum extends Window {
   ethereum?: any
@@ -24,7 +26,7 @@ const getIrys = async (
   chain: Chain = mainnet
 ): Promise<WebIrys> => {
   await (window as WindowWithEthereum).ethereum.enable()
-  const account = getAccount()
+  const account = getAccount(wagmiConfig)
   const provider = createWalletClient({
     account: account.address,
     chain,

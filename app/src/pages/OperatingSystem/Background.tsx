@@ -53,7 +53,7 @@ export default function Background() {
   const [waves] = useWaves()
   const { account, balance } = useAccount()
   const clusterName = useClusterName(account?.address)
-  const ens = useEnsName({ address: account?.address })
+  const ens = useEnsName({ address: account?.address, chainId: 1 })
 
   return (
     <BackgroundStyled>

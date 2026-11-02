@@ -1,13 +1,13 @@
 import type { Address } from 'viem'
-import { useContractReads } from 'wagmi'
+import { useReadContracts } from 'wagmi'
 
 import type { Auction } from '@/store/auction/reducer'
 
 import { ADDRESS0 } from './constants'
 
 export function useAuctionData({ nft, tokenId, address }: { nft: Address; tokenId: number; address: Address }) {
-  const { data, refetch } = useContractReads({
-    enabled: !!address,
+  const { data, refetch } = useReadContracts({
+    query: { enabled: !!address },
     contracts: [
       {
         address,
@@ -70,7 +70,7 @@ export function useAuctionData({ nft, tokenId, address }: { nft: Address; tokenI
             type: 'function',
           },
         ],
-        args: [nft, tokenId],
+        args: [nft, BigInt(tokenId)],
       },
       {
         address,
@@ -94,7 +94,7 @@ export function useAuctionData({ nft, tokenId, address }: { nft: Address; tokenI
     ],
   })
 
-  const auction = data?.[0]?.result as Auction
+  const auction = data?.[0]?.result as unknown as Auction
   const bidIncrement = data?.[1]?.result as bigint
 
   return {

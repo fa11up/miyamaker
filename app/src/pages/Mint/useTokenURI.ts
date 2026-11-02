@@ -1,10 +1,10 @@
 import type { Address } from 'viem'
-import { useContractRead } from 'wagmi'
+import { useReadContract } from 'wagmi'
 
 export function useTokenURI({ address, tokenId }: { address: Address; tokenId: string }) {
-  const { data: tokenURI, status } = useContractRead({
+  const { data: tokenURI, status } = useReadContract({
     address,
-    enabled: !!address,
+    query: { enabled: !!address },
     functionName: 'tokenURI',
     abi: [
       {
@@ -27,7 +27,7 @@ export function useTokenURI({ address, tokenId }: { address: Address; tokenId: s
         type: 'function',
       },
     ],
-    args: [tokenId],
+    args: [BigInt(tokenId || 0)],
   })
 
   return {

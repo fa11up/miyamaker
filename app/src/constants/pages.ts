@@ -5,6 +5,7 @@ import AuctionIcon from 'assets/icon/auction.png?preset=icon&resize=true'
 import MintIcon from 'assets/launchpad_logo.png?preset=icon&resize=true'
 import ManageIcon from 'assets/miya_website_logo_2-removebg-preview.png?preset=icon&resize=true'
 import LaunchIcon from 'assets/miyamints1.png?preset=icon&resize=true'
+import SwapIcon from 'assets/miyaswaps1.png?preset=icon&resize=true'
 
 export type Page = {
   id: string
@@ -76,6 +77,16 @@ const Pages: Record<string, Page> = {
     minSize: {
       width: 600,
       height: 475,
+    },
+  },
+  swap: {
+    id: 'swap',
+    path: '/swap',
+    label: 'miya swaps',
+    icon: SwapIcon[0],
+    minSize: {
+      width: 520,
+      height: 720,
     },
   },
   auction: {
