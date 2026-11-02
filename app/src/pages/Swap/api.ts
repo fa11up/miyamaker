@@ -46,11 +46,13 @@ async function call<T>(endpoint: 'price' | 'quote', req: SwapRequest, signal?: A
     // e.g. a static host with no /api route returns index.html
     throw new SwapApiError('Swap service not configured.', 'SWAP_NOT_CONFIGURED', res.status)
   }
+
   if (!res.ok) {
     const code: string = body?.name || `HTTP_${res.status}`
     const detail = body?.data?.details?.[0]?.reason
     throw new SwapApiError(FRIENDLY[code] || detail || body?.message || 'Swap request failed.', code, res.status)
   }
+
   return body as T
 }
 

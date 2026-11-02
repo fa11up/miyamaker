@@ -6,30 +6,29 @@ import { useBalance, useReadContract, useReadContracts } from 'wagmi'
 
 import type { SwapChainId, SwapToken } from './constants'
 import { isNative, PINNED_TOKENS, sameAddress, TOKEN_LIST_URL } from './constants'
+import { mergeTokenLists } from './tokenList'
 
-type UniswapList = { tokens: SwapToken[] }
+type UniswapList = { tokens: unknown[] }
 
-/** Uniswap default token list, filtered to the chain, with our pinned tokens first. */
+/** The curated miya list first, then the Uniswap default list for the chain (deduped, sorted). */
 export function useTokenList(chainId: SwapChainId) {
   const list = useQuery({
     queryKey: ['uniswap-token-list'],
     queryFn: async () => {
       const res = await fetch(TOKEN_LIST_URL)
       if (!res.ok) throw new Error(`Token list ${res.status}`)
-      return (await res.json()) as UniswapList
+      const body = (await res.json()) as UniswapList
+      return { tokens: Array.isArray(body?.tokens) ? body.tokens : [] }
     },
     staleTime: 60 * 60 * 1000,
     gcTime: Infinity,
     retry: 1,
   })
 
-  const tokens = useMemo(() => {
-    const pinned = PINNED_TOKENS[chainId]
-    const rest = (list.data?.tokens || [])
-      .filter((t) => t.chainId === chainId && !pinned.some((p) => sameAddress(p.address, t.address)))
-      .sort((a, b) => a.symbol.localeCompare(b.symbol))
-    return [...pinned, ...rest]
-  }, [list.data, chainId])
+  const tokens = useMemo(
+    () => mergeTokenLists(PINNED_TOKENS[chainId], list.data?.tokens || [], chainId) as SwapToken[],
+    [list.data, chainId]
+  )
 
   return { tokens, isLoading: list.isLoading, isError: list.isError }
 }
