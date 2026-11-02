@@ -66,6 +66,13 @@ export default defineConfig(({ mode }) => ({
           webp: { quality: 50 },
         },
       }),
+      // Screensaver art: one sharp size (bounced at up to ~240 device px on retina).
+      art: widthPreset({
+        widths: [480],
+        formats: {
+          webp: { quality: 82 },
+        },
+      }),
       banner: widthPreset({
         class: 'banner',
         loading: 'eager',
