@@ -67,3 +67,54 @@ a `phasesEpoch` bumped in `setPhases` (`mintedInPhase(phaseId, minter)` view kep
   invariant tolerance accounts for this.
 - ETH sent to the vault by anyone other than via contributions/collection (e.g. `selfdestruct`) is unaccounted
   surplus; it is never paid out as fees.
+
+---
+
+# Scope: prediction markets (`src/markets/`, testnet only)
+
+A new, separate scope, added on branch `contracts/markets`. **Not for mainnet**: see the gate list in
+`src/markets/README.md` (licence, counsel sign-off, KYC vendor, imdUSD v2 live, ExitDesk funded, Swarm audit).
+Nothing here shares state with the launchpad contracts above.
+
+| Contract | Review focus |
+|---|---|
+| `ParimutuelMarket.sol` | stake checkpoints, cutoff by attested start, settlement and rake maths, claim/refund/sweep, creator escrow |
+| `SwarmResolver.sol` | EIP-712 attestation verification, question splice, absolute-count quorum |
+| `DisputeModule.sol`, `CouncilResolver.sol` | escalation state machine, bond settlement, council limits |
+| `PredictionRegistry.sol`, `MarketFactory.sol` | snapshotting, template validation, slot sanitising, EIP-1167 clone, open-interest cap |
+| `EligibilityGate.sol` | pass verification, revocation |
+| `UsdcDoor.sol`, `ExitDesk.sol` | door deposits, 1:1 exit limits, cover rule |
+
+Tests are in `test/markets/`: unit tests, fuzz tests, an invariant suite over random stake / lock / propose /
+dispute / panel / council / claim / refund / sweep sequences, and a replay of a real production oracle signature.
+
+## Known risks (accepted for testnet; re-assess before any mainnet use)
+
+- **Two-wallet self-hedge against the door caps.** The ExitDesk pays 1:1 only up to each wallet's own door
+  deposits, so "buy imdUSD below the peg, bet both sides, cash out at $1" is capped per wallet. Two wallets that
+  bet opposite sides through the door and pool their winnings can still cash out their combined deposits at $1
+  after buying below the peg. That extracts roughly (depeg − rake) on the losing wallet's door credit. The bound is
+  the wallets' total door deposits (`test_arbitrage_twoWalletSelfHedgeBoundedByTotalDeposits`), and the per-wallet
+  and per-market caps keep it small. Operationally, the desk only opens below $0.995, and the desk and caps are
+  sized together.
+- **Oracle disagreement rate leads to the void path.** Paid swarm questions have historically failed or split often
+  enough that VOID is a normal outcome, not an edge case. A market voids on a VOID code, no proposal within 7 days,
+  nobody counted on the winner, or council silence, and all of these refund in full. Expect a meaningful void rate
+  and budget its operational cost (oracle fees, creator expectations). A wrong primary answer that nobody disputes
+  stands once the dispute window closes.
+- **Sybil insiders.** The deny-list holds only the creator's registered wallet and declared crew. A creator or crew
+  member staking through an undeclared wallet cannot be detected on chain. The mitigations are off chain (KYC on
+  creators, linkage analysis, win-rate anomaly scoring), plus the council's power to slash the creator's escrowed fee
+  share and bond before they vest. Caps bound what one wallet can take.
+- **The source clock depends on a second attestation.** The oracle signs one answer per attestation, so the official
+  start comes from a separate start-time question. If that answer is wrong, stakes fall on the wrong side of the
+  cutoff. Disputes cover the outcome only; the dispute tier does not re-attest the start time.
+- **The first valid answer proposes.** Anyone may submit any valid attestation for the market's question. If the
+  oracle signs two different answers, the first to land proposes, and the dispute path is the remedy.
+- **Identical questions share attestations.** Two markets with the same template and slots have the same
+  `questionHash`. One attestation can resolve only one of them (request ids are single-use per resolver), so the
+  second market needs its own request.
+- **The global open-interest cap is checked at stake time.** ExitDesk cash-outs can bring the desk's USDC below open
+  interest. New stakes are then refused, but existing positions are not re-covered automatically.
+- **The eligibility gate is live.** Unlike every other dependency, the gate is not snapshotted per market, so a
+  compromised signer can be rotated. It can only refuse new stakes.
