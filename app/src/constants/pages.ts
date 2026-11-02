@@ -22,7 +22,7 @@ const Pages: Record<string, Page> = {
   home: {
     id: 'home',
     path: '/about',
-    label: 'Net Mint',
+    label: 'miyanet',
     icon: MiyaLogo[0],
     minSize: {
       width: 800,
