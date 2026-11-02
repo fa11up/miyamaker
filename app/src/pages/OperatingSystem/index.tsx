@@ -113,6 +113,7 @@ const DESKTOP_ICONS: DesktopApp[] = [
   { id: 'manager', label: Pages.manager?.label || 'Manager', src: Pages.manager?.icon?.src },
   { id: 'auction', label: Pages.auction?.label || 'Auction', src: Pages.auction?.icon?.src },
   { id: 'uploader', label: Pages.uploader?.label || 'Upload', src: Pages.uploader?.icon?.src },
+  { id: 'tv', label: Pages.tv?.label || 'miyatv', src: Pages.tv?.icon?.src },
 ]
 
 export default function OperatingSystem() {
