@@ -21,6 +21,7 @@ export function parsePriceEth(input: string): Ok<{ wei: bigint }> | Err {
   if (!/^(\d{1,9}(\.\d{0,18})?|\.\d{1,18})$/.test(s)) {
     return { ok: false, error: 'Price must be a number like 0.01 (max 18 decimals).' }
   }
+
   const wei = parseEther(s.startsWith('.') ? `0${s}` : s)
   if (wei <= 0n) return { ok: false, error: 'The edition contract needs a price above 0.' }
   return { ok: true, wei }
@@ -49,7 +50,13 @@ export function parseAlignmentPct(input: string, minBps: number, protocolFeeBps 
 }
 
 /** ERC1155Instance.addEdition(pieceTitle, basePrice, supply, metadataURI, pricingModel, priceIncreaseRate, openTime) */
-export function editionArgs(p: { title: string; priceWei: bigint; supply: bigint; model: number; metadataURI: string }) {
+export function editionArgs(p: {
+  title: string
+  priceWei: bigint
+  supply: bigint
+  model: number
+  metadataURI: string
+}) {
   return [p.title, p.priceWei, p.supply, p.metadataURI, p.model, 0n, 0n] as const
 }
 

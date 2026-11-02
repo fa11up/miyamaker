@@ -30,6 +30,18 @@ export function shuffled<T>(items: readonly T[], rng: Rng = Math.random): T[] {
     out[i] = out[j] as T
     out[j] = tmp
   }
+
+  return out
+}
+
+function dedupe(tracks: readonly Track[], existing: readonly Track[] = []): Track[] {
+  const seen = new Set(existing.map((t) => t.id))
+  const out: Track[] = []
+  tracks.forEach((t) => {
+    if (seen.has(t.id)) return
+    seen.add(t.id)
+    out.push(t)
+  })
   return out
 }
 
@@ -42,17 +54,6 @@ export function createQueue(tracks: readonly Track[] = [], repeat: RepeatMode = 
     shuffle: false,
     repeat,
   }
-}
-
-function dedupe(tracks: readonly Track[], existing: readonly Track[] = []): Track[] {
-  const seen = new Set(existing.map((t) => t.id))
-  const out: Track[] = []
-  tracks.forEach((t) => {
-    if (seen.has(t.id)) return
-    seen.add(t.id)
-    out.push(t)
-  })
-  return out
 }
 
 /** Index into `tracks` of the loaded track, or -1. */
@@ -109,7 +110,10 @@ export function playNow(state: QueueState, track: Track): QueueState {
  *  - end of list + auto   → wrap if repeat 'all', otherwise stop (position stays on the last track)
  *  - end of list + manual → always wraps (like Winamp's next button)
  */
-export function next(state: QueueState, opts: { auto?: boolean; rng?: Rng } = {}): { state: QueueState; stop: boolean } {
+export function next(
+  state: QueueState,
+  opts: { auto?: boolean; rng?: Rng } = {}
+): { state: QueueState; stop: boolean } {
   if (state.position < 0 || !state.order.length) return { state, stop: true }
   if (opts.auto && state.repeat === 'one') return { state, stop: false }
   const last = state.position >= state.order.length - 1
@@ -124,6 +128,7 @@ export function next(state: QueueState, opts: { auto?: boolean; rng?: Rng } = {}
     )
     return { state: { ...state, order: [...rest, cur], position: 0 }, stop: false }
   }
+
   return { state: { ...state, position: 0 }, stop: false }
 }
 
@@ -138,6 +143,7 @@ export function prev(state: QueueState, currentTime = 0): { state: QueueState; r
   if (state.repeat === 'all' && state.order.length > 1) {
     return { state: { ...state, position: state.order.length - 1 }, restart: false }
   }
+
   return { state, restart: true }
 }
 
@@ -153,6 +159,7 @@ export function setShuffle(state: QueueState, on: boolean, rng: Rng = Math.rando
     const order = cur >= 0 ? [cur, ...rest] : rest
     return { ...state, shuffle: true, order, position: order.length ? 0 : -1 }
   }
+
   const order = identity(state.tracks.length)
   return { ...state, shuffle: false, order, position: cur >= 0 ? cur : order.length ? 0 : -1 }
 }

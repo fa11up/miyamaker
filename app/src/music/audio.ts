@@ -60,6 +60,7 @@ function checkFile(file: FileLike, table: Record<string, readonly string[]>, max
   if (type && type !== 'application/octet-stream' && !allowed.includes(type)) {
     return { ok: false, error: `File type ${type} does not match .${ext}.` }
   }
+
   if (!(file.size > 0)) return { ok: false, error: 'The file is empty.' }
   if (file.size > max) return { ok: false, error: `The file is too large (max ${Math.round(max / 1024 / 1024)} MB).` }
   return { ok: true, ext, mime: allowed[0] as string }
@@ -120,6 +121,17 @@ export function isAudio(uri: string | undefined, mimeHint?: unknown): boolean {
   return AUDIO_EXT.test(uri)
 }
 
+// ── Formatting ────────────────────────────────────────────────────────────────
+
+export function formatDuration(seconds: number | undefined): string {
+  if (seconds === undefined || !Number.isFinite(seconds) || seconds < 0) return '--:--'
+  const s = Math.floor(seconds)
+  const h = Math.floor(s / 3600)
+  const m = Math.floor((s % 3600) / 60)
+  const sec = String(s % 60).padStart(2, '0')
+  return h ? `${h}:${String(m).padStart(2, '0')}:${sec}` : `${m}:${sec}`
+}
+
 // ── Metadata builder ──────────────────────────────────────────────────────────
 
 export type MusicForm = {
@@ -151,7 +163,9 @@ export type MusicMetadata = {
   attributes: { trait_type: string; value: string | number; display_type?: string }[]
 }
 
-export type BuildResult = { ok: true; metadata: MusicMetadata } | { ok: false; errors: Partial<Record<keyof MusicForm, string>> }
+export type BuildResult =
+  | { ok: true; metadata: MusicMetadata }
+  | { ok: false; errors: Partial<Record<keyof MusicForm, string>> }
 
 /**
  * Standard ERC-721/1155 metadata for a track: `image` = cover, `animation_url` = audio, plus
@@ -178,6 +192,7 @@ export function buildMusicMetadata(form: MusicForm): BuildResult {
   if (!(Number.isFinite(form.duration) && form.duration > 0 && form.duration < 24 * 3600)) {
     errors.duration = 'Could not read the track duration.'
   }
+
   if (externalRaw && !external) errors.externalUrl = 'Website must be an https:// link.'
 
   let bpm: number | undefined
@@ -269,12 +284,7 @@ export function parseMusicMetadata(json: unknown): ParsedMusic | null {
   }
 }
 
-export function trackFromMetadata(
-  json: unknown,
-  token: { chainId: number; address: string; tokenId: string }
-): Track | null {
-  const music = parseMusicMetadata(json)
-  if (!music) return null
+export function musicTrack(music: ParsedMusic, token: { chainId: number; address: string; tokenId: string }): Track {
   return {
     id: `onchain:${token.chainId}:${token.address.toLowerCase()}:${token.tokenId}`,
     title: music.title,
@@ -287,6 +297,14 @@ export function trackFromMetadata(
   }
 }
 
+export function trackFromMetadata(
+  json: unknown,
+  token: { chainId: number; address: string; tokenId: string }
+): Track | null {
+  const music = parseMusicMetadata(json)
+  return music ? musicTrack(music, token) : null
+}
+
 /**
  * Decodes `data:application/json` token URIs (utf8 or base64) without fetching. Returns undefined for
  * anything else so the caller can fetch http/ipfs/ar URIs through the gateway.
@@ -296,24 +314,17 @@ export function decodeDataJson(uri: string): unknown {
   const comma = uri.indexOf(',')
   const header = uri.slice(0, comma).toLowerCase()
   const payload = uri.slice(comma + 1)
-  const attempts = header.includes(';base64') ? [() => atob(payload)] : [() => payload, () => decodeURIComponent(payload)]
-  for (const read of attempts) {
+  const readers = header.includes(';base64')
+    ? [() => atob(payload)]
+    : [() => payload, () => decodeURIComponent(payload)]
+  let result: unknown
+  readers.some((read) => {
     try {
-      return JSON.parse(read())
+      result = JSON.parse(read())
+      return true
     } catch {
-      // try the next decoding
+      return false
     }
-  }
-  return undefined
-}
-
-// ── Formatting ────────────────────────────────────────────────────────────────
-
-export function formatDuration(seconds: number | undefined): string {
-  if (seconds === undefined || !Number.isFinite(seconds) || seconds < 0) return '--:--'
-  const s = Math.floor(seconds)
-  const h = Math.floor(s / 3600)
-  const m = Math.floor((s % 3600) / 60)
-  const sec = String(s % 60).padStart(2, '0')
-  return h ? `${h}:${String(m).padStart(2, '0')}:${sec}` : `${m}:${sec}`
+  })
+  return result
 }
