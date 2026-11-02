@@ -58,7 +58,12 @@ export default function Background() {
     <BackgroundStyled>
       <ButtonContainer>
         <OSInfo>
-          <p>MiyaOS</p>
+          <p>
+            {/* the desktop pet likes to sit up here */}
+            <span data-pet-perch="perch" data-perch-id="miyaos">
+              MiyaOS
+            </span>
+          </p>
           <p>Version 1.0.0</p>
           {account?.isConnected && (
             <>

@@ -4,6 +4,7 @@ import styled from 'styled-components/macro'
 import { bevel, color, MOBILE_BREAKPOINT, space, text } from '@/theme/tokens'
 
 import { DESKTOP_EVENTS, setPrefs, startScreensaverPreview, useDesktopPrefs } from './prefs'
+import { getPet, nextVariant } from './pet/registry'
 import { useOpenApp } from './useOpenApp'
 
 const Menu = styled.div`
@@ -92,6 +93,11 @@ export default function DesktopContextMenu() {
 
   if (!pos) return null
   const mobile = window.innerWidth <= MOBILE_BREAKPOINT
+  const pet = getPet(prefs.petId)
+  const looks = !!pet.variants?.length
+  // the pet layer marks the look on screen (a random one when none was chosen)
+  const currentLook =
+    prefs.petVariant || document.querySelector<HTMLElement>('[data-desktop-pet]')?.dataset.petVariant || undefined
   const run = (fn: () => void) => () => {
     setPos(undefined)
     fn()
@@ -114,6 +120,15 @@ export default function DesktopContextMenu() {
       <button type="button" role="menuitem" onClick={run(() => setPrefs({ petEnabled: !prefs.petEnabled }))}>
         {prefs.petEnabled ? 'Hide desktop pet' : 'Show desktop pet'}
       </button>
+      {prefs.petEnabled && looks && (
+        <button
+          type="button"
+          role="menuitem"
+          onClick={run(() => setPrefs({ petVariant: nextVariant(pet, currentLook)?.id || '' }))}
+        >
+          Next {pet.name} look
+        </button>
+      )}
       <button type="button" role="menuitem" onClick={run(() => window.setTimeout(startScreensaverPreview, 150))}>
         Start screen saver
       </button>

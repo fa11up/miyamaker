@@ -10,6 +10,8 @@ import { clampDelayMinutes, DEFAULT_DELAY_MIN } from './screensaver/idle'
 export interface DesktopPrefs {
   petEnabled: boolean
   petId: string
+  /** look of a pet with variants (fren pets); empty = a random one each visit */
+  petVariant: string
   screensaverEnabled: boolean
   /** minutes */
   screensaverDelay: number
@@ -19,6 +21,7 @@ export interface DesktopPrefs {
 export const DEFAULT_PREFS: DesktopPrefs = {
   petEnabled: true,
   petId: 'fumo',
+  petVariant: '',
   screensaverEnabled: true,
   screensaverDelay: DEFAULT_DELAY_MIN,
   mintFeedEnabled: true,
@@ -34,6 +37,7 @@ function read(): DesktopPrefs {
     return {
       petEnabled: typeof parsed.petEnabled === 'boolean' ? parsed.petEnabled : DEFAULT_PREFS.petEnabled,
       petId: typeof parsed.petId === 'string' ? parsed.petId : DEFAULT_PREFS.petId,
+      petVariant: typeof parsed.petVariant === 'string' ? parsed.petVariant : DEFAULT_PREFS.petVariant,
       screensaverEnabled:
         typeof parsed.screensaverEnabled === 'boolean' ? parsed.screensaverEnabled : DEFAULT_PREFS.screensaverEnabled,
       screensaverDelay: clampDelayMinutes(parsed.screensaverDelay ?? DEFAULT_PREFS.screensaverDelay),
