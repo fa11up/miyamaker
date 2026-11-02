@@ -26,7 +26,6 @@ contract UniVaultInvariantTest is StdInvariant, Test {
     UniVaultHandler public handler;
 
     address public owner = address(this);
-    address public treasury = address(0x99);
     address[] public actors;
 
     uint256 constant TARGET_ID = 0;
@@ -66,7 +65,6 @@ contract UniVaultInvariantTest is StdInvariant, Test {
             hooks: IHooks(address(0))
         });
         vault.setV4PoolKey(mockPoolKey);
-        vault.setProtocolTreasury(treasury);
 
         actors.push(address(0xA11CE));
         actors.push(address(0xB0B));
@@ -94,30 +92,38 @@ contract UniVaultInvariantTest is StdInvariant, Test {
     }
 
     // ── Invariant 2: no phantom ETH ──
-    // accumulatedProtocolFees + sum(claimable) <= address(vault).balance
+    // accumulatedProtocolFees + sum(unclaimed) + totalPendingETH <= address(vault).balance
 
     function invariant_noPhantomETH() public view {
-        if (vault.totalShares() == 0) return;
-        if (vault.accumulatedFees() == 0) return;
-
         uint256 sumClaimable;
         address[] memory a = handler.getActors();
         for (uint256 i = 0; i < a.length; i++) {
-            if (vault.benefactorShares(a[i]) == 0) continue;
-            // Use the delta-based unclaimed amount (what would actually be paid)
-            uint256 currentShareValue = (vault.accumulatedFees() * vault.benefactorShares(a[i])) / vault.totalShares();
-            uint256 unclaimed = currentShareValue > vault.shareValueAtLastClaim(a[i])
-                ? currentShareValue - vault.shareValueAtLastClaim(a[i])
-                : 0;
-            sumClaimable += unclaimed;
+            sumClaimable += vault.getUnclaimedFees(a[i]);
         }
 
-        uint256 obligations = vault.accumulatedProtocolFees() + sumClaimable;
+        uint256 obligations = vault.accumulatedProtocolFees() + sumClaimable + vault.totalPendingETH();
         assertLe(
             obligations,
             address(vault).balance,
             "Uni: phantom ETH - obligations exceed balance"
         );
+    }
+
+    // ── Invariant 2b: fee conservation (audit H2) ──
+    // Every wei of benefactor fees is either claimed or still claimable: sum(claims) + sum(unclaimed)
+    // never exceeds fees distributed, and nothing beyond rounding dust is stranded (no dilution/wipe).
+
+    function invariant_feesConserved() public view {
+        uint256 sumUnclaimed;
+        address[] memory a = handler.getActors();
+        for (uint256 i = 0; i < a.length; i++) {
+            sumUnclaimed += vault.getUnclaimedFees(a[i]);
+        }
+        uint256 accountedFor = vault.totalFeesClaimed() + sumUnclaimed;
+        assertEq(vault.totalFeesClaimed(), handler.ghost_totalClaimed(), "Uni: claim ghost mismatch");
+        assertLe(accountedFor, vault.accumulatedFees(), "Uni: claims exceed fees distributed");
+        assertGe(vault.accumulatedFees(), handler.ghost_totalFeesDeposited(), "Uni: deposited fees not distributed");
+        assertApproxEqAbs(accountedFor, vault.accumulatedFees(), 1e6, "Uni: fees stranded beyond dust");
     }
 
     // ── Invariant 3: totalPendingETH == balance when no LP deployed ──
@@ -167,10 +173,13 @@ contract UniVaultInvariantTest is StdInvariant, Test {
 
                 if (convertedI >= convertedJ) {
                     if (sharesJ > sharesI) {
-                        // Allow rounding tolerance: 1 share unit per conversion
+                        // Allow rounding tolerance: 1 share unit per conversion, plus the caller reward each
+                        // batch pays out of its own ETH (<= MAX_CONVERSION_REWARD_BPS), which makes shares
+                        // per ETH differ slightly between batches of different size.
                         assertLe(
                             sharesJ - sharesI,
-                            handler.ghost_conversions(),
+                            handler.ghost_conversions()
+                                + sharesJ * vault.MAX_CONVERSION_REWARD_BPS() / 10000,
                             "Uni: dilution inversion - lower contributor has more shares"
                         );
                     }

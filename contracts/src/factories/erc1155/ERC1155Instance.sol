@@ -41,6 +41,7 @@ error NoDynamicPricingModule();
 error OnlyFactory();
 error AlreadyInitialized();
 error InvalidSplit();
+error RenounceDisabled();
 import { Currency } from "v4-core/types/Currency.sol";
 import { RevenueSplitLib } from "../../shared/libraries/RevenueSplitLib.sol";
 import { IInstanceLifecycle, TYPE_ERC1155, STATE_MINTING } from "../../interfaces/IInstanceLifecycle.sol";
@@ -251,6 +252,9 @@ contract ERC1155Instance is Ownable, ReentrancyGuard, IInstanceLifecycle {
 
         Edition storage edition = editions[editionId];
         if (bytes(edition.pieceTitle).length == 0) revert EditionNotFound();
+        if (edition.openTime != 0) {
+            if (block.timestamp < edition.openTime) revert EditionNotOpen();
+        }
         if (edition.supply > 0) {
             if (edition.minted >= edition.supply) revert EditionSoldOut();
         }
@@ -550,6 +554,7 @@ contract ERC1155Instance is Ownable, ReentrancyGuard, IInstanceLifecycle {
         bytes memory data
     ) external {
         if (from != msg.sender && !isApprovedForAll[from][msg.sender]) revert Unauthorized();
+        if (to == address(0)) revert InvalidAddress();
         if (balanceOf[from][id] < amount) revert InsufficientBalance();
 
         balanceOf[from][id] -= amount;
@@ -572,6 +577,7 @@ contract ERC1155Instance is Ownable, ReentrancyGuard, IInstanceLifecycle {
         bytes memory data
     ) external {
         if (from != msg.sender && !isApprovedForAll[from][msg.sender]) revert Unauthorized();
+        if (to == address(0)) revert InvalidAddress();
         if (ids.length != amounts.length) revert LengthMismatch();
 
         for (uint256 i = 0; i < ids.length; i++) {
@@ -584,6 +590,42 @@ contract ERC1155Instance is Ownable, ReentrancyGuard, IInstanceLifecycle {
 
         /// @dev ERC1155 compliance: Check if recipient is a contract and call receiver hook
         _doSafeBatchTransferAcceptanceCheck(msg.sender, from, to, ids, amounts, data);
+    }
+
+    /**
+     * @notice ERC1155 batch balance query
+     * @param accounts Owners to query
+     * @param ids Token ids to query (same length as accounts)
+     */
+    function balanceOfBatch(address[] calldata accounts, uint256[] calldata ids)
+        external
+        view
+        returns (uint256[] memory balances)
+    {
+        if (accounts.length != ids.length) revert LengthMismatch();
+        balances = new uint256[](accounts.length);
+        for (uint256 i = 0; i < accounts.length; i++) {
+            balances[i] = balanceOf[accounts[i]][ids[i]];
+        }
+    }
+
+    /**
+     * @notice ERC165: ERC165, ERC1155 and ERC1155MetadataURI
+     */
+    function supportsInterface(bytes4 interfaceId) external pure returns (bool) {
+        return interfaceId == 0x01ffc9a7 // ERC165
+            || interfaceId == 0xd9b67a26 // ERC1155
+            || interfaceId == 0x0e89341c; // ERC1155MetadataURI
+    }
+
+    /**
+     * @notice ERC1155MetadataURI: metadata URI of an edition
+     * @param id Edition ID
+     */
+    function uri(uint256 id) external view returns (string memory) {
+        Edition storage edition = editions[id];
+        if (edition.id == 0) revert EditionNotFound();
+        return edition.metadataURI;
     }
 
     /**
@@ -633,6 +675,11 @@ contract ERC1155Instance is Ownable, ReentrancyGuard, IInstanceLifecycle {
     // ┌─────────────────────────┐
     // │   Style Management      │
     // └─────────────────────────┘
+
+    /// @notice Disabled: the artist's share of every withdraw is sent to owner(), so renouncing would burn it.
+    function renounceOwnership() public payable override onlyOwner {
+        revert RenounceDisabled();
+    }
 
     /// @notice Set project-level style URI (creator only)
     function setStyle(string memory uri) external {

@@ -130,9 +130,8 @@ contract M04_GriefingAttackTests is Test {
     address public mockWeth;
 
     // Events to test
-    event ConversionRewardPaid(address indexed caller, uint256 totalReward, uint256 gasCost, uint256 standardReward);
+    event ConversionRewardPaid(address indexed caller, uint256 reward);
     event ConversionRewardRejected(address indexed caller, uint256 rewardAmount);
-    event InsufficientRewardBalance(address indexed caller, uint256 rewardAmount, uint256 contractBalance);
 
     function setUp() public {
         owner = address(this);
@@ -216,6 +215,9 @@ contract M04_GriefingAttackTests is Test {
 
         // ✅ VERIFY: Griefer got no reward (rejected payment)
         assertEq(address(griefer).balance, 0, "Griefer should have no reward");
+
+        // ✅ VERIFY: Rejected reward is not stranded - it is distributed to the batch's benefactors
+        assertApproxEqAbs(vault.getUnclaimedFees(alice), vault.CONVERSION_REWARD(), 1, "Rejected reward -> fees");
     }
 
     function test_GriefingAttack_ConditionalRevert_OperationSucceeds() public {
@@ -277,11 +279,9 @@ contract M04_GriefingAttackTests is Test {
         uint256 balanceAfter = caller.balance;
         assertGt(balanceAfter, balanceBefore, "Caller should receive reward");
 
-        // Verify reward is reasonable (gas cost + standard reward)
-        // Note: In test environment with low/zero gas price, reward may equal exactly standard reward
+        // Flat reward, no gas component
         uint256 rewardReceived = balanceAfter - balanceBefore;
-        assertGe(rewardReceived, 0.0012 ether, "Should receive at least standard reward");
-        assertLt(rewardReceived, 0.01 ether, "Reward should be reasonable");
+        assertEq(rewardReceived, 0.0012 ether, "Should receive exactly the flat reward");
     }
 
     function test_LegitimateContract_ReceivesReward() public {
@@ -304,10 +304,10 @@ contract M04_GriefingAttackTests is Test {
         assertGt(address(goodCaller).balance, balanceBefore, "Good caller should receive reward");
     }
 
-    // ============ Test: Insufficient Balance Handling ============
+    // ============ Test: Reward Funded From The Batch (audit H3) ============
 
-    function test_InsufficientBalance_OperationStillSucceeds() public {
-        // Setup vault with NO ETH for rewards
+    function test_RewardPaidFromBatch_NoExtraBalanceNeeded() public {
+        // Fresh vault holding ONLY the pending contribution: no fee balance, no extra funding.
         MockZRouter poorZRouter = new MockZRouter();
         MockVaultPriceValidator poorValidator = new MockVaultPriceValidator();
         alignmentToken.transfer(address(poorZRouter), 100_000e18);
@@ -326,7 +326,6 @@ contract M04_GriefingAttackTests is Test {
             TARGET_ID
         );
 
-        // Set V4 pool key
         PoolKey memory mockPoolKey = PoolKey({
             currency0: Currency.wrap(address(0)),
             currency1: Currency.wrap(address(alignmentToken)),
@@ -336,100 +335,47 @@ contract M04_GriefingAttackTests is Test {
         });
         poorVault.setV4PoolKey(mockPoolKey);
 
-        // Add pending ETH (but no extra for rewards)
         vm.deal(alice, 10 ether);
         vm.prank(alice);
         (bool s1, ) = address(poorVault).call{value: 5 ether}("");
         assertTrue(s1);
 
-        // The swap router will receive ~2.5 ETH (50% of 5 ETH pending, from mock validator).
-        // Drain vault to exactly the swap amount so that after the swap, vault.balance = 0
-        // and the reward (0.0012 ETH) cannot be paid.
-        // mockValidator returns 50% proportion, so ethToSwap = 5 ether * 50% = 2.5 ether.
-        vm.deal(address(poorVault), 2.5 ether);
-
         address caller = makeAddr("poorCaller");
-
-        // Call should succeed even though reward can't be paid
         vm.prank(caller);
         poorVault.convertAndAddLiquidity(1);
 
-        // Verify operation completed
         assertEq(poorVault.totalPendingETH(), 0, "Conversion completed");
         assertGt(poorVault.benefactorShares(alice), 0, "Shares issued");
-
-        // Caller got no reward (insufficient balance)
-        assertEq(caller.balance, 0, "No reward paid due to insufficient balance");
+        assertEq(caller.balance, 0.0012 ether, "Reward carved out of the batch");
+        assertEq(poorVault.totalEthLocked(), 5 ether - 0.0012 ether, "Only the remainder is converted");
     }
 
-    // ============ Test: Reward Calculation Accuracy ============
+    // ============ Test: Reward Calculation (audit H3) ============
 
-    function test_RewardCalculation_ScalesWithBenefactors() public {
-        // Add contributions from multiple benefactors
-        address bob = makeAddr("bob");
-        address charlie = makeAddr("charlie");
-
+    function test_Reward_IgnoresGasPrice() public {
         vm.deal(alice, 10 ether);
-        vm.deal(bob, 10 ether);
-        vm.deal(charlie, 10 ether);
-
         vm.prank(alice);
         (bool s1, ) = address(vault).call{value: 3 ether}("");
         assertTrue(s1);
 
-        vm.prank(bob);
-        (bool s2, ) = address(vault).call{value: 2 ether}("");
-        assertTrue(s2);
-
-        vm.prank(charlie);
-        (bool s3, ) = address(vault).call{value: 1 ether}("");
-        assertTrue(s3);
-
-        // Now 3 benefactors, reward should be:
-        // (100k + 3*15k) * gasPrice + 0.0012 ether
-        // = 145k * gasPrice + 0.0012 ether
-
         address caller = makeAddr("rewardTester");
-        vm.deal(caller, 1 ether);
-
-        uint256 balanceBefore = caller.balance;
-
-        // Set gas price to test reward scaling with work
-        vm.txGasPrice(1 gwei);
+        vm.txGasPrice(10_000 gwei);
         vm.prank(caller);
         vault.convertAndAddLiquidity(1);
 
-        uint256 balanceAfter = caller.balance;
-        uint256 rewardReceived = balanceAfter - balanceBefore;
-
-        // Verify reward includes standard amount
-        // Note: In test environment with low/zero gas price, reward may equal exactly standard reward
-        assertGe(rewardReceived, 0.0012 ether, "Should include standard reward");
-
-        // Verify reward scales with benefactor count (includes gas cost)
-        // At minimum gas price (1 gwei), gas cost = 145k * 1 gwei = 0.000145 ether
-        // Total = 0.000145 + 0.0012 = 0.001345 ether exactly
-        assertGe(rewardReceived, 0.001345 ether, "Reward should scale with work");
+        assertEq(caller.balance, vault.CONVERSION_REWARD(), "Reward independent of tx.gasprice");
     }
 
-    // ============ Test: Admin Controls ============
-
-    function test_AdminCanUpdateStandardReward() public {
-        uint256 newReward = 0.002 ether;
-
-        vault.setStandardConversionReward(newReward);
-
-        assertEq(vault.standardConversionReward(), newReward, "Standard reward updated");
-    }
-
-    function test_AdminCannotSetExcessiveReward() public {
-        vm.expectRevert(UniAlignmentVault.RewardTooHigh.selector);
-        vault.setStandardConversionReward(0.2 ether);
-    }
-
-    function test_NonAdminCannotUpdateReward() public {
+    function test_Reward_CappedAtOnePercentOfBatch() public {
+        vm.deal(alice, 1 ether);
         vm.prank(alice);
-        vm.expectRevert();
-        vault.setStandardConversionReward(0.002 ether);
+        (bool s1, ) = address(vault).call{value: 0.01 ether}("");
+        assertTrue(s1);
+
+        address caller = makeAddr("smallBatchCaller");
+        vm.prank(caller);
+        vault.convertAndAddLiquidity(1);
+
+        assertEq(caller.balance, 0.0001 ether, "Reward capped at 1% of a small batch");
     }
 }

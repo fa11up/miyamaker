@@ -16,6 +16,7 @@ contract UniVaultHandler is Test {
     uint256 public ghost_totalContributed;
     mapping(address => uint256) public ghost_actorContributed;
     uint256 public ghost_totalClaimed;
+    uint256 public ghost_totalFeesDeposited;
     bool public ghost_hasLP;
     uint256 public ghost_conversions;
     // Snapshot shares at each conversion to track dilution
@@ -92,21 +93,20 @@ contract UniVaultHandler is Test {
         vm.deal(vault.owner(), amount);
         vm.prank(vault.owner());
         vault.depositFees{value: amount}();
+        ghost_totalFeesDeposited += amount;
     }
 
     function claimFees(uint256 actorSeed) external {
         address actor = _getActor(actorSeed);
         if (vault.benefactorShares(actor) == 0) return;
-        if (vault.accumulatedFees() == 0) return;
+        uint256 owed = vault.getUnclaimedFees(actor);
+        if (owed == 0) return;
 
-        uint256 currentShareValue = (vault.accumulatedFees() * vault.benefactorShares(actor)) / vault.totalShares();
-        uint256 ethClaimed = currentShareValue > vault.shareValueAtLastClaim(actor)
-            ? currentShareValue - vault.shareValueAtLastClaim(actor)
-            : 0;
-        if (ethClaimed == 0) return;
-
+        uint256 before = actor.balance;
         vm.prank(actor);
         uint256 claimed = vault.claimFees();
+        require(claimed == owed, "claim != getUnclaimedFees");
+        require(actor.balance - before == claimed, "claim not paid");
         ghost_totalClaimed += claimed;
     }
 

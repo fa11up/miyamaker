@@ -12,6 +12,8 @@ import {MiyaRegistry} from "../../src/registry/MiyaRegistry.sol";
 import {MockEXECToken} from "../mocks/MockEXECToken.sol";
 import {CREATEX} from "../../src/shared/CreateXConstants.sol";
 import {CREATEX_BYTECODE} from "createx-forge/script/CreateX.d.sol";
+import {Currency} from "v4-core/types/Currency.sol";
+import {IHooks} from "v4-core/interfaces/IHooks.sol";
 
 contract UniAlignmentVaultFactoryTest is Test {
     UniAlignmentVaultFactory public factory;
@@ -204,5 +206,41 @@ contract UniAlignmentVaultFactoryTest is Test {
         bytes32 salt = _nextSalt();
         vm.expectRevert(MiyaRegistry.NotVaultFactory.selector);
         factory.deployVault(salt, address(alignmentToken), TARGET_ID, IVaultPriceValidator(address(0)));
+    }
+
+    // ── Audit M4: pool key fixed at deploy, hookless, never repointable ──
+
+    function test_deployVault_setsHooklessPoolKeyOnce() public {
+        address vault = factory.deployVault(
+            _nextSalt(), address(alignmentToken), TARGET_ID, IVaultPriceValidator(address(0))
+        );
+        (Currency c0, Currency c1, uint24 fee, int24 tickSpacing, IHooks hooks) =
+            UniAlignmentVault(payable(vault)).v4PoolKey();
+        assertEq(Currency.unwrap(c0), address(0));
+        assertEq(Currency.unwrap(c1), address(alignmentToken));
+        assertEq(fee, 3000);
+        assertEq(tickSpacing, 60);
+        assertEq(address(hooks), address(0));
+        UniAlignmentVault(payable(vault)).validateCurrentPoolKey();
+    }
+
+    function test_poolKeyCannotBeRepointed() public {
+        address vault = factory.deployVault(
+            _nextSalt(), address(alignmentToken), TARGET_ID, IVaultPriceValidator(address(0))
+        );
+        PoolKey memory other = PoolKey({
+            currency0: Currency.wrap(address(0)),
+            currency1: Currency.wrap(address(alignmentToken)),
+            fee: 10000,
+            tickSpacing: 200,
+            hooks: IHooks(address(0))
+        });
+        // Factory owner has no passthrough, and calling the vault directly is not the vault owner.
+        vm.expectRevert(Ownable.Unauthorized.selector);
+        UniAlignmentVault(payable(vault)).setV4PoolKey(other);
+        // Even the vault owner (the factory) cannot change it after deploy.
+        vm.prank(address(factory));
+        vm.expectRevert(UniAlignmentVault.PoolKeyAlreadySet.selector);
+        UniAlignmentVault(payable(vault)).setV4PoolKey(other);
     }
 }

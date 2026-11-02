@@ -362,6 +362,41 @@ contract ERC721DropTest is Test {
         assertTrue(d.supportsInterface(0x2a55205a)); // ERC2981
     }
 
+    /// Audit Low: per-wallet counters belong to a phase list; a new list (setPhases) starts them fresh rather
+    /// than applying old phase-0 mints to whatever the new phase 0 is.
+    function test_setPhasesResetsWalletCounters() public {
+        ERC721DropInstance d = _drop(100, 1000);
+        vm.prank(alice);
+        d.mint{ value: 0.06 ether }(0, 2, _proof(_leaf(bob)));
+        assertEq(d.mintedInPhase(0, alice), 2);
+
+        ERC721DropInstance.Phase[] memory next = new ERC721DropInstance.Phase[](1);
+        next[0] = ERC721DropInstance.Phase({
+            start: uint64(block.timestamp),
+            end: 0,
+            price: PRICE,
+            maxPerWallet: 1,
+            merkleRoot: bytes32(0)
+        });
+        vm.prank(artist);
+        d.setPhases(next);
+        assertEq(d.mintedInPhase(0, alice), 0, "counter scoped to the old phase list");
+
+        vm.startPrank(alice);
+        d.mint{ value: PRICE }(0, 1, _noProof());
+        vm.expectRevert(ERC721DropInstance.WalletLimit.selector);
+        d.mint{ value: PRICE }(0, 1, _noProof());
+        vm.stopPrank();
+    }
+
+    /// Audit Low: renouncing would make owner() == address(0) and permissionless withdraw() burn the artist share.
+    function test_renounceOwnershipDisabled() public {
+        ERC721DropInstance d = _drop(100, 1000);
+        vm.prank(artist);
+        vm.expectRevert(ERC721DropInstance.RenounceDisabled.selector);
+        d.renounceOwnership();
+    }
+
     function test_setPhasesValidation() public {
         ERC721DropInstance d = _drop(100, 1000);
         ERC721DropInstance.Phase[] memory bad = new ERC721DropInstance.Phase[](1);

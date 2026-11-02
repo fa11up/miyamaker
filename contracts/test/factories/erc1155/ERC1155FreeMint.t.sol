@@ -8,7 +8,9 @@ import {MiyaRegistry} from "../../../src/registry/MiyaRegistry.sol";
 import {IMiyaRegistry} from "../../../src/registry/interfaces/IMiyaRegistry.sol";
 import {FreeMintParams} from "../../../src/interfaces/IFactoryTypes.sol";
 import {GatingScope} from "../../../src/gating/IGatingModule.sol";
-import {FreeMintDisabled, FreeMintAlreadyClaimed, FreeMintExhausted} from "../../../src/factories/erc1155/ERC1155Instance.sol";
+import {FreeMintDisabled, FreeMintAlreadyClaimed, FreeMintExhausted, EditionNotOpen, EditionNotFound, LengthMismatch, RenounceDisabled} from "../../../src/factories/erc1155/ERC1155Instance.sol";
+import {MiyaPool} from "../../../src/pools/MiyaPool.sol";
+import {MiyaPoolFactory} from "../../../src/pools/MiyaPoolFactory.sol";
 import {ICreateX, CREATEX} from "../../../src/shared/CreateXConstants.sol";
 import {CREATEX_BYTECODE} from "createx-forge/script/CreateX.d.sol";
 
@@ -124,5 +126,89 @@ contract ERC1155FreeMintTest is Test {
         vm.prank(user2);
         vm.expectRevert(FreeMintExhausted.selector);
         inst.claimFreeMint(editionId, "");
+    }
+
+    // ── claimFreeMint respects openTime (audit Low) ───────────────────────────
+
+    function test_erc1155_freeMint_revertsBeforeOpenTime() public {
+        ERC1155Instance inst = _deploy(FREE_ALLOC, GatingScope.BOTH);
+        uint256 openAt = block.timestamp + 1 days;
+        vm.prank(creator);
+        inst.addEdition(
+            "Timed", 0.01 ether, 100, "ipfs://timed", ERC1155Instance.PricingModel.LIMITED_FIXED, 0, openAt
+        );
+        uint256 editionId = inst.nextEditionId() - 1;
+
+        vm.prank(user1);
+        vm.expectRevert(EditionNotOpen.selector);
+        inst.claimFreeMint(editionId, "");
+
+        vm.warp(openAt);
+        vm.prank(user1);
+        inst.claimFreeMint(editionId, "");
+        assertEq(inst.balanceOf(user1, editionId), 1);
+    }
+
+    // ── ERC165 / ERC1155 surface (audit M7) ───────────────────────────────────
+
+    function test_erc1155_supportsInterface() public {
+        ERC1155Instance inst = _deploy(FREE_ALLOC, GatingScope.BOTH);
+        assertTrue(inst.supportsInterface(0x01ffc9a7), "ERC165");
+        assertTrue(inst.supportsInterface(0xd9b67a26), "ERC1155");
+        assertTrue(inst.supportsInterface(0x0e89341c), "ERC1155MetadataURI");
+        assertFalse(inst.supportsInterface(0x80ac58cd), "not ERC721");
+        assertFalse(inst.supportsInterface(0xffffffff), "ERC165 invalid id");
+    }
+
+    function test_erc1155_uriAndBalanceOfBatch() public {
+        ERC1155Instance inst = _deploy(FREE_ALLOC, GatingScope.BOTH);
+        uint256 editionId = _addEdition(inst, 100);
+        assertEq(inst.uri(editionId), "ipfs://edition");
+        vm.expectRevert(EditionNotFound.selector);
+        inst.uri(999);
+
+        vm.prank(user1);
+        inst.claimFreeMint(editionId, "");
+        address[] memory accounts = new address[](2);
+        uint256[] memory ids = new uint256[](2);
+        accounts[0] = user1;
+        accounts[1] = user2;
+        ids[0] = editionId;
+        ids[1] = editionId;
+        uint256[] memory bals = inst.balanceOfBatch(accounts, ids);
+        assertEq(bals[0], 1);
+        assertEq(bals[1], 0);
+
+        vm.expectRevert(LengthMismatch.selector);
+        inst.balanceOfBatch(accounts, new uint256[](1));
+    }
+
+    function test_erc1155_miyaPoolCanBeCreatedAndDepositedInto() public {
+        ERC1155Instance inst = _deploy(FREE_ALLOC, GatingScope.BOTH);
+        uint256 editionId = _addEdition(inst, 100);
+        vm.prank(user1);
+        inst.claimFreeMint(editionId, "");
+
+        MiyaPoolFactory poolFactory = new MiyaPoolFactory();
+        MiyaPool pool = MiyaPool(poolFactory.createPool(address(inst), MiyaPool.RedeemMode.TARGETED));
+        assertEq(uint256(pool.kind()), uint256(MiyaPool.Kind.ERC1155));
+
+        uint256[] memory ids = new uint256[](1);
+        uint256[] memory amounts = new uint256[](1);
+        ids[0] = editionId;
+        amounts[0] = 1;
+        vm.startPrank(user1);
+        inst.setApprovalForAll(address(pool), true);
+        pool.deposit(ids, amounts, user1);
+        vm.stopPrank();
+        assertEq(inst.balanceOf(address(pool), editionId), 1);
+        assertEq(pool.balanceOf(user1), 1e18);
+    }
+
+    function test_erc1155_renounceOwnershipDisabled() public {
+        ERC1155Instance inst = _deploy(FREE_ALLOC, GatingScope.BOTH);
+        vm.prank(creator);
+        vm.expectRevert(RenounceDisabled.selector);
+        inst.renounceOwnership();
     }
 }

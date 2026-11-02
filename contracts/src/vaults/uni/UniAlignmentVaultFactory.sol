@@ -5,14 +5,17 @@ import {UniAlignmentVault} from "./UniAlignmentVault.sol";
 import {IVaultPriceValidator} from "../../interfaces/IVaultPriceValidator.sol";
 import {IMiyaRegistry} from "../../registry/interfaces/IMiyaRegistry.sol";
 import {PoolKey} from "v4-core/types/PoolKey.sol";
+import {Currency} from "v4-core/types/Currency.sol";
+import {IHooks} from "v4-core/interfaces/IHooks.sol";
 import {ICreateX, CREATEX} from "../../shared/CreateXConstants.sol";
 import {Ownable} from "solady/auth/Ownable.sol";
 
 /// @title UniAlignmentVaultFactory
 /// @notice Deploys UniAlignmentVault clones and registers each in the MiyaRegistry (this factory must be
 ///         registered there via setVaultFactory); zRouter config is shared across all vaults.
-///         The factory is the owner of every vault it deploys, so pool key configuration
-///         must go through setVaultPoolKey (onlyOwner) rather than calling the vault directly.
+///         The factory owns every vault it deploys and sets its V4 pool key exactly once, at deploy: the hookless
+///         native-ETH/alignment-token pool at the shared zRouter fee tier, i.e. the same pool zRouter swaps on.
+///         There is no way to repoint a vault's pool afterwards.
 contract UniAlignmentVaultFactory is Ownable {
     address public immutable vaultImplementation;
     IVaultPriceValidator public immutable defaultPriceValidator;
@@ -49,14 +52,6 @@ contract UniAlignmentVaultFactory is Ownable {
         vaultImplementation = address(new UniAlignmentVault());
     }
 
-    /// @notice Set the V4 pool key on a vault deployed by this factory.
-    ///         Only the factory owner can call this — the vault's owner is the factory.
-    /// @param vault Address of the vault (must have been deployed by this factory)
-    /// @param poolKey The V4 pool key to configure on the vault
-    function setVaultPoolKey(address vault, PoolKey calldata poolKey) external onlyOwner {
-        UniAlignmentVault(payable(vault)).setV4PoolKey(poolKey);
-    }
-
     /// @notice Deploy a new vault clone via CREATE3
     /// @param salt CREATE3 deployment salt for deterministic vanity address
     /// @param alignmentToken The token this vault aligns to
@@ -88,6 +83,15 @@ contract UniAlignmentVaultFactory is Ownable {
             priceValidator == IVaultPriceValidator(address(0)) ? defaultPriceValidator : priceValidator,
             registry,
             alignmentTargetId
+        );
+        UniAlignmentVault(payable(vault)).setV4PoolKey(
+            PoolKey({
+                currency0: Currency.wrap(address(0)),
+                currency1: Currency.wrap(alignmentToken),
+                fee: zRouterFee,
+                tickSpacing: zRouterTickSpacing,
+                hooks: IHooks(address(0))
+            })
         );
         registry.registerVault(vault);
 
