@@ -1,9 +1,9 @@
 /* eslint-disable no-restricted-syntax, no-continue, no-await-in-loop, no-plusplus -- bounded, sequential RPC/parse loops read clearer as loops */
-import Angel from 'assets/angel.jpg?preset=thumbnail&resize=true'
-import Ghiblady from 'assets/ghiblady.jpg?preset=thumbnail&resize=true'
-import Milady from 'assets/milady3.jpg?preset=thumbnail&resize=true'
+import Angel from 'assets/angel.jpg?preset=art&resize=true'
+import Ghiblady from 'assets/ghiblady.jpg?preset=art&resize=true'
+import Milady from 'assets/milady3.jpg?preset=art&resize=true'
 import Fumo from 'assets/pet/fumo-320.webp'
-import Pixelady from 'assets/pixelady.jpg?preset=thumbnail&resize=true'
+import Pixelady from 'assets/pixelady.jpg?preset=art&resize=true'
 import { useEffect, useRef, useState } from 'react'
 import styled from 'styled-components/macro'
 
@@ -55,13 +55,26 @@ type Sprite = {
   vy: number
   w: number
   h: number
+  /** art only: the frame's area target; w/h are fitted to the image's own aspect once it loads */
+  size?: number
   hue: number
 }
 
 type Star = { x: number; y: number; z: number; tw: number }
 
-const ART = [Milady, Pixelady, Angel, Ghiblady].map((a) => a[0]?.src).filter(Boolean) as string[]
+const ART = [Milady, Pixelady, Angel, Ghiblady].map((a) => a[a.length - 1]?.src).filter(Boolean) as string[]
 const PALETTE = ['#ffffff', color.faceLight, color.accent, '#b9a7ff', color.light]
+
+/** Size an art frame to its image's aspect ratio (same area as a size×size square), keeping it on screen. */
+function fitArt(s: Sprite, W: number, H: number) {
+  if (!s.size || !s.img.naturalWidth || !s.img.naturalHeight) return
+  const ar = s.img.naturalWidth / s.img.naturalHeight
+  s.w = Math.round(s.size * Math.sqrt(ar))
+  s.h = Math.round(s.size / Math.sqrt(ar))
+  s.size = undefined
+  s.x = Math.min(Math.max(0, s.x), Math.max(0, W - s.w))
+  s.y = Math.min(Math.max(0, s.y), Math.max(0, H - s.h))
+}
 
 function load(src: string) {
   const img = new Image()
@@ -188,7 +201,7 @@ export default function Screensaver({ onDismiss }: { onDismiss: () => void }) {
 
     ART.slice(0, small ? 2 : 4).forEach((src) => {
       const s = rand(84, 118) * scale
-      sprites.push({ img: load(src), kind: 'art', x: 0, y: 0, vx: speed(), vy: speed(), w: s, h: s, hue: 0 })
+      sprites.push({ img: load(src), kind: 'art', x: 0, y: 0, vx: speed(), vy: speed(), w: s, h: s, size: s, hue: 0 })
     })
     sprites.forEach((s) => {
       s.x = rand(0, Math.max(1, W - s.w))
@@ -227,6 +240,7 @@ export default function Screensaver({ onDismiss }: { onDismiss: () => void }) {
     const drawSprite = (s: Sprite) => {
       if (!s.img.complete || !s.img.naturalWidth) return
       if (s.kind === 'art') {
+        fitArt(s, W, H)
         // Win9x picture frame in the bounce colour.
         ctx.fillStyle = PALETTE[s.hue]!
         ctx.fillRect(Math.round(s.x) - 4, Math.round(s.y) - 4, s.w + 8, s.h + 8)
