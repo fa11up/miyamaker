@@ -32,9 +32,29 @@ const Side = styled.div`
   flex: 1 1 auto;
 `
 
+// Night-sky side banner: the screensaver's starfield in a strip. Two star layers (pseudo-elements) twinkle
+// out of phase; the wordmark glows like the starfield's sprites.
+const STARS_A = [
+  'radial-gradient(1px 1px at 6px 18px, #fff 99%, transparent)',
+  'radial-gradient(1px 1px at 19px 61px, #fff 99%, transparent)',
+  'radial-gradient(1.5px 1.5px at 11px 104px, #fff 99%, transparent)',
+  'radial-gradient(1px 1px at 22px 147px, #e9dcff 99%, transparent)',
+  'radial-gradient(1px 1px at 4px 189px, #fff 99%, transparent)',
+].join(', ')
+const STARS_B = [
+  'radial-gradient(1px 1px at 16px 34px, #d7c9ff 99%, transparent)',
+  'radial-gradient(1.5px 1.5px at 8px 82px, #fff 99%, transparent)',
+  'radial-gradient(1px 1px at 24px 121px, #fff 99%, transparent)',
+  'radial-gradient(1px 1px at 13px 166px, #f3c6f4 99%, transparent)',
+  'radial-gradient(1.5px 1.5px at 20px 208px, #fff 99%, transparent)',
+].join(', ')
+
 const Stripe = styled.div`
-  flex: 0 0 26px;
-  background: linear-gradient(0deg, ${color.titleFrom}, ${color.titleTo});
+  position: relative;
+  overflow: hidden;
+  flex: 0 0 28px;
+  background: radial-gradient(120% 40% at 50% 100%, rgba(217, 122, 218, 0.45), transparent 70%),
+    linear-gradient(0deg, #6f6894 0%, #2a2350 38%, ${color.dark} 100%);
   color: ${color.highlight};
   font-family: ${font.display};
   font-size: ${text.sm};
@@ -43,8 +63,52 @@ const Stripe = styled.div`
   display: flex;
   align-items: center;
   padding: ${space[2]} 0;
-  letter-spacing: 0.08em;
-  text-shadow: 1px 1px 0 ${color.dark};
+  letter-spacing: 0.12em;
+  text-shadow: 0 0 4px #d7c9ff, 0 0 10px ${color.titleFrom}, 1px 1px 0 ${color.dark};
+  &::before,
+  &::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background-size: 28px 224px;
+    background-repeat: repeat-y;
+    pointer-events: none;
+    animation: miya-twinkle 3.2s ease-in-out infinite alternate;
+  }
+  &::before {
+    background-image: ${STARS_A};
+  }
+  &::after {
+    background-image: ${STARS_B};
+    animation-delay: -1.6s;
+  }
+  > span {
+    position: relative;
+    z-index: 1;
+  }
+  > span::before {
+    content: '✦';
+    display: inline-block;
+    margin-bottom: 6px;
+    font-size: 0.8em;
+    color: #fff4c2;
+    text-shadow: 0 0 6px #fff4c2;
+  }
+  @keyframes miya-twinkle {
+    from {
+      opacity: 0.25;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    &::before,
+    &::after {
+      animation: none;
+      opacity: 0.8;
+    }
+  }
 `
 
 const Content = styled.div`
@@ -198,7 +262,9 @@ function StartMenu({ connected, displayName, chainName, onClose, onConnect, onWa
   return createPortal(
     <Menu ref={ref} role="menu" aria-label="Start menu" data-start-menu>
       <Side>
-        <Stripe aria-hidden>miyaOS</Stripe>
+        <Stripe aria-hidden>
+          <span>miyaOS</span>
+        </Stripe>
         <Content>
           {connected ? (
             <>
