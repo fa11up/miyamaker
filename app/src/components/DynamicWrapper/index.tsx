@@ -9,6 +9,7 @@ const Auction = lazy(() => import('@/pages/Auction'))
 const Mint = lazy(() => import('@/pages/Mint'))
 const Swap = lazy(() => import('@/pages/Swap'))
 const Radio = lazy(() => import('@/pages/Radio'))
+const DropMusic = lazy(() => import('@/pages/DropMusic'))
 
 export default function DynamicWrapper({ identifier }: { identifier: string }) {
   const component = useMemo(() => {
@@ -31,6 +32,8 @@ export default function DynamicWrapper({ identifier }: { identifier: string }) {
         return <Swap />
       case 'radio':
         return <Radio />
+      case 'dropmusic':
+        return <DropMusic />
       default:
         return <></>
     }

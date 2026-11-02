@@ -114,6 +114,7 @@ const DESKTOP_ICONS: DesktopApp[] = [
   { id: 'auction', label: Pages.auction?.label || 'Auction', src: Pages.auction?.icon?.src },
   { id: 'uploader', label: Pages.uploader?.label || 'Upload', src: Pages.uploader?.icon?.src },
   { id: 'radio', label: Pages.radio?.label || 'miya radio', src: Pages.radio?.icon?.src },
+  { id: 'dropmusic', label: Pages.dropmusic?.label || 'Drop Music', src: Pages.dropmusic?.icon?.src },
 ]
 
 export default function OperatingSystem() {
