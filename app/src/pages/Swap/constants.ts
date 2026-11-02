@@ -32,7 +32,8 @@ export const PINNED_TOKENS: Record<SwapChainId, SwapToken[]> = {
   [robinhood.id]: MIYA_LIST[robinhood.id]!.map(withLogo),
 }
 
-const find = (chainId: SwapChainId, address: string) => PINNED_TOKENS[chainId].find((t) => sameAddress(t.address, address))!
+const find = (chainId: SwapChainId, address: string) =>
+  PINNED_TOKENS[chainId].find((t) => sameAddress(t.address, address))!
 
 /** Default pair per chain: ETH -> INFER on Ethereum, ETH -> USDG on Robinhood Chain. */
 export const DEFAULT_PAIR: Record<SwapChainId, [SwapToken, SwapToken]> = {

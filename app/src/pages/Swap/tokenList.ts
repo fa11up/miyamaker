@@ -93,7 +93,7 @@ export const MIYA_LIST: Record<number, ListToken[]> = {
       decimals: 18,
       miya: true,
       tint: '#3c3c6e',
-      mark: 'wΞ',
+      mark: 'W',
     },
     {
       chainId: MAINNET,
@@ -165,28 +165,31 @@ export function isUsable(t: Partial<ListToken> | null | undefined, chainId: numb
  * remote list), then every other usable remote token for this chain, deduped by address (first wins) and
  * sorted by symbol. Remote entries never carry `miya`, `blocked` or `unverified` flags.
  */
-export function mergeTokenLists(pinned: readonly ListToken[], remote: readonly unknown[], chainId: number): ListToken[] {
+export function mergeTokenLists(
+  pinned: readonly ListToken[],
+  remote: readonly unknown[],
+  chainId: number
+): ListToken[] {
   const seen = new Set<string>()
-  const out: ListToken[] = []
-  for (const t of pinned) {
-    if (t.chainId !== chainId || seen.has(key(t.address))) continue
-    seen.add(key(t.address))
-    out.push(t)
+  const fresh = (address: string) => {
+    if (seen.has(key(address))) return false
+    seen.add(key(address))
+    return true
   }
-  const rest: ListToken[] = []
-  for (const raw of remote) {
-    const t = raw as Partial<ListToken>
-    if (!isUsable(t, chainId) || seen.has(key(t.address))) continue
-    seen.add(key(t.address))
-    rest.push({
+
+  const out = pinned.filter((t) => t.chainId === chainId && fresh(t.address))
+  const rest: ListToken[] = remote
+    .filter((raw): raw is ListToken => isUsable(raw as Partial<ListToken>, chainId))
+    .filter((t) => fresh(t.address))
+    .map((t) => ({
       chainId,
       address: t.address,
       symbol: t.symbol.trim(),
       name: typeof t.name === 'string' && t.name.trim() ? t.name.trim() : t.symbol.trim(),
       decimals: t.decimals,
       logoURI: typeof t.logoURI === 'string' && /^(https:|ipfs:)/.test(t.logoURI) ? t.logoURI : undefined,
-    })
-  }
+    }))
+
   rest.sort((a, b) => a.symbol.localeCompare(b.symbol, 'en', { sensitivity: 'base' }))
   return [...out, ...rest]
 }
@@ -205,6 +208,7 @@ export function searchTokens<T extends Pick<ListToken, 'symbol' | 'name'>>(token
     if (s.includes(q) || t.name.toLowerCase().includes(q)) return 2
     return -1
   }
+
   return tokens
     .map((t, i) => ({ t, i, r: rank(t) }))
     .filter((x) => x.r >= 0)
