@@ -274,7 +274,7 @@ const Readouts = styled.div`
 
 /* Music, playlist and equalizer take turns in this one screen. */
 const Panel = styled.div`
-  height: 148px;
+  height: 176px;
   margin-top: 5px;
   display: flex;
   flex-direction: column;

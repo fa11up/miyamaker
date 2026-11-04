@@ -185,7 +185,7 @@ export default function Playlist({
         {queue.tracks.length === 0 ? (
           <Empty>
             <p>No tracks yet — drop music to fill the radio</p>
-            <small>Music drops minted on-chain show up here. Load them below, or release your own.</small>
+            <small>Add music drops below, or release your own.</small>
           </Empty>
         ) : (
           <List ref={listRef}>
