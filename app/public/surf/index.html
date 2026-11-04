@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>Surf with the doll · miyamaker</title>
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon1.png" />
+    <meta name="theme-color" content="#a9a3c9" />
+    <meta name="description" content="Throw a doll into the waves and watch it surf. Made by miyamaker." />
+    <link rel="canonical" href="https://www.miyamaker.com/surf/" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="miyamaker" />
+    <meta property="og:url" content="https://www.miyamaker.com/surf/" />
+    <meta property="og:title" content="Surf with the doll" />
+    <meta property="og:description" content="Throw a doll into the waves and watch it surf. Made by miyamaker." />
+    <meta property="og:image" content="https://www.miyamaker.com/surf/card.png" />
+    <meta property="og:image:width" content="1280" />
+    <meta property="og:image:height" content="720" />
+    <meta property="og:image:alt" content="A plush doll surfing purple waves, with the miyamaker winged heart logo" />
+
+    <meta name="twitter:card" content="player" />
+    <meta name="twitter:title" content="Surf with the doll" />
+    <meta name="twitter:description" content="Throw a doll into the waves and watch it surf. Made by miyamaker." />
+    <meta name="twitter:image" content="https://www.miyamaker.com/surf/card.png" />
+    <meta name="twitter:image:alt" content="A plush doll surfing purple waves, with the miyamaker winged heart logo" />
+    <meta name="twitter:player" content="https://www.miyamaker.com/surf/" />
+    <meta name="twitter:player:width" content="640" />
+    <meta name="twitter:player:height" content="360" />
+    <style>
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+        background: #6f6894;
+        font-family: ui-monospace, Menlo, Consolas, monospace;
+      }
+      canvas {
+        position: fixed;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        display: block;
+        touch-action: none;
+        cursor: grab;
+        user-select: none;
+        -webkit-user-select: none;
+      }
+      canvas.held {
+        cursor: grabbing;
+      }
+      #logo {
+        position: fixed;
+        top: max(10px, env(safe-area-inset-top));
+        left: max(10px, env(safe-area-inset-left));
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-height: 44px;
+        padding: 2px 12px 2px 6px;
+        color: #fff;
+        font-weight: 700;
+        font-size: 15px;
+        text-decoration: none;
+        text-shadow: 1px 1px 0 #2c2547;
+        background: rgb(44 37 71 / 55%);
+        border: 1px solid rgb(255 255 255 / 45%);
+        transition: background 0.15s;
+      }
+      #logo:hover,
+      #logo:focus-visible {
+        background: #d979d6;
+      }
+      #logo:focus-visible {
+        outline: 2px solid #fff;
+        outline-offset: 2px;
+      }
+      #logo img {
+        width: 40px;
+        height: 40px;
+        image-rendering: pixelated;
+      }
+      #flips {
+        position: fixed;
+        top: max(10px, env(safe-area-inset-top));
+        right: max(12px, env(safe-area-inset-right));
+        color: #fff;
+        font-size: 15px;
+        font-weight: 700;
+        line-height: 44px;
+        text-shadow: 1px 1px 0 #2c2547;
+        pointer-events: none;
+      }
+      #hint {
+        position: fixed;
+        left: 16px;
+        right: 16px;
+        bottom: max(14px, env(safe-area-inset-bottom));
+        color: #fff;
+        font-size: 14px;
+        text-align: center;
+        text-shadow: 1px 1px 0 #2c2547;
+        pointer-events: none;
+        transition: opacity 0.6s;
+      }
+      .hidden {
+        opacity: 0;
+      }
+      /* #still: how the share images are captured */
+      .still #logo {
+        top: 9%;
+        left: 7%;
+        padding: 0;
+        gap: 22px;
+        font-size: 72px;
+        background: none;
+        border: 0;
+        text-shadow: 3px 3px 0 #2c2547;
+      }
+      .still #logo img {
+        width: 150px;
+        height: 150px;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="sea" tabindex="0" role="img" aria-label="A plush doll surfing on waves. Press space to jump, and the arrow keys to paddle."></canvas>
+    <a id="logo" href="https://www.miyamaker.com/" target="_blank" rel="noopener" aria-label="Go to miyamaker.com">
+      <img src="./logo.png" alt="" />
+      miyamaker
+    </a>
+    <div id="flips" aria-live="polite"></div>
+    <div id="hint">Tap to jump. Throw the doll. Poke the water.</div>
+    <script src="./surf.js"></script>
+  </body>
+</html>
