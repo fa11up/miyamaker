@@ -164,16 +164,18 @@ export function usePool(chainId: SupportedChainId, pool: Address | undefined, ow
       { address: pool, abi: poolAbi, functionName: 'heldIdsCount', chainId },
       { address: pool, abi: poolAbi, functionName: 'pendingUnits', chainId },
       { address: pool, abi: poolAbi, functionName: 'nextCommitId', chainId },
+      { address: pool, abi: poolAbi, functionName: 'nextRevealId', chainId },
       { address: pool, abi: poolAbi, functionName: 'balanceOf', args: [owner || zeroAddress], chainId },
     ],
     query: { enabled: !!pool },
   })
-  const [count, pending, nextCommit, balance] = extra.data || []
+  const [count, pending, nextCommit, nextReveal, balance] = extra.data || []
   return {
     pool: summary.pools[0],
     heldIdsCount: Number(ok<bigint>(count) ?? 0n),
     pendingUnits: ok<bigint>(pending) ?? 0n,
     nextCommitId: ok<bigint>(nextCommit),
+    nextRevealId: ok<bigint>(nextReveal),
     balance: owner ? ok<bigint>(balance) : undefined,
     loading: summary.loading || extra.isLoading,
     missing: !summary.loading && !extra.isLoading && !summary.pools[0],

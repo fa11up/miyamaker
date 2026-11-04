@@ -43,7 +43,7 @@ export type SplitPart = {
 
 /**
  * The three shares in plain words for an example sale amount (default 1 ETH), artist first.
- * `vaultName` is what the alignment vault buys, e.g. "CULT".
+ * `vaultName` is what the alignment vault buys, e.g. "INFER".
  */
 export function describeSplit(p: { protocolBps: number; alignmentBps: number; vaultName?: string; example?: bigint }): {
   parts: SplitPart[]
