@@ -17,6 +17,7 @@ import {
   parseAlignmentPct,
   parseEth,
   parseLink,
+  parseReserve,
   parseRoyaltyPct,
   parseSymbol,
   txPlan,
@@ -129,12 +130,12 @@ test('ticker and royalty', () => {
 })
 
 test('phases: blank start = now, end after start, free mints allowed, at most 3', () => {
-  const r = buildPhases([{ start: '', end: '', price: '0', maxPerWallet: '' }], NOW)
+  const r = buildPhases([{ start: '', end: '', price: '0', maxPerWallet: '', supplyCap: '' }], NOW)
   assert.ok(r.ok)
-  assert.deepEqual(r.phases[0], { start: NOW, end: 0n, price: 0n, maxPerWallet: 0, merkleRoot: `0x${'0'.repeat(64)}` })
-  const bad = buildPhases([{ start: '2030-01-02T00:00', end: '2030-01-01T00:00', price: '0.1', maxPerWallet: '2' }], NOW)
+  assert.deepEqual(r.phases[0], { start: NOW, end: 0n, price: 0n, maxPerWallet: 0, merkleRoot: `0x${'0'.repeat(64)}`, supplyCap: 0 })
+  const bad = buildPhases([{ start: '2030-01-02T00:00', end: '2030-01-01T00:00', price: '0.1', maxPerWallet: '2', supplyCap: '' }], NOW)
   assert.equal(bad.ok, false)
-  const four = Array.from({ length: 4 }, () => ({ start: '', end: '', price: '0.1', maxPerWallet: '' }))
+  const four = Array.from({ length: 4 }, () => ({ start: '', end: '', price: '0.1', maxPerWallet: '', supplyCap: '' }))
   assert.equal(buildPhases(four, NOW).ok, false)
 })
 
@@ -164,7 +165,7 @@ test('buildDropArgs → ERC721DropFactory.createDrop(InitParams, vault, alignmen
     description: 'hi',
     supply: '100',
     royaltyPct: '5',
-    phases: [{ start: '', end: '', price: '0.01', maxPerWallet: '3' }],
+    phases: [{ start: '', end: '', price: '0.01', maxPerWallet: '3', supplyCap: '' }],
   })
   const [params, vault, bps] = buildDropArgs(f, resolved, NOW)
   assert.equal(vault, VAULT)
@@ -180,6 +181,7 @@ test('buildDropArgs → ERC721DropFactory.createDrop(InitParams, vault, alignmen
     end: 0n,
     price: parseEther('0.01'),
     maxPerWallet: 3,
+    supplyCap: 0,
     merkleRoot: `0x${'0'.repeat(64)}`,
   })
   assert.ok(params.unrevealedURI.startsWith('data:application/json;utf8,'))
@@ -276,4 +278,18 @@ test('kindFromFactory, scanRange and progress labels', () => {
   assert.equal(progressLabel('editions', 3n, undefined), '3 minted')
   assert.equal(progressLabel('auction', 1n), '1 piece')
   assert.equal(KIND_LABEL.legacy, 'Legacy (MiyaMints v1)')
+})
+
+test('buildPhases: a phase can cap what it sells', () => {
+  const r = buildPhases([{ start: '', end: '', price: '0.1', maxPerWallet: '', supplyCap: '50' }], NOW)
+  assert.ok(r.ok)
+  assert.equal(r.phases[0]?.supplyCap, 50)
+  const zero = buildPhases([{ start: '', end: '', price: '0.1', maxPerWallet: '', supplyCap: '0' }], NOW)
+  assert.equal(zero.ok, false)
+})
+
+test('parseReserve: blank is none, and one piece must stay on sale', () => {
+  assert.deepEqual(parseReserve('', 10), { ok: true, n: 0 })
+  assert.deepEqual(parseReserve('9', 10), { ok: true, n: 9 })
+  assert.equal(parseReserve('10', 10).ok, false, 'a fully reserved drop could never sell')
 })

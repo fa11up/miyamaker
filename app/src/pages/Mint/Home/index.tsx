@@ -419,7 +419,8 @@ function Featured({
   onOpen: (c: LiveMintCard) => void
   loading: boolean
 }) {
-  const remaining = card.supply !== undefined && card.minted !== undefined ? card.supply - card.minted : undefined
+  const remaining =
+    card.left ?? (card.supply !== undefined && card.minted !== undefined ? card.supply - card.minted : undefined)
   return (
     <Feature aria-label={`Featured: ${card.name}`}>
       <Frame>

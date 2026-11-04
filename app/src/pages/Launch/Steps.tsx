@@ -478,6 +478,14 @@ export function SaleStep({ form, set, errors }: StepProps) {
           <Err>{errors.supply}</Err>
         </Field>
         <Field>
+          Pieces kept back
+          <input {...input('ownerReserve')} inputMode="numeric" placeholder="None" />
+          <small>
+            Yours to give away for free. Buyers can&apos;t mint them, and this can&apos;t change after launch.
+          </small>
+          <Err>{errors.ownerReserve}</Err>
+        </Field>
+        <Field>
           Royalty on resales (%)
           <input {...input('royaltyPct')} inputMode="decimal" placeholder="5" />
           <small>Your cut when a piece is resold. 0 to 10.</small>
@@ -522,6 +530,16 @@ export function SaleStep({ form, set, errors }: StepProps) {
                 placeholder="No limit"
                 onChange={(e) => setPhase(i, 'maxPerWallet', e.target.value)}
               />
+            </Field>
+            <Field>
+              Pieces for sale
+              <input
+                value={p.supplyCap}
+                inputMode="numeric"
+                placeholder="No limit"
+                onChange={(e) => setPhase(i, 'supplyCap', e.target.value)}
+              />
+              <small>The most this phase can sell.</small>
             </Field>
           </Row2>
           <Row2>

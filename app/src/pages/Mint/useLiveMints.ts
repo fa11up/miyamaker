@@ -27,8 +27,10 @@ export const dropAbi = parseAbi([
   'function maxSupply() view returns (uint32)',
   'function contractURI() view returns (string)',
   'function tokenURI(uint256 tokenId) view returns (string)',
-  'struct Phase { uint64 start; uint64 end; uint128 price; uint32 maxPerWallet; bytes32 merkleRoot; }',
+  'struct Phase { uint64 start; uint64 end; uint128 price; uint32 maxPerWallet; bytes32 merkleRoot; uint32 supplyCap; }',
   'function phases() view returns (Phase[])',
+  'function phasesMinted() view returns (uint256[])',
+  'function publicRemaining() view returns (uint256)',
   'function mint(uint256 phaseId, uint256 quantity, bytes32[] proof) payable',
 ])
 
@@ -41,8 +43,8 @@ const registryAbi = parseAbi([
 /** How many registry collections the home page looks at (newest first). */
 const REGISTRY_LIMIT = 24
 const REFRESH_MS = 30_000
-/** erc721mCalls and dropCalls both read five values per collection. */
-const READS_PER_COLLECTION = 5
+/** How many values erc721mCalls and dropCalls read per collection. */
+const READS_PER_COLLECTION = { erc721m: 5, drop: 7 } as const
 
 const nowSec = () => Math.floor(Date.now() / 1000)
 
@@ -60,15 +62,17 @@ const call = (address: Address, abi: Abi, chainId: number, functionName: string,
 export const erc721mCalls = (a: Address, chainId: number) =>
   ['name', 'price', 'totalSupply', 'maxSupply', 'mintOpen'].map((f) => call(a, erc721mAbi, chainId, f))
 
-/** miyamints drop: name, totalSupply, maxSupply, phases, contractURI. */
+/** miyamints drop: name, totalSupply, maxSupply, phases, contractURI, phasesMinted, publicRemaining. */
 export const dropCalls = (a: Address, chainId: number) =>
-  ['name', 'totalSupply', 'maxSupply', 'phases', 'contractURI'].map((f) => call(a, dropAbi, chainId, f))
+  ['name', 'totalSupply', 'maxSupply', 'phases', 'contractURI', 'phasesMinted', 'publicRemaining'].map((f) =>
+    call(a, dropAbi, chainId, f)
+  )
 
 export type ReadResult = { status: 'success' | 'failure'; result?: unknown } | undefined
 const ok = <T>(r: ReadResult) => (r?.status === 'success' ? (r.result as T) : undefined)
 const num = (v: bigint | number | undefined) => (v !== undefined ? Number(v) : undefined)
 
-/** Turns the five raw results for one collection into reads (the order matches erc721mCalls / dropCalls). */
+/** Turns the raw results for one collection into reads (the order matches erc721mCalls / dropCalls). */
 export function readsFromResults(kind: LiveMintEntry['kind'], r: ReadResult[]): LiveMintReads & { phaseId?: number } {
   if (kind === 'erc721m') {
     return {
@@ -81,15 +85,24 @@ export function readsFromResults(kind: LiveMintEntry['kind'], r: ReadResult[]): 
   }
 
   const phases = ok<readonly DropPhase[]>(r[3])
-  const live = activePublicPhase(phases, nowSec())
+  const sold = ok<readonly bigint[]>(r[5])
+  const live = activePublicPhase(phases, nowSec(), sold)
+  const publicRemaining = num(ok<bigint>(r[6]))
   return {
     name: ok<string>(r[0]),
     totalSupply: num(ok<bigint>(r[1])),
     maxSupply: num(ok<number>(r[2])),
     price: live?.price,
-    mintOpen: phases ? !!live : undefined,
+    // Without the sold counts and public supply we can't say whether a phase still has pieces.
+    mintOpen: phases && sold && publicRemaining !== undefined ? !!live : undefined,
     contractURI: ok<string>(r[4]),
     phaseId: live?.phaseId,
+    publicRemaining,
+    // What the live phase can still sell: its own cap or the public supply, whichever runs out first.
+    left:
+      live?.left !== undefined && publicRemaining !== undefined
+        ? Math.min(live.left, publicRemaining)
+        : publicRemaining,
   }
 }
 
@@ -187,16 +200,21 @@ export function useLiveMints() {
   })
 
   const cards: LiveMintCard[] = useMemo(() => {
-    const slice = (data: readonly unknown[] | undefined, i: number) =>
-      (data?.slice(i * READS_PER_COLLECTION, (i + 1) * READS_PER_COLLECTION) || []) as ReadResult[]
-
     const byKey: Record<string, LiveMintReads | undefined> = {}
-    readable.forEach((e, i) => {
-      byKey[entryKey(e)] = curatedReads.data ? readsFromResults(e.kind, slice(curatedReads.data, i)) : undefined
+    let at = 0
+    readable.forEach((e) => {
+      const next = at + READS_PER_COLLECTION[e.kind]
+      byKey[entryKey(e)] = curatedReads.data
+        ? readsFromResults(e.kind, curatedReads.data.slice(at, next) as ReadResult[])
+        : undefined
+      at = next
     })
 
     const registry = discovered.map((d, i) => {
-      const reads = registryReads.data ? readsFromResults('drop', slice(registryReads.data, i)) : undefined
+      const n = READS_PER_COLLECTION.drop
+      const reads = registryReads.data
+        ? readsFromResults('drop', registryReads.data.slice(i * n, (i + 1) * n) as ReadResult[])
+        : undefined
       return { entry: registryEntry(d.chainId, d.address, reads?.name), reads }
     })
 

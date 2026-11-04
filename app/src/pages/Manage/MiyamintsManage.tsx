@@ -110,6 +110,7 @@ function DropMetadata({
     unrevealedURI: (dropReads.data?.[6]?.result as string) || '',
     contractURI: (dropReads.data?.[7]?.result as string) || '',
     locked: !!dropReads.data?.[8]?.result,
+    royaltyLocked: !!dropReads.data?.[12]?.result,
   }
   const [reveal, setReveal] = useState<string>()
   const value = reveal ?? cur.baseURI
@@ -153,9 +154,22 @@ function DropMetadata({
         >
           {cur.locked ? 'Metadata is locked' : 'Lock metadata forever'}
         </SmallButton>
+        <SmallButton
+          type="button"
+          disabled={busy || cur.royaltyLocked || !isOwner}
+          onClick={() => {
+            // eslint-disable-next-line no-alert
+            if (window.confirm('Lock the royalty forever? Nobody can change it after this, not even you.')) {
+              run('lockRoyalty', call('lockRoyalty'))
+            }
+          }}
+        >
+          {cur.royaltyLocked ? 'Royalty is locked' : 'Lock royalty forever'}
+        </SmallButton>
       </div>
       <TxNote tx={tx} id="meta" explorer={explorer} />
       <TxNote tx={tx} id="lock" explorer={explorer} />
+      <TxNote tx={tx} id="lockRoyalty" explorer={explorer} />
     </Stack>
   )
 }
@@ -172,8 +186,11 @@ function DropActions({
   const [to, setTo] = useState('')
   const [qty, setQty] = useState('1')
   const q = parseWhole(qty, { min: 1, max: 500, label: 'Amount' })
-  type Ph = { start: bigint; end: bigint; price: bigint; maxPerWallet: number }
+  type Ph = { start: bigint; end: bigint; price: bigint; maxPerWallet: number; supplyCap: number }
   const phases = (dropReads.data?.[9]?.result as Ph[] | undefined) || []
+  const reserve = Number((dropReads.data?.[10]?.result as number | undefined) ?? 0)
+  const reserveUsed = Number((dropReads.data?.[11]?.result as bigint | undefined) ?? 0n)
+  const reserveLeft = reserve - reserveUsed
   return (
     <Stack>
       <Eyebrow>Sale phases</Eyebrow>
@@ -185,6 +202,7 @@ function DropActions({
             <th>Starts</th>
             <th>Ends</th>
             <th>Per wallet</th>
+            <th>For sale</th>
           </tr>
         </thead>
         <tbody>
@@ -196,12 +214,16 @@ function DropActions({
               <td>{new Date(Number(p.start) * 1000).toLocaleString()}</td>
               <td>{p.end === 0n ? 'No end' : new Date(Number(p.end) * 1000).toLocaleString()}</td>
               <td>{p.maxPerWallet || 'No limit'}</td>
+              <td>{p.supplyCap || 'No limit'}</td>
             </tr>
           ))}
         </tbody>
       </Table>
       <Eyebrow>Give pieces away</Eyebrow>
-      <p>Mint pieces for free to any wallet, for your team or giveaways. They count toward the total.</p>
+      <p>
+        Mint the pieces you kept back at launch to any wallet, for your team or giveaways. {reserveLeft} of {reserve}{' '}
+        left.
+      </p>
       <Row2>
         <Field>
           Wallet address
@@ -216,7 +238,7 @@ function DropActions({
       <div>
         <SmallButton
           type="button"
-          disabled={busy || !isOwner || !isAddress(to) || !q.ok}
+          disabled={busy || !isOwner || !isAddress(to) || !q.ok || q.n > reserveLeft}
           onClick={() => q.ok && run('gift', call('ownerMint', [to, BigInt(q.n)]))}
         >
           Mint for free
@@ -492,6 +514,9 @@ export default function MiyamintsManage({
         'contractURI',
         'metadataLocked',
         'phases',
+        'ownerReserve',
+        'ownerMinted',
+        'royaltyLocked',
       ] as const
     ).map((functionName) => ({ address, abi: dropInstanceAbi, functionName, chainId })),
     query: { enabled: kind === 'drop' },

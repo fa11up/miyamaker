@@ -10,6 +10,9 @@ const FRIENDLY: Record<string, string> = {
   DepositRequired: 'The starting bid must be more than 0.',
   InvalidPrice: 'The edition price must be more than 0.',
   Unauthorized: 'Only the collection owner can do that.',
+  SoldOut: 'There are not enough pieces left to mint that many.',
+  PhaseSoldOut: 'This sale phase does not have that many pieces left.',
+  ReserveExceeded: 'That is more than the pieces you have left from what you kept back at launch.',
   NotFactory: 'This factory is not registered with miya on this network.',
   // MiyaPool / MiyaPoolFactory (Trade → NFTs)
   NotHeld: 'That NFT is no longer in the pool. Someone may have just taken it. Pick another.',
