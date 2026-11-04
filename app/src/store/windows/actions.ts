@@ -10,6 +10,7 @@ export const updateWindowPosition = createAction<{ value: PageKey; position: { x
 export const toggleFullscreen = createAction<{ value: PageKey }>('windows/toggleFullscreen')
 export const setToFront = createAction<{ value: PageKey }>('windows/setToFront')
 export const minimizeWindow = createAction<{ value: PageKey }>('windows/minimizeWindow')
+export const setAlwaysOnTop = createAction<{ value: PageKey; on: boolean }>('windows/setAlwaysOnTop')
 export const createUploadOrder = createAction<{
   requestFrom: string
   timestamp: number

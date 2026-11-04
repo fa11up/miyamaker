@@ -8,42 +8,49 @@ type Skin = { id: SkinId; label: string; vars: Record<string, string> }
 
 export const SKINS: readonly Skin[] = [
   {
-    // The console: a dark hi-fi chassis with silver keys, green LEDs on black, and a green-to-red analyzer.
+    // Chrome shell, pale grey-green LCD glass with dark ink, and a hot pink glass orb.
     id: 'classic',
-    label: 'Classic',
+    label: 'Chrome',
     vars: {
-      '--rk-frame': '#4b4a68',
-      '--rk-frame-2': '#2a2940',
-      '--rk-frame-hi': '#8d8cab',
-      '--rk-frame-lo': '#10101c',
-      '--rk-frame-ink': '#dcdcea',
-      '--rk-seam': '#17172a',
+      '--rk-frame': '#38304f',
+      '--rk-frame-2': '#1c1730',
+      '--rk-frame-hi': '#8d86b4',
+      '--rk-frame-lo': '#0a0814',
+      '--rk-frame-ink': '#dfe2ef',
+      '--rk-etch': '#d9ddec',
+      '--rk-seam': '#10101d',
       '--rk-strip-a': '#6a2bb0',
       '--rk-strip-b': '#1f1f6e',
       '--rk-strip-ink': '#ffffff',
       '--rk-strip-rule': 'rgba(255, 255, 255, 0.55)',
-      '--rk-lcd': '#000000',
-      '--rk-lcd-2': '#000000',
-      '--rk-lcd-ink': '#00e800',
-      '--rk-lcd-soft': '#00a800',
-      '--rk-lcd-dim': 'rgba(0, 232, 0, 0.14)',
-      '--rk-lcd-glow': 'rgba(0, 232, 0, 0.35)',
-      '--rk-viz-lo': '#00d800',
-      '--rk-viz-mid': '#e8e800',
-      '--rk-viz-hi': '#ff2a00',
-      '--rk-peak': '#ffffff',
-      '--rk-btn': '#c6c6d4',
+      '--rk-lcd': '#a9b5a1',
+      '--rk-lcd-2': '#a9b5a1',
+      '--rk-lcd-ink': '#141d17',
+      '--rk-lcd-soft': '#4c5a4e',
+      '--rk-lcd-dim': 'rgba(20, 29, 23, 0.11)',
+      '--rk-lcd-glow': 'rgba(20, 29, 23, 0)',
+      '--rk-viz-lo': '#26342a',
+      '--rk-viz-mid': '#1c281f',
+      '--rk-viz-hi': '#0d130f',
+      '--rk-peak': '#0d130f',
+      '--rk-btn': '#c4cada',
+      '--rk-btn-2': '#8f97ae',
       '--rk-btn-ink': '#14142a',
-      '--rk-btn-on': '#00e800',
-      '--rk-groove': '#0a0a14',
-      '--rk-fill-a': '#00c800',
-      '--rk-fill-b': '#00e800',
-      '--rk-pl': '#000000',
-      '--rk-pl-ink': '#00e800',
-      '--rk-pl-cur': '#ffffff',
-      '--rk-pl-cur-bg': '#0000c6',
-      '--rk-pl-hover': '#00283a',
-      '--rk-pl-num': '#00a800',
+      '--rk-btn-off': '#50566c',
+      '--rk-lamp-off': 'rgba(20, 29, 23, 0.22)',
+      '--rk-key-hi': '#f2f5ff',
+      '--rk-key-lo': '#474d66',
+      '--rk-btn-on': '#1c6b23',
+      '--rk-groove': '#7f8b78',
+      '--rk-fill-a': '#26342a',
+      '--rk-fill-b': '#26342a',
+      '--rk-pl': '#a9b5a1',
+      '--rk-pl-ink': '#141d17',
+      '--rk-pl-cur': '#000000',
+      '--rk-pl-sel': '#dbe5d0',
+      '--rk-pl-cur-bg': '#2c3930',
+      '--rk-pl-hover': 'rgba(20, 29, 23, 0.14)',
+      '--rk-pl-num': '#4c5a4e',
     },
   },
   {
@@ -172,12 +179,24 @@ export const nextSkin = (id: SkinId): SkinId => {
 // ── layout prefs (per-viewer convenience; storage may be blocked) ─────────────
 
 export type PanelState = 'open' | 'shade' | 'hidden'
-export type RadioLayout = { skin: SkinId; main: 'open' | 'shade'; eq: PanelState; pl: PanelState }
+export type RadioLayout = {
+  skin: SkinId
+  main: 'open' | 'shade'
+  eq: PanelState
+  pl: PanelState
+  onTop: boolean
+}
 
 const LAYOUT_KEY = 'miya-radio:layout:v1'
 const PANEL: readonly PanelState[] = ['open', 'shade', 'hidden']
 
-export const DEFAULT_LAYOUT: RadioLayout = { skin: 'lilac', main: 'open', eq: 'shade', pl: 'open' }
+export const DEFAULT_LAYOUT: RadioLayout = {
+  skin: 'lilac',
+  main: 'open',
+  eq: 'shade',
+  pl: 'open',
+  onTop: false,
+}
 
 export function loadLayout(): RadioLayout {
   try {
@@ -188,6 +207,7 @@ export function loadLayout(): RadioLayout {
       main: v.main === 'shade' ? 'shade' : 'open',
       eq: PANEL.includes(v.eq as PanelState) ? (v.eq as PanelState) : DEFAULT_LAYOUT.eq,
       pl: PANEL.includes(v.pl as PanelState) ? (v.pl as PanelState) : DEFAULT_LAYOUT.pl,
+      onTop: v.onTop === true,
     }
   } catch {
     return DEFAULT_LAYOUT

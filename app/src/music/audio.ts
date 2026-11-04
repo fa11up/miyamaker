@@ -132,6 +132,39 @@ export function formatDuration(seconds: number | undefined): string {
   return h ? `${h}:${String(m).padStart(2, '0')}:${sec}` : `${m}:${sec}`
 }
 
+/** Average bitrate in kbps from the file's size and length, when both are known. */
+export function estimateKbps(bytes: number | undefined, seconds: number | undefined): number | undefined {
+  if (!bytes || !seconds || !Number.isFinite(bytes) || !Number.isFinite(seconds) || bytes <= 0 || seconds <= 0) {
+    return undefined
+  }
+
+  return Math.round((bytes * 8) / seconds / 1000)
+}
+
+const WAVE_MID = 128
+const WAVE_QUIET = 2
+
+/**
+ * Reads one slice of byte waveform per channel. A mono file leaves the right channel empty and a dual-mono file
+ * makes the two identical, so only audibly different channels count as stereo.
+ */
+export function classifyChannels(left: Uint8Array, right: Uint8Array): 'silent' | 'mono' | 'stereo' {
+  let l = 0
+  let r = 0
+  let diff = 0
+  for (let i = 0; i < left.length; i += 1) {
+    const a = (left[i] as number) - WAVE_MID
+    const b = (right[i] as number) - WAVE_MID
+    l = Math.max(l, Math.abs(a))
+    r = Math.max(r, Math.abs(b))
+    diff = Math.max(diff, Math.abs(a - b))
+  }
+
+  if (l <= WAVE_QUIET && r <= WAVE_QUIET) return 'silent'
+  if (l <= WAVE_QUIET || r <= WAVE_QUIET || diff <= WAVE_QUIET) return 'mono'
+  return 'stereo'
+}
+
 // ── Metadata builder ──────────────────────────────────────────────────────────
 
 export type MusicForm = {
