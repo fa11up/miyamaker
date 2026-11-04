@@ -4,6 +4,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
 import {
+  clientKey,
   createRateLimiter,
   ETH,
   FEE_BPS,
@@ -184,4 +185,9 @@ test("the page's fee display matches what the proxy enforces", () => {
   assert.equal(pageFee.feeApplies(1, ETH, MIYA), true)
   assert.equal(pageFee.feeApplies(4663, ETH, USDG), false)
   assert.equal(pageFee.feeApplies(1, ETH, IMDUSD), false)
+})
+
+test('clientKey: cf-connecting-ip wins over headers a client can set itself', () => {
+  const headers = new Headers({ 'cf-connecting-ip': '203.0.113.9', 'x-real-ip': '1.1.1.1', 'x-forwarded-for': '2.2.2.2' })
+  assert.equal(clientKey(headers), '203.0.113.9')
 })

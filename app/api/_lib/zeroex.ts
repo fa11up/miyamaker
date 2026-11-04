@@ -12,8 +12,8 @@
  * - The key (ZEROX_API_KEY) is injected here. An upstream 401/403 is reported as "unavailable",
  *   never echoing anything about the key.
  *
- * Shared by the Vercel functions (api/0x/...) and the Vite dev middleware (vite.config.ts).
- * `api/_lib` is not a route on Vercel (underscore prefix). Do not import this from browser code.
+ * Shared by the Cloudflare Worker (api/worker.ts) and the Vite dev middleware (vite.config.ts).
+ * Do not import this from browser code.
  * This file has no imports so `node --test` can load it directly (tests/zeroex.test.mts).
  */
 
@@ -119,9 +119,9 @@ export type RateLimiter = (key: string, now?: number) => boolean
 
 /**
  * In-memory token bucket per client key (IP): `capacity` requests in a burst, refilled at `perSecond`.
- * NOTE: state lives in this process only. On Vercel every function instance (and every cold start) has
- * its own buckets, so this is a first layer against a single noisy client, not a global quota; put a
- * shared store (KV/Upstash) or the platform firewall in front for a hard limit.
+ * NOTE: state lives in this process only. On Cloudflare every Worker isolate has its own buckets, so this
+ * is a first layer against a single noisy client, not a global quota; put a shared store (KV) or the
+ * platform firewall in front for a hard limit.
  */
 export function createRateLimiter({ capacity = 60, perSecond = 1, maxKeys = 10_000 } = {}): RateLimiter {
   const buckets = new Map<string, { tokens: number; at: number }>()
@@ -147,10 +147,13 @@ export function createRateLimiter({ capacity = 60, perSecond = 1, maxKeys = 10_0
 
 const defaultLimiter = createRateLimiter()
 
-/** Client IP as the platform reports it (Vercel sets x-real-ip / x-forwarded-for). */
+/**
+ * Client IP as Cloudflare reports it. cf-connecting-ip is the only one Cloudflare sets itself: a client can
+ * send its own x-real-ip / x-forwarded-for, so those are only a fallback for the Vite dev server.
+ */
 export function clientKey(headers: Headers | undefined) {
   const forwarded = headers?.get('x-forwarded-for')?.split(',')[0]?.trim()
-  return headers?.get('x-real-ip')?.trim() || forwarded || 'unknown'
+  return headers?.get('cf-connecting-ip')?.trim() || headers?.get('x-real-ip')?.trim() || forwarded || 'unknown'
 }
 
 /**
@@ -200,5 +203,3 @@ export async function handleZeroExRequest(
   }
   return json(res.status, body)
 }
-
-export const envFromProcess = (): ProxyEnv => ({ ZEROX_API_KEY: process.env.ZEROX_API_KEY })

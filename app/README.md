@@ -49,10 +49,10 @@ rebuilds, so the page cannot pick a recipient). **Get a free key** on
 [docs.opensea.io/reference/api-keys](https://docs.opensea.io/reference/api-keys): opensea.io → Settings →
 Developer → Create key (needs a verified email), or for a quick test the instant key
 (`curl -X POST https://api.opensea.io/api/v2/auth/keys`, free tier, expires after 7 days, low limits). Put it in
-`app/.env.local` as `OPENSEA_API_KEY=...` (no `VITE_` prefix) or in Vercel's Environment Variables. Without it the
+`app/.env.local` as `OPENSEA_API_KEY=...` (no `VITE_` prefix) or as a Worker secret. Without it the
 venue cards still show with working links and a quiet "prices need an API key" note.
 
-**Vercel:** set the project's Root Directory to `app` (framework preset: Vite), then add
-`ZEROX_API_KEY` (and `OPENSEA_API_KEY`) under
-Project Settings -> Environment Variables for Production/Preview, and redeploy. The functions in
-`app/api/0x/swap/allowance-holder/{price,quote}.ts` serve the 0x proxy and `app/api/opensea.ts` the OpenSea one.
+**Cloudflare:** `app/` deploys as a Worker with static assets (`app/wrangler.jsonc`). Put the `VITE_` values in
+`app/.env.production.local` (they are read at build time), set the keys with `npx wrangler secret put ZEROX_API_KEY`
+and `npx wrangler secret put OPENSEA_API_KEY`, then run `yarn deploy`. `app/api/worker.ts` serves both proxies and
+redirects `miyamaker.com` to `www.miyamaker.com`.
