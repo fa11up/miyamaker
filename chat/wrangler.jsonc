@@ -15,8 +15,7 @@
   },
   // Secrets (not in this file): SESSION_SECRET  ->  npx wrangler secret put SESSION_SECRET
   //                            RPC_URL (optional, keyed mainnet RPC; public node otherwise) -> npx wrangler secret put RPC_URL
-  // miyagod.eth moderates. Served from imdusd.com (same Cloudflare account as box.imdusd.com) until miyamaker.com's
-  // zone is reachable from this account; then switch the pattern to chat.miyamaker.com.
-  "routes": [{ "pattern": "chat.imdusd.com", "custom_domain": true }],
+  // miyagod.eth moderates.
+  "routes": [{ "pattern": "chat.miyamaker.com", "custom_domain": true }],
   "observability": { "enabled": true }
 }
