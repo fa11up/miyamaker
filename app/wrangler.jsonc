@@ -14,7 +14,7 @@
   },
   // Secrets (not in this file): npx wrangler secret put ZEROX_API_KEY
   //                             npx wrangler secret put OPENSEA_API_KEY
-  "workers_dev": true,
+  "workers_dev": false,
   "routes": [
     { "pattern": "www.miyamaker.com", "custom_domain": true },
     { "pattern": "miyamaker.com", "custom_domain": true }
