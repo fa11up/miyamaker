@@ -1,11 +1,14 @@
 import { useEffect } from 'react'
 import styled from 'styled-components/macro'
+import type { Address } from 'viem'
 
 import type { Artwork } from '@/components/ArtViewer'
 import { toArtwork } from '@/components/ArtViewer'
 import { NormalButton } from '@/components/Button/NormalButton'
 import NftImage from '@/components/NftImage'
 import ImageWrapper from '@/pages/Auction/ImageWrapper'
+import { lotAction } from '@/pages/Auction/lotAction'
+import { useAuctionData } from '@/pages/Auction/useAuctionData'
 import { useToken } from '@/pages/Auction/useToken'
 import { setCurrentToken } from '@/store/collections/actions'
 import { useAppDispatch } from '@/store/hooks'
@@ -65,6 +68,8 @@ const Description = styled.div`
 `
 
 export default function AuctionProduct({
+  nft,
+  auctionContract,
   tokenId,
   tokenURI,
   onArtwork,
@@ -72,6 +77,8 @@ export default function AuctionProduct({
   hidden = false,
 }: {
   hidden?: boolean
+  nft: Address
+  auctionContract: Address
   tokenId: number
   tokenURI: string
   onArtwork?: (tokenId: number, artwork: Artwork) => void
@@ -86,7 +93,9 @@ export default function AuctionProduct({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tokenId, name, description, image, externalURL])
 
-  const handleBid = () => {
+  const { endTime, settled } = useAuctionData({ nft, tokenId, address: auctionContract })
+
+  const handleOpen = () => {
     dispatch(
       setCurrentToken({
         tokenId,
@@ -109,8 +118,8 @@ export default function AuctionProduct({
           {/* </Description> */}
         </ImageDetail>
       </ImageWrapper>
-      <NormalButton onClick={handleBid} style={{ width: '100%', marginTop: '0.25rem', flex: 'none' }}>
-        Bid
+      <NormalButton onClick={handleOpen} style={{ width: '100%', marginTop: '0.25rem', flex: 'none' }}>
+        {lotAction(endTime, settled, Date.now())}
       </NormalButton>
     </ProductWrapper>
   )

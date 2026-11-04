@@ -120,7 +120,7 @@ export default function ImagesList({ images, onView }: { images: string[]; onVie
     <ImagesListWrapper>
       <ImageWrapper>
         <Images type="button" title="View artwork" onClick={() => onView?.(currentCounter - 1)}>
-          <NftImage variant="thumb" src={images[currentCounter - 1] || undefined} alt="Artwork" fit="contain" eager />
+          <NftImage variant="full" src={images[currentCounter - 1] || undefined} alt="Artwork" fit="contain" eager />
         </Images>
         <Counter>
           {currentCounter} of {totalImages}
