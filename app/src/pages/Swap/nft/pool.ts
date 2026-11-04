@@ -28,6 +28,10 @@ export const MODE_HINT: Record<PoolMode, string> = {
 export const KIND_LABEL: Record<PoolKind, string> = { 0: 'ERC-721', 1: 'ERC-1155' }
 
 export const asKind = (v: unknown): PoolKind | undefined => (v === 0 || v === 1 ? v : undefined)
+/** Robinhood Chain's block hashes come from its sequencer, so the factory refuses Random pools there. */
+export const modesOn = (chainId: number): PoolMode[] =>
+  chainId === 4663 ? [MODE.TARGETED] : [MODE.TARGETED, MODE.RANDOM]
+
 export const asMode = (v: unknown): PoolMode | undefined => (v === 0 || v === 1 ? v : undefined)
 
 /** Pool tokens needed to take `units` NFTs out. */
