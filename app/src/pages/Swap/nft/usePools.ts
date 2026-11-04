@@ -13,8 +13,8 @@ import { useMetadata } from '@/utils/nftMetadata'
 import { resolveUri } from '@/utils/resolveUri'
 
 import { erc721Abi, erc1155Abi, poolAbi, poolFactoryAbi } from './abi'
-import type { CommitRow, PoolKind, PoolMode, PoolSummary } from './pool'
-import { asKind, asMode, KIND, pendingFor, poolIndexes } from './pool'
+import type { CommitRow, PoolKind, PoolSummary } from './pool'
+import { asKind, asMode, KIND, modesOn, pendingFor, poolIndexes } from './pool'
 
 /** The MiyaPoolFactory on a chain, from env or contracts/deployments (undefined = not deployed there yet). */
 export const poolFactoryFor = (chainId: number): Address | undefined => miyamintsAddresses(chainId).miyaPoolFactory
@@ -145,7 +145,7 @@ export function usePoolsForCollection(chainId: SupportedChainId, factory: Addres
     collection,
     pools: summaries.pools,
     /** Modes with no pool yet for this collection (empty until the lookup is done). */
-    freeModes: reads.data ? ([0, 1] as PoolMode[]).filter((m) => !taken.has(m)) : [],
+    freeModes: reads.data ? modesOn(chainId).filter((m) => !taken.has(m)) : [],
     loading: reads.isLoading || summaries.loading,
     refetch: () => {
       reads.refetch()
