@@ -334,6 +334,16 @@ const Footer = styled.div`
   }
 `
 
+const LookPreview = styled.img`
+  height: auto;
+  border: none;
+  image-rendering: pixelated;
+
+  :hover {
+    border: none;
+  }
+`
+
 export default function DisplayProperties() {
   const dispatch = useAppDispatch()
   const prefs = useDesktopPrefs()
@@ -359,6 +369,8 @@ export default function DisplayProperties() {
   }
 
   const pets = Object.values(PETS)
+  const selectedPet = PETS[shown.petId]
+  const chosenLook = selectedPet?.variants?.find((v) => v.id === shown.petVariant)
   const delayKnown = DELAY_CHOICES_MIN.includes(shown.screensaverDelay as (typeof DELAY_CHOICES_MIN)[number])
 
   const onTabKey = (e: KeyboardEvent<HTMLButtonElement>) => {
@@ -494,6 +506,31 @@ export default function DisplayProperties() {
                           </option>
                         ))}
                       </select>
+                    </div>
+                  </div>
+                )}
+                {!!selectedPet?.variants?.length && (
+                  <div className="field">
+                    <label htmlFor={`${uid}-look`} className={shown.petEnabled ? '' : 'disabled'}>
+                      Which:
+                    </label>
+                    <div className="controls">
+                      <select
+                        id={`${uid}-look`}
+                        value={shown.petVariant}
+                        disabled={!shown.petEnabled}
+                        onChange={(e) => edit({ petVariant: e.target.value })}
+                      >
+                        <option value="">Surprise me</option>
+                        {selectedPet.variants.map((v) => (
+                          <option key={v.id} value={v.id}>
+                            {v.name}
+                          </option>
+                        ))}
+                      </select>
+                      {chosenLook && (
+                        <LookPreview src={chosenLook.src} alt={chosenLook.name} style={{ width: chosenLook.w * 2 }} />
+                      )}
                     </div>
                   </div>
                 )}

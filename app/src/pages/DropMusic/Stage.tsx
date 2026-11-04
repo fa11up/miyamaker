@@ -8,6 +8,7 @@ import { bevel, color, font, space, text } from '@/theme/tokens'
 import StageViz from './StageViz'
 import type { StudioPlayer } from './useStudioPlayer'
 import Waveform from './Waveform'
+import { brushedSilver, gel, y2k } from './y2k'
 
 export type StageStatus = 'soundcheck' | 'ready' | 'rec' | 'onair'
 
@@ -53,7 +54,8 @@ const Scene = styled.div`
   position: relative;
   height: 270px;
   overflow: hidden;
-  background: radial-gradient(120% 90% at 50% 0%, #3a2463 0%, #21153d 45%, ${color.dark} 100%);
+  background: radial-gradient(120% 90% at 50% 0%, #1b57d6 0%, #0a2a7a 45%, #02071c 100%);
+  border-radius: 14px;
   box-shadow: ${bevel.sunken};
   isolation: isolate;
   .narrow & {
@@ -63,7 +65,7 @@ const Scene = styled.div`
     height: 400px;
   }
   &.onair {
-    background: radial-gradient(120% 90% at 50% 0%, #6b2f78 0%, #2b1648 50%, ${color.dark} 100%);
+    background: radial-gradient(120% 90% at 50% 0%, #19b6e8 0%, #0b3fa8 50%, #02071c 100%);
   }
   /* the room flashes with the kick */
   &::before {
@@ -72,7 +74,7 @@ const Scene = styled.div`
     inset: 0;
     pointer-events: none;
     z-index: 4;
-    background: radial-gradient(60% 70% at 50% 75%, rgba(217, 122, 218, 0.55), transparent 70%);
+    background: radial-gradient(60% 70% at 50% 75%, rgba(39, 211, 255, 0.55), transparent 70%);
     opacity: calc(var(--lvl) * var(--lvl) * 0.9);
     mix-blend-mode: screen;
   }
@@ -95,8 +97,8 @@ const Floor = styled.div<{ $run: boolean }>`
   height: 46%;
   transform: perspective(160px) rotateX(58deg);
   transform-origin: 50% 100%;
-  background-image: linear-gradient(rgba(217, 122, 218, 0.55) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(217, 122, 218, 0.45) 1px, transparent 1px);
+  background-image: linear-gradient(rgba(39, 211, 255, 0.7) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(39, 211, 255, 0.55) 1px, transparent 1px);
   background-size: 100% 32px, 32px 100%;
   mask-image: linear-gradient(to top, #000 30%, transparent 100%);
   -webkit-mask-image: linear-gradient(to top, #000 30%, transparent 100%);
@@ -185,15 +187,17 @@ const Marquee = styled.div`
   width: min(52%, 320px);
   height: 26px;
   overflow: hidden;
-  background: #0c0915;
-  box-shadow: ${bevel.sunken};
-  color: ${color.accent};
+  background: ${y2k.lcd};
+  border: 1px solid #9fb3d6;
+  border-radius: 6px;
+  box-shadow: inset 0 1px 4px #000;
+  color: ${y2k.lcdText};
   font-family: ${font.mono};
   font-size: 12px;
-  line-height: 26px;
+  line-height: 24px;
   text-transform: uppercase;
   white-space: nowrap;
-  text-shadow: 0 0 6px rgba(217, 122, 218, 0.7);
+  text-shadow: 0 0 6px rgba(182, 255, 60, 0.7);
   .track {
     display: inline-block;
     padding-left: 4px;
@@ -226,13 +230,15 @@ const Speaker = styled.div<{ $side: 'left' | 'right' }>`
   flex-direction: column;
   align-items: center;
   justify-content: space-around;
-  background: linear-gradient(180deg, #2c2346, #17112a);
-  box-shadow: inset -2px -2px #0a0712, inset 2px 2px #4b3c72, 3px 3px 0 rgba(0, 0, 0, 0.4);
+  ${brushedSilver}
+  border-radius: 10px;
+  border: 1px solid ${y2k.silverLine};
+  box-shadow: inset 0 1px 0 #fff, 0 3px 8px rgba(0, 0, 0, 0.55);
   i {
     display: block;
     border-radius: 50%;
     background: radial-gradient(circle, #5d4d86 0 18%, #1b1430 20% 46%, #3b2f5c 48% 60%, #0d0a17 62%);
-    box-shadow: 0 0 0 2px #0a0712, 0 0 calc(var(--lvl) * 16px) rgba(217, 122, 218, 0.7);
+    box-shadow: 0 0 0 2px #0a0712, 0 0 calc(var(--lvl) * 16px) rgba(39, 211, 255, 0.8);
     transform: scale(calc(1 + var(--lvl) * 0.12));
   }
   i:first-child {
@@ -524,13 +530,19 @@ const Transport = styled.div`
   gap: ${space[2]};
   padding: ${space[1]} ${space[2]};
   min-height: 48px;
-  background: #0c0915;
-  box-shadow: ${bevel.sunken};
-  color: ${color.light};
+  margin-top: ${space[1]};
+  ${brushedSilver}
+  border: 1px solid ${y2k.silverLine};
+  border-radius: 999px;
+  color: ${y2k.ink};
   .time {
+    padding: 2px 8px;
+    border-radius: 6px;
+    background: ${y2k.lcd};
+    box-shadow: inset 0 1px 3px #000;
     font-family: ${font.mono};
     font-size: 12px;
-    color: ${color.accent};
+    color: ${y2k.lcdText};
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
   }
@@ -538,7 +550,7 @@ const Transport = styled.div`
     flex: 1 1 auto;
     min-width: 0;
     font-size: ${text.xs};
-    color: ${color.light};
+    color: ${y2k.ink};
   }
   .narrow & .time .total {
     display: none;
@@ -552,58 +564,47 @@ const PlayButton = styled.button`
   display: flex;
   align-items: center;
   justify-content: center;
-  border: none;
-  border-radius: 0;
-  background: ${color.accent};
-  color: ${color.highlight};
-  box-shadow: inset -2px -2px ${color.accentDark}, inset 2px 2px #f5c6f6;
+  ${gel('#7ecbff', y2k.blue, '#ffffff')}
+  border-radius: 50%;
   cursor: pointer;
   svg {
     width: 16px;
     height: 16px;
   }
   &:active:not(:disabled) {
-    box-shadow: inset 2px 2px ${color.accentDark}, inset -2px -2px #f5c6f6;
+    transform: translateY(1px);
   }
   &:focus-visible {
     outline: 2px dotted ${color.highlight};
     outline-offset: -6px;
   }
   &:disabled {
-    background: #3d3360;
-    color: #6c5f95;
-    box-shadow: inset -2px -2px #251d3a, inset 2px 2px #574b80;
+    ${gel('#e4e9f3', '#a9b5cb', '#6b7894')}
     cursor: not-allowed;
   }
 `
 
 const DeckButton = styled.button`
   flex: 0 0 auto;
-  border: none;
-  border-radius: 0;
+  ${gel('#f4f7fd', '#b7c4dc', y2k.ink)}
   min-height: 32px;
-  padding: 0 ${space[2]};
-  background: ${color.face};
-  box-shadow: ${bevel.raised};
-  color: ${color.ink};
+  padding: 0 ${space[3]};
   font-size: ${text.xs};
   cursor: pointer;
   white-space: nowrap;
   &:hover:not(:disabled) {
-    background: ${color.faceLight};
+    ${gel('#d9f6ff', y2k.aqua, y2k.navy)}
   }
   &:active:not(:disabled) {
-    box-shadow: ${bevel.pressed};
+    transform: translateY(1px);
   }
   &:focus-visible {
     outline: 1px dotted ${color.dark};
     outline-offset: -4px;
   }
   &.hot {
-    background: ${color.accent};
-    color: ${color.highlight};
-    text-shadow: 1px 1px 0 ${color.accentDark};
-    box-shadow: inset -2px -2px ${color.accentDark}, inset 2px 2px #f5c6f6;
+    ${gel('#e6ffb0', y2k.lime, y2k.navy)}
+    font-weight: 700;
     font-size: ${text.sm};
     min-height: 40px;
     padding: 0 ${space[3]};

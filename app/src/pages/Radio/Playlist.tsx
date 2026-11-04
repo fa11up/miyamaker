@@ -186,9 +186,6 @@ export default function Playlist({
           <Empty>
             <p>No tracks yet — drop music to fill the radio</p>
             <small>Music drops minted on-chain show up here. Load them below, or release your own.</small>
-            <Key type="button" $wide onClick={onDropMusic}>
-              Drop Music
-            </Key>
           </Empty>
         ) : (
           <List ref={listRef}>

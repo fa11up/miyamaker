@@ -23,6 +23,7 @@ import { erc721mAbi } from './Miyamini/abi'
 
 export const dropAbi = parseAbi([
   'function name() view returns (string)',
+  'function owner() view returns (address)',
   'function totalSupply() view returns (uint256)',
   'function maxSupply() view returns (uint32)',
   'function contractURI() view returns (string)',
@@ -52,7 +53,7 @@ const registryAbi = parseAbi([
 const REGISTRY_LIMIT = 24
 const REFRESH_MS = 30_000
 /** How many values erc721mCalls and dropCalls read per collection. */
-const READS_PER_COLLECTION = { erc721m: 5, drop: 7 } as const
+const READS_PER_COLLECTION = { erc721m: 5, drop: 8 } as const
 
 const nowSec = () => Math.floor(Date.now() / 1000)
 
@@ -70,9 +71,9 @@ const call = (address: Address, abi: Abi, chainId: number, functionName: string,
 export const erc721mCalls = (a: Address, chainId: number) =>
   ['name', 'price', 'totalSupply', 'maxSupply', 'mintOpen'].map((f) => call(a, erc721mAbi, chainId, f))
 
-/** miyamints drop: name, totalSupply, maxSupply, phases, contractURI, phasesMinted, publicRemaining. */
+/** miyamints drop: name, totalSupply, maxSupply, phases, contractURI, phasesMinted, publicRemaining, owner. */
 export const dropCalls = (a: Address, chainId: number) =>
-  ['name', 'totalSupply', 'maxSupply', 'phases', 'contractURI', 'phasesMinted', 'publicRemaining'].map((f) =>
+  ['name', 'totalSupply', 'maxSupply', 'phases', 'contractURI', 'phasesMinted', 'publicRemaining', 'owner'].map((f) =>
     call(a, dropAbi, chainId, f)
   )
 
@@ -110,6 +111,7 @@ export function readsFromResults(
     phaseId: live?.phaseId,
     maxPerWallet: live?.maxPerWallet,
     publicRemaining,
+    owner: ok<`0x${string}`>(r[7]),
     // What the live phase can still sell: its own cap or the public supply, whichever runs out first.
     left:
       live?.left !== undefined && publicRemaining !== undefined

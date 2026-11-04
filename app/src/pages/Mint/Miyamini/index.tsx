@@ -21,7 +21,9 @@ import {
 } from '@/components/Retro'
 import { explorerUrl } from '@/config/wagmi'
 import { MIYAMINI_CHAIN_ID, MIYAMINI_CONTRACT } from '@/constants/contracts'
+import ArtistTag from '@/pages/Mint/ArtistTag'
 import BackToMints from '@/pages/Mint/BackToMints'
+import { LIVE_MINTS } from '@/pages/Mint/liveMints'
 import { bevel, color, space, text } from '@/theme/tokens'
 
 import { describeError, useMiyaminiMint, useMiyaminiState, useTokenMeta } from './useMiyamini'
@@ -196,6 +198,8 @@ const formatEth = (wei: bigint | undefined) => {
   return d ? `${i}.${d.slice(0, 4).replace(/0+$/, '') || '0'}` : i
 }
 
+const CREDIT = LIVE_MINTS.find((e) => e.slug === 'miyamini')
+
 export default function MiyaminiMint({
   onBack,
 }: {
@@ -274,6 +278,12 @@ export default function MiyaminiMint({
               MIYAMINI · Ethereum
             </Eyebrow>
             <DisplayTitle>{state.name || 'miyamaker mini'}</DisplayTitle>
+            <ArtistTag
+              artist={CREDIT?.artist}
+              logo={CREDIT?.artistLogo}
+              url={CREDIT?.artistUrl}
+              style={{ color: color.highlight, textShadow: `1px 1px 0 ${color.dark}` }}
+            />
           </div>
           <div style={{ display: 'flex', gap: space[2], alignItems: 'center', flexWrap: 'wrap' }}>
             {state.isLoading ? (

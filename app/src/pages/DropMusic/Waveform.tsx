@@ -73,7 +73,7 @@ export default function Waveform({
         const p = data[Math.floor((i / n) * data.length)] as number
         const bh = Math.max(2 * dpr, Math.round(p * (h - 2)))
         const x = i * step
-        g.fillStyle = i / n <= progress ? color.accent : peaks?.length ? '#6c5f95' : '#3d3360'
+        g.fillStyle = i / n <= progress ? '#2a6bff' : peaks?.length ? '#6c5f95' : '#3d3360'
         g.fillRect(x, Math.round((h - bh) / 2), step - dpr, bh)
       }
 

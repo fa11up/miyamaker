@@ -2,11 +2,50 @@
  * miya radio skins. Each skin is a set of CSS custom properties applied to the player root; every part of the
  * player (and the canvas visualizer, which reads them back with getComputedStyle) draws from these.
  */
-export type SkinId = 'lilac' | 'noir' | 'angel'
+export type SkinId = 'classic' | 'lilac' | 'noir' | 'angel'
 
 type Skin = { id: SkinId; label: string; vars: Record<string, string> }
 
 export const SKINS: readonly Skin[] = [
+  {
+    // The console: a dark hi-fi chassis with silver keys, green LEDs on black, and a green-to-red analyzer.
+    id: 'classic',
+    label: 'Classic',
+    vars: {
+      '--rk-frame': '#4b4a68',
+      '--rk-frame-2': '#2a2940',
+      '--rk-frame-hi': '#8d8cab',
+      '--rk-frame-lo': '#10101c',
+      '--rk-frame-ink': '#dcdcea',
+      '--rk-seam': '#17172a',
+      '--rk-strip-a': '#6a2bb0',
+      '--rk-strip-b': '#1f1f6e',
+      '--rk-strip-ink': '#ffffff',
+      '--rk-strip-rule': 'rgba(255, 255, 255, 0.55)',
+      '--rk-lcd': '#000000',
+      '--rk-lcd-2': '#000000',
+      '--rk-lcd-ink': '#00e800',
+      '--rk-lcd-soft': '#00a800',
+      '--rk-lcd-dim': 'rgba(0, 232, 0, 0.14)',
+      '--rk-lcd-glow': 'rgba(0, 232, 0, 0.35)',
+      '--rk-viz-lo': '#00d800',
+      '--rk-viz-mid': '#e8e800',
+      '--rk-viz-hi': '#ff2a00',
+      '--rk-peak': '#ffffff',
+      '--rk-btn': '#c6c6d4',
+      '--rk-btn-ink': '#14142a',
+      '--rk-btn-on': '#00e800',
+      '--rk-groove': '#0a0a14',
+      '--rk-fill-a': '#00c800',
+      '--rk-fill-b': '#00e800',
+      '--rk-pl': '#000000',
+      '--rk-pl-ink': '#00e800',
+      '--rk-pl-cur': '#ffffff',
+      '--rk-pl-cur-bg': '#0000c6',
+      '--rk-pl-hover': '#00283a',
+      '--rk-pl-num': '#00a800',
+    },
+  },
   {
     id: 'lilac',
     label: 'Lilac (miyaOS)',

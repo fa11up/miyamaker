@@ -19,7 +19,7 @@ import {
   StepList as Steps,
   Thumb as Cover,
 } from '@/components/LaunchKit'
-import { BigButton, Chip, DisplayTitle, Eyebrow, StatusBox, Well } from '@/components/Retro'
+import { BigButton, Chip, Eyebrow, StatusBox, Well } from '@/components/Retro'
 import TitleBar from '@/components/TitleBar'
 import WindowWrapper from '@/components/WindowWrapper'
 import { explorerUrl } from '@/config/wagmi'
@@ -57,6 +57,7 @@ import type { StageStatus } from './Stage'
 import Stage from './Stage'
 import { STEPS, useDropMusic, useMusicChain } from './useDropMusic'
 import { useStudioPlayer, useWaveformPeaks } from './useStudioPlayer'
+import { brushedSilver, gel, y2k } from './y2k'
 
 const pageId = 'dropmusic' as PageKey
 
@@ -64,6 +65,27 @@ const Layout = styled.div`
   height: 100%;
   overflow-y: auto;
   overflow-x: hidden;
+  color: ${y2k.ink};
+  background: radial-gradient(60% 40% at 85% 0%, rgba(255, 255, 255, 0.95), transparent 70%),
+    radial-gradient(50% 35% at 0% 100%, rgba(39, 211, 255, 0.45), transparent 75%),
+    linear-gradient(165deg, #eaf3ff 0%, #b9d4ff 38%, #8fb6f5 62%, #dbe7ff 100%);
+
+  /* Everything in the session panel: pills and soft-edged wells instead of the OS's square bevels. */
+  section button:not([role='tab']) {
+    ${gel('#f4f7fd', '#b7c4dc', y2k.ink)}
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+  section button:not([role='tab']):hover:not(:disabled) {
+    ${gel('#d9f6ff', y2k.aqua, y2k.navy)}
+  }
+  section input:not([type='checkbox']):not([type='radio']),
+  section textarea,
+  section select {
+    border: 1px solid ${y2k.silverLine};
+    border-radius: 8px;
+    box-shadow: inset 0 1px 3px rgba(11, 31, 92, 0.35);
+  }
 `
 
 const Wrap = styled.div`
@@ -107,8 +129,69 @@ const Head = styled.header`
   p {
     margin: 2px 0 0;
     font-size: ${text.sm};
-    color: ${color.ink};
+    color: ${y2k.ink};
     max-width: 60ch;
+  }
+`
+
+const ChromeTitle = styled.h1`
+  position: relative;
+  display: inline-block;
+  margin: 0;
+  padding-right: 8px;
+  font-family: ${font.display};
+  font-size: 40px;
+  font-weight: 400;
+  font-style: italic;
+  line-height: 1.15;
+  letter-spacing: 0.01em;
+  background: linear-gradient(180deg, #ffffff 0%, #dfe8f7 36%, #5c74a8 49%, #ffffff 53%, #9fc4ff 72%, #2a6bff 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-stroke: 1px ${y2k.navy};
+  filter: drop-shadow(0 2px 0 rgba(11, 31, 92, 0.35)) drop-shadow(0 0 8px rgba(39, 211, 255, 0.6));
+  .narrow & {
+    font-size: 28px;
+  }
+`
+
+const Burst = styled.span`
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 58px;
+  height: 58px;
+  margin-left: ${space[1]};
+  vertical-align: middle;
+  transform: rotate(-12deg);
+  font-family: ${font.ui};
+  font-size: 13px;
+  font-weight: 700;
+  color: ${y2k.navy};
+  background: ${y2k.lime};
+  clip-path: polygon(
+    50% 0,
+    61% 18%,
+    82% 7%,
+    80% 30%,
+    100% 36%,
+    85% 52%,
+    98% 72%,
+    75% 74%,
+    72% 96%,
+    53% 83%,
+    33% 98%,
+    28% 75%,
+    5% 76%,
+    16% 55%,
+    0 38%,
+    21% 30%,
+    17% 7%,
+    39% 17%
+  );
+  .narrow & {
+    display: none;
   }
 `
 
@@ -126,8 +209,11 @@ const Json = styled.pre`
 /* ── the session: four channel strips (tabs) and the panel they open ───── */
 
 const Session = styled.section`
-  background: ${color.face};
-  box-shadow: ${bevel.raised};
+  ${brushedSilver}
+  border: 1px solid ${y2k.silverLine};
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow: inset 0 1px 0 #ffffff, 0 3px 10px rgba(11, 31, 92, 0.35);
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -136,9 +222,9 @@ const Session = styled.section`
 const TabRow = styled.div`
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 2px;
-  padding: ${space[1]} ${space[1]} 0;
-  background: ${color.shadow};
+  gap: ${space[1]};
+  padding: ${space[2]};
+  background: linear-gradient(180deg, #5f7bc0 0%, ${y2k.navy} 100%);
 `
 
 const Tab = styled.button<{ $led: string }>`
@@ -149,11 +235,7 @@ const Tab = styled.button<{ $led: string }>`
   min-width: 0;
   min-height: 40px;
   padding: 4px ${space[2]};
-  border: none;
-  border-radius: 0;
-  background: ${color.faceLight};
-  box-shadow: ${bevel.raised};
-  color: ${color.ink};
+  ${gel('#f4f7fd', '#b7c4dc', y2k.ink)}
   font-size: ${text.xs};
   text-align: left;
   cursor: pointer;
@@ -166,10 +248,10 @@ const Tab = styled.button<{ $led: string }>`
     font-size: 12px;
     font-weight: 700;
     line-height: 16px;
-    color: ${color.accent};
-    background: ${color.dark};
-    box-shadow: ${bevel.sunken};
-    text-shadow: 0 0 4px rgba(217, 122, 218, 0.7);
+    border-radius: 999px;
+    color: ${y2k.lcdText};
+    background: ${y2k.lcd};
+    text-shadow: 0 0 4px rgba(182, 255, 60, 0.7);
   }
   .l {
     min-width: 0;
@@ -182,19 +264,21 @@ const Tab = styled.button<{ $led: string }>`
     flex: 0 0 8px;
     width: 8px;
     height: 8px;
+    border-radius: 50%;
     background: ${({ $led }) => $led};
     box-shadow: inset -1px -1px rgba(0, 0, 0, 0.35), 0 0 6px ${({ $led }) => $led};
   }
   &:hover {
-    background: ${color.well};
+    ${gel('#d9f6ff', y2k.aqua, y2k.navy)}
   }
   &[aria-selected='true'] {
-    background: ${color.face};
-    box-shadow: inset 1px 1px ${color.highlight}, inset -1px 0 ${color.dark}, inset 0 3px ${color.accent};
+    ${gel('#7ecbff', y2k.blue, '#ffffff')}
+    /* White text needs a darker body than the usual gloss. */
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.35) 0%, transparent 45%),
+      linear-gradient(180deg, #2f73ee 0%, #1548c8 100%);
     font-weight: 700;
+    text-shadow: 0 1px 1px rgba(11, 31, 92, 0.7);
     z-index: 1;
-    margin-bottom: -2px;
-    padding-bottom: 6px;
   }
   &:focus-visible {
     outline: 1px dotted ${color.dark};
@@ -747,7 +831,8 @@ export default function DropMusicWindow() {
         <Wrap>
           <Head>
             <div>
-              <DisplayTitle>Drop Music</DisplayTitle>
+              <ChromeTitle>Drop Music</ChromeTitle>
+              <Burst aria-hidden="true">new!</Burst>
               <p>Put your track on stage, dress it up, and release it as a collectible that plays in miya radio.</p>
             </div>
             {music.ready ? (

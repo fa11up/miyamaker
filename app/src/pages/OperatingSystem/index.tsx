@@ -175,6 +175,7 @@ export default function OperatingSystem() {
             baseDepth={zindex.indexOf(window) * 1000 + 2000}
             identifier={window}
             baseSize={page.minSize}
+            shaped={page.shaped}
             onClick={() => zindex.indexOf(window) !== zindex.length - 1 && dispatch(setToFront({ value: window }))}
           >
             <DynamicWrapper identifier={window} />
