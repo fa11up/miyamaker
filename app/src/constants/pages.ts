@@ -146,7 +146,7 @@ const Pages: Record<string, Page> = {
     shaped: true,
     minSize: {
       width: 620,
-      height: 470,
+      height: 490,
     },
   },
   dropmusic: {
