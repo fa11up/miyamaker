@@ -29,6 +29,7 @@ import {
 } from '@/components/Retro'
 import type { SupportedChainId } from '@/config/wagmi'
 import { explorerUrl } from '@/config/wagmi'
+import ArtistTag from '@/pages/Mint/ArtistTag'
 import BackToMints from '@/pages/Mint/BackToMints'
 import { StatusChip } from '@/pages/Mint/Home'
 import type { LiveMintCard } from '@/pages/Mint/liveMints'
@@ -232,6 +233,14 @@ export default function LiveMintView({ card, onBack }: { card: LiveMintCard; onB
               Mint · {live.chainName}
             </Eyebrow>
             <DisplayTitle>{live.name}</DisplayTitle>
+            <ArtistTag
+              artist={live.artist}
+              logo={live.artistLogo}
+              url={live.artistUrl}
+              address={live.artistAddress}
+              explorer={explorer}
+              style={{ color: color.highlight, textShadow: `1px 1px 0 ${color.dark}` }}
+            />
           </div>
           <div style={{ display: 'flex', gap: space[2], alignItems: 'center', flexWrap: 'wrap' }}>
             {isError ? <Chip tone="warn">RPC unavailable</Chip> : <StatusChip status={live.status} />}

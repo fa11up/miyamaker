@@ -1,11 +1,9 @@
 import type { KeyboardEvent } from 'react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import styled, { keyframes } from 'styled-components/macro'
+import { useElementSize } from 'usehooks-ts'
 import { useAccount } from 'wagmi'
 
-import MiladyFace from '@/assets/milady_pixelated.png'
-import TitleBar from '@/components/TitleBar'
-import WindowWrapper from '@/components/WindowWrapper'
 import Pages from '@/constants/pages'
 import { useRadio, useRadioClock } from '@/context/RadioProvider'
 import { formatDuration } from '@/music/audio'
@@ -17,129 +15,215 @@ import type { PlaylistSource } from '@/music/types'
 import { useOpenApp } from '@/music/useOpenApp'
 import { useAppDispatch } from '@/store/hooks'
 import { closeWindow, minimizeWindow } from '@/store/windows/actions'
-import { useFullscreen } from '@/store/windows/hooks'
 import type { PageKey } from '@/store/windows/reducer'
 import { font } from '@/theme/tokens'
 
 import Equalizer from './Equalizer'
 import { Glyph } from './Glyph'
-import { Key, Lcd, Led, PanelFrame, Slider, SliderLabel, Strip, wingHeart } from './parts'
+import { feather, HEART_PATH, pivot, tailFeather, VIEW } from './heartGeometry'
+import { Key, Led, Slider, wingHeart } from './parts'
 import Playlist, { playlistSummary } from './Playlist'
 import SegmentTime from './SegmentTime'
-import type { PanelState, RadioLayout } from './skins'
-import { loadLayout, nextSkin, saveLayout, skinById } from './skins'
+import type { RadioLayout } from './skins'
+import { loadLayout, saveLayout, skinById } from './skins'
 import Visualizer from './Visualizer'
 
 const pageId = 'radio' as PageKey
 
-// ── layout ────────────────────────────────────────────────────────────────────
+/* ── the shape: a winged heart with a classic hi-fi console on its chest ──── */
 
 const Root = styled.div`
   position: relative;
-  isolation: isolate;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  padding: 3px;
-  min-height: 0;
-  overflow-x: hidden;
-  overflow-y: auto;
+  height: 100%;
   font-family: ${font.ui};
-  background: repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.04) 0 2px, transparent 2px 6px), var(--rk-seam);
+  --lvl: 0;
   &:focus {
     outline: none;
   }
-  /* Milady watermark in the empty space left when panels are shaded or hidden. */
-  > .watermark {
-    position: absolute;
-    z-index: -1;
-    left: 0;
-    right: 0;
-    bottom: 28px;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 10px;
+
+  /* No window behind it: only what it paints takes clicks, so the desktop works in the gaps between the feathers. */
+  &&,
+  && * {
     pointer-events: none;
-    color: var(--rk-frame);
-    font-size: 12px;
-    letter-spacing: 0.2em;
-    text-transform: uppercase;
-    opacity: 0.35;
   }
-  > .watermark img {
-    width: 128px;
-    height: 128px;
-    image-rendering: pixelated;
-    filter: invert(1);
-    mix-blend-mode: screen;
-    opacity: 0.6;
+  && .plume,
+  && .heart-body,
+  && .console,
+  && .console * {
+    pointer-events: auto;
+  }
+
+  /* Phones: it fills the screen on its own backdrop, so the desktop's icons don't show through. */
+  &.narrow {
+    overflow-y: auto;
+    background: radial-gradient(90% 50% at 50% 22%, #3a1a66 0%, #150a2c 70%, #07040f 100%);
+  }
+  &&.narrow {
+    pointer-events: auto;
   }
 `
 
-const Display = styled(Lcd)`
-  display: grid;
-  grid-template-columns: 150px minmax(0, 1fr);
-  grid-template-areas:
-    'time marquee'
-    'viz info';
-  gap: 6px 10px;
-  padding: 8px 8px 7px;
-  @media (max-width: 480px) {
-    grid-template-columns: 132px minmax(0, 1fr);
+const Shape = styled.svg`
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  aspect-ratio: ${VIEW.width} / ${VIEW.height};
+  overflow: visible;
+
+  .wing-left,
+  .wing-right {
+    transition: transform 70ms linear;
+  }
+  .wing-left {
+    transform-origin: ${pivot('left').x}px ${pivot('left').y}px;
+    transform: rotate(calc(var(--lvl) * 5deg));
+  }
+  .wing-right {
+    transform-origin: ${pivot('right').x}px ${pivot('right').y}px;
+    transform: rotate(calc(var(--lvl) * -5deg));
+  }
+  .plume {
+    cursor: grab;
+    fill: url(#radio-feather);
+    stroke: #05060e;
+    stroke-width: 1.5;
+  }
+  .plume.back {
+    fill: url(#radio-feather-back);
+  }
+  .tail {
+    fill: url(#radio-tail);
+  }
+  .spine {
+    fill: none;
+    stroke: rgba(255, 255, 255, 0.35);
+    stroke-width: 1.5;
+  }
+  .heart-body {
+    cursor: grab;
+    fill: url(#radio-heart);
+    stroke: url(#radio-chrome-rim);
+    stroke-width: 9;
+  }
+  .heart-gloss {
+    fill: url(#radio-gloss);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .wing-left,
+    .wing-right {
+      transform: none;
+    }
   }
 `
 
-const TimeBtn = styled.button`
-  all: unset;
-  box-sizing: border-box;
-  background: transparent;
-  border: 0;
-  padding: 0;
-  color: inherit;
-  grid-area: time;
+const bevelOut = `inset 1px 1px 0 var(--rk-frame-hi), inset -1px -1px 0 var(--rk-frame-lo)`
+const bevelIn = `inset 1px 1px 0 var(--rk-frame-lo), inset -1px -1px 0 var(--rk-frame-hi)`
+
+const Console = styled.div`
+  position: absolute;
+  top: 54px;
+  left: 50%;
+  width: 352px;
+  transform: translateX(-50%);
+  padding: 3px;
+  color: var(--rk-frame-ink);
+  background: repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.025) 0 1px, transparent 1px 3px),
+    linear-gradient(180deg, var(--rk-frame) 0%, var(--rk-frame-2) 100%);
+  box-shadow: ${bevelOut}, 0 0 0 1px #05060e, 0 8px 16px rgba(4, 2, 12, 0.6);
+
+  .narrow & {
+    position: relative;
+    top: auto;
+    left: auto;
+    transform: none;
+    width: auto;
+    margin: 56px 8px 12px;
+  }
+`
+
+const TitleStrip = styled.div`
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
+  height: 18px;
+  padding: 0 2px;
+  cursor: grab;
+  user-select: none;
+  background: linear-gradient(90deg, var(--rk-strip-a), var(--rk-strip-b));
+  color: var(--rk-strip-ink);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  img {
+    width: 16px;
+    height: 16px;
+    border: none;
+    image-rendering: pixelated;
+  }
+  img:hover {
+    border: none;
+  }
+  .rule {
+    flex: 1 1 auto;
+    height: 7px;
+    background: repeating-linear-gradient(180deg, var(--rk-strip-rule) 0 1px, transparent 1px 3px);
+  }
+  button {
+    all: unset;
+    box-sizing: border-box;
+    display: grid;
+    place-items: center;
+    width: 13px;
+    height: 13px;
+    font-size: 11px;
+    line-height: 1;
+    cursor: pointer;
+    color: var(--rk-frame-ink);
+    background: var(--rk-btn);
+    box-shadow: ${bevelOut};
+  }
+  button:active {
+    box-shadow: ${bevelIn};
+  }
+  button:focus-visible {
+    outline: 1px dotted #fff;
+  }
+`
+
+const Screen = styled.div`
+  margin-top: 3px;
+  padding: 5px 6px;
+  background: var(--rk-lcd);
+  box-shadow: ${bevelIn};
+  color: var(--rk-lcd-ink);
+`
+
+const TopRow = styled.div`
+  display: grid;
+  grid-template-columns: 118px minmax(0, 1fr);
+  gap: 7px;
+  align-items: stretch;
+`
+
+const TimeButton = styled.button`
+  all: unset;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 5px;
   cursor: pointer;
   color: var(--rk-lcd-ink);
   &:focus-visible {
     outline: 1px dotted var(--rk-lcd-ink);
-    outline-offset: 2px;
-  }
-  .state {
-    display: inline-flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 2px;
-    width: 12px;
-    filter: drop-shadow(0 0 2px var(--rk-lcd-glow));
-  }
-  .state i {
-    width: 10px;
-    height: 2px;
-    background: var(--rk-lcd-dim);
-  }
-  .state i.on {
-    background: var(--rk-lcd-ink);
   }
 `
 
-const VizBox = styled.div`
-  grid-area: viz;
-  position: relative;
-  z-index: 1;
-  height: 44px;
-  box-shadow: 0 0 0 1px var(--rk-lcd-dim);
-`
-
-const Info = styled.div`
-  grid-area: info;
-  position: relative;
-  z-index: 1;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 50px;
-  gap: 6px;
+const Now = styled.div`
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 3px;
   min-width: 0;
 `
 
@@ -149,32 +233,15 @@ const scroll = keyframes`
 `
 
 const MarqueeBox = styled.div`
-  grid-area: marquee;
-  position: relative;
-  z-index: 1;
-  align-self: center;
   overflow: hidden;
   white-space: nowrap;
-  padding: 3px 5px;
-  background: rgba(0, 0, 0, 0.35);
-  box-shadow: inset 0 0 0 1px var(--rk-lcd-dim);
-  color: var(--rk-lcd-ink);
-  font-size: 15px;
-  line-height: 18px;
-  letter-spacing: 0.04em;
-  text-shadow: 0 0 5px var(--rk-lcd-glow);
+  font-size: 13px;
+  line-height: 16px;
   > span {
     display: inline-block;
   }
   &.run > span {
     animation: ${scroll} var(--marquee-s, 14s) linear infinite;
-  }
-  &.mini {
-    flex: 1 1 auto;
-    min-width: 0;
-    padding: 1px 4px;
-    font-size: 13px;
-    line-height: 16px;
   }
   @media (prefers-reduced-motion: reduce) {
     &.run > span {
@@ -187,278 +254,162 @@ const MarqueeBox = styled.div`
 
 const Readouts = styled.div`
   display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  gap: 3px;
-  min-width: 0;
-  font-size: 11px;
-  letter-spacing: 0.12em;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+  font-size: 10px;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--rk-lcd-soft);
-  .row {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 3px 8px;
-    min-width: 0;
-  }
   b {
     font-weight: 400;
     color: var(--rk-lcd-ink);
-    text-shadow: 0 0 4px var(--rk-lcd-glow);
   }
   .lamp {
     color: var(--rk-lcd-dim);
   }
   .lamp.on {
     color: var(--rk-lcd-ink);
-    text-shadow: 0 0 4px var(--rk-lcd-glow);
   }
-  .msg {
+`
+
+/* Music, playlist and equalizer take turns in this one screen. */
+const Panel = styled.div`
+  height: 148px;
+  margin-top: 5px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  box-shadow: 0 0 0 1px var(--rk-lcd-dim);
+  .narrow & {
+    height: auto;
+    min-height: 148px;
+  }
+`
+
+const Heading = styled.div`
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 1px 4px;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--rk-lcd);
+  background: var(--rk-lcd-ink);
+  span:last-child {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    min-height: 13px;
-  }
-  .msg.err {
-    color: #ff6f8f;
-  }
-`
-
-const bob = keyframes`
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-2px); }
-`
-const rise = keyframes`
-  0% { transform: translate(0, 0) scale(0.6); opacity: 0; }
-  20% { opacity: 1; }
-  100% { transform: translate(var(--dx, 4px), -26px) scale(1); opacity: 0; }
-`
-
-/** "miya cam": the pixel milady face, glowing in the skin colour, bouncing to the bass. */
-const Cam = styled.div`
-  --lvl: 0;
-  position: relative;
-  align-self: end;
-  width: 50px;
-  height: 50px;
-  box-shadow: inset 0 0 0 1px var(--rk-lcd-dim);
-  background: radial-gradient(circle at 50% 60%, var(--rk-lcd-dim), transparent 70%), var(--rk-lcd);
-  overflow: hidden;
-  isolation: isolate;
-  /* tint the (inverted, screened) face in the skin's phosphor colour */
-  &::after {
-    content: '';
-    position: absolute;
-    inset: 0;
-    background: var(--rk-lcd-ink);
-    mix-blend-mode: multiply;
-    pointer-events: none;
-  }
-  img {
-    position: absolute;
-    left: 3px;
-    top: 5px;
-    width: 44px;
-    height: 44px;
-    image-rendering: pixelated;
-    filter: invert(1);
-    mix-blend-mode: screen;
-    transform: translateY(calc(var(--lvl) * -5px)) scale(calc(1 + var(--lvl) * 0.1));
-    transition: transform 60ms linear;
-  }
-  .rec {
-    position: absolute;
-    left: 3px;
-    top: 3px;
-    width: 4px;
-    height: 4px;
-    background: var(--rk-lcd-dim);
-  }
-  .heart {
-    position: absolute;
-    bottom: 4px;
-    width: 5px;
-    height: 5px;
-    opacity: 0;
-    color: var(--rk-lcd-ink);
-  }
-  &.on .rec {
-    background: #ff4f7b;
-    box-shadow: 0 0 4px #ff4f7b;
-  }
-  &.on.idle img {
-    animation: ${bob} 0.9s steps(2) infinite;
-  }
-  &.on .heart {
-    animation: ${rise} 2.4s linear infinite;
-  }
-  &.on .heart:nth-of-type(2) {
-    --dx: -6px;
-    left: 8px;
-    animation-delay: 0.8s;
-  }
-  &.on .heart:nth-of-type(3) {
-    --dx: 3px;
-    right: 6px;
-    animation-delay: 1.6s;
-  }
-  @media (prefers-reduced-motion: reduce) {
-    &.on.idle img,
-    &.on .heart {
-      animation: none;
-    }
-    img {
-      transform: none;
-      transition: none;
-    }
+    letter-spacing: 0;
+    text-transform: none;
   }
 `
 
 const Deck = styled.div`
   display: flex;
   flex-direction: column;
-  gap: 5px;
-  margin-top: 6px;
+  gap: 4px;
+  margin-top: 5px;
+  padding: 0 1px 1px;
 `
 
 const Row = styled.div`
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 3px;
   min-width: 0;
-  &.sliders {
-    gap: 10px;
-  }
   .grow {
-    flex: 1 1 auto;
-  }
-  .spacer {
     flex: 1 1 0;
-  }
-  .cluster {
-    flex: 0 0 auto;
-    display: inline-flex;
-    gap: 2px;
-    padding: 2px;
-    background: var(--rk-seam);
-    box-shadow: 0 1px 0 var(--rk-frame-hi);
-  }
-  @media (max-width: 480px) {
-    flex-wrap: wrap;
-    &.sliders {
-      gap: 6px 10px;
-    }
-    .cluster.transport,
-    .vol {
-      flex: 1 1 100%;
-    }
-    .cluster.transport > button {
-      flex: 1 1 0;
-    }
-  }
-`
-
-const SkinButton = styled.button`
-  all: unset;
-  box-sizing: border-box;
-  background: transparent;
-  border: 0;
-  padding: 0;
-  color: inherit;
-  display: grid;
-  place-items: center;
-  width: 38px;
-  height: 30px;
-  cursor: pointer;
-  img {
-    width: 34px;
-    height: 34px;
-    image-rendering: pixelated;
-    filter: drop-shadow(0 0 3px var(--rk-btn-on));
-    transition: transform 120ms ease;
-  }
-  &:hover img {
-    transform: scale(1.1) rotate(-4deg);
-  }
-  &:focus-visible {
-    outline: 1px dotted var(--rk-frame-ink);
-  }
-  @media (prefers-reduced-motion: reduce) {
-    img {
-      transition: none;
-    }
-  }
-`
-
-const ShadeRow = styled.div`
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  min-width: 0;
-  .cluster {
-    flex: 0 0 auto;
-    display: inline-flex;
-    gap: 2px;
-    padding: 2px;
-    background: var(--rk-seam);
-  }
-  .cluster button {
-    min-width: 24px;
-    padding: 0 4px;
-  }
-  .lcd {
-    flex: 1 1 auto;
     min-width: 0;
+  }
+  label {
     display: flex;
     align-items: center;
-    gap: 6px;
-    padding: 3px 5px;
+    gap: 4px;
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--rk-frame-ink);
   }
-  .lcd > * {
-    position: relative;
-    z-index: 1;
-  }
-  .viz {
-    flex: 0 0 56px;
-    height: 18px;
-  }
-  @media (max-width: 480px) {
-    .viz {
-      display: none;
-    }
+  button {
+    min-width: 0;
+    padding: 0 6px;
   }
 `
 
-const SrOnly = styled.span`
-  position: absolute;
-  width: 1px;
-  height: 1px;
+const Notice = styled.div`
+  margin-top: 3px;
   overflow: hidden;
-  clip: rect(0 0 0 0);
   white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 11px;
+  color: #ff8f8f;
 `
 
-function Marquee({ value, mini }: { value: string; mini?: boolean }) {
-  const run = value.length > (mini ? 24 : 34)
-  const cls = [run ? 'run' : '', mini ? 'mini' : ''].join(' ').trim() || undefined
+/* ── pieces ────────────────────────────────────────────────────────────── */
+
+const BACK = [
+  { angle: 40, length: 300 },
+  { angle: 22, length: 330 },
+  { angle: 6, length: 318 },
+  { angle: -10, length: 290 },
+]
+const FRONT = [
+  { angle: 31, length: 312 },
+  { angle: 14, length: 324 },
+  { angle: -2, length: 304 },
+  { angle: -18, length: 266 },
+]
+const TAIL = [
+  { angle: 0, length: 130 },
+  { angle: 14, length: 112 },
+  { angle: -14, length: 112 },
+  { angle: 28, length: 86 },
+  { angle: -28, length: 86 },
+]
+
+function Wing({ side }: { side: 'left' | 'right' }) {
   return (
-    <MarqueeBox className={cls} style={{ ['--marquee-s' as string]: `${Math.max(8, value.length / 4)}s` }}>
-      <span aria-hidden="true">{run ? `${value}  ✦ ✦ ✦  ${value}  ✦ ✦ ✦  ` : value}</span>
-      <SrOnly>{value}</SrOnly>
+    <g className={`wing-${side}`}>
+      {BACK.map((f) => (
+        <path key={f.angle} className="plume back title-bar" d={feather(side, f.angle, f.length, 30).d} />
+      ))}
+      {FRONT.map((f) => {
+        const shape = feather(side, f.angle, f.length, 30)
+        return (
+          <g key={f.angle}>
+            <path className="plume title-bar" d={shape.d} />
+            <path className="spine" d={shape.spine} />
+          </g>
+        )
+      })}
+    </g>
+  )
+}
+
+function Marquee({ value }: { value: string }) {
+  const run = value.length > 26
+  return (
+    <MarqueeBox
+      className={run ? 'run' : undefined}
+      style={{ ['--marquee-s' as string]: `${Math.max(8, value.length * 0.28)}s` }}
+      title={value}
+    >
+      <span>{run ? `${value}  ***  ${value}  ***  ` : value}</span>
     </MarqueeBox>
   )
 }
 
-const HEART = 'M1 1h1v1H1zM3 1h1v1H3zM0 2h5v1H0zM1 3h3v1H1zM2 4h1v1H2z'
-
 const isTyping = (el: EventTarget | null) =>
   el instanceof HTMLElement && (/^(INPUT|SELECT|TEXTAREA)$/.test(el.tagName) || el.isContentEditable)
+
+/* ── the player ────────────────────────────────────────────────────────── */
 
 export default function RadioWindow() {
   const radio = useRadio()
   const clock = useRadioClock()
   const dispatch = useAppDispatch()
-  const [fullscreen, toggleFullscreen] = useFullscreen(pageId)
   const openApp = useOpenApp()
   const { chainId } = useAccount()
 
@@ -467,15 +418,21 @@ export default function RadioWindow() {
   const [status, setStatus] = useState<{ text: string; tone?: 'error' }>()
   const [busy, setBusy] = useState(false)
   const [layout, setLayout] = useState<RadioLayout>(loadLayout)
-  const camRef = useRef<HTMLDivElement>(null)
+  const rootRef = useRef<HTMLDivElement>(null)
+  const [sizeRef, { width }] = useElementSize()
 
   useEffect(() => saveLayout(layout), [layout])
-  const patch = (p: Partial<RadioLayout>) => setLayout((l) => ({ ...l, ...p }))
-  const togglePanel = (key: 'eq' | 'pl') =>
-    patch({ [key]: (layout[key] === 'hidden' ? 'open' : 'hidden') as PanelState })
-  const shadePanel = (key: 'eq' | 'pl') => patch({ [key]: (layout[key] === 'shade' ? 'open' : 'shade') as PanelState })
 
-  const skin = skinById(layout.skin)
+  // The screen shows the visualizer, the playlist or the equalizer.
+  const view: 'eq' | 'pl' | 'viz' = layout.eq === 'open' ? 'eq' : layout.pl === 'open' ? 'pl' : 'viz'
+  const show = (next: 'eq' | 'pl') =>
+    setLayout((l) => ({
+      ...l,
+      eq: next === 'eq' && view !== 'eq' ? 'open' : 'hidden',
+      pl: next === 'pl' && view !== 'pl' ? 'open' : 'hidden',
+    }))
+
+  const skin = skinById('classic')
 
   // Adapters: on-chain music drops per supported chain, plus the curated stations file.
   const sources = useMemo<PlaylistSource[]>(
@@ -494,7 +451,7 @@ export default function RadioWindow() {
     ? `${nowIndex + 1}. ${current.artist ? `${current.artist} - ` : ''}${current.title} (${formatDuration(
         duration || undefined
       )})`
-    : 'miya radio ✦ no track loaded ✦ add a source below'
+    : 'MIYA RADIO *** NO TRACK LOADED'
 
   const loadSource = async () => {
     const source = sources.find((s) => s.id === sourceId) || sources[0]
@@ -525,9 +482,8 @@ export default function RadioWindow() {
       title: 'Test tone (synthetic C-E-G-C sine, dev fixture)',
       artist: 'miya radio',
       src: url,
-      duration: 2,
       source: 'dev',
-    })
+    } as Parameters<typeof radio.playNow>[0])
   }
 
   const play = () => {
@@ -539,7 +495,7 @@ export default function RadioWindow() {
     if (current) radio.toggle()
   }
 
-  // Classic player hotkeys while the radio window has focus: Z prev, X play, C pause, V stop, B next.
+  // Classic player hotkeys while the radio has focus: Z prev, X play, C pause, V stop, B next.
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     if (e.altKey || e.ctrlKey || e.metaKey || isTyping(e.target)) return
     const map: Record<string, (() => void) | undefined> = {
@@ -560,332 +516,284 @@ export default function RadioWindow() {
   const paused = !!current && !radio.playing && clock.time > 0
   const live = radio.fx && !!current
   const preset = matchPreset(radio.eq)
-  const repeatLabel = queue.repeat === 'one' ? 'Rep 1' : 'Rep'
   const seekMax = duration || 1
   const seekValue = Math.min(shown, seekMax)
+  const commitSeek = () => {
+    if (scrub !== undefined) radio.seek(scrub)
+    setScrub(undefined)
+  }
 
-  const message = radio.error
-    ? radio.error
-    : radio.loading && radio.playing
-    ? 'Buffering…'
-    : current?.token
-    ? `Token #${current.token.tokenId}`
-    : radio.visualizer === 'reduced'
-    ? 'Visuals still (reduced motion)'
-    : current && radio.visualizer === 'unavailable'
-    ? 'Plain audio · no live visuals'
-    : ''
+  const message = status?.tone === 'error' ? status.text : radio.error
 
-  const transport = (small?: boolean) => (
-    <span className="cluster transport">
-      <Key type="button" aria-label="Previous" title="Previous (Z)" onClick={radio.prev} disabled={!current}>
-        <Glyph kind="prev" />
-      </Key>
-      <Key
-        type="button"
-        aria-label="Play"
-        title="Play (X)"
-        onClick={play}
-        disabled={!queue.tracks.length}
-        $wide={!small}
-      >
-        <Glyph kind="play" />
-      </Key>
-      <Key type="button" aria-label="Pause" aria-pressed={paused} title="Pause (C)" onClick={pause} disabled={!current}>
-        <Glyph kind="pause" />
-      </Key>
-      <Key type="button" aria-label="Stop" title="Stop (V)" onClick={radio.stop} disabled={!current}>
-        <Glyph kind="stop" />
-      </Key>
-      <Key type="button" aria-label="Next" title="Next (B)" onClick={radio.next} disabled={!current}>
-        <Glyph kind="next" />
-      </Key>
-    </span>
-  )
-
-  const clockButton = (height: number) => (
-    <TimeBtn
-      type="button"
-      onClick={() => setRemaining((r) => !r)}
-      title={remaining ? 'Showing time remaining (click for elapsed)' : 'Showing elapsed time (click for remaining)'}
-      aria-label={`Time ${timeText}${remaining ? ' remaining' : ''}. Click to switch elapsed and remaining.`}
-    >
-      <span className="state" aria-hidden="true">
-        <Glyph kind={playingGlyph} />
-        {height > 20 && <i className={live ? 'on' : undefined} />}
-      </span>
-      <SegmentTime value={timeText} height={height} blink={paused} />
-    </TimeBtn>
-  )
+  const narrow = width > 0 && width <= 480
+  const setRoot = (el: HTMLDivElement | null) => {
+    ;(rootRef as { current: HTMLDivElement | null }).current = el
+    sizeRef(el)
+  }
 
   return (
-    <WindowWrapper>
-      <TitleBar
-        closeBtn
-        onClose={(e) => {
-          if (e.cancelable) e.stopPropagation()
-          dispatch(closeWindow({ value: pageId }))
-        }}
-        fullscreen={fullscreen}
-        fullscreenBtn
-        onFullscreen={() => toggleFullscreen()}
-        minimizeBtn
-        onMinimize={(e) => {
-          if (e.cancelable) e.stopPropagation()
-          dispatch(minimizeWindow({ value: pageId }))
-        }}
-      >
-        {Pages.radio?.label}
-      </TitleBar>
-      <Root style={skin.vars} onKeyDown={onKeyDown} data-skin={skin.id}>
-        <div className="watermark" aria-hidden="true">
-          <img src={MiladyFace} alt="" />
-          <span>double-click a strip to roll it down</span>
-        </div>
-        {/* ── main player ── */}
-        <PanelFrame className={layout.main === 'shade' ? 'shaded' : undefined} aria-label="Player">
-          <Strip
-            label="miya radio"
-            extra={layout.main === 'shade' ? undefined : 'v98'}
-            shaded={layout.main === 'shade'}
-            onShade={() => patch({ main: layout.main === 'shade' ? 'open' : 'shade' })}
-            panelId="radio-main"
-          />
-          {layout.main === 'shade' ? (
-            <ShadeRow id="radio-main">
-              <Lcd className="lcd">
-                {clockButton(16)}
-                <Marquee value={title} mini />
-                <div className="viz">
-                  <Visualizer
-                    compact
-                    mode={radio.visualizer}
-                    playing={radio.playing}
-                    getAnalyser={radio.getAnalyser}
-                    skin={skin.id}
+    <Root
+      ref={setRoot}
+      style={skin.vars}
+      className={narrow ? 'narrow' : undefined}
+      tabIndex={-1}
+      onKeyDown={onKeyDown}
+      data-skin={skin.id}
+    >
+      <Shape viewBox={`0 0 ${VIEW.width} ${VIEW.height}`} aria-hidden="true">
+        <defs>
+          <linearGradient id="radio-feather" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stopColor="#ffffff" />
+            <stop offset="0.2" stopColor="#a9b6d6" />
+            <stop offset="0.46" stopColor="#262c48" />
+            <stop offset="0.52" stopColor="#e3e9f8" />
+            <stop offset="0.68" stopColor="#59648a" />
+            <stop offset="1" stopColor="#0a0d1c" />
+          </linearGradient>
+          <linearGradient id="radio-feather-back" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stopColor="#8f9ac0" />
+            <stop offset="0.5" stopColor="#1b2038" />
+            <stop offset="0.56" stopColor="#6a769c" />
+            <stop offset="1" stopColor="#05060e" />
+          </linearGradient>
+          <linearGradient id="radio-tail" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stopColor="#59648a" />
+            <stop offset="0.5" stopColor="#c9d2ea" />
+            <stop offset="1" stopColor="#0a0d1c" />
+          </linearGradient>
+          <radialGradient id="radio-heart" cx="0.42" cy="0.28" r="0.85">
+            <stop offset="0" stopColor="#7b22b8" />
+            <stop offset="0.5" stopColor="#3f0f6e" />
+            <stop offset="1" stopColor="#12041f" />
+          </radialGradient>
+          <linearGradient id="radio-gloss" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stopColor="rgba(255,255,255,0.55)" />
+            <stop offset="0.15" stopColor="rgba(255,255,255,0.08)" />
+            <stop offset="0.17" stopColor="rgba(255,255,255,0)" />
+          </linearGradient>
+          <linearGradient id="radio-chrome-rim" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stopColor="#ffffff" />
+            <stop offset="0.45" stopColor="#7d89ad" />
+            <stop offset="0.52" stopColor="#f2f5ff" />
+            <stop offset="1" stopColor="#39425f" />
+          </linearGradient>
+        </defs>
+        {TAIL.map((t) => (
+          <path key={t.angle} className="plume tail title-bar" d={tailFeather(t.angle, t.length, 28)} />
+        ))}
+        <Wing side="left" />
+        <Wing side="right" />
+        <path className="heart-body title-bar" d={HEART_PATH} />
+        <path className="heart-gloss" d={HEART_PATH} />
+      </Shape>
+
+      <Console className="console" aria-label={Pages.radio?.label} role="group">
+        <TitleStrip className="title-bar">
+          <img src={wingHeart?.src} srcSet={wingHeart?.srcset} alt="" />
+          <span className="rule" />
+          <span>MIYA RADIO</span>
+          <span className="rule" />
+          <button
+            type="button"
+            aria-label="Minimize"
+            title="Minimize"
+            onClick={() => dispatch(minimizeWindow({ value: pageId }))}
+          >
+            _
+          </button>
+          <button
+            type="button"
+            aria-label="Close"
+            title="Close"
+            onClick={() => dispatch(closeWindow({ value: pageId }))}
+          >
+            ×
+          </button>
+        </TitleStrip>
+
+        <Screen>
+          <TopRow>
+            <TimeButton
+              type="button"
+              onClick={() => setRemaining((r) => !r)}
+              title={remaining ? 'Showing time remaining' : 'Showing elapsed time'}
+              aria-label={`Time ${timeText}${remaining ? ' remaining' : ''}. Click to switch elapsed and remaining.`}
+            >
+              <Glyph kind={playingGlyph} />
+              <SegmentTime value={timeText} height={28} blink={paused} />
+            </TimeButton>
+            <Now>
+              <Marquee value={title} />
+              <Readouts>
+                <span>
+                  <b>{live && radio.sampleRate ? Math.round(radio.sampleRate / 1000) : '--'}</b> kHz
+                </span>
+                <span>
+                  trk <b>{positionLabel(queue)}</b>
+                </span>
+                <span className={`lamp${live ? ' on' : ''}`}>live</span>
+                <span className={`lamp${live && radio.eq.enabled ? ' on' : ''}`}>eq</span>
+              </Readouts>
+            </Now>
+          </TopRow>
+
+          <Panel>
+            {view === 'viz' && (
+              <Visualizer
+                mode={radio.visualizer}
+                playing={radio.playing}
+                getAnalyser={radio.getAnalyser}
+                skin={skin.id}
+                levelTarget={rootRef}
+              />
+            )}
+            {view === 'eq' && (
+              <>
+                <Heading>
+                  <span>Equalizer</span>
+                  <span>{`${radio.eq.enabled ? 'on' : 'off'} · ${preset ? preset.label : 'custom'}`}</span>
+                </Heading>
+                <Equalizer radio={radio} />
+              </>
+            )}
+            {view === 'pl' && (
+              <>
+                <Heading>
+                  <span>Playlist</span>
+                  <span>{playlistSummary(radio)}</span>
+                </Heading>
+                <div style={{ display: 'flex', flexDirection: 'column', flex: '1 1 auto', minHeight: 0 }}>
+                  <Playlist
+                    radio={radio}
+                    nowIndex={nowIndex}
+                    sources={sources}
+                    sourceId={sourceId}
+                    setSourceId={setSourceId}
+                    busy={busy}
+                    onLoad={loadSource}
+                    onDropMusic={() => openApp('dropmusic')}
+                    onTestTone={import.meta.env.DEV ? loadTestTone : undefined}
+                    status={status}
                   />
                 </div>
-              </Lcd>
-              {transport(true)}
-            </ShadeRow>
-          ) : (
-            <div id="radio-main">
-              <Display aria-label="Now playing">
-                {clockButton(30)}
-                <Marquee value={title} />
-                <VizBox>
-                  <Visualizer
-                    mode={radio.visualizer}
-                    playing={radio.playing}
-                    getAnalyser={radio.getAnalyser}
-                    skin={skin.id}
-                    levelTarget={camRef}
-                  />
-                </VizBox>
-                <Info>
-                  <Readouts>
-                    <div className="row">
-                      <span>
-                        kHz <b>{live && radio.sampleRate ? Math.round(radio.sampleRate / 1000) : '--'}</b>
-                      </span>
-                      <span>
-                        Trk <b>{positionLabel(queue)}</b>
-                      </span>
-                      <span>
-                        Src <b>{current ? current.source : '—'}</b>
-                      </span>
-                    </div>
-                    <div className="row" aria-label="Indicators">
-                      <span className={`lamp${live ? ' on' : ''}`}>Live</span>
-                      <span className={`lamp${live && radio.eq.enabled ? ' on' : ''}`}>EQ</span>
-                      <span className={`lamp${queue.shuffle ? ' on' : ''}`}>Shuf</span>
-                      <span className={`lamp${queue.repeat !== 'off' ? ' on' : ''}`}>
-                        {queue.repeat === 'one' ? 'Rep1' : 'Rep'}
-                      </span>
-                    </div>
-                    <div
-                      className={`msg${radio.error ? ' err' : ''}`}
-                      role={radio.error ? 'alert' : undefined}
-                      title={message}
-                    >
-                      {message || ' '}
-                    </div>
-                  </Readouts>
-                  <Cam
-                    ref={camRef}
-                    aria-hidden="true"
-                    className={[radio.playing ? 'on' : '', radio.visualizer !== 'live' ? 'idle' : ''].join(' ').trim()}
-                  >
-                    <span className="rec" />
-                    <img src={MiladyFace} alt="" />
-                    {[0, 1, 2].map((i) => (
-                      <svg key={i} className="heart" viewBox="0 0 5 5" fill="currentColor" style={{ left: 18 }}>
-                        <path d={HEART} />
-                      </svg>
-                    ))}
-                  </Cam>
-                </Info>
-              </Display>
-
-              <Deck>
-                <Row className="sliders">
-                  <SliderLabel className="grow vol" style={{ flexGrow: 2 }}>
-                    <span>Vol</span>
-                    <Slider
-                      aria-label="Volume"
-                      aria-valuetext={`${Math.round(radio.volume * 100)}%`}
-                      title={`Volume ${Math.round(radio.volume * 100)}%`}
-                      min={0}
-                      max={1}
-                      step={0.01}
-                      value={radio.volume}
-                      style={{ ['--p' as string]: radio.volume }}
-                      onChange={(e) => radio.setVolume(Number(e.target.value))}
-                    />
-                  </SliderLabel>
-                  <SliderLabel className="grow">
-                    <span>Bal</span>
-                    <Slider
-                      $center
-                      aria-label="Balance"
-                      aria-valuetext={
-                        radio.balance === 0
-                          ? 'centre'
-                          : `${Math.round(Math.abs(radio.balance) * 100)}% ${radio.balance < 0 ? 'left' : 'right'}`
-                      }
-                      title="Balance (double-click to centre)"
-                      min={-1}
-                      max={1}
-                      step={0.02}
-                      value={radio.balance}
-                      onChange={(e) => radio.setBalance(Number(e.target.value))}
-                      onDoubleClick={() => radio.setBalance(0)}
-                    />
-                  </SliderLabel>
-                  <span className="cluster">
-                    <Key
-                      type="button"
-                      aria-pressed={layout.eq !== 'hidden'}
-                      onClick={() => togglePanel('eq')}
-                      title="Show or hide the equalizer"
-                    >
-                      <Led $on={layout.eq !== 'hidden'} /> EQ
-                    </Key>
-                    <Key
-                      type="button"
-                      aria-pressed={layout.pl !== 'hidden'}
-                      onClick={() => togglePanel('pl')}
-                      title="Show or hide the playlist"
-                    >
-                      <Led $on={layout.pl !== 'hidden'} /> PL
-                    </Key>
-                  </span>
-                </Row>
-
-                <Slider
-                  aria-label="Seek"
-                  aria-valuetext={`${formatDuration(seekValue)} of ${formatDuration(duration || undefined)}`}
-                  min={0}
-                  max={seekMax}
-                  step={0.1}
-                  value={seekValue}
-                  style={{ ['--p' as string]: seekValue / seekMax }}
-                  disabled={!current || !duration}
-                  onChange={(e) => setScrub(Number(e.target.value))}
-                  onPointerUp={() => {
-                    if (scrub !== undefined) radio.seek(scrub)
-                    setScrub(undefined)
-                  }}
-                  onKeyUp={() => {
-                    if (scrub !== undefined) radio.seek(scrub)
-                    setScrub(undefined)
-                  }}
-                />
-
-                <Row>
-                  {transport()}
-                  <span className="cluster">
-                    <Key type="button" aria-pressed={queue.shuffle} title="Shuffle" onClick={radio.toggleShuffle}>
-                      <Led $on={queue.shuffle} /> Shuf
-                    </Key>
-                    <Key
-                      type="button"
-                      aria-pressed={queue.repeat !== 'off'}
-                      aria-label={`Repeat: ${queue.repeat}`}
-                      title="Repeat: off / all / one"
-                      onClick={radio.cycleRepeat}
-                    >
-                      <Led $on={queue.repeat !== 'off'} /> {repeatLabel}
-                    </Key>
-                  </span>
-                  <span className="spacer" />
-                  <SkinButton
-                    type="button"
-                    onClick={() => patch({ skin: nextSkin(skin.id) })}
-                    aria-label={`Skin: ${skin.label}. Click for the next skin.`}
-                    title={`Skin: ${skin.label} (click to change)`}
-                  >
-                    <img src={wingHeart?.src} srcSet={wingHeart?.srcset} alt="" />
-                  </SkinButton>
-                </Row>
-              </Deck>
-            </div>
-          )}
-        </PanelFrame>
-
-        {/* ── equalizer ── */}
-        {layout.eq !== 'hidden' && (
-          <PanelFrame className={layout.eq === 'shade' ? 'shaded' : undefined} aria-label="Equalizer">
-            <Strip
-              label="Equalizer"
-              extra={`${radio.eq.enabled ? 'on' : 'off'} · ${preset ? preset.label : 'custom'}`}
-              shaded={layout.eq === 'shade'}
-              onShade={() => shadePanel('eq')}
-              onHide={() => patch({ eq: 'hidden' })}
-              panelId="radio-eq"
-            />
-            {layout.eq === 'open' && (
-              <div id="radio-eq">
-                <Equalizer radio={radio} />
-              </div>
+              </>
             )}
-          </PanelFrame>
+          </Panel>
+        </Screen>
+
+        {message && (
+          <Notice role={radio.error ? 'alert' : 'status'} title={message}>
+            {message}
+          </Notice>
         )}
 
-        {/* ── playlist ── */}
-        {layout.pl !== 'hidden' && (
-          <PanelFrame
-            className={layout.pl === 'shade' ? 'shaded' : 'grow'}
-            aria-label="Playlist editor"
-            style={{ minHeight: layout.pl === 'shade' ? undefined : 200 }}
-          >
-            <Strip
-              label="Playlist"
-              extra={layout.pl === 'shade' && current ? `${nowIndex + 1}. ${current.title}` : playlistSummary(radio)}
-              shaded={layout.pl === 'shade'}
-              onShade={() => shadePanel('pl')}
-              onHide={() => patch({ pl: 'hidden' })}
-              panelId="radio-pl"
-            />
-            {layout.pl === 'open' && (
-              <div id="radio-pl" style={{ display: 'flex', flexDirection: 'column', flex: '1 1 auto', minHeight: 0 }}>
-                <Playlist
-                  radio={radio}
-                  nowIndex={nowIndex}
-                  sources={sources}
-                  sourceId={sourceId}
-                  setSourceId={setSourceId}
-                  busy={busy}
-                  onLoad={loadSource}
-                  onDropMusic={() => openApp('dropmusic')}
-                  onTestTone={import.meta.env.DEV ? loadTestTone : undefined}
-                  status={status}
-                />
-              </div>
-            )}
-          </PanelFrame>
-        )}
-      </Root>
-    </WindowWrapper>
+        <Deck>
+          <Slider
+            aria-label="Seek"
+            aria-valuetext={`${formatDuration(seekValue)} of ${formatDuration(duration || undefined)}`}
+            min={0}
+            max={seekMax}
+            step={0.1}
+            value={seekValue}
+            style={{ ['--p' as string]: seekValue / seekMax }}
+            disabled={!current || !duration}
+            onChange={(e) => setScrub(Number(e.target.value))}
+            onPointerUp={commitSeek}
+            onKeyUp={commitSeek}
+          />
+          <Row>
+            <label className="grow" style={{ flexGrow: 2 }}>
+              Vol
+              <Slider
+                aria-label="Volume"
+                aria-valuetext={`${Math.round(radio.volume * 100)}%`}
+                title={`Volume ${Math.round(radio.volume * 100)}%`}
+                min={0}
+                max={1}
+                step={0.01}
+                value={radio.volume}
+                style={{
+                  ['--p' as string]: radio.volume,
+                  // Green to red as it gets louder, as on the old hi-fi sliders.
+                  ['--rk-fill-b' as string]: `hsl(${Math.round(120 * (1 - radio.volume))} 100% 45%)`,
+                }}
+                onChange={(e) => radio.setVolume(Number(e.target.value))}
+              />
+            </label>
+            <label className="grow">
+              Bal
+              <Slider
+                $center
+                aria-label="Balance"
+                aria-valuetext={
+                  radio.balance === 0
+                    ? 'centre'
+                    : `${Math.round(Math.abs(radio.balance) * 100)}% ${radio.balance < 0 ? 'left' : 'right'}`
+                }
+                title="Balance (double-click to centre)"
+                min={-1}
+                max={1}
+                step={0.02}
+                value={radio.balance}
+                onChange={(e) => radio.setBalance(Number(e.target.value))}
+                onDoubleClick={() => radio.setBalance(0)}
+              />
+            </label>
+            <Key type="button" aria-pressed={view === 'eq'} onClick={() => show('eq')} title="Equalizer">
+              <Led $on={view === 'eq'} /> EQ
+            </Key>
+            <Key type="button" aria-pressed={view === 'pl'} onClick={() => show('pl')} title="Playlist">
+              <Led $on={view === 'pl'} /> PL
+            </Key>
+          </Row>
+          <Row>
+            <Key type="button" aria-label="Previous" title="Previous (Z)" onClick={radio.prev} disabled={!current}>
+              <Glyph kind="prev" />
+            </Key>
+            <Key type="button" aria-label="Play" title="Play (X)" onClick={play} disabled={!queue.tracks.length}>
+              <Glyph kind="play" />
+            </Key>
+            <Key
+              type="button"
+              aria-label="Pause"
+              aria-pressed={paused}
+              title="Pause (C)"
+              onClick={pause}
+              disabled={!current}
+            >
+              <Glyph kind="pause" />
+            </Key>
+            <Key type="button" aria-label="Stop" title="Stop (V)" onClick={radio.stop} disabled={!current}>
+              <Glyph kind="stop" />
+            </Key>
+            <Key type="button" aria-label="Next" title="Next (B)" onClick={radio.next} disabled={!current}>
+              <Glyph kind="next" />
+            </Key>
+            <Key
+              type="button"
+              aria-label="Eject: add tracks"
+              title="Eject: add tracks"
+              onClick={() => view !== 'pl' && show('pl')}
+              style={{ marginLeft: 4 }}
+            >
+              ▲
+            </Key>
+            <span className="grow" />
+            <Key type="button" aria-pressed={queue.shuffle} title="Shuffle" onClick={radio.toggleShuffle}>
+              <Led $on={queue.shuffle} /> Shuf
+            </Key>
+            <Key
+              type="button"
+              aria-pressed={queue.repeat !== 'off'}
+              aria-label={`Repeat: ${queue.repeat}`}
+              title="Repeat: off / all / one"
+              onClick={radio.cycleRepeat}
+            >
+              <Led $on={queue.repeat !== 'off'} /> {queue.repeat === 'one' ? 'Rep 1' : 'Rep'}
+            </Key>
+          </Row>
+        </Deck>
+      </Console>
+    </Root>
   )
 }

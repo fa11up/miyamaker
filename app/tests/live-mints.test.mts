@@ -20,16 +20,20 @@ const A = '0x1111111111111111111111111111111111111111' as const
 const B = '0x2222222222222222222222222222222222222222' as const
 const MIYAMINI = LIVE_MINTS[0]!
 
-test('curated list: MIYAMINI first, Miyakakis present as coming soon', () => {
-  assert.equal(MIYAMINI.slug, 'miyamini')
-  assert.equal(MIYAMINI.view, 'miyamini')
-  const kakis = LIVE_MINTS.find((e) => e.slug === 'miyakakis')
-  assert.ok(kakis, 'Miyakakis must be in the group')
+test('curated list: MIYAMINI first, credited to koolskull.eth', () => {
   const cards = buildLiveMintList(LIVE_MINTS, {})
   assert.equal(cards[0]!.slug, 'miyamini')
-  const k = cards.find((c) => c.slug === 'miyakakis')!
-  assert.equal(k.status, 'soon')
-  assert.equal(k.clickable, false)
+  assert.equal(cards[0]!.artist, 'koolskull.eth')
+  assert.ok(cards[0]!.artistLogo)
+  assert.equal(cards.find((c) => c.slug === 'miyakakis'), undefined)
+})
+
+test('a registry drop credits its owner', () => {
+  const owner = '0x70997970C51812dc3A010C7d01b50e0d17dc79C8' as const
+  const entry = { slug: 'x', name: 'X', kind: 'drop', chainId: 1, address: owner } as const
+  const key = entryKey(entry)
+  const [card] = buildLiveMintList([entry], { [key]: { owner } })
+  assert.equal(card!.artistAddress, owner)
 })
 
 test('toCard: status from reads', () => {

@@ -97,6 +97,7 @@ export default function Windows({
   focused,
   identifier = 'program',
   baseDepth = 2000,
+  shaped = false,
 }: {
   children: ReactNode
   baseSize: { width: number; height: number }
@@ -106,6 +107,7 @@ export default function Windows({
   focused?: boolean
   identifier?: string
   baseDepth?: number
+  shaped?: boolean
 }) {
   // in-component state
   const [dragPosition, setDragPosition] = useState<{ x: number; y: number } | undefined>()
@@ -182,10 +184,10 @@ export default function Windows({
             height: mobile ? 'auto' : baseSize.height,
             width: mobile ? 'auto' : baseSize.width,
             position: 'absolute',
-            pointerEvents: 'all',
+            pointerEvents: shaped ? 'none' : 'all',
             zIndex: baseDepth + 101,
             visibility: initialized ? 'visible' : 'hidden',
-            overflow: 'hidden',
+            overflow: shaped ? 'visible' : 'hidden',
           }}
         >
           {children}
