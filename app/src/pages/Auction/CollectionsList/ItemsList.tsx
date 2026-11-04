@@ -1,8 +1,10 @@
+import { useRef } from 'react'
 import styled from 'styled-components/macro'
 import type { Address } from 'viem'
 
 import NftImage from '@/components/NftImage'
 import { AUCTION_PAGE_SECTION } from '@/pages/Auction/constants'
+import { useFitText } from '@/pages/Auction/useFitText'
 import { useNFT } from '@/pages/Auction/useNFT'
 import { setCurrentNFT } from '@/store/collections/actions'
 import { useAppDispatch } from '@/store/hooks'
@@ -29,7 +31,8 @@ const Item = styled.div`
   width: 40%;
   display: flex;
   padding: 0.5rem;
-  overflow-x: auto;
+  min-height: 0;
+  overflow: hidden;
   font-size: 0.85rem;
   line-height: 1rem;
 
@@ -38,6 +41,12 @@ const Item = styled.div`
     text-align: justify;
   }
 `
+/* Fits its row: the text steps down in size (useFitText) rather than scrolling inside the row. */
+const DescriptionItem = styled(Item)`
+  display: block;
+  line-height: 1.25;
+`
+
 const LinkItem = styled.a`
   width: 25%;
   display: flex;
@@ -109,6 +118,9 @@ export default function ItemsList({ nft, setPageSection }: { nft: string; setPag
   // external_link comes from on-chain metadata: only http(s) links are rendered as links.
   const safeLink = safeHttpUrl(externalLink)
 
+  const descriptionRef = useRef<HTMLDivElement>(null)
+  useFitText(descriptionRef, description || '')
+
   const handleClick = () => {
     setPageSection(AUCTION_PAGE_SECTION.PRODUCT_SECTION)
     dispatch(
@@ -137,7 +149,9 @@ export default function ItemsList({ nft, setPageSection }: { nft: string; setPag
           {name} ({symbol})
         </div>
       </ImageItem>
-      <Item>{description}</Item>
+      <DescriptionItem ref={descriptionRef} title={description}>
+        {description}
+      </DescriptionItem>
       {safeLink ? (
         <LinkItem href={safeLink} target="_blank" rel="noreferrer noopener">
           {externalLink.replace('https://', '')}
