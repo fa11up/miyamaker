@@ -1,6 +1,6 @@
 # Internal audit notes (for external review)
 
-Status of the internal-audit findings as of branch `contracts/audit-fixes`. Line numbers refer to the
+Status of the internal-audit findings. Line numbers refer to the
 pre-fix tree (commit 88641a8). The regression tests below are ports of the internal PoC tests, which
 demonstrated each fixed bug on 88641a8; here they assert the fixed behaviour.
 
@@ -9,11 +9,11 @@ demonstrated each fixed bug on 88641a8; here they assert the fixed behaviour.
 | H1 | `UniAlignmentVault.claimFees` / `claimFeesAsDelegate` revert with `Reentrancy()` once the LP accrues native-ETH fees: `PoolManager.take(ETH)` and the zRouter token->ETH swap pay into `receive()`, which runs the `nonReentrant` contribution path. All LP yield unclaimable. | Fixed |
 | H2 | Fee watermark model (`shareValueAtLastClaim`) dilutes unclaimed fees when new shares are minted (diluted part stranded forever) and resets a benefactor's watermark on re-contribution, erasing all their unclaimed fees. `ERC721DropInstance.withdraw()` is permissionless, so anyone could trigger the wipe. | Fixed |
 | H3 | Conversion caller reward = `(100k + 15k*n) * tx.gasprice + 0.0012 ETH`, paid from the vault's general balance, i.e. from benefactors' fees. A builder/validator-set gas price drains the vault. | Fixed |
-| M1 | `MiyaPool` RANDOM mode: once the outcome block hash is public, a depositor can steer which id a pending commit receives by depositing before reveal (contradicts MiyaPool.sol:41-42). | **Open** (needs design decision) |
-| M2 | Vault swaps are sandwichable: `convertAndAddLiquidity(minOutTarget)` accepts any caller-chosen floor (e.g. 1), and the fee token->ETH swap has `minEthOut = 0` when the validator has no TWAP data. | **Open** (needs design decision: TWAP floor / keeper restriction) |
+| M1 | `MiyaPool` RANDOM mode: once the outcome block hash is public, a depositor can steer which id a pending commit receives by depositing before reveal (contradicts MiyaPool.sol:41-42). | Fixed |
+| M2 | Vault swaps are sandwichable: `convertAndAddLiquidity(minOutTarget)` accepts any caller-chosen floor (e.g. 1), and the fee token->ETH swap has `minEthOut = 0` when the validator has no TWAP data. Fork test on a real pool (CULT): `validatePrice` passed throughout while a 5 ETH pre-buy cut a 1 ETH swap to 33% of its normal output and a 25 ETH pre-buy to about 0%. Effectively High. | Fixed (keeper only) |
 | M3 | `protocolTreasury` was never settable in production (factory owns the vault, no passthrough), locking the 1% LP-yield cut. | Fixed |
 | M4 | Factory owner could repoint any vault's V4 pool key at any time; hooks were not checked. | Fixed |
-| M5 | Not part of this change's brief; status not re-verified here. | Unverified |
+| M5 | `PasswordTierGatingModule`: no factory calls `configureFor`, so a collection that picks it could not be configured. | Not fixed; off at deploy, external review asked to confirm |
 | M6 | `ERC721AuctionInstance.settleAuction` used `_safeMint`; a contract winner whose `onERC721Received` reverts froze settlement (artist proceeds, vault cut, the line's queue). | Fixed |
 | M7 | `ERC1155Instance` lacked `supportsInterface` / `uri` / `balanceOfBatch`, so `MiyaPoolFactory._detectKind` reverted for miyamaker 1155 collections. | Fixed |
 | L1 | `renounceOwnership` on instances makes `owner() == address(0)`; artist share then goes to `address(0)` (Drop `withdraw()` is permissionless). | Fixed (renounce disabled) |
@@ -23,7 +23,7 @@ demonstrated each fixed bug on 88641a8; here they assert the fixed behaviour.
 ## What changed
 
 **H1** — `receive()` returns early while a transient flag (`_COLLECTING_SLOT`, TSTORE/TLOAD) is set; the flag
-wraps only the internal collection (`_claimVaultFees` + `_convertVaultFeesToEth`). One TLOAD keeps 2300-gas
+wraps only the internal collection (`_claimVaultFees`) and the keeper's fee-token swap (`_convertPendingFeeTokens`). One TLOAD keeps 2300-gas
 `transfer` senders working. Test: `test/vaults/UniAlignmentVaultRealV4.t.sol` (real v4 `PoolManager`; this file
 compiles as a separate solc 0.8.26 unit, see `foundry.toml`).
 
@@ -59,7 +59,30 @@ swaps on); `setVaultPoolKey` was removed.
 a `phasesEpoch` bumped in `setPhases` (`mintedInPhase(phaseId, minter)` view kept); `claimFreeMint` checks
 `openTime`.
 
+**M1** — RANDOM pools keep ids in a deposit-order queue. Each commit records the queue end, draws only from
+`[head, queueEnd)`, and swaps a picked id with the head, so that range stays exactly the ids it could draw minus those
+already drawn. Reveals must run in commit order (`nextRevealId`). Once a target block is mined the pick is fixed: later
+deposits and reveal order cannot move it. Ordered reveals could let one commit block the rest, so the recipient cannot
+be zero, a commit is capped at `MAX_COMMIT_UNITS` (50), and an id the collection refuses to transfer goes to
+`escrowedTo` (`claimEscrowed`). Tests: `test/pools/MiyaPool.t.sol`.
+
+**M2** — `convertAndAddLiquidity` and the new `convertFeeTokens` are limited to `MiyaRegistry.conversionKeeper`, which
+submits through a private mempool with floors from a live quote. Claims no longer swap: `claimFees` was open to anyone
+and swapped fee tokens with a zero floor when the validator had no price, so token-side fees now wait in
+`pendingFeeTokens`. They convert before any share mint, which keeps H2's guarantee. Tests:
+`UniAlignmentVaultRealV4.t.sol`.
+
 ## Notes for the reviewer
+
+- **Keeper trust (M2).** A wrong or malicious keeper can pass low floors and lose value on conversions, or stop
+  converting (ETH and fee tokens wait; the owner can replace it). It cannot take principal or claims.
+- **`validatePrice` is a backstop, not a guarantee.** It cross-checks v2 against v3 only when v2 holds 10+ WETH, and v4
+  against a v3 TWAP only when no v3 pool exists, so a token with a v3 pool and a dust v2 pair gets no cross-check. Its
+  v3 lookup takes the first fee tier with nonzero liquidity (0.3%, 0.05%, 1%), so a dust pool in an earlier tier wins.
+  INFER has no v2 or v3 pool at all. Safety rests on the keeper's floors.
+- **Default alignment token is INFER**, which needs a hookless ETH pool seeded before deployment (DEPLOY.md).
+- **RANDOM re-rolls remain**: a commit left unrevealed past the block-hash window is re-armed, and block producers can
+  influence the hash. Both are documented in `MiyaPool.sol`.
 
 - Fee collection is still gated by `vaultFeeCollectionInterval` (1 day) for claims, but forced on every
   conversion. Uncollected LP yield is not reflected in `getUnclaimedFees` until collected.

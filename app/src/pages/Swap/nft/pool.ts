@@ -121,6 +121,8 @@ export function pendingFor(rows: (CommitRow | undefined)[], owner: string | unde
 
 /** Plain blockhash covers 256 blocks. Past that the pool falls back to the EIP-2935 history or picks a new block. */
 export const BLOCKHASH_WINDOW = 256n
+/** MiyaPool.MAX_COMMIT_UNITS: the most NFTs one random draw can take. */
+export const MAX_DRAW_UNITS = 50
 
 export type CommitPhase = 'waiting' | 'ready' | 'late'
 

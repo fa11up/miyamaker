@@ -19,6 +19,7 @@ import { DEFAULT_PAIR_SYMBOL, pairWords, pickPair } from './pairs'
 import type { CommitRow } from './pool'
 import {
   blocksToReveal,
+  MAX_DRAW_UNITS,
   commitPhase,
   depositPlan,
   KIND,
@@ -234,6 +235,7 @@ export default function PoolView({
   const { balance } = info
   const affordable = wholeUnits(balance)
   const free = Number(pool.held - info.pendingUnits) // ERC721: NFTs not promised to an open draw
+  const maxDraw = Math.max(1, Math.min(free, MAX_DRAW_UNITS))
   const is1155 = pool.kind === KIND.ERC1155
   const swapChain = isSwapChain(chainId) ? chainId : undefined
   const { busy } = tx
@@ -265,6 +267,14 @@ export default function PoolView({
       abi: poolAbi,
       functionName: 'commitRedeem',
       args: [BigInt(count), me],
+      chainId,
+    })
+  const settleOlderDraw = (id: bigint) =>
+    tx.run(`settle-${id}`, {
+      address: poolAddress,
+      abi: poolAbi,
+      functionName: 'revealRedeem',
+      args: [id],
       chainId,
     })
   const reveal = (c: CommitRow) => {
@@ -356,6 +366,14 @@ export default function PoolView({
       if (draw) {
         const left = blocksToReveal(draw.targetBlock, block.data)
         if (left > 0) return { label: `Reveal in ${left} block${left === 1 ? '' : 's'}…`, disabled: true }
+        const older = info.nextRevealId
+        if (older !== undefined && older !== draw.id) {
+          return {
+            label: 'Settle the earlier draw',
+            step: 'Draws settle in order. This one sends its NFT to whoever made it, then yours is closer.',
+            onClick: () => settleOlderDraw(older),
+          }
+        }
         return {
           label: draw.amount === 1 ? 'Reveal your NFT' : `Reveal your ${draw.amount} NFTs`,
           step: 'Step 2 of 2: see which NFT you got. It goes straight to your wallet.',
@@ -562,15 +580,15 @@ export default function PoolView({
                   value={count}
                   onChange={(e) => {
                     const n = Number(e.target.value.replace(/\D/g, ''))
-                    setCount(Math.max(1, Math.min(n || 1, Math.max(1, free))))
+                    setCount(Math.max(1, Math.min(n || 1, maxDraw)))
                   }}
                   disabled={busy}
                 />
                 <button
                   type="button"
                   aria-label="One more"
-                  onClick={() => setCount((c) => Math.min(Math.max(1, free), c + 1))}
-                  disabled={count >= free || busy}
+                  onClick={() => setCount((c) => Math.min(maxDraw, c + 1))}
+                  disabled={count >= maxDraw || busy}
                 >
                   +
                 </button>
