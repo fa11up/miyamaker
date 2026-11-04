@@ -51,6 +51,8 @@ export const poolAbi = parseAbi([
   'error CommitTooLarge()',
   'error InvalidRecipient()',
   'error NotEscrowed()',
+  'error AlreadyHeld(uint256 id)',
+  'error RevealGasTooLow()',
   'error TransferNotReceived(uint256 id)',
   'error InsufficientBalance()',
 ])
