@@ -9,6 +9,7 @@ import {
   entryKey,
   formatEthShort,
   LIVE_MINTS,
+  mintableNow,
   mintPath,
   registryEntry,
   slugFromPath,
@@ -143,4 +144,14 @@ test('formatEthShort', () => {
   assert.equal(formatEthShort(0n), 'Free')
   assert.equal(formatEthShort(1n), '<0.0001 ETH')
   assert.equal(formatEthShort(undefined), '…')
+})
+
+test('mintableNow: the smallest of the transaction, sale and wallet limits', () => {
+  assert.equal(mintableNow({ maxPerTx: 10 }), 10)
+  assert.equal(mintableNow({ maxPerTx: 10, left: 3 }), 3)
+  assert.equal(mintableNow({ maxPerTx: 10, left: 8, maxPerWallet: 5, walletMinted: 3 }), 2)
+  assert.equal(mintableNow({ maxPerTx: 10, maxPerWallet: 2, walletMinted: 2 }), 0)
+  assert.equal(mintableNow({ maxPerTx: 10, maxPerWallet: 2, walletMinted: 9 }), 0)
+  assert.equal(mintableNow({ maxPerTx: 10, maxPerWallet: 0, walletMinted: 9 }), 10)
+  assert.equal(mintableNow({ maxPerTx: 10, left: 0 }), 0)
 })

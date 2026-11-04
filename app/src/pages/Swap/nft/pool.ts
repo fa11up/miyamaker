@@ -165,3 +165,12 @@ export function filterPools<T extends PoolSummary>(pools: T[], query: string): T
 /** The pool name without the contract's "miya pool: " prefix. */
 export const poolTitle = (p: Pick<PoolSummary, 'name' | 'collectionName' | 'collection'>) =>
   p.collectionName || p.name.replace(/^miya pool:\s*/i, '') || `${p.collection.slice(0, 6)}…${p.collection.slice(-4)}`
+
+/** What a finished reveal gave the buyer. `held`: ids the collection refused to send, so the pool keeps them to claim. */
+export function revealWords(ids: readonly bigint[], held: readonly bigint[] = []) {
+  const list = (xs: readonly bigint[]) => xs.map((id) => `#${id}`).join(', ')
+  const sent = ids.filter((id) => !held.includes(id))
+  if (!held.length) return `You got ${list(ids)}. It is in your wallet.`
+  const keep = `The collection refused to send ${list(held)}, so the pool is holding it for you to claim below.`
+  return sent.length ? `You got ${list(sent)}, now in your wallet. ${keep}` : keep
+}

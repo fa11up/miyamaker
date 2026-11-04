@@ -31,7 +31,15 @@ export const dropAbi = parseAbi([
   'function phases() view returns (Phase[])',
   'function phasesMinted() view returns (uint256[])',
   'function publicRemaining() view returns (uint256)',
+  'function mintedInPhase(uint256 phaseId, address minter) view returns (uint256)',
   'function mint(uint256 phaseId, uint256 quantity, bytes32[] proof) payable',
+  'function mintTo(address to, uint256 phaseId, uint256 quantity, bytes32[] proof) payable',
+  'error PhaseNotActive()',
+  'error NotAllowlisted()',
+  'error WalletLimit()',
+  'error SoldOut()',
+  'error PhaseSoldOut()',
+  'error WrongPayment()',
 ])
 
 const registryAbi = parseAbi([
@@ -73,7 +81,10 @@ const ok = <T>(r: ReadResult) => (r?.status === 'success' ? (r.result as T) : un
 const num = (v: bigint | number | undefined) => (v !== undefined ? Number(v) : undefined)
 
 /** Turns the raw results for one collection into reads (the order matches erc721mCalls / dropCalls). */
-export function readsFromResults(kind: LiveMintEntry['kind'], r: ReadResult[]): LiveMintReads & { phaseId?: number } {
+export function readsFromResults(
+  kind: LiveMintEntry['kind'],
+  r: ReadResult[]
+): LiveMintReads & { phaseId?: number; maxPerWallet?: number } {
   if (kind === 'erc721m') {
     return {
       name: ok<string>(r[0]),
@@ -97,6 +108,7 @@ export function readsFromResults(kind: LiveMintEntry['kind'], r: ReadResult[]): 
     mintOpen: phases && sold && publicRemaining !== undefined ? !!live : undefined,
     contractURI: ok<string>(r[4]),
     phaseId: live?.phaseId,
+    maxPerWallet: live?.maxPerWallet,
     publicRemaining,
     // What the live phase can still sell: its own cap or the public supply, whichever runs out first.
     left:

@@ -3,9 +3,11 @@ import { useEffect, useState } from 'react'
 import styled from 'styled-components/macro'
 import { useElementSize } from 'usehooks-ts'
 import type { Address, Hash } from 'viem'
+import { isAddress } from 'viem'
 import {
   useAccount,
   useBalance,
+  useReadContract,
   useReadContracts,
   useSwitchChain,
   useWaitForTransactionReceipt,
@@ -32,7 +34,7 @@ import { explorerUrl } from '@/config/wagmi'
 import BackToMints from '@/pages/Mint/BackToMints'
 import { StatusChip } from '@/pages/Mint/Home'
 import type { LiveMintCard } from '@/pages/Mint/liveMints'
-import { formatEthShort, toCard } from '@/pages/Mint/liveMints'
+import { formatEthShort, mintableNow, toCard } from '@/pages/Mint/liveMints'
 import { erc721mAbi } from '@/pages/Mint/Miyamini/abi'
 import { describeError } from '@/pages/Mint/Miyamini/useMiyamini'
 import type { ReadResult } from '@/pages/Mint/useLiveMints'
@@ -132,18 +134,17 @@ function useMint(card: LiveMintCard, phaseId: number | undefined) {
     if (receipt.isSuccess) balance.refetch()
   }, [receipt.isSuccess])
 
-  const mint = (qty: number, price: bigint) => {
+  const mint = (qty: number, price: bigint, to?: Address) => {
     const value = price * BigInt(qty)
     if (card.kind === 'drop') {
       if (phaseId === undefined) return
-      write.writeContract({
-        address: card.address as Address,
-        abi: dropAbi,
-        chainId,
-        functionName: 'mint',
-        args: [BigInt(phaseId), BigInt(qty), []],
-        value,
-      })
+      const common = { address: card.address as Address, abi: dropAbi, chainId, value }
+      if (to) {
+        write.writeContract({ ...common, functionName: 'mintTo', args: [to, BigInt(phaseId), BigInt(qty), []] })
+      } else {
+        write.writeContract({ ...common, functionName: 'mint', args: [BigInt(phaseId), BigInt(qty), []] })
+      }
+
       return
     }
 
@@ -179,10 +180,25 @@ export default function LiveMintView({ card, onBack }: { card: LiveMintCard; onB
   const { openConnectModal } = useConnectModal()
   const cover = useContractImage(live.image ? undefined : live.contractURI)
   const [quantity, setQuantity] = useState(1)
+  const [sendElsewhere, setSendElsewhere] = useState(false)
+  const [recipient, setRecipient] = useState('')
+  const { address: account } = useAccount()
+  const maxPerWallet = reads?.maxPerWallet
+  const walletReads = useReadContract({
+    address: card.address as Address,
+    abi: dropAbi,
+    functionName: 'mintedInPhase',
+    args: account && reads?.phaseId !== undefined ? [BigInt(reads.phaseId), account] : undefined,
+    chainId: card.chainId as SupportedChainId,
+    query: { enabled: card.kind === 'drop' && !!account && !!maxPerWallet && reads?.phaseId !== undefined },
+  })
+  const walletMinted = walletReads.data !== undefined ? Number(walletReads.data) : undefined
 
   const remaining =
     live.left ?? (live.supply !== undefined && live.minted !== undefined ? live.supply - live.minted : undefined)
-  const maxQty = Math.max(1, Math.min(MAX_PER_TX, remaining ?? MAX_PER_TX))
+  const mintable = mintableNow({ maxPerTx: MAX_PER_TX, left: remaining, maxPerWallet, walletMinted })
+  const maxQty = Math.max(1, mintable)
+  const badRecipient = sendElsewhere && !isAddress(recipient.trim())
   const total = live.price !== undefined ? live.price * BigInt(quantity) : undefined
   const insufficient = tx.balance !== undefined && total !== undefined && tx.balance < total
   const busy = tx.isAwaitingWallet || tx.isConfirming
@@ -194,8 +210,11 @@ export default function LiveMintView({ card, onBack }: { card: LiveMintCard; onB
     if (quantity > maxQty) setQuantity(maxQty)
   }, [maxQty])
   useEffect(() => {
-    if (tx.isConfirmed) refetch()
-  }, [tx.isConfirmed])
+    if (tx.isConfirmed || tx.reverted) {
+      refetch()
+      walletReads.refetch()
+    }
+  }, [tx.isConfirmed, tx.reverted])
 
   const action = (() => {
     const off = (label: string) => ({ label, disabled: true, onClick: () => {} })
@@ -213,11 +232,15 @@ export default function LiveMintView({ card, onBack }: { card: LiveMintCard; onB
       }
     if (tx.isAwaitingWallet) return off('Confirm in wallet…')
     if (tx.isConfirming) return off('Minting…')
+    if (mintable === 0) return off('Wallet limit reached')
     if (insufficient) return off('Not enough ETH')
+    if (badRecipient) return off('Enter a wallet address')
     return {
       label: `Mint ${quantity}`,
       disabled: live.price === undefined,
-      onClick: () => live.price !== undefined && tx.mint(quantity, live.price),
+      onClick: () =>
+        live.price !== undefined &&
+        tx.mint(quantity, live.price, sendElsewhere ? (recipient.trim() as Address) : undefined),
     }
   })()
 
@@ -265,6 +288,12 @@ export default function LiveMintView({ card, onBack }: { card: LiveMintCard; onB
             </StatRow>
             <ProgressMeter value={live.minted || 0} max={live.supply || 1} label="Minted supply" />
             {remaining !== undefined && <Muted>{remaining.toLocaleString()} left</Muted>}
+            {!!maxPerWallet && (
+              <Muted>
+                Limit {maxPerWallet} per wallet
+                {walletMinted ? ` · you have minted ${walletMinted}` : ''}
+              </Muted>
+            )}
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: space[2] }}>
@@ -304,6 +333,33 @@ export default function LiveMintView({ card, onBack }: { card: LiveMintCard; onB
             </Stepper>
           </div>
 
+          {card.kind === 'drop' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: space[2] }}>
+              <label style={{ display: 'flex', gap: space[2], alignItems: 'center', cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={sendElsewhere}
+                  disabled={busy}
+                  onChange={(e) => setSendElsewhere(e.target.checked)}
+                />
+                Send to another wallet
+              </label>
+              {sendElsewhere && (
+                <>
+                  <input
+                    aria-label="Wallet to receive the mint"
+                    value={recipient}
+                    placeholder="0x…"
+                    spellCheck={false}
+                    disabled={busy}
+                    onChange={(e) => setRecipient(e.target.value)}
+                  />
+                  <Muted>You pay, and the limit counts against your wallet.</Muted>
+                </>
+              )}
+            </div>
+          )}
+
           <StatRow>
             <span>Total</span>
             <strong>{formatEthShort(total)}</strong>
@@ -342,7 +398,11 @@ export default function LiveMintView({ card, onBack }: { card: LiveMintCard; onB
           )}
           {(tx.reverted || (tx.error && !busy)) && (
             <StatusBox tone={err.cancelled ? 'info' : 'error'} role="alert">
-              <span>{tx.reverted ? 'The transaction reverted.' : err.message}</span>
+              <span>
+                {tx.reverted
+                  ? 'The mint did not go through. Someone may have minted first, so check what is left.'
+                  : err.message}
+              </span>
             </StatusBox>
           )}
 

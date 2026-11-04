@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { useEffect } from 'react'
 import type { Hash } from 'viem'
-import { BaseError } from 'viem'
+import { BaseError, ContractFunctionRevertedError } from 'viem'
 import {
   useAccount,
   useBalance,
@@ -126,6 +126,15 @@ export function useMiyaminiMint() {
   }
 }
 
+const MINT_ERRORS: Record<string, string> = {
+  SoldOut: 'There are not enough pieces left to mint that many.',
+  PhaseSoldOut: 'This sale phase does not have that many pieces left.',
+  WalletLimit: 'That is over the limit per wallet for this sale.',
+  PhaseNotActive: 'This sale phase is not open right now.',
+  WrongPayment: 'The price changed. Reload the page and try again.',
+  NotAllowlisted: 'This wallet is not on the list for this sale.',
+}
+
 /** Human-readable error text; wallet rejections read as a cancel, not a failure. */
 export function describeError(error: unknown): { message: string; cancelled: boolean } {
   if (!error) return { message: '', cancelled: false }
@@ -136,5 +145,12 @@ export function describeError(error: unknown): { message: string; cancelled: boo
   if (/insufficient funds/i.test(base?.details || text)) {
     return { message: 'Not enough ETH to cover the mint and gas.', cancelled: false }
   }
+
+  const revert = base?.walk((e) => e instanceof ContractFunctionRevertedError) as
+    | ContractFunctionRevertedError
+    | null
+    | undefined
+  const friendly = MINT_ERRORS[revert?.data?.errorName ?? '']
+  if (friendly) return { message: friendly, cancelled: false }
   return { message: text, cancelled: false }
 }

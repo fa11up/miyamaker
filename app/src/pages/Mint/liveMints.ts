@@ -268,6 +268,16 @@ export function activePublicPhase(phases: readonly DropPhase[] | undefined, nowS
   return undefined
 }
 
+/**
+ * The most this wallet can mint in one go: the transaction limit, what is left for sale and what is left of its
+ * per-wallet limit (`maxPerWallet` 0 = no limit, as in the contract). 0 means this wallet has reached its limit.
+ */
+export function mintableNow(opts: { maxPerTx: number; left?: number; maxPerWallet?: number; walletMinted?: number }) {
+  const { maxPerTx, left, maxPerWallet, walletMinted = 0 } = opts
+  const forWallet = maxPerWallet ? Math.max(0, maxPerWallet - walletMinted) : Infinity
+  return Math.min(maxPerTx, left ?? Infinity, forWallet)
+}
+
 /** Path for a card: /mint/<slug>. Parses back with `slugFromPath`. */
 export const MINT_BASE_PATH = '/mint'
 export const mintPath = (slug?: string) => (slug ? `${MINT_BASE_PATH}/${slug}` : MINT_BASE_PATH)
