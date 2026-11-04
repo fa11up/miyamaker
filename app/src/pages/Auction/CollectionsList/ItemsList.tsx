@@ -22,9 +22,11 @@ const Items = styled.div`
     background-color: rgba(255, 255, 255, 0.2);
   }
 
+  /* Rows stack on phones and the list scrolls, so each row takes the height its content needs. */
   @media only screen and (max-width: 640px) {
     flex-direction: column;
-    height: 50%;
+    flex: none;
+    height: auto;
   }
 `
 const Item = styled.div`
@@ -45,6 +47,10 @@ const Item = styled.div`
 const DescriptionItem = styled(Item)`
   display: block;
   line-height: 1.25;
+
+  @media only screen and (max-width: 640px) {
+    flex: none;
+  }
 `
 
 const LinkItem = styled.a`
@@ -75,7 +81,8 @@ const ImageItem = styled.div`
     width: 100%;
     flex-direction: column;
     justify-content: center;
-    height: 50%;
+    flex: none;
+    height: 14rem;
 
     > * + * {
       margin-top: 0.5rem;
