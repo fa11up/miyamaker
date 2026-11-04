@@ -95,9 +95,9 @@ export default function StageViz({
       const colW = w / BARS
       const barW = Math.max(block, Math.floor(colW - block / 2))
       const grad = g.createLinearGradient(0, floor, 0, 0)
-      grad.addColorStop(0, color.accentDark)
-      grad.addColorStop(0.5, color.accent)
-      grad.addColorStop(0.85, '#f5c6f6')
+      grad.addColorStop(0, '#2a6bff')
+      grad.addColorStop(0.5, '#27d3ff')
+      grad.addColorStop(0.85, '#b6ff3c')
       grad.addColorStop(1, color.highlight)
       for (let c = 0; c < BARS; c += 1) {
         // Mirror: low frequencies in the middle, highs to the edges.

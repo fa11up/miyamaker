@@ -1,7 +1,7 @@
 /* eslint-disable no-restricted-syntax, no-continue, no-await-in-loop, no-plusplus -- bounded, sequential RPC/parse loops read clearer as loops */
 import Angel from 'assets/angel.jpg?preset=art&resize=true'
-import Imd1616 from 'assets/imd-1616.png?preset=art&resize=true'
 import Ghiblady from 'assets/ghiblady.jpg?preset=art&resize=true'
+import Imd1616 from 'assets/imd-1616.png?preset=art&resize=true'
 import Milady from 'assets/milady3.jpg?preset=art&resize=true'
 import Fumo from 'assets/pet/fumo-320.webp'
 import Pixelady from 'assets/pixelady.jpg?preset=art&resize=true'
@@ -10,6 +10,7 @@ import styled from 'styled-components/macro'
 
 import { color, font, text } from '@/theme/tokens'
 
+import { PETS } from '../pet/registry'
 import { useReducedMotion } from '../prefs'
 import { movedEnough } from './idle'
 
@@ -49,7 +50,7 @@ const Hint = styled.div`
 
 type Sprite = {
   img: HTMLImageElement
-  kind: 'doll' | 'art'
+  kind: 'doll' | 'art' | 'fren'
   x: number
   y: number
   vx: number
@@ -86,7 +87,7 @@ function load(src: string) {
 }
 
 /**
- * Fumo dolls and collection art bouncing DVD-logo style over a lilac starfield. Any key, click,
+ * Fumo dolls, fren pets and collection art bouncing DVD-logo style over a lilac starfield. Any key, click,
  * touch or real mouse movement dismisses it; the click that wakes it is swallowed so it never
  * lands on whatever is underneath.
  */
@@ -201,6 +202,23 @@ export default function Screensaver({ onDismiss }: { onDismiss: () => void }) {
       })
     }
 
+    // A few fren pets, whole-pixel sizes so they stay crisp; shuffled so each run gets a different gang.
+    const frens = [...(PETS.fren?.variants || [])].sort(() => Math.random() - 0.5).slice(0, small ? 3 : 5)
+    frens.forEach((f) => {
+      const zoom = small ? 2 : 3
+      sprites.push({
+        img: load(f.src),
+        kind: 'fren',
+        x: 0,
+        y: 0,
+        vx: speed(),
+        vy: speed(),
+        w: f.w * zoom,
+        h: f.h * zoom,
+        hue: 0,
+      })
+    })
+
     ART.slice(0, small ? 3 : ART.length).forEach((src) => {
       const s = rand(84, 118) * scale
       sprites.push({ img: load(src), kind: 'art', x: 0, y: 0, vx: speed(), vy: speed(), w: s, h: s, size: s, hue: 0 })
@@ -251,6 +269,7 @@ export default function Screensaver({ onDismiss }: { onDismiss: () => void }) {
         ctx.drawImage(s.img, Math.round(s.x), Math.round(s.y), s.w, s.h)
       } else {
         ctx.save()
+        ctx.imageSmoothingEnabled = s.kind !== 'fren'
         ctx.shadowColor = PALETTE[s.hue]!
         ctx.shadowBlur = 18
         ctx.drawImage(s.img, Math.round(s.x), Math.round(s.y), s.w, s.h)

@@ -21,6 +21,8 @@ export type Page = {
     width: number
     height: number
   }
+  /** Draws its own shape with no window behind it: only what it paints takes clicks. */
+  shaped?: boolean
 }
 
 const Pages: Record<string, Page> = {
@@ -141,9 +143,10 @@ const Pages: Record<string, Page> = {
     path: '/radio',
     label: 'miya radio',
     icon: RadioIcon[0],
+    shaped: true,
     minSize: {
-      width: 480,
-      height: 680,
+      width: 620,
+      height: 470,
     },
   },
   dropmusic: {

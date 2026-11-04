@@ -24,6 +24,9 @@ export type LiveMintEntry = {
   image?: string
   blurb?: string
   artist?: string
+  /** Path of the artist's logo (under public/) and a link for their name. */
+  artistLogo?: string
+  artistUrl?: string
   /** Dedicated view instead of the generic mint view (MIYAMINI keeps its own page). */
   view?: 'miyamini'
   /** Pin to the top of the list (lower first). Unpinned entries sort after pinned ones. */
@@ -33,6 +36,8 @@ export type LiveMintEntry = {
 /** What the chain told us about one collection. Any field may be missing when a read failed. */
 export type LiveMintReads = {
   name?: string
+  /** Drops: who owns the collection, credited when there is no curated artist. */
+  owner?: `0x${string}`
   price?: bigint
   totalSupply?: number
   maxSupply?: number
@@ -60,6 +65,10 @@ export type LiveMintCard = {
   contractURI?: string
   blurb?: string
   artist?: string
+  artistLogo?: string
+  artistUrl?: string
+  /** Drops with no curated credit: the collection's owner. */
+  artistAddress?: `0x${string}`
   view?: 'miyamini'
   status: LiveMintStatus
   price?: bigint
@@ -118,19 +127,11 @@ export const LIVE_MINTS: LiveMintEntry[] = [
     address: '0x375a1911c0c2982f59826c227b7830e5d5985d59',
     image: 'https://koolskull.com/miyamakermini/metadata/images/1.png',
     blurb: '1,024 tiny miyamakers. The first miyamaker mint.',
-    artist: 'koolskull',
+    artist: 'koolskull.eth',
+    artistLogo: '/artists/koolskull.png',
+    artistUrl: 'https://koolskull.com/',
     view: 'miyamini',
     pin: 0,
-  },
-  {
-    slug: 'miyakakis',
-    name: 'Miyakakis',
-    kind: 'erc721m',
-    chainId: 1,
-    // TODO(miyakakis): contract address not known yet; ask the team. Until it is set, this renders a "coming soon" card.
-    address: undefined,
-    blurb: 'Part of the miyamaker family. Mint opens soon.',
-    pin: 1,
   },
 ]
 
@@ -174,6 +175,9 @@ export function toCard(
     contractURI: reads?.contractURI,
     blurb: entry.blurb,
     artist: entry.artist,
+    artistLogo: entry.artistLogo,
+    artistUrl: entry.artistUrl,
+    artistAddress: entry.artist ? undefined : reads?.owner,
     view: entry.view,
     status,
     price: reads?.price,

@@ -455,8 +455,7 @@ export default function Home() {
             <Prose>
               <p>
                 <strong>imdUSD is a dollar, not an investment.</strong> It is the steady part of the miyanet. miyamaker
-                sends its 1% fee to the imdUSD Treasury. Swapping into or out of imdUSD in Trade has no miyamaker
-                fee.
+                sends its 1% fee to the imdUSD Treasury. Swapping into or out of imdUSD in Trade has no miyamaker fee.
               </p>
               <p>
                 <strong>Hold imdUSD, earn INFER.</strong> Each day you hold imdUSD earns season points. When a season

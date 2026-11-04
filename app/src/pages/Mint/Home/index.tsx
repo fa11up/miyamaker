@@ -3,6 +3,8 @@ import { useElementSize } from 'usehooks-ts'
 
 import NftImage from '@/components/NftImage'
 import { BigButton, Chip, DisplayTitle, Eyebrow, Panel, ProgressMeter, Skeleton, Well } from '@/components/Retro'
+import { explorerUrl } from '@/config/wagmi'
+import ArtistTag from '@/pages/Mint/ArtistTag'
 import type { LiveMintCard, LiveMintStatus } from '@/pages/Mint/liveMints'
 import { formatEthShort } from '@/pages/Mint/liveMints'
 import { useContractImage, useLiveMints } from '@/pages/Mint/useLiveMints'
@@ -363,6 +365,13 @@ function MintCard({
       </Well>
       <CardInfo>
         <CardName title={card.name}>{card.name}</CardName>
+        <ArtistTag
+          artist={card.artist}
+          logo={card.artistLogo}
+          url={card.artistUrl}
+          address={card.artistAddress}
+          explorer={explorerUrl(card.chainId)}
+        />
         <CardRow>
           <span>{card.chainName}</span>
           <StatusChip status={card.status} />
@@ -433,7 +442,13 @@ function Featured({
         </Chips>
         <div>
           <Name>{card.name}</Name>
-          {card.artist && <Blurb>by {card.artist}</Blurb>}
+          <ArtistTag
+            artist={card.artist}
+            logo={card.artistLogo}
+            url={card.artistUrl}
+            address={card.artistAddress}
+            explorer={explorerUrl(card.chainId)}
+          />
         </div>
         {card.blurb && <Blurb>{card.blurb}</Blurb>}
       </FeatureIntro>
