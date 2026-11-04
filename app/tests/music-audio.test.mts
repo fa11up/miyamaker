@@ -5,7 +5,9 @@ import { test } from 'node:test'
 
 import {
   buildMusicMetadata,
+  classifyChannels,
   decodeDataJson,
+  estimateKbps,
   formatDuration,
   isAudio,
   MAX_AUDIO_BYTES,
@@ -182,4 +184,22 @@ test('isAudio and formatDuration', () => {
   assert.equal(formatDuration(65.9), '1:05')
   assert.equal(formatDuration(3725), '1:02:05')
   assert.equal(formatDuration(undefined), '--:--')
+})
+
+test('estimates bitrate from size and length, and only when both are known', () => {
+  assert.equal(estimateKbps(4_000_000, 200), 160)
+  assert.equal(estimateKbps(undefined, 200), undefined)
+  assert.equal(estimateKbps(4_000_000, 0), undefined)
+  assert.equal(estimateKbps(4_000_000, Number.POSITIVE_INFINITY), undefined)
+})
+
+test('tells mono from stereo by comparing the channels', () => {
+  const wave = (f: (i: number) => number) => Uint8Array.from({ length: 64 }, (_, i) => 128 + f(i))
+  const quiet = wave(() => 0)
+  const tone = wave((i) => Math.round(60 * Math.sin(i / 3)))
+  const other = wave((i) => Math.round(60 * Math.cos(i / 5)))
+  assert.equal(classifyChannels(quiet, quiet), 'silent')
+  assert.equal(classifyChannels(tone, quiet), 'mono')
+  assert.equal(classifyChannels(tone, tone), 'mono')
+  assert.equal(classifyChannels(tone, other), 'stereo')
 })
