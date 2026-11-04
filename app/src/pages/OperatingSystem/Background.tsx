@@ -64,7 +64,7 @@ export default function Background() {
               MiyaOS
             </span>
           </p>
-          <p>Version 1.0.0</p>
+          <p>Version 1.3.0</p>
           {account?.isConnected && (
             <>
               {clusterName ? <p>{clusterName}</p> : !!ens.data && <p>{ens.data}</p>}
