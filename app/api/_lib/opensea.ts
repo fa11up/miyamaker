@@ -12,7 +12,7 @@
  * - Integers too big for a JS number (Seaport salts, amounts) are turned into strings before the page parses the
  *   JSON, so signatures and amounts survive (`quoteBigInts`).
  *
- * Shared by the Vercel function (api/opensea.ts) and the Vite dev middleware (vite.config.ts). No imports, so
+ * Shared by the Cloudflare Worker (api/worker.ts) and the Vite dev middleware (vite.config.ts). No imports, so
  * `node --test` loads it directly (tests/markets.test.mts). The same-origin check and the rate limiter come from
  * api/_lib/zeroex.ts and are passed in (`guards`).
  */
@@ -345,5 +345,3 @@ export async function handleOpenSeaRequest(
     headers: { 'content-type': 'application/json', 'cache-control': cache },
   })
 }
-
-export const envFromProcess = (): OpenSeaEnv => ({ OPENSEA_API_KEY: process.env.OPENSEA_API_KEY })

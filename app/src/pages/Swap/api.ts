@@ -1,6 +1,6 @@
 import type { SwapRequest, ZeroExPrice, ZeroExQuote } from './types'
 
-/** Same-origin proxy (Vercel function in prod, Vite middleware in dev). The 0x key stays server-side. */
+/** Same-origin proxy (Cloudflare Worker in prod, Vite middleware in dev). The 0x key stays server-side. */
 const PROXY_BASE = '/api/0x/swap/allowance-holder'
 
 export class SwapApiError extends Error {

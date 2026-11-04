@@ -14,7 +14,7 @@ import {
   parseStats,
 } from './markets'
 
-/** Same-origin proxy (Vercel function in prod, Vite middleware in dev). The OpenSea key stays server-side. */
+/** Same-origin proxy (Cloudflare Worker in prod, Vite middleware in dev). The OpenSea key stays server-side. */
 const PROXY = '/api/opensea'
 
 export class MarketError extends Error {

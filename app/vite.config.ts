@@ -13,7 +13,7 @@ import { handleOpenSeaRequest, OPENSEA_PROXY_PATH } from './api/_lib/opensea'
 import { clientKey, createRateLimiter, handleZeroExRequest, PROXY_PREFIX, sameOrigin } from './api/_lib/zeroex'
 
 /**
- * Dev-only stand-in for the Vercel functions in api/0x: same validation and key injection
+ * Dev-only stand-in for the Worker's 0x routes (api/worker.ts): same validation and key injection
  * (api/_lib/zeroex.ts). ZEROX_API_KEY is read from the shell or app/.env.local and
  * are never exposed to the client bundle (no VITE_ prefix).
  */
@@ -37,7 +37,7 @@ function zeroExDevProxy(env: Record<string, string>): Plugin {
   }
 }
 
-/** Dev-only stand-in for api/opensea.ts (api/_lib/opensea.ts). OPENSEA_API_KEY from the shell or app/.env.local. */
+/** Dev-only stand-in for the Worker's OpenSea route (api/_lib/opensea.ts). OPENSEA_API_KEY from the shell or app/.env.local. */
 function openSeaDevProxy(env: Record<string, string>): Plugin {
   const guards = {
     sameOrigin,

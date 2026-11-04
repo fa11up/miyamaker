@@ -1,0 +1,23 @@
+{
+  // miyamaker.com: static build (dist/) + the API proxies in api/worker.ts. Deploy with `yarn deploy`.
+  // VITE_ vars are read at build time from .env.production.local (gitignored); see .env.example.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "miyamaker",
+  "main": "api/worker.ts",
+  "compatibility_date": "2026-10-01",
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    // Hashed assets skip the Worker (they don't count against its request quota); page loads and /api/* need it.
+    "run_worker_first": ["/*", "!/assets/*", "!/fonts/*", "!/icons/*", "!/sounds/*"]
+  },
+  // Secrets (not in this file): npx wrangler secret put ZEROX_API_KEY
+  //                             npx wrangler secret put OPENSEA_API_KEY
+  "workers_dev": true,
+  "routes": [
+    { "pattern": "www.miyamaker.com", "custom_domain": true },
+    { "pattern": "miyamaker.com", "custom_domain": true }
+  ],
+  "observability": { "enabled": true }
+}
