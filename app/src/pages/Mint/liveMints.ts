@@ -37,6 +37,10 @@ export type LiveMintReads = {
   totalSupply?: number
   maxSupply?: number
   mintOpen?: boolean
+  /** Drops: pieces phases can still sell, after the artist's reserve. */
+  publicRemaining?: number
+  /** Drops: what the live phase can still sell, or publicRemaining when no phase is live. */
+  left?: number
   image?: string
   /** Contract-level metadata (cover image) for collections without a curated image. */
   contractURI?: string
@@ -61,6 +65,8 @@ export type LiveMintCard = {
   price?: bigint
   minted?: number
   supply?: number
+  /** Drops: what can still be minted right now. */
+  left?: number
   /** 0..1, undefined when supply is unknown. */
   progress?: number
   /** Cards that can open a mint view (has an address). */
@@ -146,7 +152,8 @@ export function toCard(
   const address = isLiveAddress(entry.address) ? entry.address : undefined
   const minted = finiteOrUndefined(reads?.totalSupply)
   const supply = finiteOrUndefined(reads?.maxSupply)
-  const soldOut = minted !== undefined && supply !== undefined && supply > 0 && minted >= supply
+  const soldOut =
+    reads?.publicRemaining === 0 || (minted !== undefined && supply !== undefined && supply > 0 && minted >= supply)
 
   let status: LiveMintStatus
   if (!address) status = 'soon'
@@ -172,6 +179,7 @@ export function toCard(
     price: reads?.price,
     minted,
     supply,
+    left: finiteOrUndefined(reads?.left),
     progress: minted !== undefined && supply ? Math.min(1, Math.max(0, minted / supply)) : undefined,
     clickable: !!address,
     source,
@@ -234,13 +242,15 @@ export type DropPhase = {
   price: bigint
   maxPerWallet: number
   merkleRoot: string
+  supplyCap: number
 }
 
 /**
  * The phase a public minter can use right now: active (start <= now < end, end 0 = open-ended) and not allowlisted
- * (merkleRoot 0). Returns its index and price, or undefined when nothing public is live.
+ * (merkleRoot 0), with supply left under its cap. Returns its index, price and how many it can still sell (undefined
+ * with no cap), or undefined when nothing public is live. `sold` is phasesMinted(), in the same order.
  */
-export function activePublicPhase(phases: readonly DropPhase[] | undefined, nowSec: number) {
+export function activePublicPhase(phases: readonly DropPhase[] | undefined, nowSec: number, sold?: readonly bigint[]) {
   if (!phases) return undefined
   for (let i = 0; i < phases.length; i += 1) {
     const p = phases[i]!
@@ -248,7 +258,11 @@ export function activePublicPhase(phases: readonly DropPhase[] | undefined, nowS
     const end = Number(p.end)
     const live = start <= nowSec && (end === 0 || nowSec < end)
     const isPublic = /^0x0*$/.test(p.merkleRoot)
-    if (live && isPublic) return { phaseId: i, price: p.price, maxPerWallet: p.maxPerWallet }
+    const cap = Number(p.supplyCap)
+    const left = cap ? cap - Number(sold?.[i] ?? 0n) : undefined
+    if (live && isPublic && (left === undefined || left > 0)) {
+      return { phaseId: i, price: p.price, maxPerWallet: p.maxPerWallet, left }
+    }
   }
 
   return undefined

@@ -43,7 +43,7 @@ export type LaunchType = 'drop' | 'auction' | 'editions'
 export type EditionKind = 'art' | 'music'
 export type MediaMode = 'upload' | 'link'
 
-export type PhaseForm = { start: string; end: string; price: string; maxPerWallet: string }
+export type PhaseForm = { start: string; end: string; price: string; maxPerWallet: string; supplyCap: string }
 
 export type LaunchForm = {
   type: LaunchType | ''
@@ -60,6 +60,7 @@ export type LaunchForm = {
   artist: string
   // drop
   supply: string
+  ownerReserve: string
   phases: PhaseForm[]
   royaltyPct: string
   revealUri: string
@@ -81,7 +82,7 @@ export const MAX_PHASES = 3
 export const AUCTION_TIME_BUFFER_SECONDS = 300
 export const MAX_ROYALTY_BPS = 1000
 
-export const EMPTY_PHASE: PhaseForm = { start: '', end: '', price: '', maxPerWallet: '' }
+export const EMPTY_PHASE: PhaseForm = { start: '', end: '', price: '', maxPerWallet: '', supplyCap: '' }
 
 export const EMPTY_FORM: LaunchForm = {
   type: '',
@@ -96,6 +97,7 @@ export const EMPTY_FORM: LaunchForm = {
   audioUri: '',
   artist: '',
   supply: '',
+  ownerReserve: '',
   phases: [{ ...EMPTY_PHASE }],
   royaltyPct: '5',
   revealUri: '',
@@ -166,6 +168,10 @@ export function parseWhole(
   return { ok: true, n }
 }
 
+/** Pieces kept for the artist to give away. Blank means none. At least one must stay on sale, or no phase can sell. */
+export const parseReserve = (input: string, supply: number) =>
+  parseWhole(input, { min: 0, max: supply - 1, label: 'Pieces kept back', blank: 0 })
+
 export function parseName(input: string): Result<{ name: string }> {
   const s = (input || '').replace(/\s+/g, ' ').trim()
   if (!s) return { ok: false, error: 'Give your collection a name.' }
@@ -211,7 +217,14 @@ export function parseVault(input: string): Result<{ vault: Address }> {
 
 // ── phases ───────────────────────────────────────────────────────────────────
 
-export type Phase = { start: bigint; end: bigint; price: bigint; maxPerWallet: number; merkleRoot: `0x${string}` }
+export type Phase = {
+  start: bigint
+  end: bigint
+  price: bigint
+  maxPerWallet: number
+  merkleRoot: `0x${string}`
+  supplyCap: number
+}
 
 const ZERO_ROOT = `0x${'0'.repeat(64)}` as const
 
@@ -227,14 +240,25 @@ export function buildPhases(phases: PhaseForm[], now: bigint): Result<{ phases: 
     const end = parseLocalTime(p.end, 0n)
     const price = parseEth(p.price, { allowZero: true, label: `Price${n}` })
     const cap = parseWhole(p.maxPerWallet, { min: 1, max: 100_000, label: `Per-wallet limit${n}`, blank: 0 })
+    const supplyCap = parseWhole(p.supplyCap, { min: 1, max: 100_000, label: `Pieces for sale${n}`, blank: 0 })
     if (!start.ok) errors[i] = `Start${n}: ${start.error}`
     else if (!end.ok) errors[i] = `End${n}: ${end.error}`
     else if (!price.ok) errors[i] = price.error
     else if (!cap.ok) errors[i] = cap.error
+    else if (!supplyCap.ok) errors[i] = supplyCap.error
     else if (end.at !== 0n && end.at <= start.at) errors[i] = `The end${n} must be after the start.`
     else if (end.at !== 0n && end.at <= now) errors[i] = `The end${n} is already in the past.`
     else if (price.wei >= 2n ** 128n) errors[i] = `Price${n} is too large.`
-    else out.push({ start: start.at, end: end.at, price: price.wei, maxPerWallet: cap.n, merkleRoot: ZERO_ROOT })
+    else {
+      out.push({
+        start: start.at,
+        end: end.at,
+        price: price.wei,
+        maxPerWallet: cap.n,
+        merkleRoot: ZERO_ROOT,
+        supplyCap: supplyCap.n,
+      })
+    }
   })
   if (errors.some(Boolean)) return { ok: false, error: errors.filter(Boolean)[0] as string }
   return { ok: true, phases: out, errors }
@@ -341,8 +365,14 @@ export function validateStep(step: StepKey, f: LaunchForm, ctx: ValidationContex
     if (f.type === 'drop') {
       const s = parseWhole(f.supply, { min: 1, max: 100_000, label: 'Supply' })
       if (!s.ok) e.supply = s.error
+      const reserve = parseReserve(f.ownerReserve, s.ok ? s.n : 100_000)
+      if (!reserve.ok) e.ownerReserve = reserve.error
       const ph = buildPhases(f.phases, ctx.now)
       if (!ph.ok) e.phases = ph.error
+      else if (s.ok && reserve.ok && ph.phases.some((p) => p.supplyCap > s.n - reserve.n)) {
+        e.phases = `A phase can sell at most ${(s.n - reserve.n).toLocaleString('en-US')} pieces.`
+      }
+
       const r = parseRoyaltyPct(f.royaltyPct)
       if (!r.ok) e.royaltyPct = r.error
       const reveal = parseLink(f.revealUri, false)
@@ -415,7 +445,8 @@ export function buildDropArgs(f: LaunchForm, r: Resolved, now: bigint) {
   const phases = buildPhases(f.phases, now)
   const royalty = parseRoyaltyPct(f.royaltyPct)
   const reveal = parseLink(f.revealUri, false)
-  if (!sym.ok || !supply.ok || !phases.ok || !royalty.ok || !reveal.ok || !c.name) {
+  const reserve = parseReserve(f.ownerReserve, supply.ok ? supply.n : 100_000)
+  if (!sym.ok || !supply.ok || !reserve.ok || !phases.ok || !royalty.ok || !reveal.ok || !c.name) {
     throw new Error('Fix the highlighted fields first.')
   }
 
@@ -426,6 +457,7 @@ export function buildDropArgs(f: LaunchForm, r: Resolved, now: bigint) {
       name: c.name,
       symbol: sym.symbol,
       maxSupply: supply.n,
+      ownerReserve: reserve.n,
       baseURI: reveal.uri,
       unrevealedURI,
       contractURI,

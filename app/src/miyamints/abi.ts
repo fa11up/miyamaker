@@ -16,6 +16,7 @@ const phaseComponents = [
   { name: 'price', type: 'uint128' },
   { name: 'maxPerWallet', type: 'uint32' },
   { name: 'merkleRoot', type: 'bytes32' },
+  { name: 'supplyCap', type: 'uint32' },
 ] as const
 
 const phaseTupleArray = {
@@ -39,6 +40,7 @@ export const dropFactoryAbi = [
           { name: 'name', type: 'string' },
           { name: 'symbol', type: 'string' },
           { name: 'maxSupply', type: 'uint32' },
+          { name: 'ownerReserve', type: 'uint32' },
           { name: 'baseURI', type: 'string' },
           { name: 'unrevealedURI', type: 'string' },
           { name: 'contractURI', type: 'string' },
@@ -81,6 +83,9 @@ export const dropInstanceAbi = [
   view('unrevealedURI', 'string'),
   view('contractURI', 'string'),
   view('metadataLocked', 'bool'),
+  view('ownerReserve', 'uint32'),
+  view('ownerMinted', 'uint256'),
+  view('royaltyLocked', 'bool'),
   view('protocolBps', 'uint16'),
   view('alignmentBps', 'uint16'),
   view('vault', 'address'),
@@ -104,6 +109,7 @@ export const dropInstanceAbi = [
     outputs: [],
   },
   { type: 'function', name: 'lockMetadata', stateMutability: 'nonpayable', inputs: [], outputs: [] },
+  { type: 'function', name: 'lockRoyalty', stateMutability: 'nonpayable', inputs: [], outputs: [] },
   {
     type: 'function',
     name: 'setPhases',
@@ -145,6 +151,8 @@ export const dropInstanceAbi = [
   { type: 'error', name: 'NotAllowlisted', inputs: [] },
   { type: 'error', name: 'WalletLimit', inputs: [] },
   { type: 'error', name: 'SoldOut', inputs: [] },
+  { type: 'error', name: 'PhaseSoldOut', inputs: [] },
+  { type: 'error', name: 'ReserveExceeded', inputs: [] },
   { type: 'error', name: 'WrongPayment', inputs: [] },
   { type: 'error', name: 'Locked', inputs: [] },
   { type: 'error', name: 'NothingToWithdraw', inputs: [] },

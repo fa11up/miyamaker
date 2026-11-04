@@ -602,6 +602,8 @@ export default function LaunchPage() {
                               {form.phases.length} phase{form.phases.length > 1 ? 's' : ''}, first starts{' '}
                               {form.phases[0]?.start ? new Date(form.phases[0].start).toLocaleString() : 'right away'}
                             </dd>
+                            <dt>Kept back</dt>
+                            <dd>{form.ownerReserve.trim() || 'None'}</dd>
                             <dt>Resale royalty</dt>
                             <dd>{royalty.ok ? pctLabel(royalty.bps) : '—'}</dd>
                           </>

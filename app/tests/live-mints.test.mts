@@ -110,17 +110,28 @@ test('paths: mintPath / slugFromPath round trip', () => {
   assert.equal(slugFromPath('/swap'), undefined)
 })
 
+test('activePublicPhase: skips a phase that sold its cap and reports what is left', () => {
+  const zero = `0x${'0'.repeat(64)}`
+  const phases = [
+    { start: 0n, end: 0n, price: 1n, maxPerWallet: 0, merkleRoot: zero, supplyCap: 5 },
+    { start: 0n, end: 0n, price: 2n, maxPerWallet: 0, merkleRoot: zero, supplyCap: 0 },
+  ]
+  assert.deepEqual(activePublicPhase(phases, 1, [3n, 0n]), { phaseId: 0, price: 1n, maxPerWallet: 0, left: 2 })
+  assert.equal(activePublicPhase(phases, 1, [5n, 0n])?.phaseId, 1)
+  assert.equal(activePublicPhase(phases, 1, [5n, 0n])?.left, undefined)
+})
+
 test('activePublicPhase: picks the first live public phase', () => {
   const zero = `0x${'0'.repeat(64)}`
   const root = `0x${'a'.repeat(64)}`
   const phases = [
-    { start: 0n, end: 100n, price: 1n, maxPerWallet: 0, merkleRoot: zero }, // ended
-    { start: 100n, end: 0n, price: 2n, maxPerWallet: 0, merkleRoot: root }, // allowlist
-    { start: 150n, end: 0n, price: 3n, maxPerWallet: 2, merkleRoot: zero }, // public, open-ended
+    { start: 0n, end: 100n, price: 1n, maxPerWallet: 0, merkleRoot: zero, supplyCap: 0 }, // ended
+    { start: 100n, end: 0n, price: 2n, maxPerWallet: 0, merkleRoot: root, supplyCap: 0 }, // allowlist
+    { start: 150n, end: 0n, price: 3n, maxPerWallet: 2, merkleRoot: zero, supplyCap: 0 }, // public, open-ended
   ]
   assert.equal(activePublicPhase(phases, 50)?.phaseId, 0)
   assert.equal(activePublicPhase(phases, 120), undefined)
-  assert.deepEqual(activePublicPhase(phases, 200), { phaseId: 2, price: 3n, maxPerWallet: 2 })
+  assert.deepEqual(activePublicPhase(phases, 200), { phaseId: 2, price: 3n, maxPerWallet: 2, left: undefined })
   assert.equal(activePublicPhase(undefined, 1), undefined)
   assert.equal(activePublicPhase([], 1), undefined)
 })

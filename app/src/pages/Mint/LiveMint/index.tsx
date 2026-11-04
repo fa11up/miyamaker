@@ -180,7 +180,8 @@ export default function LiveMintView({ card, onBack }: { card: LiveMintCard; onB
   const cover = useContractImage(live.image ? undefined : live.contractURI)
   const [quantity, setQuantity] = useState(1)
 
-  const remaining = live.supply !== undefined && live.minted !== undefined ? live.supply - live.minted : undefined
+  const remaining =
+    live.left ?? (live.supply !== undefined && live.minted !== undefined ? live.supply - live.minted : undefined)
   const maxQty = Math.max(1, Math.min(MAX_PER_TX, remaining ?? MAX_PER_TX))
   const total = live.price !== undefined ? live.price * BigInt(quantity) : undefined
   const insufficient = tx.balance !== undefined && total !== undefined && tx.balance < total
