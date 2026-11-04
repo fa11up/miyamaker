@@ -308,6 +308,13 @@ export default function LiveMintView({ card, onBack }: { card: LiveMintCard; onB
             <strong>{formatEthShort(total)}</strong>
           </StatRow>
 
+          {tx.isConnected && tx.balance !== undefined && (
+            <StatRow>
+              <span>In your wallet</span>
+              <strong>{formatEthShort(tx.balance)}</strong>
+            </StatRow>
+          )}
+
           <BigButton type="button" disabled={action.disabled} onClick={action.onClick}>
             {action.label}
           </BigButton>

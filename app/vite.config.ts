@@ -229,7 +229,7 @@ export default defineConfig(({ mode }) => ({
           },
         ],
         navigateFallback: 'index.html',
-        navigateFallbackDenylist: [/^\/api\//],
+        navigateFallbackDenylist: [/^\/api\//, /^\/surf(\/|$)/],
         cleanupOutdatedCaches: true,
       },
     }),
