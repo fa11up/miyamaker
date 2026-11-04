@@ -14,22 +14,24 @@ import { color, space, text } from '@/theme/tokens'
 import type { SwapChainId, SwapToken } from '../constants'
 import { isSwapChain } from '../constants'
 import { erc721Abi, erc1155Abi, poolAbi } from './abi'
+import { EscrowClaim } from './EscrowClaim'
 import { formatPrice } from './markets'
 import { DEFAULT_PAIR_SYMBOL, pairWords, pickPair } from './pairs'
 import type { CommitRow } from './pool'
 import {
   blocksToReveal,
-  MAX_DRAW_UNITS,
   commitPhase,
   depositPlan,
   KIND,
   KIND_LABEL,
+  MAX_DRAW_UNITS,
   MODE,
   MODE_HINT,
   MODE_LABEL,
   parseTokenIds,
   poolTitle,
   redeemCost,
+  revealWords,
   unitsText,
   wholeUnits,
 } from './pool'
@@ -152,7 +154,7 @@ export default function PoolView({
   const [typed, setTyped] = useState('')
   const [typedError, setTypedError] = useState<string>()
   const [manualIds, setManualIds] = useState<string[]>([])
-  const [revealed, setRevealed] = useState<{ ids: bigint[]; rearmed?: boolean }>()
+  const [revealed, setRevealed] = useState<{ ids: bigint[]; held?: bigint[]; rearmed?: boolean }>()
   // Which pair "Buy / Sell <pool token>" uses on the Tokens tab, and prices the token in. ETH unless chosen.
   const pairs = pairsFor(chainId)
   const [pairSymbol, setPairSymbol] = useState<string>(DEFAULT_PAIR_SYMBOL)
@@ -192,8 +194,10 @@ export default function PoolView({
     if (tx.tx.phase !== 'done' || !tx.tx.id?.startsWith('reveal') || !tx.tx.receipt) return
     const logs = parseEventLogs({ abi: poolAbi, logs: tx.tx.receipt.logs })
     const done = logs.find((l) => l.eventName === 'RedeemRevealed')
-    if (done && done.eventName === 'RedeemRevealed') setRevealed({ ids: [...done.args.ids] })
-    else if (logs.some((l) => l.eventName === 'RedeemRearmed')) setRevealed({ ids: [], rearmed: true })
+    if (done && done.eventName === 'RedeemRevealed') {
+      const held = logs.flatMap((l) => (l.eventName === 'RedeemEscrowed' ? [l.args.id] : []))
+      setRevealed({ ids: [...done.args.ids], held })
+    } else if (logs.some((l) => l.eventName === 'RedeemRearmed')) setRevealed({ ids: [], rearmed: true })
   }, [tx.tx.phase, tx.tx.receipt])
 
   // A different pool starts clean.
@@ -374,6 +378,7 @@ export default function PoolView({
             onClick: () => settleOlderDraw(older),
           }
         }
+
         return {
           label: draw.amount === 1 ? 'Reveal your NFT' : `Reveal your ${draw.amount} NFTs`,
           step: 'Step 2 of 2: see which NFT you got. It goes straight to your wallet.',
@@ -520,9 +525,13 @@ export default function PoolView({
           <span>
             {revealed.rearmed
               ? 'That draw waited too long, so it moved to a new block. Reveal again in a moment.'
-              : `You got ${revealed.ids.map((id) => `#${id}`).join(', ')}. It is in your wallet.`}
+              : revealWords(revealed.ids, revealed.held)}
           </span>
         </StatusBox>
+      )}
+
+      {side === 'buy' && random && (
+        <EscrowClaim pool={poolAddress} chainId={chainId} me={me} busy={busy} disabled={wrongChain} tx={tx} />
       )}
 
       {side === 'buy' ? (

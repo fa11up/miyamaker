@@ -18,6 +18,7 @@ import {
   redeemCost,
   unitsText,
   wholeUnits,
+  revealWords,
 } from '../src/pages/Swap/nft/pool.ts'
 import { canonicalPath, parseTradePath, tradePath } from '../src/pages/Swap/tradePath.ts'
 
@@ -119,4 +120,12 @@ test('pool list: newest first, filtered by name, ticker or address', () => {
   assert.equal(poolTitle(pools[0]!), 'Milady')
   assert.equal(poolTitle(pools[1]!), 'Song')
   assert.equal(poolTitle({ name: '', collection: pools[1]!.collection }), '0x4444…4444')
+})
+
+test('revealWords: says when the pool is holding an NFT', () => {
+  assert.equal(revealWords([1n]), 'You got #1. It is in your wallet.')
+  assert.match(revealWords([1n], [1n]), /^The collection refused to send #1/)
+  const mixed = revealWords([1n, 2n], [2n])
+  assert.match(mixed, /^You got #1, now in your wallet/)
+  assert.match(mixed, /refused to send #2/)
 })
