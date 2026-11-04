@@ -1,327 +1,447 @@
 import WingHeartIcon from 'assets/miya_website_logo_2-removebg-preview.png?preset=icon&resize=true'
-import type { ReactNode } from 'react'
-import styled, { css } from 'styled-components/macro'
+import type { CSSProperties, ReactNode } from 'react'
+import { useEffect, useRef } from 'react'
+import styled, { keyframes } from 'styled-components/macro'
 
 import { font } from '@/theme/tokens'
 
+import { CELL_H, CELL_W, clockDigits, DIGIT_H, digitPath, textPath, textWidth } from './pixelFont'
+
 export const wingHeart = WingHeartIcon[0]
 
-/** Shared building blocks of the miya radio skin. All colours come from the skin's CSS variables. */
+/** The radio's parts, all sized in whole player pixels. Every colour comes from the skin's CSS variables. */
 
-const bevelOut = css`
-  box-shadow: inset 1px 1px 0 var(--rk-frame-hi), inset -1px -1px 0 var(--rk-frame-lo),
-    inset 2px 2px 0 rgba(255, 255, 255, 0.18), inset -2px -2px 0 rgba(0, 0, 0, 0.22);
-`
-const bevelIn = css`
-  box-shadow: inset 1px 1px 0 var(--rk-frame-lo), inset -1px -1px 0 var(--rk-frame-hi),
-    inset 2px 2px 0 rgba(0, 0, 0, 0.35);
-`
+const raised = `inset 1px 1px 0 var(--rk-key-hi), inset -1px -1px 0 var(--rk-key-lo)`
+const pressed = `inset 1px 1px 0 var(--rk-key-lo), inset -1px -1px 0 var(--rk-key-hi)`
 
-export const PanelFrame = styled.section`
-  position: relative;
-  flex: 0 0 auto;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  padding: 0 4px 4px;
-  color: var(--rk-frame-ink);
-  background: repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.05) 0 1px, transparent 1px 3px),
-    linear-gradient(180deg, var(--rk-frame), var(--rk-frame-2));
-  ${bevelOut};
-  &.grow {
-    flex: 1 1 auto;
-  }
-  &.shaded {
-    padding-bottom: 2px;
-  }
-`
+export const well = `inset 1px 1px 0 var(--rk-frame-lo), inset -1px -1px 0 var(--rk-frame-hi)`
 
-const StripBar = styled.div`
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  height: 18px;
-  margin: 0 -4px 4px;
-  padding: 0 3px 0 4px;
-  background: linear-gradient(90deg, var(--rk-strip-a), var(--rk-strip-b));
-  color: var(--rk-strip-ink);
-  font-family: ${font.ui};
-  font-size: 12px;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  user-select: none;
-  .shaded > & {
-    margin-bottom: 2px;
-  }
-  img {
-    width: 16px;
-    height: 16px;
-    image-rendering: pixelated;
-    filter: drop-shadow(0 0 1px var(--rk-strip-rule)) drop-shadow(0 0 2px rgba(0, 0, 0, 0.35));
-  }
-  .rule {
-    flex: 1 1 12px;
-    min-width: 8px;
-    height: 7px;
-    background: repeating-linear-gradient(180deg, var(--rk-strip-rule) 0 1px, transparent 1px 3px);
-  }
-  .label {
-    flex: 0 1 auto;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    text-shadow: 1px 1px 0 rgba(0, 0, 0, 0.25);
-  }
-  .extra {
-    flex: 0 1 auto;
-    min-width: 0;
-    overflow: hidden;
-    white-space: nowrap;
-    text-overflow: ellipsis;
-    letter-spacing: 0.06em;
-    text-transform: none;
-    opacity: 0.85;
-  }
-  @media (max-width: 768px) {
-    height: 30px;
-    font-size: 13px;
-  }
+export const at = (left: number, top: number, width?: number, height?: number): CSSProperties => ({
+  position: 'absolute',
+  left,
+  top,
+  width,
+  height,
+})
+
+export function PixelText({ text, style, className }: { text: string; style?: CSSProperties; className?: string }) {
+  return (
+    <svg
+      className={className}
+      style={{ display: 'block', flex: '0 0 auto', ...style }}
+      width={textWidth(text)}
+      height={CELL_H}
+      viewBox={`0 0 ${textWidth(text)} ${CELL_H}`}
+      fill="currentColor"
+      shapeRendering="crispEdges"
+      aria-hidden="true"
+    >
+      <path d={textPath(text)} />
+    </svg>
+  )
+}
+
+const marqueeSteps = keyframes`
+  from { transform: translateX(0); }
+  to { transform: translateX(var(--marquee-x)); }
 `
 
-const StripButton = styled.button`
-  flex: 0 0 auto;
-  display: grid;
-  place-items: center;
-  width: 14px;
-  height: 12px;
-  padding: 0;
-  border: none;
-  border-radius: 0;
-  background: var(--rk-btn);
-  color: var(--rk-btn-ink);
-  cursor: pointer;
-  ${bevelOut};
-  svg {
-    width: 8px;
-    height: 8px;
+const MarqueeBox = styled.div`
+  overflow: hidden;
+  > svg.run {
+    animation: ${marqueeSteps} var(--marquee-s) steps(var(--marquee-n)) infinite;
   }
-  &:active {
-    ${bevelIn};
-  }
-  &:focus-visible {
-    outline: 1px dotted var(--rk-strip-ink);
-    outline-offset: 1px;
-  }
-  @media (max-width: 768px) {
-    width: 28px;
-    height: 24px;
-    svg {
-      width: 10px;
-      height: 10px;
+  @media (prefers-reduced-motion: reduce) {
+    > svg.run {
+      animation: none;
     }
   }
 `
 
-const SHADE_PATH = { open: 'M1 6h6v1H1z', shade: 'M1 1h6v1H1zM1 2h1v5H1zM6 2h1v5H6zM1 6h6v1H1z' }
-
-/** A panel's title strip: winged-heart badge, ruled lines, label, then windowshade / hide buttons. */
-export function Strip({
-  label,
-  extra,
-  shaded,
-  onShade,
-  onHide,
-  panelId,
-}: {
-  label: string
-  extra?: ReactNode
-  shaded: boolean
-  onShade: () => void
-  onHide?: () => void
-  panelId: string
-}) {
+/** One line of pixel text that scrolls a cell at a time when it doesn't fit. */
+export function Marquee({ value, width, style }: { value: string; width: number; style?: CSSProperties }) {
+  const fits = textWidth(value) <= width
+  const shown = fits ? value : `${value}  ***  `
+  const chars = textWidth(shown) / CELL_W
   return (
-    <StripBar onDoubleClick={onShade}>
-      <img src={wingHeart?.src} srcSet={wingHeart?.srcset} alt="" />
-      <span className="rule" />
-      <span className="label">{label}</span>
-      {extra && <span className="extra">{extra}</span>}
-      <span className="rule" />
-      <StripButton
-        type="button"
-        onClick={onShade}
-        aria-expanded={!shaded}
-        aria-controls={panelId}
-        aria-label={shaded ? `Expand ${label}` : `Windowshade ${label}`}
-        title={shaded ? 'Expand (double-click the strip)' : 'Windowshade (double-click the strip)'}
-      >
-        <svg viewBox="0 0 8 8" fill="currentColor" shapeRendering="crispEdges" aria-hidden="true">
-          <path d={shaded ? SHADE_PATH.shade : SHADE_PATH.open} />
-        </svg>
-      </StripButton>
-      {onHide && (
-        <StripButton type="button" onClick={onHide} aria-label={`Hide ${label}`} title={`Hide ${label}`}>
-          <svg viewBox="0 0 8 8" fill="currentColor" shapeRendering="crispEdges" aria-hidden="true">
-            <path d="M1 1h1v1H1zM2 2h1v1H2zM3 3h2v2H3zM5 2h1v1H5zM6 1h1v1H6zM2 5h1v1H2zM1 6h1v1H1zM5 5h1v1H5zM6 6h1v1H6z" />
-          </svg>
-        </StripButton>
-      )}
-    </StripBar>
+    <MarqueeBox
+      className="marquee"
+      title={value}
+      style={{
+        width,
+        height: CELL_H,
+        ...style,
+        ['--marquee-x' as string]: `${-textWidth(shown)}px`,
+        ['--marquee-n' as string]: chars,
+        ['--marquee-s' as string]: `${chars * 0.2}s`,
+      }}
+    >
+      <PixelText text={fits ? value : shown + shown} className={fits ? undefined : 'run'} />
+    </MarqueeBox>
   )
 }
 
-export const Lcd = styled.div`
-  position: relative;
-  background: radial-gradient(120% 140% at 30% 0%, var(--rk-lcd-2), var(--rk-lcd) 60%);
-  color: var(--rk-lcd-ink);
-  ${bevelIn};
-  box-shadow: inset 1px 1px 0 var(--rk-frame-lo), inset -1px -1px 0 var(--rk-frame-hi), inset 0 0 0 2px var(--rk-seam);
-  /* faint scanlines */
-  &::after {
-    content: '';
-    position: absolute;
-    inset: 2px;
-    pointer-events: none;
-    background: repeating-linear-gradient(180deg, rgba(255, 255, 255, 0.025) 0 1px, transparent 1px 3px);
+const blink = keyframes`
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0.25; }
+`
+
+const Digits = styled.svg`
+  display: block;
+  &.blink {
+    animation: ${blink} 1s steps(1) infinite;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    &.blink {
+      animation: none;
+      opacity: 0.55;
+    }
   }
 `
 
-export const Key = styled.button<{ $on?: boolean; $wide?: boolean }>`
-  position: relative;
-  display: inline-flex;
+const DIGIT_X = [9, 21, 39, 51]
+
+/** The big clock, as mm:ss with a minus sign when counting down. Blank when nothing is loaded. */
+export function Clock({
+  seconds,
+  negative,
+  blank,
+  paused,
+}: {
+  seconds: number
+  negative?: boolean
+  blank?: boolean
+  paused?: boolean
+}) {
+  return (
+    <Digits
+      className={paused ? 'blink' : undefined}
+      width="60"
+      height={DIGIT_H}
+      viewBox={`0 0 60 ${DIGIT_H}`}
+      fill="var(--rk-lcd-ink)"
+      shapeRendering="crispEdges"
+      aria-hidden="true"
+    >
+      <path fill="var(--rk-lcd-dim)" d={DIGIT_X.map((x) => digitPath(8, x)).join('')} />
+      {!blank && (
+        <path
+          d={`${clockDigits(seconds)
+            .map((d, i) => digitPath(d, DIGIT_X[i]))
+            .join('')}M33 4h2v2h-2zM33 8h2v2h-2z${negative ? 'M1 6h5v1H1z' : ''}`}
+        />
+      )}
+    </Digits>
+  )
+}
+
+/** A silver key. Sized by the caller; holds a glyph or pixel text. */
+export const Key = styled.button`
+  all: unset;
+  box-sizing: border-box;
+  display: flex;
   align-items: center;
   justify-content: center;
-  gap: 5px;
-  min-width: ${({ $wide }) => ($wide ? '44px' : '30px')};
-  height: 24px;
-  padding: 0 7px;
-  border: none;
-  border-radius: 0;
-  background: linear-gradient(180deg, var(--rk-frame-hi) -60%, var(--rk-btn) 45%, var(--rk-frame-2) 160%);
+  gap: 2px;
   color: var(--rk-btn-ink);
-  font-family: ${font.ui};
-  font-size: 12px;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  white-space: nowrap;
+  background: linear-gradient(180deg, var(--rk-btn) 0%, var(--rk-btn-2) 100%);
+  box-shadow: ${raised}, 0 0 0 1px var(--rk-seam);
   cursor: pointer;
-  ${bevelOut};
   svg {
-    width: 11px;
-    height: 11px;
-  }
-  &:hover:not(:disabled) {
-    filter: brightness(1.06);
+    filter: drop-shadow(1px 1px 0 var(--rk-key-hi));
   }
   &:active:not(:disabled),
   &[aria-pressed='true'] {
-    ${bevelIn};
-    background: linear-gradient(180deg, var(--rk-frame-2), var(--rk-btn));
-  }
-  &:focus-visible {
-    outline: 1px dotted var(--rk-btn-ink);
-    outline-offset: -4px;
-  }
-  &:disabled {
-    opacity: 0.45;
-    cursor: not-allowed;
-  }
-  @media (max-width: 768px) {
-    height: 34px;
-    min-width: ${({ $wide }) => ($wide ? '48px' : '38px')};
-  }
-`
-
-/** Little indicator lamp used on toggle keys. */
-export const Led = styled.i<{ $on?: boolean }>`
-  display: inline-block;
-  width: 6px;
-  height: 6px;
-  background: ${({ $on }) => ($on ? 'var(--rk-btn-on)' : 'rgba(0, 0, 0, 0.3)')};
-  box-shadow: ${({ $on }) =>
-    $on ? '0 0 4px var(--rk-btn-on), inset -1px -1px 0 rgba(0,0,0,0.25)' : 'inset 1px 1px 0 rgba(0,0,0,0.35)'};
-`
-
-/** Horizontal slider; set `--p` (0…1) via style for the filled part. `$center` fills out from the middle. */
-export const Slider = styled.input.attrs({ type: 'range' })<{ $center?: boolean }>`
-  --p: 0;
-  -webkit-appearance: none;
-  appearance: none;
-  display: block;
-  width: 100%;
-  height: 16px;
-  margin: 0;
-  background: transparent;
-  cursor: pointer;
-  &::-webkit-slider-runnable-track {
-    height: 6px;
-    background: ${({ $center }) =>
-      $center
-        ? `linear-gradient(90deg, var(--rk-fill-b), var(--rk-fill-a) 50%, var(--rk-fill-b))`
-        : `linear-gradient(90deg, var(--rk-fill-a), var(--rk-fill-b)) 0 0 / calc(var(--p) * 100%) 100% no-repeat, var(--rk-groove)`};
-    box-shadow: inset 1px 1px 0 rgba(0, 0, 0, 0.5), 0 1px 0 var(--rk-frame-hi);
-  }
-  &::-moz-range-track {
-    height: 6px;
-    background: ${({ $center }) =>
-      $center
-        ? `linear-gradient(90deg, var(--rk-fill-b), var(--rk-fill-a) 50%, var(--rk-fill-b))`
-        : `linear-gradient(90deg, var(--rk-fill-a), var(--rk-fill-b)) 0 0 / calc(var(--p) * 100%) 100% no-repeat, var(--rk-groove)`};
-    box-shadow: inset 1px 1px 0 rgba(0, 0, 0, 0.5), 0 1px 0 var(--rk-frame-hi);
-  }
-  &::-webkit-slider-thumb {
-    -webkit-appearance: none;
-    width: 14px;
-    height: 12px;
-    margin-top: -3px;
-    border: none;
-    background: linear-gradient(90deg, transparent 6px, var(--rk-btn-on) 6px 8px, transparent 8px),
-      linear-gradient(180deg, var(--rk-frame-hi), var(--rk-btn) 50%, var(--rk-frame-2));
-    box-shadow: inset 1px 1px 0 var(--rk-frame-hi), inset -1px -1px 0 var(--rk-frame-lo), 0 0 0 1px var(--rk-seam);
-  }
-  &::-moz-range-thumb {
-    width: 14px;
-    height: 12px;
-    border: none;
-    border-radius: 0;
-    background: linear-gradient(90deg, transparent 6px, var(--rk-btn-on) 6px 8px, transparent 8px),
-      linear-gradient(180deg, var(--rk-frame-hi), var(--rk-btn) 50%, var(--rk-frame-2));
-    box-shadow: inset 1px 1px 0 var(--rk-frame-hi), inset -1px -1px 0 var(--rk-frame-lo), 0 0 0 1px var(--rk-seam);
+    background: linear-gradient(180deg, var(--rk-btn-2) 0%, var(--rk-btn) 100%);
+    box-shadow: ${pressed}, 0 0 0 1px var(--rk-seam);
   }
   &:focus-visible {
     outline: 1px dotted var(--rk-frame-ink);
     outline-offset: 1px;
   }
   &:disabled {
-    cursor: not-allowed;
-    opacity: 0.55;
-  }
-  @media (max-width: 768px) {
-    height: 28px;
-    &::-webkit-slider-thumb {
-      width: 20px;
-      height: 18px;
-      margin-top: -6px;
-    }
-    &::-moz-range-thumb {
-      width: 20px;
-      height: 18px;
-    }
+    cursor: default;
+    color: var(--rk-btn-off);
   }
 `
 
-export const SliderLabel = styled.label`
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  font-family: ${font.ui};
-  font-size: 11px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--rk-frame-ink);
-  > span {
-    flex: 0 0 auto;
+/** A round chrome bead with a glyph on it. `$orb` is the big glass play button. */
+export const Bead = styled.button.attrs({ type: 'button' })<{ $size: number; $lit?: boolean; $orb?: boolean }>`
+  all: unset;
+  box-sizing: border-box;
+  display: grid;
+  place-items: center;
+  width: ${({ $size }) => $size}px;
+  height: ${({ $size }) => $size}px;
+  border-radius: 50%;
+  cursor: pointer;
+  color: ${({ $orb }) => ($orb ? '#fff' : 'var(--rk-btn-ink)')};
+  background: ${({ $orb, $lit }) =>
+    $orb
+      ? `radial-gradient(circle at 36% 26%, #fff 0 5%, #ff9df0 16%, #c82bd0 42%, #57107f 72%, #1c0538 100%)`
+      : $lit
+      ? `radial-gradient(circle at 36% 28%, #fff 0 8%, #e2ffd2 22%, #7be05f 52%, #23762a 86%, #0e3d17 100%)`
+      : `radial-gradient(circle at 36% 28%, #fff 0 8%, #e4e8f4 22%, #a2aac2 52%, #565d7c 84%, #2b2f48 100%)`};
+  box-shadow: 0 0 0 1px #10101d, 0 2px 3px rgba(2, 1, 10, 0.75),
+    ${({ $orb, $lit }) => ($orb && $lit ? '0 0 calc(8px + var(--lvl) * 16px) #ff5ce8' : '0 0 0 transparent')};
+  svg {
+    filter: drop-shadow(0 1px 0 rgba(255, 255, 255, 0.5));
+  }
+  &:active:not(:disabled) {
+    transform: translateY(1px);
+    filter: brightness(0.85);
+  }
+  &:focus-visible {
+    outline: 1px dotted #fff;
+    outline-offset: 2px;
+  }
+  &:disabled {
+    cursor: default;
+    color: var(--rk-btn-off);
+    filter: saturate(0.5) brightness(0.8);
   }
 `
+
+const DialBox = styled.div`
+  box-sizing: border-box;
+  position: absolute;
+  border-radius: 50%;
+  cursor: ns-resize;
+  touch-action: none;
+  background: conic-gradient(
+    from 200deg,
+    #2b2f48,
+    #e8ecf8 18%,
+    #59607f 34%,
+    #f3f5ff 52%,
+    #4a506e 68%,
+    #d3d9ea 84%,
+    #2b2f48
+  );
+  box-shadow: 0 0 0 2px #10101d, 0 3px 5px rgba(2, 1, 10, 0.75), inset 0 0 6px rgba(0, 0, 0, 0.5);
+  &:focus-visible {
+    outline: 1px dotted #fff;
+    outline-offset: 3px;
+  }
+  .notch {
+    position: absolute;
+    left: calc(50% - 2px);
+    top: 3px;
+    width: 4px;
+    height: 9px;
+    border-radius: 2px;
+    background: #ff5ce8;
+    box-shadow: 0 0 5px #ff5ce8;
+  }
+`
+
+const SWEEP = 270
+
+/** A rotary knob: drag up or down, scroll with the arrow keys, double-click to reset where that makes sense. */
+export function Dial({
+  label,
+  style,
+  min,
+  max,
+  step,
+  value,
+  text,
+  onChange,
+  onReset,
+  center,
+}: {
+  label: string
+  style: CSSProperties
+  min: number
+  max: number
+  step: number
+  value: number
+  text: string
+  onChange: (v: number) => void
+  onReset?: () => void
+  center?: boolean
+}) {
+  const drag = useRef<{ y: number; start: number } | null>(null)
+  const clamp = (v: number) => Math.min(max, Math.max(min, Number((Math.round(v / step) * step).toFixed(4))))
+  const angle = ((value - min) / (max - min) - 0.5) * SWEEP
+  return (
+    <DialBox
+      role="slider"
+      tabIndex={0}
+      aria-label={label}
+      aria-valuemin={min}
+      aria-valuemax={max}
+      aria-valuenow={value}
+      aria-valuetext={text}
+      title={`${label} ${text}${center ? ' (double-click to centre)' : ''}`}
+      style={{ ...style, transform: `rotate(${angle}deg)` }}
+      onPointerDown={(e) => {
+        e.currentTarget.setPointerCapture(e.pointerId)
+        drag.current = { y: e.clientY, start: value }
+      }}
+      onPointerMove={(e) => {
+        if (drag.current) onChange(clamp(drag.current.start + ((drag.current.y - e.clientY) / 110) * (max - min)))
+      }}
+      onPointerUp={() => {
+        drag.current = null
+      }}
+      onDoubleClick={onReset}
+      onKeyDown={(e) => {
+        const by = { ArrowUp: step, ArrowRight: step, ArrowDown: -step, ArrowLeft: -step }[e.key]
+        if (by) {
+          e.preventDefault()
+          onChange(clamp(value + by))
+        }
+      }}
+    >
+      <span className="notch" />
+    </DialBox>
+  )
+}
+
+/** Horizontal slider. Set `--p` (0…1) for the lit part and `--fill` for its colour. */
+export const Slider = styled.input.attrs({ type: 'range' })<{ $thumb?: number; $thumbH?: number; $center?: boolean }>`
+  --p: 0;
+  --fill: var(--rk-fill-b);
+  all: unset;
+  -webkit-appearance: none;
+  appearance: none;
+  display: block;
+  box-sizing: border-box;
+  cursor: pointer;
+  background: var(--rk-groove);
+  box-shadow: ${well};
+  &::-webkit-slider-runnable-track {
+    height: 100%;
+    background: linear-gradient(var(--fill), var(--fill)) ${({ $center }) => ($center ? '50%' : '0')} 50% /
+      calc(var(--p) * 100%) 3px no-repeat;
+  }
+  &::-moz-range-track {
+    height: 100%;
+    background: linear-gradient(var(--fill), var(--fill)) ${({ $center }) => ($center ? '50%' : '0')} 50% /
+      calc(var(--p) * 100%) 3px no-repeat;
+  }
+  &::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    box-sizing: border-box;
+    width: ${({ $thumb = 14 }) => $thumb}px;
+    height: ${({ $thumbH = 11 }) => $thumbH}px;
+    margin-top: 1px;
+    background: linear-gradient(180deg, var(--rk-btn) 0%, var(--rk-btn-2) 100%);
+    box-shadow: ${raised}, 0 0 0 1px var(--rk-seam);
+  }
+  &::-moz-range-thumb {
+    box-sizing: border-box;
+    width: ${({ $thumb = 14 }) => $thumb}px;
+    height: ${({ $thumbH = 11 }) => $thumbH}px;
+    border: none;
+    border-radius: 0;
+    background: linear-gradient(180deg, var(--rk-btn) 0%, var(--rk-btn-2) 100%);
+    box-shadow: ${raised}, 0 0 0 1px var(--rk-seam);
+  }
+  &:focus-visible {
+    outline: 1px dotted var(--rk-frame-ink);
+    outline-offset: 1px;
+  }
+  &:disabled {
+    cursor: default;
+  }
+  &:disabled::-webkit-slider-thumb {
+    visibility: hidden;
+  }
+  &:disabled::-moz-range-thumb {
+    visibility: hidden;
+  }
+`
+
+const MenuBox = styled.div`
+  position: absolute;
+  z-index: 5;
+  min-width: 118px;
+  max-width: 250px;
+  padding: 2px;
+  font-family: ${font.ui};
+  font-size: 11px;
+  line-height: 13px;
+  color: var(--rk-frame-ink);
+  background: var(--rk-frame-2);
+  box-shadow: inset 1px 1px 0 var(--rk-frame-hi), inset -1px -1px 0 var(--rk-frame-lo), 0 0 0 1px var(--rk-seam),
+    2px 2px 0 rgba(0, 0, 0, 0.5);
+  button {
+    all: unset;
+    box-sizing: border-box;
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    width: 100%;
+    padding: 1px 4px;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+  button:hover:not(:disabled),
+  button:focus-visible {
+    color: var(--rk-pl-cur);
+    background: var(--rk-pl-cur-bg);
+  }
+  button:disabled {
+    cursor: default;
+    opacity: 0.5;
+  }
+  dl {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 1px 8px;
+    margin: 0;
+    padding: 2px 4px;
+  }
+  dt {
+    color: var(--rk-lcd-soft);
+  }
+  dd {
+    margin: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+`
+
+/** A small pop-up, shut by Escape or a click anywhere else. */
+export function Menu({
+  label,
+  style,
+  onClose,
+  children,
+}: {
+  label: string
+  style: CSSProperties
+  onClose: () => void
+  children: ReactNode
+}) {
+  const ref = useRef<HTMLDivElement>(null)
+  const close = useRef(onClose)
+  close.current = onClose
+
+  useEffect(() => {
+    ref.current?.querySelector('button')?.focus()
+    const onDown = (e: PointerEvent) => {
+      if (!ref.current?.contains(e.target as Node)) close.current()
+    }
+
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') close.current()
+    }
+
+    window.addEventListener('pointerdown', onDown, true)
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('pointerdown', onDown, true)
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [])
+
+  return (
+    <MenuBox ref={ref} role="group" aria-label={label} style={style}>
+      {children}
+    </MenuBox>
+  )
+}

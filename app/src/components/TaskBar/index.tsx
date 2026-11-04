@@ -5,7 +5,7 @@ import styled from 'styled-components/macro'
 import Pages from '@/constants/pages'
 import { useAccount } from '@/context/AccountProvider'
 import { useWaves } from '@/store/experience/hooks'
-
+import { useWindows } from '@/store/windows/hooks'
 import { bevel, color, text } from '@/theme/tokens'
 
 import { ButtonIcon, HighlightButton } from '../Button'
@@ -104,6 +104,7 @@ export default function TaskBar({
 }) {
   const [waves, toggleWaves] = useWaves()
   const { block } = useAccount()
+  const [, , , minimized] = useWindows()
 
   return (
     <NoScroll>
@@ -122,28 +123,31 @@ export default function TaskBar({
             </ButtonContainer>
           ) : (
             <ButtonContainer>
-              {active.map((id) => {
-                const page = Pages[id]!
-                return (
-                  <TaskButton
-                    key={`${id}-taskbar`}
-                    className={`free-height free-width ${focus === id ? 'focus-taskbar' : ''}`}
-                    onClick={() => onClick(id)}
-                    title={page.label}
-                  >
-                    <img
-                      src={page.icon?.src}
-                      srcSet={page.icon?.srcset}
-                      sizes="(min-width: 1px) 16px, 60px"
-                      width={16}
-                      height={16}
-                      style={{ minWidth: 16, width: 16, border: 'none', margin: 0 }}
-                      alt=""
-                    />
-                    <span>{page.label}</span>
-                  </TaskButton>
-                )
-              })}
+              {/* The minimized radio lives in its dock by the wave button instead. */}
+              {active
+                .filter((id) => !(id === 'radio' && minimized.includes(id)))
+                .map((id) => {
+                  const page = Pages[id]!
+                  return (
+                    <TaskButton
+                      key={`${id}-taskbar`}
+                      className={`free-height free-width ${focus === id ? 'focus-taskbar' : ''}`}
+                      onClick={() => onClick(id)}
+                      title={page.label}
+                    >
+                      <img
+                        src={page.icon?.src}
+                        srcSet={page.icon?.srcset}
+                        sizes="(min-width: 1px) 16px, 60px"
+                        width={16}
+                        height={16}
+                        style={{ minWidth: 16, width: 16, border: 'none', margin: 0 }}
+                        alt=""
+                      />
+                      <span>{page.label}</span>
+                    </TaskButton>
+                  )
+                })}
             </ButtonContainer>
           )}
         </Row>

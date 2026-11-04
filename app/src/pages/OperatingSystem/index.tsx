@@ -109,6 +109,7 @@ export default function OperatingSystem() {
   /* Redux stuff */
   const dispatch = useAppDispatch()
   const [windows, zindex, fullScreen, minimized] = useWindows()
+  const onTop = useAppSelector((state) => state.windows.onTop)
   const firstLoad = useAppSelector((state) => state.experience.firstLoad)
 
   const handleOpen = (id: string) => {
@@ -172,7 +173,7 @@ export default function OperatingSystem() {
             minimized={minimized.includes(window)}
             focused={zindex[zindex.length - 1] === window && !minimized.includes(window)}
             mobile={isMobile || fullScreen.includes(window)}
-            baseDepth={zindex.indexOf(window) * 1000 + 2000}
+            baseDepth={zindex.indexOf(window) * 1000 + 2000 + (onTop?.includes(window) ? 100000 : 0)}
             identifier={window}
             baseSize={page.minSize}
             shaped={page.shaped}
@@ -183,7 +184,7 @@ export default function OperatingSystem() {
         </Fragment>
       )
     })
-  }, [windows, zindex, fullScreen, isMobile, minimized])
+  }, [windows, zindex, fullScreen, isMobile, minimized, onTop])
 
   return (
     <div className="bwindow" style={{ height: '100%', overflow: 'hidden', position: 'relative', zIndex: 0 }}>

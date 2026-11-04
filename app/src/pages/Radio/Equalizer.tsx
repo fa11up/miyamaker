@@ -4,44 +4,49 @@ import type { RadioApi } from '@/context/RadioProvider'
 import { bandLabel, defaultEq, EQ_BANDS, EQ_MAX_DB, EQ_MIN_DB, EQ_PRESETS, matchPreset } from '@/music/eq'
 import { font } from '@/theme/tokens'
 
-import { Key, Lcd, Led } from './parts'
+import { Key, PixelText, well } from './parts'
 
 const Top = styled.div`
   display: flex;
-  align-items: center;
-  gap: 4px;
-  margin-bottom: 6px;
+  align-items: stretch;
+  gap: 3px;
+  height: 14px;
+  margin: 3px 4px;
   select {
-    height: 24px;
-    min-width: 0;
-    flex: 0 1 150px;
-    border: none;
-    border-radius: 0;
-    padding: 0 4px;
-    background: var(--rk-lcd);
-    color: var(--rk-lcd-ink);
+    all: unset;
+    box-sizing: border-box;
+    flex: 0 0 78px;
+    padding: 0 3px;
+    overflow: hidden;
     font-family: ${font.ui};
-    font-size: 12px;
-    box-shadow: inset 1px 1px 0 var(--rk-frame-lo), inset -1px -1px 0 var(--rk-frame-hi);
+    font-size: 10px;
+    line-height: 14px;
+    white-space: nowrap;
+    color: var(--rk-lcd-ink);
+    background: var(--rk-lcd);
+    box-shadow: ${well};
+    cursor: pointer;
     &:focus-visible {
       outline: 1px dotted var(--rk-frame-ink);
-      outline-offset: 1px;
     }
-    @media (max-width: 768px) {
-      height: 34px;
-    }
+  }
+  option {
+    color: var(--rk-lcd-ink);
+    background: var(--rk-lcd);
   }
 `
 
-const Curve = styled(Lcd)`
-  flex: 1 1 80px;
-  min-width: 60px;
-  height: 24px;
+const Curve = styled.div`
+  position: relative;
+  flex: 1 1 0;
+  min-width: 0;
+  background: var(--rk-lcd);
+  box-shadow: ${well};
   svg {
     position: absolute;
-    inset: 3px 4px;
-    width: calc(100% - 8px);
-    height: calc(100% - 6px);
+    inset: 2px 3px;
+    width: calc(100% - 6px);
+    height: calc(100% - 4px);
     overflow: visible;
   }
   .zero {
@@ -50,72 +55,54 @@ const Curve = styled(Lcd)`
   .line {
     fill: none;
     stroke: var(--rk-lcd-ink);
-    stroke-width: 1.5;
+    stroke-width: 1;
     vector-effect: non-scaling-stroke;
-    filter: drop-shadow(0 0 2px var(--rk-lcd-glow));
   }
   &.off .line {
     stroke: var(--rk-lcd-soft);
     opacity: 0.45;
-    filter: none;
-  }
-  @media (max-width: 768px) {
-    height: 34px;
   }
 `
 
 const Bands = styled.div`
   display: grid;
-  grid-template-columns: 26px 22px 10px repeat(${EQ_BANDS.length}, minmax(0, 1fr));
-  align-items: stretch;
-  column-gap: 2px;
-  font-family: ${font.ui};
-  font-size: 10px;
-  letter-spacing: 0.04em;
-  color: var(--rk-frame-ink);
+  grid-template-columns: 17px 14px 3px repeat(${EQ_BANDS.length}, minmax(0, 1fr));
+  align-items: start;
+  margin: 0 2px;
+  color: var(--rk-lcd-ink);
   .scale {
     display: flex;
     flex-direction: column;
+    align-items: flex-end;
     justify-content: space-between;
-    height: 72px;
-    text-align: right;
-    opacity: 0.75;
+    height: 63px;
+    padding-right: 2px;
   }
   .col {
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 3px;
+    gap: 2px;
     min-width: 0;
   }
-  .col small {
-    font-size: 10px;
-    white-space: nowrap;
-  }
   .sep {
-    width: 1px;
     justify-self: center;
-    height: 72px;
+    width: 1px;
+    height: 63px;
     background: var(--rk-frame-lo);
     box-shadow: 1px 0 0 var(--rk-frame-hi);
   }
-  @media (max-width: 768px) {
-    .scale,
-    .sep {
-      height: 96px;
-    }
-  }
 `
 
-/** Vertical fader. `--v` (0…1) colours the thumb from cool (cut) to hot (boost). */
+/** Vertical fader. `--v` (0…1) is how much of the groove is lit. */
 const Fader = styled.input.attrs({ type: 'range' })`
   --v: 0.5;
   -webkit-appearance: none;
   appearance: none;
   writing-mode: vertical-lr;
   direction: rtl;
-  width: 16px;
-  height: 72px;
+  width: 14px;
+  height: 63px;
   margin: 0;
   padding: 0;
   background: transparent;
@@ -123,37 +110,37 @@ const Fader = styled.input.attrs({ type: 'range' })`
   &::-webkit-slider-runnable-track {
     width: 4px;
     margin: 0 auto;
-    background: linear-gradient(0deg, var(--rk-fill-a), var(--rk-fill-b)) 0 100% / 100% calc(var(--v) * 100%) no-repeat,
+    background: linear-gradient(0deg, var(--rk-viz-lo), var(--rk-viz-mid) 60%, var(--rk-viz-hi)) 0 100% / 100%
+        calc(var(--v) * 100%) no-repeat,
       var(--rk-groove);
-    box-shadow: inset 1px 1px 0 rgba(0, 0, 0, 0.5), 1px 0 0 var(--rk-frame-hi);
+    box-shadow: ${well};
   }
   &::-moz-range-track {
     width: 4px;
     background: var(--rk-groove);
-    box-shadow: inset 1px 1px 0 rgba(0, 0, 0, 0.5), 1px 0 0 var(--rk-frame-hi);
+    box-shadow: ${well};
   }
   &::-moz-range-progress {
     width: 4px;
-    background: linear-gradient(0deg, var(--rk-fill-a), var(--rk-fill-b));
+    background: linear-gradient(0deg, var(--rk-viz-lo), var(--rk-viz-mid) 60%, var(--rk-viz-hi));
   }
   &::-webkit-slider-thumb {
     -webkit-appearance: none;
-    width: 14px;
-    height: 8px;
-    margin-left: -5px;
-    border: none;
-    background: linear-gradient(180deg, transparent 3px, var(--rk-btn-on) 3px 5px, transparent 5px),
-      linear-gradient(180deg, var(--rk-frame-hi), var(--rk-btn) 50%, var(--rk-frame-2));
-    box-shadow: inset 1px 1px 0 var(--rk-frame-hi), inset -1px -1px 0 var(--rk-frame-lo), 0 0 0 1px var(--rk-seam);
+    box-sizing: border-box;
+    width: 11px;
+    height: 7px;
+    margin-left: -4px;
+    background: linear-gradient(180deg, var(--rk-btn) 0%, var(--rk-btn-2) 100%);
+    box-shadow: inset 1px 1px 0 var(--rk-key-hi), inset -1px -1px 0 var(--rk-key-lo), 0 0 0 1px var(--rk-seam);
   }
   &::-moz-range-thumb {
-    width: 14px;
-    height: 8px;
+    box-sizing: border-box;
+    width: 11px;
+    height: 7px;
     border: none;
     border-radius: 0;
-    background: linear-gradient(180deg, transparent 3px, var(--rk-btn-on) 3px 5px, transparent 5px),
-      linear-gradient(180deg, var(--rk-frame-hi), var(--rk-btn) 50%, var(--rk-frame-2));
-    box-shadow: inset 1px 1px 0 var(--rk-frame-hi), inset -1px -1px 0 var(--rk-frame-lo), 0 0 0 1px var(--rk-seam);
+    background: linear-gradient(180deg, var(--rk-btn) 0%, var(--rk-btn-2) 100%);
+    box-shadow: inset 1px 1px 0 var(--rk-key-hi), inset -1px -1px 0 var(--rk-key-lo), 0 0 0 1px var(--rk-seam);
   }
   &:focus-visible {
     outline: 1px dotted var(--rk-frame-ink);
@@ -162,28 +149,6 @@ const Fader = styled.input.attrs({ type: 'range' })`
   &.off {
     opacity: 0.6;
   }
-  @media (max-width: 768px) {
-    height: 96px;
-    width: 24px;
-    &::-webkit-slider-thumb {
-      width: 20px;
-      height: 12px;
-      margin-left: -8px;
-    }
-    &::-moz-range-thumb {
-      width: 20px;
-      height: 12px;
-    }
-  }
-`
-
-const Note = styled.p`
-  margin: 6px 0 0;
-  font-family: ${font.ui};
-  font-size: 11px;
-  line-height: 1.3;
-  color: var(--rk-frame-ink);
-  opacity: 0.85;
 `
 
 const RANGE = EQ_MAX_DB - EQ_MIN_DB
@@ -207,17 +172,17 @@ function curvePath(bands: number[]) {
 export default function Equalizer({ radio }: { radio: RadioApi }) {
   const { eq, setEq } = radio
   const preset = matchPreset(eq)
-  const live = radio.fx
   return (
     <>
       <Top>
         <Key
           type="button"
           aria-pressed={eq.enabled}
+          style={{ width: 24 }}
           onClick={() => setEq({ enabled: !eq.enabled })}
           title={eq.enabled ? 'Equalizer on (click to bypass)' : 'Equalizer bypassed (click to turn on)'}
         >
-          <Led $on={eq.enabled} /> On
+          <PixelText text={eq.enabled ? 'ON' : 'OFF'} />
         </Key>
         <select
           aria-label="Equalizer preset"
@@ -250,17 +215,18 @@ export default function Equalizer({ radio }: { radio: RadioApi }) {
         </Curve>
         <Key
           type="button"
+          style={{ width: 28 }}
           onClick={() => setEq({ ...defaultEq(), enabled: eq.enabled })}
           title="Reset every band to 0 dB"
         >
-          Flat
+          <PixelText text="FLAT" />
         </Key>
       </Top>
       <Bands role="group" aria-label="Equalizer bands">
         <div className="scale" aria-hidden="true">
-          <span>+12</span>
-          <span>0</span>
-          <span>-12</span>
+          <PixelText text="+12" />
+          <PixelText text="0" />
+          <PixelText text="-12" />
         </div>
         <div className="col">
           <Fader
@@ -276,7 +242,7 @@ export default function Equalizer({ radio }: { radio: RadioApi }) {
             onChange={(e) => setEq({ preamp: Number(e.target.value) })}
             onDoubleClick={() => setEq({ preamp: 0 })}
           />
-          <small>PRE</small>
+          <PixelText text="PR" />
         </div>
         <span className="sep" aria-hidden="true" />
         {EQ_BANDS.map((hz, i) => {
@@ -304,17 +270,11 @@ export default function Equalizer({ radio }: { radio: RadioApi }) {
                   setEq({ bands })
                 }}
               />
-              <small>{bandLabel(hz)}</small>
+              <PixelText text={bandLabel(hz)} />
             </div>
           )
         })}
       </Bands>
-      {radio.current && !live && (
-        <Note role="note">
-          This track plays without the live audio path (reduced motion, iOS, or a host without CORS), so the EQ and
-          balance wait for the next track that has it.
-        </Note>
-      )}
     </>
   )
 }

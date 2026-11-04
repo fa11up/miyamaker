@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 
-import { safeUri } from '@/music/audio'
+import { classifyChannels, safeUri } from '@/music/audio'
 import type { EqState } from '@/music/eq'
 import { clampBalance, dbToGain, effectiveGains, EQ_BANDS, sanitizeEq } from '@/music/eq'
 import type { QueueState } from '@/music/queue'
@@ -40,6 +40,8 @@ export type RadioApi = {
   fx: boolean
   /** Output sample rate of the audio graph (Hz), once it exists. */
   sampleRate: number | undefined
+  /** What the current moment of audio looks like across channels; null without the WebAudio path. */
+  readChannels: () => 'silent' | 'mono' | 'stereo' | null
   play: () => void
   pause: () => void
   toggle: () => void
@@ -144,7 +146,7 @@ const prefersReducedMotion = () =>
   typeof window !== 'undefined' && !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
 
 /** Resolved, playable URL for a track, or '' when its URI is not allowed. */
-function playableUrl(track: Track): string {
+export function playableUrl(track: Track): string {
   const { src } = track
   // Local previews (Drop Music) and the dev test tone are same-origin or blob: URLs built by this app.
   if ((track.source === 'local' || track.source === 'dev') && (src.startsWith('blob:') || src.startsWith('/'))) {
@@ -193,6 +195,7 @@ export default function RadioProvider({ children }: { children: ReactNode }) {
   const preampRef = useRef<GainNode | null>(null)
   const filtersRef = useRef<BiquadFilterNode[]>([])
   const pannerRef = useRef<StereoPannerNode | null>(null)
+  const channelsRef = useRef<[AnalyserNode, AnalyserNode] | null>(null)
   const fxBrokenRef = useRef(false)
   const noCorsRef = useRef(new Set<string>())
   const wantPlayRef = useRef(false)
@@ -266,6 +269,17 @@ export default function RadioProvider({ children }: { children: ReactNode }) {
       if (panner) chain = chain.connect(panner)
       chain.connect(analyser)
       analyser.connect(ctx.destination)
+      // Tapped ahead of the balance control, so turning it can't change what the stereo light reads.
+      const splitter = ctx.createChannelSplitter(2)
+      source.connect(splitter)
+      const tap = (channel: number) => {
+        const node = ctx.createAnalyser()
+        node.fftSize = 256
+        splitter.connect(node, channel)
+        return node
+      }
+
+      channelsRef.current = [tap(0), tap(1)]
       ctxRef.current = ctx
       analyserRef.current = analyser
       preampRef.current = preamp
@@ -277,6 +291,16 @@ export default function RadioProvider({ children }: { children: ReactNode }) {
     } catch {
       fxBrokenRef.current = true
     }
+  }, [])
+
+  const readChannels = useCallback(() => {
+    const taps = channelsRef.current
+    if (!taps) return null
+    const left = new Uint8Array(taps[0].fftSize)
+    const right = new Uint8Array(taps[1].fftSize)
+    taps[0].getByteTimeDomainData(left)
+    taps[1].getByteTimeDomainData(right)
+    return classifyChannels(left, right)
   }, [])
 
   const els = useCallback(() => {
@@ -668,6 +692,7 @@ export default function RadioProvider({ children }: { children: ReactNode }) {
       setBalance,
       fx: usingFx,
       sampleRate,
+      readChannels,
       play,
       pause,
       toggle,
@@ -699,6 +724,7 @@ export default function RadioProvider({ children }: { children: ReactNode }) {
       setBalance,
       usingFx,
       sampleRate,
+      readChannels,
       play,
       pause,
       toggle,

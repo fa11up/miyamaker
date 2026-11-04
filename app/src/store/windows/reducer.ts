@@ -10,6 +10,7 @@ import {
   finalizeUploadOrder,
   minimizeWindow,
   openWindow,
+  setAlwaysOnTop,
   setToFront,
   toggleFullscreen,
   updateWindowPosition,
@@ -29,6 +30,7 @@ export interface UserState {
   zIndex: PageKey[]
   fullScreen: PageKey[]
   minimized: PageKey[]
+  onTop?: PageKey[]
   position: { [key: PageKey]: { x: number; y: number } }
   uploadRequests: Record<string, { requestFrom: string; timestamp: number; label?: string; result?: any; value?: any }>
 }
@@ -109,6 +111,11 @@ export default createReducer(initialState, (builder) =>
       state.fullScreen = state.fullScreen.includes(page)
         ? state.fullScreen.filter((id) => id !== page)
         : [...state.fullScreen, page]
+    })
+    .addCase(setAlwaysOnTop, (state, action) => {
+      const { value, on } = action.payload
+      const others = (state.onTop ?? []).filter((id) => id !== value)
+      state.onTop = on ? [...others, value] : others
     })
     .addCase(setToFront, (state, action) => {
       const { value: page } = action.payload

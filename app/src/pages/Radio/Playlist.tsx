@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import styled from 'styled-components/macro'
 
 import type { RadioApi } from '@/context/RadioProvider'
@@ -6,20 +6,17 @@ import { formatDuration } from '@/music/audio'
 import type { PlaylistSource } from '@/music/types'
 import { font } from '@/theme/tokens'
 
-import { Key, Lcd } from './parts'
+import { Key, Menu, PixelText } from './parts'
 
-const Well = styled(Lcd)`
+const Well = styled.div`
   flex: 1 1 auto;
-  min-height: 96px;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  padding: 3px;
-  background: var(--rk-pl);
+  padding: 1px;
 `
 
 const List = styled.ol`
-  position: relative;
-  z-index: 1;
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
@@ -27,34 +24,25 @@ const List = styled.ol`
   padding: 0;
   list-style: none;
   font-family: ${font.ui};
-  font-size: 13px;
+  font-size: 11px;
+  line-height: 12px;
   scrollbar-width: thin;
   scrollbar-color: var(--rk-pl-num) var(--rk-pl);
 `
 
-const Row = styled.li<{ $active?: boolean }>`
+const Row = styled.li<{ $active?: boolean; $selected?: boolean }>`
   display: grid;
-  grid-template-columns: 26px minmax(0, 1fr) auto 22px;
-  align-items: center;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 6px;
-  padding: 2px 4px;
-  color: ${({ $active }) => ($active ? 'var(--rk-pl-cur)' : 'var(--rk-pl-ink)')};
-  background: ${({ $active }) =>
-    $active ? 'linear-gradient(90deg, var(--rk-pl-cur-bg), transparent 140%)' : 'transparent'};
-  text-shadow: ${({ $active }) => ($active ? '0 0 6px var(--rk-lcd-glow)' : 'none')};
+  padding: 0 2px;
+  color: ${({ $selected }) => ($selected ? 'var(--rk-pl-sel)' : 'var(--rk-pl-ink)')};
+  background: ${({ $selected }) => ($selected ? 'var(--rk-pl-cur-bg)' : 'transparent')};
+  font-weight: ${({ $active }) => ($active ? 700 : 400)};
   cursor: pointer;
-  &:hover {
-    background: ${({ $active }) =>
-      $active ? 'linear-gradient(90deg, var(--rk-pl-cur-bg), transparent 140%)' : 'var(--rk-pl-hover)'};
-  }
+  user-select: none;
   &:focus-visible {
     outline: 1px dotted var(--rk-lcd-ink);
-    outline-offset: -2px;
-  }
-  .n {
-    color: var(--rk-pl-num);
-    text-align: right;
-    font-variant-numeric: tabular-nums;
+    outline-offset: -1px;
   }
   .t {
     overflow: hidden;
@@ -62,130 +50,113 @@ const Row = styled.li<{ $active?: boolean }>`
     white-space: nowrap;
   }
   .d {
-    color: var(--rk-pl-num);
     font-variant-numeric: tabular-nums;
-  }
-  button {
-    all: unset;
-    cursor: pointer;
-    text-align: center;
-    color: var(--rk-pl-num);
-    &:hover,
-    &:focus-visible {
-      color: var(--rk-lcd-ink);
-    }
-  }
-  @media (max-width: 768px) {
-    padding: 8px 4px;
-    font-size: 14px;
   }
 `
 
 const Empty = styled.div`
-  position: relative;
-  z-index: 1;
   flex: 1 1 auto;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 10px;
-  padding: 16px;
+  gap: 2px;
+  padding: 4px;
   text-align: center;
   font-family: ${font.ui};
+  font-size: 11px;
+  line-height: 13px;
   color: var(--rk-pl-ink);
   p {
     margin: 0;
-    font-size: 16px;
-    color: var(--rk-pl-cur);
-    text-shadow: 0 0 6px var(--rk-lcd-glow);
-  }
-  small {
-    max-width: 30ch;
-    font-size: 12px;
-    line-height: 1.4;
+    font-weight: 700;
   }
 `
 
-const Footer = styled.div`
+const Foot = styled.div`
+  position: relative;
+  flex: 0 0 auto;
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 4px;
-  margin-top: 4px;
-  select {
-    height: 24px;
-    min-width: 0;
-    flex: 1 1 140px;
-    border: none;
-    border-radius: 0;
-    padding: 0 4px;
-    background: var(--rk-lcd);
+  gap: 3px;
+  height: 18px;
+  padding: 0 4px;
+  button {
+    height: 12px;
+  }
+  .time {
+    margin-left: auto;
+    padding: 2px 3px;
     color: var(--rk-lcd-ink);
-    font-family: ${font.ui};
-    font-size: 12px;
-    box-shadow: inset 1px 1px 0 var(--rk-frame-lo), inset -1px -1px 0 var(--rk-frame-hi);
-    &:focus-visible {
-      outline: 1px dotted var(--rk-frame-ink);
-      outline-offset: 1px;
-    }
-    @media (max-width: 768px) {
-      height: 34px;
-    }
   }
 `
 
-const Status = styled.div<{ $error?: boolean }>`
-  min-height: 15px;
-  margin-top: 3px;
-  font-family: ${font.ui};
-  font-size: 11px;
-  color: ${({ $error }) => ($error ? '#ff5c7a' : 'var(--rk-frame-ink)')};
-  opacity: ${({ $error }) => ($error ? 1 : 0.85)};
-`
-
-export function playlistSummary(radio: RadioApi) {
-  const total = radio.queue.tracks.reduce((s, t) => s + (t.duration || 0), 0)
-  const n = radio.queue.tracks.length
-  return n ? `${n} trk · ${formatDuration(total)}` : 'empty'
-}
+type MenuId = 'add' | 'rem' | 'misc'
 
 export default function Playlist({
   radio,
   nowIndex,
+  nowDuration,
   sources,
-  sourceId,
-  setSourceId,
   busy,
   onLoad,
   onDropMusic,
   onTestTone,
-  status,
+  onInfo,
 }: {
   radio: RadioApi
   nowIndex: number
+  nowDuration: number
   sources: PlaylistSource[]
-  sourceId: string
-  setSourceId: (id: string) => void
   busy: boolean
-  onLoad: () => void
+  onLoad: (id: string) => void
   onDropMusic: () => void
   onTestTone?: () => void
-  status?: { text: string; tone?: 'error' }
+  onInfo: () => void
 }) {
   const { queue } = radio
+  const [selected, setSelected] = useState<number[]>([])
+  const [menu, setMenu] = useState<MenuId>()
   const listRef = useRef<HTMLOListElement>(null)
+
   useEffect(() => {
     listRef.current?.querySelector('[data-active="true"]')?.scrollIntoView?.({ block: 'nearest' })
   }, [nowIndex])
+
+  // Selections are by position, so they don't survive the list changing.
+  useEffect(() => setSelected([]), [queue.tracks.length])
+
+  const allSelected = queue.tracks.length > 0 && selected.length === queue.tracks.length
+  // The playing track knows its real length even when its metadata didn't say.
+  const length = (i: number) => (i === nowIndex && nowDuration) || queue.tracks[i]?.duration
+  const total = queue.tracks.reduce((s, _, i) => s + (length(i) || 0), 0)
+  const picked = selected.reduce((s, i) => s + (length(i) || 0), 0)
+
+  const removeSelected = () => {
+    // Highest first, so the earlier positions stay put.
+    ;[...selected].sort((a, b) => b - a).forEach((i) => radio.remove(i))
+    setMenu(undefined)
+  }
+
+  const footKey = (id: MenuId, label: string, width: number, title: string) => (
+    <Key
+      type="button"
+      style={{ width }}
+      title={title}
+      aria-expanded={menu === id}
+      onClick={() => setMenu((m) => (m === id ? undefined : id))}
+    >
+      <PixelText text={label} />
+    </Key>
+  )
 
   return (
     <>
       <Well aria-label="Playlist">
         {queue.tracks.length === 0 ? (
           <Empty>
-            <p>No tracks yet — drop music to fill the radio</p>
-            <small>Add music drops below, or release your own.</small>
+            <p>No tracks yet</p>
+            <span>Press ADD to load music drops.</span>
           </Empty>
         ) : (
           <List ref={listRef}>
@@ -195,6 +166,7 @@ export default function Playlist({
                 <Row
                   key={t.id}
                   $active={active}
+                  $selected={selected.includes(i)}
                   data-active={active}
                   tabIndex={0}
                   aria-current={active ? 'true' : undefined}
@@ -205,58 +177,116 @@ export default function Playlist({
                   }}
                   onClick={(e) => {
                     // Single tap plays on touch screens (no double-click there).
-                    if ((e.nativeEvent as PointerEvent).pointerType === 'touch') radio.jumpTo(i)
+                    if ((e.nativeEvent as PointerEvent).pointerType === 'touch') {
+                      radio.jumpTo(i)
+                      return
+                    }
+
+                    setSelected((s) => {
+                      if (!e.ctrlKey && !e.metaKey) return [i]
+                      return s.includes(i) ? s.filter((x) => x !== i) : [...s, i]
+                    })
                   }}
                   title={`${t.artist ? `${t.artist} - ` : ''}${t.title} (double-click to play)`}
                 >
-                  <span className="n">{i + 1}.</span>
                   <span className="t">
+                    {active ? '▸ ' : `${i + 1}. `}
                     {t.artist ? `${t.artist} - ` : ''}
                     {t.title}
                   </span>
-                  <span className="d">{formatDuration(t.duration)}</span>
-                  <button
-                    type="button"
-                    aria-label={`Remove ${t.title}`}
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      radio.remove(i)
-                    }}
-                  >
-                    ×
-                  </button>
+                  <span className="d">{formatDuration(length(i))}</span>
                 </Row>
               )
             })}
           </List>
         )}
       </Well>
-      <Footer>
-        <select aria-label="Playlist source" value={sourceId} onChange={(e) => setSourceId(e.target.value)}>
-          {sources.map((src) => (
-            <option key={src.id} value={src.id}>
-              {src.label}
-            </option>
-          ))}
-        </select>
-        <Key type="button" onClick={onLoad} disabled={busy} title="Add the chosen source's tracks to the playlist">
-          {busy ? 'Loading…' : '+ Add'}
+      <Foot>
+        {footKey('add', 'ADD', 24, 'Add tracks')}
+        {footKey('rem', 'REM', 24, 'Remove tracks')}
+        <Key
+          type="button"
+          style={{ width: 24 }}
+          title={allSelected ? 'Select none' : 'Select all'}
+          aria-pressed={allSelected}
+          disabled={!queue.tracks.length}
+          onClick={() => setSelected(allSelected ? [] : queue.tracks.map((_, i) => i))}
+        >
+          <PixelText text="SEL" />
         </Key>
-        <Key type="button" onClick={radio.clear} disabled={!queue.tracks.length} title="Clear the playlist">
-          Clear
-        </Key>
-        <Key type="button" onClick={onDropMusic}>
-          Drop Music
-        </Key>
-        {onTestTone && (
-          <Key type="button" onClick={onTestTone} title="Dev only: play the synthetic test tone fixture">
-            Test tone
-          </Key>
+        {footKey('misc', 'MISC', 28, 'More')}
+        <span className="time" title="Selected length / playlist length">
+          <PixelText text={`${formatDuration(picked)}/${formatDuration(total)}`} />
+        </span>
+        {menu === 'add' && (
+          <Menu label="Add tracks" style={{ left: 4, bottom: 17 }} onClose={() => setMenu(undefined)}>
+            {sources.map((src) => (
+              <button
+                type="button"
+                key={src.id}
+                disabled={busy}
+                onClick={() => {
+                  onLoad(src.id)
+                  setMenu(undefined)
+                }}
+              >
+                {src.label}
+              </button>
+            ))}
+            {onTestTone && (
+              <button
+                type="button"
+                onClick={() => {
+                  onTestTone()
+                  setMenu(undefined)
+                }}
+              >
+                Test tone (dev)
+              </button>
+            )}
+          </Menu>
         )}
-      </Footer>
-      <Status $error={status?.tone === 'error'} role="status">
-        {status?.text || ' '}
-      </Status>
+        {menu === 'rem' && (
+          <Menu label="Remove tracks" style={{ left: 31, bottom: 17 }} onClose={() => setMenu(undefined)}>
+            <button type="button" disabled={!selected.length} onClick={removeSelected}>
+              Remove selected
+            </button>
+            <button
+              type="button"
+              disabled={!queue.tracks.length}
+              onClick={() => {
+                radio.clear()
+                setMenu(undefined)
+              }}
+            >
+              Clear playlist
+            </button>
+          </Menu>
+        )}
+        {menu === 'misc' && (
+          <Menu label="More" style={{ left: 85, bottom: 17 }} onClose={() => setMenu(undefined)}>
+            <button
+              type="button"
+              disabled={!radio.current}
+              onClick={() => {
+                onInfo()
+                setMenu(undefined)
+              }}
+            >
+              Track info
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                onDropMusic()
+                setMenu(undefined)
+              }}
+            >
+              Release your own
+            </button>
+          </Menu>
+        )}
+      </Foot>
     </>
   )
 }

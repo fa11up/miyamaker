@@ -1,5 +1,5 @@
 import type { RefObject } from 'react'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef } from 'react'
 import styled from 'styled-components/macro'
 
 import type { VisualizerMode } from '@/context/RadioProvider'
@@ -30,8 +30,8 @@ const Hit = styled.button`
 `
 
 export type VizKind = 'bars' | 'wings' | 'scope'
-const KINDS: VizKind[] = ['bars', 'wings', 'scope']
-const KIND_LABEL: Record<VizKind, string> = { bars: 'spectrum', wings: 'angel wings', scope: 'oscilloscope' }
+export const VIZ_KINDS: VizKind[] = ['bars', 'wings', 'scope']
+export const VIZ_LABEL: Record<VizKind, string> = { bars: 'spectrum', wings: 'angel wings', scope: 'oscilloscope' }
 
 const PEAK_FALL = 0.01
 
@@ -57,6 +57,8 @@ export default function Visualizer({
   skin,
   levelTarget,
   compact,
+  kind,
+  onCycle,
 }: {
   mode: VisualizerMode
   playing: boolean
@@ -64,9 +66,10 @@ export default function Visualizer({
   skin: string
   levelTarget?: RefObject<HTMLElement>
   compact?: boolean
+  kind: VizKind
+  onCycle: () => void
 }) {
   const ref = useRef<HTMLCanvasElement>(null)
-  const [kind, setKind] = useState<VizKind>('bars')
   const peaks = useRef<number[]>([])
 
   useEffect(() => {
@@ -87,7 +90,8 @@ export default function Visualizer({
       glow: v('--rk-lcd-glow', 'rgba(255,120,238,0.55)'),
     }
 
-    const dpr = Math.min(2, window.devicePixelRatio || 1)
+    // One canvas pixel per logical player pixel: the browser scales it up square.
+    const dpr = 1
     const fit = () => {
       const w = Math.max(1, Math.round(canvas.clientWidth * dpr))
       const h = Math.max(1, Math.round(canvas.clientHeight * dpr))
@@ -125,21 +129,30 @@ export default function Visualizer({
 
     const drawBars = (w: number, h: number, data: Uint8Array | null) => {
       clear(w, h)
-      const n = compact ? 14 : Math.max(14, Math.min(32, Math.floor(w / (7 * px))))
+      const n = compact ? 19 : Math.max(14, Math.min(32, Math.floor(w / (7 * px))))
       const gap = px
       const bw = Math.max(px, Math.floor((w - gap * (n - 1)) / n))
-      const seg = 2 * px
-      const segs = Math.max(4, Math.floor(h / (seg + px)))
+      const seg = compact ? px : 2 * px
+      const space = compact ? 0 : px
+      const segs = Math.max(4, Math.floor(h / (seg + space)))
+      const left = Math.floor((w - (n * bw + (n - 1) * gap)) / 2)
       const grad = gradient(h, 0)
       const vals = levels(data, n)
       if (peaks.current.length !== n) peaks.current = new Array(n).fill(0)
+      if (compact) {
+        g.fillStyle = pal.dim
+        for (let y = 1; y < h; y += 2) for (let x = 1; x < w; x += 2) g.fillRect(x, y, 1, 1)
+      }
+
       for (let i = 0; i < n; i += 1) {
-        const x = i * (bw + gap)
+        const x = left + i * (bw + gap)
         const lit = Math.round((vals[i] as number) * segs)
         for (let s = 0; s < segs; s += 1) {
-          const y = h - (s + 1) * (seg + px) + px
-          g.fillStyle = s < lit ? grad : pal.dim
-          g.fillRect(x, y, bw, seg)
+          if (s < lit || !compact) {
+            const y = h - (s + 1) * (seg + space) + space
+            g.fillStyle = s < lit ? grad : pal.dim
+            g.fillRect(x, y, bw, seg)
+          }
         }
 
         const peak = Math.max(vals[i] as number, (peaks.current[i] || 0) - PEAK_FALL)
@@ -147,7 +160,7 @@ export default function Visualizer({
         const ps = Math.min(segs - 1, Math.round(peak * segs))
         if (data && ps > 0) {
           g.fillStyle = pal.peak
-          g.fillRect(x, h - (ps + 1) * (seg + px) + px, bw, px)
+          g.fillRect(x, h - (ps + 1) * (seg + space) + space, bw, px)
         }
       }
 
@@ -194,7 +207,7 @@ export default function Visualizer({
       g.strokeStyle = pal.ink
       g.lineWidth = Math.max(1, px * 1.2)
       g.shadowColor = pal.glow
-      g.shadowBlur = 6 * px
+      g.shadowBlur = compact ? 0 : 6 * px
       g.beginPath()
       const n = data ? 512 : 2
       for (let i = 0; i < n; i += 1) {
@@ -259,15 +272,10 @@ export default function Visualizer({
       ? 'Visualizer paused (reduced motion)'
       : mode === 'unavailable'
       ? 'Visualizer unavailable for this source'
-      : `Visualizer: ${KIND_LABEL[kind]}. Click to switch.`
+      : `Visualizer: ${VIZ_LABEL[kind]}. Click to switch.`
 
   return (
-    <Hit
-      type="button"
-      title={label}
-      aria-label={label}
-      onClick={() => setKind((k) => KINDS[(KINDS.indexOf(k) + 1) % KINDS.length] as VizKind)}
-    >
+    <Hit type="button" title={label} aria-label={label} onClick={onCycle}>
       <Canvas ref={ref} aria-hidden="true" />
     </Hit>
   )
