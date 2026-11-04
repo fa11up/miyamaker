@@ -1,5 +1,6 @@
 // src/pages/Auction/fitText.ts: the lot description steps down through whole-pixel sizes until it fits, and says so
 // when even the smallest does not. Run: yarn test
+import { lotAction } from '../src/pages/Auction/lotAction.ts'
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
@@ -35,4 +36,12 @@ test('sizes are whole pixels, descending, and never below 12px', () => {
     assert.ok(Number.isInteger(size) && size >= 12)
     if (i > 0) assert.ok(size < (DESCRIPTION_SIZES[i - 1] as number))
   }
+})
+
+test('lotAction: Bid only while the auction is running', () => {
+  assert.equal(lotAction(2000, false, 1_000_000), 'Bid')
+  assert.equal(lotAction(1000, false, 1_000_000), 'View', 'ends exactly now')
+  assert.equal(lotAction(500, false, 1_000_000), 'View', 'ended')
+  assert.equal(lotAction(2000, true, 1_000_000), 'View', 'settled')
+  assert.equal(lotAction(0, false, 1_000_000), 'View', 'chain has not answered')
 })

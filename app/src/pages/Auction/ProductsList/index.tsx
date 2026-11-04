@@ -106,6 +106,8 @@ export default function ProductsList({ auctionContract }: { auctionContract: Add
         {/* Every lot stays mounted (off-page ones hidden) so the viewer can step through all of them. */}
         {tokenIds.map((tokenId: number, index: number) => (
           <AuctionProduct
+            nft={nftContract}
+            auctionContract={auctionContract}
             key={index}
             hidden={!onPage(index)}
             tokenId={tokenId}
