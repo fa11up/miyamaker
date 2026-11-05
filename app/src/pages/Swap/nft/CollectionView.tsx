@@ -15,10 +15,12 @@ import { Chip, Eyebrow, Skeleton, StatusBox } from '../floor/retro'
 import { bevel, color, space, text } from '../floor/tokens'
 import { erc721Abi, poolFactoryAbi } from './abi'
 import type { OsOrder, Price } from './markets'
-import { bestQuote, collectionUrl, formatPrice, venuesFor } from './markets'
+import { bestQuote, collectionUrl, formatAmount, formatPrice, venuesFor } from './markets'
 import { DEFAULT_PAIR_SYMBOL, pickPair } from './pairs'
 import type { PoolMode } from './pool'
 import { KIND, MODE, MODE_HINT, MODE_LABEL } from './pool'
+import { MAX_SWEEP, pickCheapest, sumPrices, sweepable } from './sweep'
+import SweepReview from './SweepReview'
 import { Card, Chips, Field, Head, Hint, LinkButton, Mono, Prose, PushButton } from './ui'
 import { useOpenSeaCollection, useOpenSeaListings, useOpenSeaNftImage } from './useMarkets'
 import type { PoolPrice } from './usePoolPrices'
@@ -104,6 +106,9 @@ const TileButton = styled.button`
   &:active {
     box-shadow: ${bevel.pressed};
   }
+  &[data-picked] {
+    box-shadow: ${bevel.pressed};
+  }
   .label {
     display: flex;
     flex-direction: column;
@@ -120,6 +125,38 @@ const TileButton = styled.button`
   }
 `
 
+const SweepBar = styled.div`
+  display: grid;
+  grid-template-columns: auto minmax(80px, 1fr) auto auto;
+  align-items: center;
+  gap: ${space[3]};
+  padding: ${space[2]} ${space[3]};
+  background: ${color.well};
+  border: 1px solid ${color.accent};
+  font-size: ${text.sm};
+  b {
+    color: ${color.accent};
+  }
+  label {
+    white-space: nowrap;
+  }
+  input {
+    width: 100%;
+    accent-color: ${color.accent};
+  }
+  strong {
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+  .narrow & {
+    grid-template-columns: 1fr auto;
+    input {
+      grid-column: 1 / -1;
+      grid-row: 2;
+    }
+  }
+`
+
 const LookupRow = styled.form`
   display: flex;
   gap: ${space[2]};
@@ -132,18 +169,26 @@ function ListingTile({
   contract,
   listing,
   onOpen,
+  picked,
 }: {
   chainId: SupportedChainId
   contract: Address
   listing: OsOrder
   onOpen: () => void
+  /** In the sweep the bar would buy. */
+  picked?: boolean
 }) {
   const id = listing.tokenId!
   const osImage = useOpenSeaNftImage(chainId, contract, id)
   const meta = useNftMeta(chainId, osImage ? undefined : contract, KIND.ERC721, BigInt(id))
   return (
     <li>
-      <TileButton type="button" onClick={onOpen} aria-label={`#${id}, ${formatPrice(listing.price)} on OpenSea. Open`}>
+      <TileButton
+        type="button"
+        onClick={onOpen}
+        data-picked={picked || undefined}
+        aria-label={`#${id}, ${formatPrice(listing.price)} on OpenSea${picked ? ', in the sweep' : ''}. Open`}
+      >
         <NftImage src={osImage || meta.image} alt="" variant="thumb" />
         <span className="label">
           <span>#{id}</span>
@@ -239,7 +284,7 @@ export default function CollectionView({
   onOpenPool: (pool: Address) => void
 }) {
   const chain = chains.find((c) => c.id === chainId) || mainnet
-  const { isConnected, chainId: walletChain } = useAccount()
+  const { address: me, isConnected, chainId: walletChain } = useAccount()
   const { switchChain, isPending: switching } = useSwitchChain()
   const { openConnectModal } = useConnectModal()
   const wrongChain = isConnected && walletChain !== chainId
@@ -256,6 +301,10 @@ export default function CollectionView({
     query: { staleTime: Infinity },
   })
   const [lookup, setLookup] = useState('')
+  const [sweeping, setSweeping] = useState(false)
+  const [sweepCount, setSweepCount] = useState(3)
+  const canSweep = sweepable(listings.listings ?? [], me)
+  const pickedListings = pickCheapest(canSweep, Math.min(sweepCount, canSweep.length))
   const create = useTx(() => pools.refetch())
 
   const knownName = os.info?.name || cleanText(onchainName.data as string | undefined, 80)
@@ -402,6 +451,38 @@ export default function CollectionView({
         )}
       </Card>
 
+      {sweeping && pickedListings.length > 0 ? (
+        <SweepReview
+          key={pickedListings.map((l) => l.hash).join()}
+          listings={pickedListings}
+          chainId={chainId}
+          contract={address}
+          title={name}
+          onClose={() => setSweeping(false)}
+          onDone={() => listings.refetch()}
+        />
+      ) : (
+        canSweep.length >= 2 && (
+          <SweepBar aria-label="Sweep the floor">
+            <label htmlFor="sweep-count">
+              <b>Sweep</b> the {sweepCount} cheapest
+            </label>
+            <input
+              id="sweep-count"
+              type="range"
+              min={2}
+              max={Math.min(MAX_SWEEP, canSweep.length)}
+              value={sweepCount}
+              onChange={(e) => setSweepCount(Number(e.target.value))}
+            />
+            <strong>{formatAmount(sumPrices(pickedListings), 18, 4)} ETH</strong>
+            <PushButton type="button" onClick={() => setSweeping(true)}>
+              Review sweep
+            </PushButton>
+          </SweepBar>
+        )
+      )}
+
       {os.slug && (listings.loading || (listings.listings && listings.listings.length > 0)) && (
         <Card aria-label="Cheapest on OpenSea">
           <Eyebrow>Cheapest on OpenSea</Eyebrow>
@@ -420,6 +501,7 @@ export default function CollectionView({
                 .listings!.filter((l) => l.tokenId)
                 .map((l) => (
                   <ListingTile
+                    picked={!sweeping && pickedListings.some((p) => p.hash === l.hash)}
                     key={l.hash}
                     chainId={chainId}
                     contract={address}

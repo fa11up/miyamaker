@@ -238,6 +238,8 @@ export type OsOrder = {
   price: Price
   tokenId?: string
   contract?: string
+  /** Who listed it, when the order says. */
+  maker?: string
   remaining: number
 }
 
@@ -277,6 +279,7 @@ export function parseOrder(j: unknown): OsOrder | undefined {
     price,
     tokenId: id && /^[0-9]+$/.test(id) ? id : undefined,
     contract: str(asset?.contract) || str(nft?.token),
+    maker: str(params?.offerer) || undefined,
     remaining: typeof o.remaining_quantity === 'number' ? (o.remaining_quantity as number) : 1,
   }
 }
