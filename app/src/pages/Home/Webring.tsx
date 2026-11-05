@@ -14,6 +14,7 @@ export const RING = [
   { name: 'imdusd.com', url: 'https://imdusd.com/', blurb: 'imdUSD, the dollar of the miyanet.' },
   { name: 'infer.imdusd.com', url: 'https://infer.imdusd.com/', blurb: 'Trade and stake INFER.' },
   { name: 'box.imdusd.com', url: 'https://box.imdusd.com/', blurb: 'INFER BOX. Ask the swarm to build things.' },
+  { name: 'shop.imdusd.com', url: 'https://shop.imdusd.com/', blurb: 'Merch made to order, paid in imdUSD.' },
   { name: 'whitepaper.imdusd.com', url: 'https://whitepaper.imdusd.com/', blurb: 'How INFER works, in full.' },
   { name: 'explorer.imd.fun', url: 'https://explorer.imd.fun/', blurb: 'Every job the swarm has run.' },
 ] as const

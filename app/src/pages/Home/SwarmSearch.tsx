@@ -25,7 +25,7 @@ type SwarmResponse = { health: SwarmHealth; skills: Skill[] }
 
 const SWARM_URL = `${LINKS.box}api/public/swarm`
 const MAX_RESULTS = 6
-const EXAMPLES = ['build a mint site', 'audit my contract', 'make a token logo']
+const EXAMPLES = ['launch a token', 'build a mint site', 'audit my contract']
 
 /** INFER BOX's public swarm health and skill list (shared by the search box and the ticker). */
 export function useSwarm() {

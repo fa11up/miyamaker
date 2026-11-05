@@ -1,44 +1,86 @@
 import { useEffect } from 'react'
 import type { Hash } from 'viem'
 import { erc20Abi } from 'viem'
-import { useAccount, useReadContracts, useSwitchChain, useWaitForTransactionReceipt, useWriteContract } from 'wagmi'
+import {
+  useAccount,
+  useBlockNumber,
+  useReadContracts,
+  useSwitchChain,
+  useWaitForTransactionReceipt,
+  useWriteContract,
+} from 'wagmi'
 
-import { IMDUSD_V1, INFER, LEGACY_REDEEMER, legacyRedeemerAbi, MIYA, MIYANET_CHAIN_ID } from '@/constants/miyanet'
+import type { Legacy } from '@/constants/miyanet'
+import {
+  IMDUSD_V1,
+  INFER,
+  LEGACY_REDEEMER,
+  legacyRedeemerAbi,
+  MIYA,
+  MIYANET_CHAIN_ID,
+  MXXN,
+  mxxnAbi,
+} from '@/constants/miyanet'
 
 const redeemer = { address: LEGACY_REDEEMER, abi: legacyRedeemerAbi, chainId: MIYANET_CHAIN_ID } as const
 const miya = { address: MIYA, abi: erc20Abi, chainId: MIYANET_CHAIN_ID } as const
+export const LEGACY_TOKEN = { miya: MIYA, mxxn: MXXN } as const
+const legacyToken = (which: Legacy) =>
+  ({ address: LEGACY_TOKEN[which], abi: erc20Abi, chainId: MIYANET_CHAIN_ID } as const)
 
-/** Public redemption state, read from mainnet regardless of the wallet's chain. */
-export function useRedemptionState() {
+/** Where MXXN's full-moon window stands against the current block. */
+export type Moon = { open: boolean; start: bigint; end: bigint; block: bigint; behind: boolean }
+
+/** Public redemption state for one token, read from mainnet regardless of the wallet's chain. */
+export function useRedemptionState(which: Legacy = 'miya') {
   const result = useReadContracts({
     contracts: [
-      { ...redeemer, functionName: 'rateA' },
+      { ...redeemer, functionName: which === 'miya' ? 'rateA' : 'rateB' },
       { ...redeemer, functionName: 'closesAt' },
-      { ...redeemer, functionName: 'quote', args: [MIYA, 0n] },
+      { ...redeemer, functionName: 'quote', args: [LEGACY_TOKEN[which], 0n] },
       { ...miya, functionName: 'totalSupply' },
+      { address: MXXN, abi: mxxnAbi, chainId: MIYANET_CHAIN_ID, functionName: 'moonConfig' },
     ],
     query: { refetchInterval: 30_000 },
   })
-  const [rate, closesAt, quote, miyaSupply] = result.data || []
+  const block = useBlockNumber({
+    chainId: MIYANET_CHAIN_ID,
+    watch: which === 'mxxn',
+    query: { enabled: which === 'mxxn' },
+  })
+  const [rate, closesAt, quote, miyaSupply, moonConfig] = result.data || []
+  const window = moonConfig?.result
+  const moon: Moon | undefined =
+    window && block.data !== undefined
+      ? {
+          start: window[0],
+          end: window[1],
+          block: block.data,
+          open: block.data >= window[0] && block.data <= window[1],
+          behind: block.data > window[1],
+        }
+      : undefined
   return {
     rate: rate?.result,
     closesAt: closesAt?.result !== undefined ? Number(closesAt.result) : undefined,
     inferLeft: quote?.result?.[1],
     miyaSupply: miyaSupply?.result,
+    moon,
     isLoading: result.isLoading,
     isError: result.isError && !result.data,
     refetch: result.refetch,
   }
 }
 
-/** The connected wallet's MIYA, INFER and imdUSD v1, and what its MIYA redeems for right now. */
-export function useWalletPosition() {
+/** The connected wallet's MIYA or MXXN, INFER and imdUSD v1, and what that token redeems for right now. */
+export function useWalletPosition(which: Legacy = 'miya') {
   const { address } = useAccount()
   const holder = address as `0x${string}`
+  const legacy = legacyToken(which)
   const balances = useReadContracts({
     contracts: [
-      { ...miya, functionName: 'balanceOf', args: [holder] },
-      { ...miya, functionName: 'allowance', args: [holder, LEGACY_REDEEMER] },
+      { ...legacy, functionName: 'balanceOf', args: [holder] },
+      { ...legacy, functionName: 'allowance', args: [holder, LEGACY_REDEEMER] },
       { address: INFER, abi: erc20Abi, chainId: MIYANET_CHAIN_ID, functionName: 'balanceOf', args: [holder] },
       { address: IMDUSD_V1, abi: erc20Abi, chainId: MIYANET_CHAIN_ID, functionName: 'balanceOf', args: [holder] },
       { ...redeemer, functionName: 'claimable', args: [holder] },
@@ -46,18 +88,18 @@ export function useWalletPosition() {
     ],
     query: { enabled: !!address, refetchInterval: 20_000 },
   })
-  const [miyaBal, allowance, inferBal, imdusdBal, claimable, vesting] = balances.data || []
-  const miyaBalance = miyaBal?.result
+  const [legacyBal, allowance, inferBal, imdusdBal, claimable, vesting] = balances.data || []
+  const legacyBalance = legacyBal?.result
 
   const split = useReadContracts({
-    contracts: [{ ...redeemer, functionName: 'quoteFor', args: [holder, MIYA, miyaBalance ?? 0n] }],
-    query: { enabled: !!address && !!miyaBalance },
+    contracts: [{ ...redeemer, functionName: 'quoteFor', args: [holder, legacy.address, legacyBalance ?? 0n] }],
+    query: { enabled: !!address && !!legacyBalance },
   })
   const quote = split.data?.[0]?.result
 
   const v = vesting?.result
   return {
-    miya: miyaBalance,
+    legacy: legacyBalance,
     allowance: allowance?.result,
     infer: inferBal?.result,
     imdusd: imdusdBal?.result,
@@ -73,13 +115,14 @@ export function useWalletPosition() {
   }
 }
 
-export type MiyanetAction = 'approve' | 'redeem' | 'claim'
+export type MiyanetAction = 'approve' | 'redeem' | 'claim' | 'advanceClock'
 
 /**
- * Approve (exact amount, never unlimited), redeem MIYA for INFER, and collect vested INFER. One write at a time;
- * `lastAction` says which one the current hash belongs to.
+ * Approve (exact amount, never unlimited), redeem MIYA or MXXN for INFER, collect vested INFER, and move MXXN's
+ * moon clock on when its window has passed. One write at a time; `lastAction` says which one the hash belongs to.
  */
-export function useMiyanetTx(onConfirmed: () => void) {
+export function useMiyanetTx(which: Legacy, onConfirmed: () => void) {
+  const legacy = legacyToken(which)
   const { chainId, isConnected } = useAccount()
   const { switchChain, isPending: isSwitching } = useSwitchChain()
   const write = useWriteContract()
@@ -102,9 +145,11 @@ export function useMiyanetTx(onConfirmed: () => void) {
     switchToMainnet: () => switchChain({ chainId: MIYANET_CHAIN_ID }),
     isSwitching,
     approve: (amount: bigint) =>
-      write.writeContract({ ...miya, functionName: 'approve', args: [LEGACY_REDEEMER, amount] }),
-    redeem: (amount: bigint) => write.writeContract({ ...redeemer, functionName: 'redeem', args: [MIYA, amount] }),
+      write.writeContract({ ...legacy, functionName: 'approve', args: [LEGACY_REDEEMER, amount] }),
+    redeem: (amount: bigint) =>
+      write.writeContract({ ...redeemer, functionName: 'redeem', args: [legacy.address, amount] }),
     claim: () => write.writeContract({ ...redeemer, functionName: 'claim' }),
+    advanceClock: () => write.writeContract({ ...redeemer, functionName: 'advanceClock', args: [MXXN, 1n] }),
     reset: write.reset,
     lastAction,
     hash: write.data,
