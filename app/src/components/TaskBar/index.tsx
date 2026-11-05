@@ -34,10 +34,13 @@ const TaskBarStyled = styled.div`
   padding-bottom: max(3px, env(safe-area-inset-bottom));
 `
 
+// Every program gets the same width; they all narrow together once the bar fills up.
 const TaskButton = styled(HighlightButton)`
   height: 100%;
-  max-width: 180px;
-  min-width: 0;
+  flex: 0 1 160px;
+  && {
+    min-width: 0;
+  }
   justify-content: flex-start;
   padding: 0 10px 0 6px;
   span {
@@ -70,6 +73,25 @@ const ButtonContainer = styled.div`
   flex-direction: row;
   gap: 3px;
   align-items: start;
+`
+
+// The desktop's program list takes whatever the Start button and the tray leave free.
+const TaskRow = styled(Row)`
+  flex: 1 1 0;
+  min-width: 0;
+  > * {
+    flex-shrink: 0;
+  }
+  > ${ButtonContainer} {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+`
+
+const MobileButtons = styled(ButtonContainer)`
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
 `
 
 const InsetContainer = styled.div`
@@ -105,22 +127,23 @@ export default function TaskBar({
   const [waves, toggleWaves] = useWaves()
   const { block } = useAccount()
   const [, , , minimized] = useWindows()
+  const Left = mobile ? Row : TaskRow
 
   return (
     <NoScroll>
       <TaskBarStyled>
-        <Row>
+        <Left>
           <StartButton />
           <VerticalSeparator />
           {mobile ? (
-            <ButtonContainer>
+            <MobileButtons>
               <MobileButton className="free-height" onClick={onHome}>
                 Desktop
               </MobileButton>
               <MobileButton className="free-height" onClick={onOpenSwitcher} title="Switch programs">
                 Programs{active.length ? ` (${active.length})` : ''}
               </MobileButton>
-            </ButtonContainer>
+            </MobileButtons>
           ) : (
             <ButtonContainer>
               {/* The minimized radio lives in its dock by the wave button instead. */}
@@ -151,7 +174,7 @@ export default function TaskBar({
                 })}
             </ButtonContainer>
           )}
-        </Row>
+        </Left>
         <Row>
           <VerticalSeparator />
           <InsetContainer>

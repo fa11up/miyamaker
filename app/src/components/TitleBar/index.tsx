@@ -52,7 +52,6 @@ export type TitleSkin =
   | 'floor'
   | 'aqua'
   | 'tv'
-  | 'chrome'
   | 'mint'
   | 'launch'
   | 'auction'
@@ -60,13 +59,13 @@ export type TitleSkin =
   | 'files'
   | 'upload'
   | 'display'
+  | 'station'
 
 const MARK: Record<TitleSkin, string> = {
   miyanet: '✦',
   floor: '●',
   aqua: '♪',
   tv: '●',
-  chrome: '♥',
   mint: '♥',
   launch: '▲',
   auction: '♦',
@@ -74,6 +73,7 @@ const MARK: Record<TitleSkin, string> = {
   files: '▤',
   upload: '∞',
   display: '▣',
+  station: '★',
 }
 
 const StyledTitleBar = styled.div`
@@ -208,29 +208,6 @@ const StyledTitleBar = styled.div`
     }
     ${ChromeButton}:hover {
       background: linear-gradient(180deg, #5d586e, #2f2b3c);
-    }
-  }
-
-  /* Community station: the radio's sculpted chrome and its pink orb. */
-  &[data-skin='chrome'] {
-    background: linear-gradient(180deg, #fff 0%, #cfd4e6 42%, #7f86a6 52%, #d8dcec 100%);
-    color: #1c1040;
-    .mark {
-      color: #c82bd0;
-    }
-    .title-bar {
-      text-shadow: 0 1px 0 rgba(255, 255, 255, 0.7);
-    }
-    ${ChromeButton} {
-      width: 18px;
-      border-radius: 50%;
-      color: #1c1040;
-      background: radial-gradient(circle at 36% 28%, #fff 0 8%, #e4e8f4 22%, #a2aac2 52%, #565d7c 100%);
-      box-shadow: 0 0 0 1px #10101d;
-    }
-    ${ChromeButton}.close {
-      color: #fff;
-      background: radial-gradient(circle at 36% 26%, #fff 0 5%, #ff9df0 16%, #c82bd0 42%, #57107f 100%);
     }
   }
 
@@ -390,6 +367,34 @@ const StyledTitleBar = styled.div`
     }
     ${ChromeButton}:hover {
       background: #dcdcdc;
+    }
+  }
+
+  /* Community station: pinstriped tangerine plastic with gel buttons. */
+  &[data-skin='station'] {
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.65) 0%, rgba(255, 255, 255, 0.12) 48%, transparent 52%),
+      repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.16) 0 1px, transparent 1px 3px),
+      linear-gradient(90deg, #ff7a18, #ffa928 70%, #ffd24d);
+    color: #2a0a5e;
+    .mark {
+      color: #c6ff3d;
+      text-shadow: 0 0 1px #2a0a5e, 1px 1px 0 #2a0a5e;
+    }
+    .title-bar {
+      text-shadow: 0 1px 0 rgba(255, 255, 255, 0.55);
+    }
+    ${ChromeButton} {
+      width: 18px;
+      border-radius: 50%;
+      color: #2a0a5e;
+      background: radial-gradient(circle at 36% 28%, #fff 0 10%, #e6ff9c 28%, #c6ff3d 56%, #6fbf00 100%);
+      box-shadow: 0 0 0 1px #2a0a5e;
+    }
+    ${ChromeButton}:hover {
+      filter: brightness(1.08);
+    }
+    ${ChromeButton}.close {
+      background: radial-gradient(circle at 36% 28%, #fff 0 10%, #ffc2e0 28%, #ff5fae 56%, #c81a78 100%);
     }
   }
 

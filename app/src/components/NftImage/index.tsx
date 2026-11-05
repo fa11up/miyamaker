@@ -6,6 +6,7 @@ import { color } from '@/theme/tokens'
 import { thumbFor } from '@/utils/artThumbs'
 import { gatewayUrls, ipfsPath } from '@/utils/ipfsGateways'
 import { IPFS_GATEWAYS } from '@/utils/nftMetadata'
+import { resolveUri } from '@/utils/resolveUri'
 
 /**
  * An NFT image that loads fast and never shows a broken icon:
@@ -83,6 +84,7 @@ const Missing = styled.span`
 export function imageCandidates(src: string | undefined): string[] {
   if (!src) return []
   if (/^data:image\//i.test(src.trim())) return [src.trim()]
+  if (/^ar:\/\//i.test(src.trim())) return [resolveUri(src)]
   return gatewayUrls(src, IPFS_GATEWAYS)
 }
 
