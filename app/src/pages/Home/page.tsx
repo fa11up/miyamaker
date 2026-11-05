@@ -14,6 +14,7 @@ import Claim from './Claim'
 import SwarmSearch from './SwarmSearch'
 import Ticker from './Ticker'
 import { useRedemptionState } from './useMiyanet'
+import { LaunchYourOwn, NowMinting } from './WayIn'
 import Webring from './Webring'
 import {
   LinkRow,
@@ -30,6 +31,8 @@ import {
 
 const SECTIONS = {
   search: 'miyanet-search',
+  mint: 'miyanet-mint',
+  launch: 'miyanet-launch',
   claim: 'miyanet-claim',
   infer: 'miyanet-infer',
   imdusd: 'miyanet-imdusd',
@@ -252,13 +255,14 @@ const NavList = styled.ul`
 const Main = styled.div`
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  grid-template-areas: 'claim' 'infer' 'imdusd' 'map' 'heritage' 'ring';
+  grid-template-areas: 'mint' 'launch' 'claim' 'infer' 'imdusd' 'map' 'heritage' 'ring';
   gap: ${space[4]};
   align-items: start;
   min-width: 0;
   .wide & {
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     grid-template-areas:
+      'mint launch'
       'claim infer'
       'claim imdusd'
       'heritage ring'
@@ -418,6 +422,8 @@ export default function Home() {
   }
 
   const nav: { id?: string; label: string; note: string; tag?: ReactNode; onClick?: () => void }[] = [
+    { id: SECTIONS.mint, label: 'Now minting', note: 'collect an NFT' },
+    { id: SECTIONS.launch, label: 'Launch', note: 'sell your art' },
     { id: SECTIONS.search, label: 'Search', note: 'ask the swarm' },
     { id: SECTIONS.claim, label: 'The Claim', note: 'MIYA, MXXN to INFER', tag: <NewTag>NEW!</NewTag> },
     { id: SECTIONS.infer, label: 'INFER', note: 'the token' },
@@ -489,6 +495,12 @@ export default function Home() {
         </Sidebar>
 
         <Main>
+          <div style={{ gridArea: 'mint', minWidth: 0 }}>
+            <NowMinting id={SECTIONS.mint} />
+          </div>
+          <div style={{ gridArea: 'launch', minWidth: 0 }}>
+            <LaunchYourOwn id={SECTIONS.launch} />
+          </div>
           <Claim id={SECTIONS.claim} style={{ gridArea: 'claim' }} />
 
           <PortalBox id={SECTIONS.infer} title="INFER" label="INFER" style={{ gridArea: 'infer' }}>
