@@ -116,46 +116,49 @@ const Tagline = styled.p`
   }
 `
 
-/** The way in for someone who came for NFTs, not the swarm. */
+/** The way in for someone who came for NFTs, not the swarm. Same width as the search box below it. */
 const Start = styled.div`
-  display: flex;
-  flex-wrap: wrap;
+  box-sizing: border-box;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: ${space[2]} ${space[3]};
-  max-width: 64ch;
-  padding: ${space[2]} ${space[3]};
+  gap: ${space[3]};
+  width: 100%;
+  max-width: 720px;
+  margin: 0 auto;
+  padding: ${space[3]};
   background: ${color.faceLight};
   color: ${color.ink};
   box-shadow: ${bevel.raised};
+  text-align: left;
   font-size: ${text.sm};
   line-height: 1.45;
-  > div {
-    flex: 1 1 260px;
-  }
   b {
     display: block;
+    margin-bottom: 2px;
+    font-family: ${font.display};
+    font-weight: 400;
+    font-size: ${text.lg};
   }
-  button {
-    min-height: 32px;
-    padding: 0 ${space[3]};
-    border: none;
-    border-radius: 0;
-    background: ${color.face};
-    color: ${color.ink};
-    box-shadow: ${bevel.raised};
-    font-family: ${font.ui};
-    font-size: ${text.sm};
-    cursor: pointer;
+  .actions {
+    display: flex;
+    gap: ${space[2]};
   }
-  button.primary {
+  .actions button {
+    min-height: 40px;
+    white-space: nowrap;
+  }
+  .actions button.primary {
     background: ${color.accent};
   }
-  button:active {
-    box-shadow: ${bevel.pressed};
+  .actions button.primary:hover:not(:disabled) {
+    background: #e48fe5;
   }
-  button:focus-visible {
-    outline: 1px dotted ${color.dark};
-    outline-offset: -4px;
+  .narrow & {
+    grid-template-columns: minmax(0, 1fr);
+    .actions button {
+      flex: 1 1 0;
+    }
   }
 `
 
@@ -415,7 +418,7 @@ export default function Home() {
 
   const nav: { id?: string; label: string; note: string; tag?: ReactNode; onClick?: () => void }[] = [
     { id: SECTIONS.search, label: 'Search', note: 'ask the swarm' },
-    { id: SECTIONS.claim, label: 'The Claim', note: 'MIYA to INFER', tag: <NewTag>NEW!</NewTag> },
+    { id: SECTIONS.claim, label: 'The Claim', note: 'MIYA, MXXN to INFER', tag: <NewTag>NEW!</NewTag> },
     { id: SECTIONS.infer, label: 'INFER', note: 'the token' },
     { id: SECTIONS.imdusd, label: 'imdUSD', note: 'the dollar' },
     { id: SECTIONS.map, label: 'How it fits', note: 'the big picture' },
@@ -440,15 +443,17 @@ export default function Home() {
         </Tagline>
         <Start>
           <div>
-            <b>miyamaker: make and collect NFTs</b>
+            <b>Make and collect NFTs</b>
             An NFT is a piece of art or music you own, recorded on Ethereum. Collect one, or sell your own.
           </div>
-          <button type="button" className="primary" onClick={() => navigate('/mint')}>
-            Mint an NFT
-          </button>
-          <button type="button" onClick={() => navigate('/launch')}>
-            Launch my art
-          </button>
+          <div className="actions">
+            <PushButton type="button" className="primary" onClick={() => navigate('/mint')}>
+              Mint an NFT
+            </PushButton>
+            <PushButton type="button" onClick={() => navigate('/launch')}>
+              Launch my art
+            </PushButton>
+          </div>
         </Start>
         <SwarmSearch />
       </Masthead>

@@ -18,6 +18,11 @@ export const IMDUSD_TREASURY: Address = '0x6Ac8fF96Fb8DCF5d79A8eF1E59D9AC23f2BD2
 export const INFER_SUPPLY = 1_000_000_000
 /** MIYA a wallet can redeem before the rest vests over one 13-week season (`IMMEDIATE_A`). */
 export const MIYA_IMMEDIATE_LIMIT = 200_000
+/** INFER a wallet can receive at once from MXXN before the rest vests (`IMMEDIATE_B_INFER`). */
+export const MXXN_IMMEDIATE_INFER = 930_000
+
+/** The two tokens the claim burns for INFER. */
+export type Legacy = 'miya' | 'mxxn'
 
 export const LINKS = {
   infer: 'https://infer.imdusd.com/',
@@ -88,4 +93,29 @@ export const legacyRedeemerAbi = [
   },
   { type: 'function', name: 'closesAt', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint64' }] },
   { type: 'function', name: 'rateA', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
+  { type: 'function', name: 'rateB', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
+  {
+    type: 'function',
+    name: 'advanceClock',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'legacy', type: 'address' },
+      { name: 'steps', type: 'uint256' },
+    ],
+    outputs: [],
+  },
+] as const
+
+/** MXXN moves (and so redeems) only inside its full-moon window, given in block numbers. */
+export const mxxnAbi = [
+  {
+    type: 'function',
+    name: 'moonConfig',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [
+      { name: 'start', type: 'uint256' },
+      { name: 'end', type: 'uint256' },
+    ],
+  },
 ] as const

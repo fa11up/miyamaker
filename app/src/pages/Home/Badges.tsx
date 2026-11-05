@@ -89,6 +89,42 @@ const Pix = styled.span`
   }
 `
 
+/**
+ * The INFER / imdUSD mark: the favicon's 16x16 pixels (infer.imdusd.com, imdusd.com, the brand kit), drawn in
+ * currentColor so each badge keeps its own colours.
+ */
+function Mark() {
+  return (
+    <svg viewBox="4 3 9 10" width="18" height="20" shapeRendering="crispEdges" aria-hidden focusable="false">
+      <g fill="currentColor">
+        <rect x="5" y="4" width="7" height="1" />
+        <rect x="8" y="4" width="1" height="8" />
+        <rect x="5" y="11" width="7" height="1" />
+        <rect x="4" y="4" width="1" height="1" fillOpacity=".5" />
+        <rect x="12" y="4" width="1" height="1" fillOpacity=".5" />
+        <rect x="4" y="11" width="1" height="1" fillOpacity=".5" />
+        <rect x="12" y="11" width="1" height="1" fillOpacity=".5" />
+        <rect x="5" y="7" width="3" height="2" fillOpacity=".5" />
+        <rect x="9" y="7" width="3" height="2" fillOpacity=".5" />
+        <rect x="4" y="7" width="1" height="2" fillOpacity=".25" />
+        <rect x="12" y="7" width="1" height="2" fillOpacity=".25" />
+      </g>
+    </svg>
+  )
+}
+
+/** The imdUSD pixel wordmark from the brand kit (wordmark-ink.svg), in currentColor. */
+const IMDUSD_WORDMARK =
+  'M20 0h20v20h-20zM280 0h20v20h-20zM320 0h40v20h-40zM400 0h40v20h-40zM480 0h100v20h-100zM600 0h100v20h-100zM0 40h40v20h-40zM80 40h40v20h-40zM140 40h20v20h-20zM220 40h80v20h-80zM320 40h40v20h-40zM400 40h40v20h-40zM460 40h40v20h-40zM600 40h40v20h-40zM680 40h40v20h-40zM20 60h20v20h-20zM80 60h20v20h-20zM120 60h20v20h-20zM160 60h20v20h-20zM200 60h20v20h-20zM280 60h20v20h-20zM320 60h40v20h-40zM400 60h40v20h-40zM480 60h80v20h-80zM600 60h40v20h-40zM680 60h40v20h-40zM20 80h20v20h-20zM80 80h20v20h-20zM120 80h20v20h-20zM160 80h20v20h-20zM200 80h20v20h-20zM280 80h20v20h-20zM320 80h40v20h-40zM400 80h40v20h-40zM540 80h40v20h-40zM600 80h40v20h-40zM680 80h40v20h-40zM20 100h20v20h-20zM80 100h20v20h-20zM120 100h20v20h-20zM160 100h20v20h-20zM200 100h20v20h-20zM280 100h20v20h-20zM320 100h40v20h-40zM400 100h40v20h-40zM540 100h40v20h-40zM600 100h40v20h-40zM680 100h40v20h-40zM0 120h60v20h-60zM80 120h20v20h-20zM120 120h20v20h-20zM160 120h20v20h-20zM220 120h80v20h-80zM340 120h80v20h-80zM460 120h100v20h-100zM600 120h100v20h-100zM280 20h20v20h-20zM320 20h40v20h-40zM400 20h40v20h-40zM460 20h40v20h-40zM600 20h40v20h-40zM680 20h40v20h-40z'
+
+function Wordmark() {
+  return (
+    <svg viewBox="0 0 720 140" width="54" height="11" shapeRendering="crispEdges" role="img" aria-label="imdUSD">
+      <path fill="currentColor" d={IMDUSD_WORDMARK} />
+    </svg>
+  )
+}
+
 const Wall = styled.div`
   display: flex;
   flex-wrap: wrap;
@@ -117,7 +153,9 @@ export function BadgeWall() {
         style={{ background: '#000', color: y2k.phosphor }}
         title="INFER: trade and stake"
       >
-        <Pix style={{ background: y2k.phosphor, color: '#000' }}>∞</Pix>
+        <Pix style={{ background: y2k.phosphor, color: '#000' }}>
+          <Mark />
+        </Pix>
         <span>
           <b>INFER</b>
           <small style={{ color: '#fff' }}>get it here</small>
@@ -129,9 +167,13 @@ export function BadgeWall() {
         style={{ background: 'linear-gradient(#1e8a4c, #0b4d27)', color: '#fff' }}
         title="imdUSD"
       >
-        <Pix style={{ background: '#fff', color: '#0b4d27' }}>$</Pix>
+        <Pix style={{ background: '#fff', color: '#0b4d27' }}>
+          <Mark />
+        </Pix>
         <span>
-          <b>imdUSD</b>
+          <b style={{ marginBottom: 3 }}>
+            <Wordmark />
+          </b>
           <small>just a dollar</small>
         </span>
       </Badge>
