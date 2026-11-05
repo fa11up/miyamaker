@@ -14,6 +14,8 @@
   },
   // Secrets (not in this file): npx wrangler secret put ZEROX_API_KEY
   //                             npx wrangler secret put OPENSEA_API_KEY
+  // Wallets that can remove any track from the radio's community station, comma-separated. Set before going live.
+  "vars": { "STATION_ADMINS": "" },
   "workers_dev": false,
   "routes": [
     { "pattern": "www.miyamaker.com", "custom_domain": true },

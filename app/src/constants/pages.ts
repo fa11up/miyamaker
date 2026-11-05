@@ -149,6 +149,16 @@ const Pages: Record<string, Page> = {
       height: 397,
     },
   },
+  station: {
+    id: 'station',
+    path: '/station',
+    label: 'Community station',
+    icon: RadioIcon[0],
+    minSize: {
+      width: 640,
+      height: 680,
+    },
+  },
   dropmusic: {
     id: 'dropmusic',
     path: '/drop-music',

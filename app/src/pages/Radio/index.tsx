@@ -8,7 +8,8 @@ import Pages from '@/constants/pages'
 import type { RadioApi } from '@/context/RadioProvider'
 import { playableUrl, useRadio, useRadioClock } from '@/context/RadioProvider'
 import { estimateKbps, formatDuration } from '@/music/audio'
-import { LISTED_MUSIC_CHAINS, musicConfig } from '@/music/config'
+import { communitySource } from '@/music/community'
+import { LISTED_MUSIC_CHAINS } from '@/music/config'
 import { positionLabel } from '@/music/queue'
 import { musicDropsSource, stationSource } from '@/music/sources'
 import type { PlaylistSource, Track } from '@/music/types'
@@ -355,10 +356,10 @@ export default function RadioWindow() {
 
   // Adapters: on-chain music drops per supported chain, plus the curated stations file.
   const sources = useMemo<PlaylistSource[]>(
-    () => [...LISTED_MUSIC_CHAINS.map((c) => musicDropsSource(c.chainId)), stationSource],
+    () => [communitySource, ...LISTED_MUSIC_CHAINS.map((c) => musicDropsSource(c.chainId)), stationSource],
     []
   )
-  const defaultSource = `drops:${musicConfig(chainId).chainId}`
+  const defaultSource = communitySource.id
 
   const { queue, current } = radio
   const duration = clock.duration || current?.duration || 0
@@ -846,6 +847,7 @@ export default function RadioWindow() {
                     checked={checked}
                     onLoad={loadSource}
                     onDropMusic={() => openApp('dropmusic')}
+                    onUpload={() => openApp('station')}
                     onTestTone={import.meta.env.DEV ? loadTestTone : undefined}
                     onInfo={() => setMenu('info')}
                   />
