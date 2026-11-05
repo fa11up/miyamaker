@@ -141,6 +141,13 @@ export function priceDecimals(p: Price): number {
   return whole >= 1000n ? 0 : whole >= 10n ? 2 : 4
 }
 
+/** The lower of two prices, when they can be compared (same token); else the first that exists. */
+export function lowerPrice(a: Price | undefined, b: Price | undefined): Price | undefined {
+  if (!a || !b) return a || b
+  if (a.symbol !== b.symbol || a.decimals !== b.decimals) return a
+  return b.amount < a.amount ? b : a
+}
+
 export const formatPrice = (p: Price | undefined) =>
   p ? `${formatAmount(p.amount, p.decimals, priceDecimals(p))} ${p.symbol}` : '–'
 

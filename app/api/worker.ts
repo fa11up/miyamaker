@@ -2,7 +2,8 @@
 // and everything else from the static build in dist/ (wrangler.jsonc).
 import { verifyMessage } from 'viem'
 
-import { handleOpenSeaRequest, OPENSEA_PROXY_PATH } from './_lib/opensea'
+import { edgeCache, handleMarketRequest, MARKET_PREFIX, openSeaReader } from './_lib/market'
+import { handleOpenSeaRequest, OPENSEA_PROXY_PATH, quoteBigInts } from './_lib/opensea'
 import type { D1Like } from './_lib/station'
 import { d1Store, gatewayContentType, handleStationRequest, STATION_PATH } from './_lib/station'
 import { clientKey, createRateLimiter, handleZeroExRequest, PROXY_PREFIX, sameOrigin } from './_lib/zeroex'
@@ -25,6 +26,7 @@ const guards = {
   readLimiter: createRateLimiter({ capacity: 120, perSecond: 2 }),
   fillLimiter: createRateLimiter({ capacity: 10, perSecond: 0.2 }),
 }
+const marketLimiter = createRateLimiter({ capacity: 120, perSecond: 2 })
 const stationLimiter = createRateLimiter({ capacity: 20, perSecond: 0.2 })
 
 export default {
@@ -45,6 +47,19 @@ export default {
         { method: request.method, url: request.url, headers: request.headers, body },
         { OPENSEA_API_KEY: env.OPENSEA_API_KEY },
         guards
+      )
+    }
+
+    if (url.pathname.startsWith(`${MARKET_PREFIX}/`)) {
+      return handleMarketRequest(
+        { method: request.method, url: request.url, headers: request.headers },
+        {
+          openSea: openSeaReader(env.OPENSEA_API_KEY, quoteBigInts),
+          cache: edgeCache((caches as unknown as { default?: Cache }).default),
+          sameOrigin,
+          clientKey,
+          limiter: marketLimiter,
+        }
       )
     }
 

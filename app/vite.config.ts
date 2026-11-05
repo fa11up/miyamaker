@@ -10,7 +10,8 @@ import { nodePolyfills } from 'vite-plugin-node-polyfills'
 import { VitePWA } from 'vite-plugin-pwa'
 import svgr from 'vite-plugin-svgr'
 
-import { handleOpenSeaRequest, OPENSEA_PROXY_PATH } from './api/_lib/opensea'
+import { handleMarketRequest, MARKET_PREFIX, memoryCache, openSeaReader } from './api/_lib/market'
+import { handleOpenSeaRequest, OPENSEA_PROXY_PATH, quoteBigInts } from './api/_lib/opensea'
 import { gatewayContentType, handleStationRequest, memoryStore, STATION_PATH } from './api/_lib/station'
 import { clientKey, createRateLimiter, handleZeroExRequest, PROXY_PREFIX, sameOrigin } from './api/_lib/zeroex'
 
@@ -76,6 +77,34 @@ function openSeaDevProxy(env: Record<string, string>): Plugin {
   }
 }
 
+/** Dev-only stand-in for the Worker's market route. OPENSEA_API_KEY from the shell or app/.env.local. */
+function marketDevProxy(env: Record<string, string>): Plugin {
+  const cache = memoryCache()
+  const limiter = createRateLimiter({ capacity: 200, perSecond: 5 })
+  return {
+    name: 'miya-market-dev-proxy',
+    configureServer(server) {
+      server.middlewares.use(MARKET_PREFIX, async (req, res) => {
+        const headers = new Headers()
+        for (const [k, v] of Object.entries(req.headers)) if (typeof v === 'string') headers.set(k, v)
+        const response = await handleMarketRequest(
+          { method: req.method || 'GET', url: `http://${req.headers.host || 'localhost'}${MARKET_PREFIX}${req.url || ''}`, headers },
+          {
+            openSea: openSeaReader(process.env.OPENSEA_API_KEY || env.OPENSEA_API_KEY, quoteBigInts),
+            cache,
+            sameOrigin,
+            clientKey,
+            limiter,
+          }
+        )
+        res.statusCode = response.status
+        response.headers.forEach((value, key) => res.setHeader(key, value))
+        res.end(await response.text())
+      })
+    },
+  }
+}
+
 /** Dev-only stand-in for the Worker's station route, kept in memory. STATION_ADMINS from the shell. */
 function stationDevProxy(): Plugin {
   const store = memoryStore()
@@ -117,6 +146,7 @@ export default defineConfig(({ mode }) => ({
     zeroExDevProxy(loadEnv(mode, __dirname, ['ZEROX_'])),
     openSeaDevProxy(loadEnv(mode, __dirname, ['OPENSEA_'])),
     stationDevProxy(),
+    marketDevProxy(loadEnv(mode, __dirname, ['OPENSEA_'])),
     react(),
     dynamicImport(),
     svgr(),

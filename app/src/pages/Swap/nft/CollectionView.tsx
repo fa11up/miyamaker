@@ -17,14 +17,14 @@ import { bevel, color, space, text } from '../floor/tokens'
 import { useEthUsd } from '../MarketBoard'
 import { erc721Abi, poolFactoryAbi } from './abi'
 import type { OsOrder, Price } from './markets'
-import { bestQuote, collectionUrl, formatAmount, formatPrice, venuesFor } from './markets'
+import { bestQuote, collectionUrl, formatAmount, formatPrice, lowerPrice, venuesFor } from './markets'
 import { DEFAULT_PAIR_SYMBOL, pickPair } from './pairs'
 import type { PoolMode } from './pool'
 import { KIND, MODE, MODE_HINT, MODE_LABEL } from './pool'
 import { MAX_SWEEP, pickCheapest, sumPrices, sweepable } from './sweep'
 import SweepReview from './SweepReview'
 import { Card, Chips, Field, Head, Hint, LinkButton, Mono, Prose, PushButton } from './ui'
-import { useOpenSeaCollection, useOpenSeaListings, useOpenSeaNftImage } from './useMarkets'
+import { useMarketListings, useMarketSales, useOpenSeaCollection, useOpenSeaNftImage } from './useMarkets'
 import type { PoolPrice } from './usePoolPrices'
 import { pairsFor, poolSide, usePoolPrices } from './usePoolPrices'
 import type { Pool } from './usePools'
@@ -136,6 +136,8 @@ const TileButton = styled.button`
   }
 `
 
+const TILE_PAGE = 24
+
 const SweepBar = styled.div`
   display: grid;
   grid-template-columns: auto minmax(80px, 1fr) auto auto;
@@ -167,6 +169,34 @@ const SweepBar = styled.div`
     }
   }
 `
+
+const Sales = styled.ul`
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: ${text.sm};
+  font-variant-numeric: tabular-nums;
+  li {
+    display: flex;
+    justify-content: space-between;
+    gap: ${space[3]};
+    padding: ${space[1]} 0;
+    border-bottom: 1px solid ${color.light};
+  }
+  li:last-child {
+    border-bottom: none;
+  }
+  a {
+    white-space: nowrap;
+  }
+`
+
+const timeAgo = (seconds: number) => {
+  const mins = Math.max(0, Math.round((Date.now() / 1000 - seconds) / 60))
+  if (mins < 60) return `${mins}m ago`
+  if (mins < 48 * 60) return `${Math.round(mins / 60)}h ago`
+  return `${Math.round(mins / 1440)}d ago`
+}
 
 const LookupRow = styled.form`
   display: flex;
@@ -301,7 +331,8 @@ export default function CollectionView({
   const wrongChain = isConnected && walletChain !== chainId
 
   const os = useOpenSeaCollection(chainId, address)
-  const listings = useOpenSeaListings(os.slug, 20)
+  const listings = useMarketListings(os.slug)
+  const sales = useMarketSales(os.slug)
   const factory = poolFactoryFor(chainId)
   const pools = usePoolsForCollection(chainId, factory, address)
   const onchainName = useReadContract({
@@ -315,6 +346,10 @@ export default function CollectionView({
   const ethUsd = useEthUsd()
   const [sweeping, setSweeping] = useState(false)
   const [sweepCount, setSweepCount] = useState(3)
+  // Each tile looks up its own image, so the grid grows on request rather than asking for every listing at once.
+  const [tileLimit, setTileLimit] = useState(TILE_PAGE)
+  const listed = (listings.listings ?? []).filter((l) => l.tokenId)
+  const shownListings = listed.slice(0, tileLimit)
   const canSweep = sweepable(listings.listings ?? [], me)
   const pickedListings = pickCheapest(canSweep, Math.min(sweepCount, canSweep.length))
   const create = useTx(() => pools.refetch())
@@ -337,7 +372,9 @@ export default function CollectionView({
   const poolVenue = (p: Pool) => `MiyaPool (${MODE_LABEL[p.mode]})`
   // `where` reads after the price: an OpenSea listing or offer is "on OpenSea"; a pool's bid is a sale into it.
 
-  const floor: Price | undefined = os.stats?.floor || listings.listings?.[0]?.price
+  // OpenSea's stat can be lower than anything its listings call returns: show the lowest known, and what can be bought.
+  const floor: Price | undefined = lowerPrice(os.stats?.floor, listings.floor)
+  const buyHere = listings.floor && floor && listings.floor.amount !== floor.amount ? listings.floor : undefined
   const cheapest = bestQuote([
     { where: 'on OpenSea', price: floor },
     ...poolsWithNfts.map((p) => ({
@@ -404,8 +441,9 @@ export default function CollectionView({
             <div>
               <dt title="The cheapest one for sale right now">Floor</dt>
               <dd>
-                {os.stats.floor ? formatPrice(os.stats.floor) : 'None for sale'}
-                {os.stats.floor?.symbol === 'ETH' && <small>{ethInUsd(os.stats.floor.amount, ethUsd)}</small>}
+                {floor ? formatPrice(floor) : 'None for sale'}
+                {floor?.symbol === 'ETH' && <small>{ethInUsd(floor.amount, ethUsd)}</small>}
+                {buyHere && <small>Cheapest to buy here: {formatPrice(buyHere)}</small>}
               </dd>
             </div>
             <div>
@@ -502,9 +540,11 @@ export default function CollectionView({
       )}
 
       {os.slug && (listings.loading || (listings.listings && listings.listings.length > 0)) && (
-        <Card aria-label="Cheapest on OpenSea">
+        <Card aria-label="Cheapest for sale">
           <Eyebrow>Cheapest for sale</Eyebrow>
-          <Hint>Press one to see it and buy it here.</Hint>
+          <Hint>
+            Press one to see it and buy it here.{listings.stale ? ' These prices may be a few minutes old.' : ''}
+          </Hint>
           {listings.loading ? (
             <Tiles>
               {[0, 1, 2].map((i) => (
@@ -515,20 +555,46 @@ export default function CollectionView({
             </Tiles>
           ) : (
             <Tiles>
-              {listings
-                .listings!.filter((l) => l.tokenId)
-                .map((l) => (
-                  <ListingTile
-                    picked={!sweeping && pickedListings.some((p) => p.hash === l.hash)}
-                    key={l.hash}
-                    chainId={chainId}
-                    contract={address}
-                    listing={l}
-                    onOpen={() => onOpenItem(l.tokenId!)}
-                  />
-                ))}
+              {shownListings.map((l) => (
+                <ListingTile
+                  picked={!sweeping && pickedListings.some((p) => p.hash === l.hash)}
+                  key={l.hash}
+                  chainId={chainId}
+                  contract={address}
+                  listing={l}
+                  onOpen={() => onOpenItem(l.tokenId!)}
+                />
+              ))}
             </Tiles>
           )}
+          {!listings.loading && listed.length > shownListings.length && (
+            <PushButton type="button" onClick={() => setTileLimit((n) => n + TILE_PAGE)}>
+              Show more ({listed.length - shownListings.length} left)
+            </PushButton>
+          )}
+        </Card>
+      )}
+
+      {sales.sales && sales.sales.length > 0 && (
+        <Card aria-label="Recent sales">
+          <Eyebrow>Recent sales</Eyebrow>
+          {sales.day && (
+            <Hint>
+              Last 24 hours: {sales.day.count} sold, {formatAmount(BigInt(sales.day.volume), 18, 2)} ETH.
+            </Hint>
+          )}
+          <Sales>
+            {sales.sales.slice(0, 8).map((s) => (
+              <li key={`${s.tx}-${s.tokenId}`}>
+                <span>
+                  #{s.tokenId} sold for {formatAmount(BigInt(s.price), 18, 3)} {s.currency}
+                </span>
+                <a href={`${explorerUrl(chainId)}/tx/${s.tx}`} target="_blank" rel="noreferrer">
+                  {timeAgo(s.at)}
+                </a>
+              </li>
+            ))}
+          </Sales>
         </Card>
       )}
 
@@ -605,7 +671,7 @@ export default function CollectionView({
                       : os.needsKey
                       ? 'Listings and offers need an API key. The link works.'
                       : listings.listings?.length
-                      ? 'Buy listed NFTs right here, below.'
+                      ? 'Buy listed NFTs right here, above.'
                       : undefined
                   }
                 >

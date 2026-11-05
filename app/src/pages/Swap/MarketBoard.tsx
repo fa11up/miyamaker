@@ -17,8 +17,8 @@ import {
 import type { SwapToken } from './constants'
 import { PINNED_TOKENS } from './constants'
 import { color, font, space, text } from './floor/tokens'
-import { formatPrice } from './nft/markets'
-import { useCollectionRow } from './nft/useMarkets'
+import { formatPrice, lowerPrice } from './nft/markets'
+import { useCollectionRow, useMarketListings } from './nft/useMarkets'
 import { NATIVE } from './tokenList'
 import { TokenLogo } from './TokenPicker'
 
@@ -366,6 +366,8 @@ function CollectionRow({
   onOpen: (address: string) => void
 }) {
   const { info, stats, loading } = useCollectionRow(slug)
+  const market = useMarketListings(slug)
+  const floor = lowerPrice(stats?.floor, market.floor)
   const ethUsd = useEthUsd()
   const dash = loading ? '…' : '–'
   return (
@@ -386,8 +388,8 @@ function CollectionRow({
         </button>
       </td>
       <td>
-        {stats?.floor ? formatPrice(stats.floor) : loading ? dash : 'None for sale'}
-        {stats?.floor?.symbol === 'ETH' && <span className="usd">{ethInUsd(stats.floor.amount, ethUsd)}</span>}
+        {floor ? formatPrice(floor) : loading ? dash : 'None for sale'}
+        {floor?.symbol === 'ETH' && <span className="usd">{ethInUsd(floor.amount, ethUsd)}</span>}
       </td>
       <td className="opt">{stats?.sales7d ?? dash}</td>
       <td className="opt">{stats?.volume7d !== undefined ? `${stats.volume7d.toFixed(1)} ETH` : dash}</td>

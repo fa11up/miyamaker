@@ -1,18 +1,20 @@
 import { useQuery } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 
+import type { MarketListing, MarketSale } from '../../../../api/_lib/market'
+import { MARKET_PREFIX } from '../../../../api/_lib/market'
 import type { OsCollection, OsNft, OsOrder, OsSearchHit, OsStats, OwnedGroup, Price } from './markets'
 import {
   groupAccountNfts,
   OPENSEA_CHAIN,
   parseCollection,
-  parseListings,
   parseNft,
   parseOfferAggregate,
   parseOrder,
   parseSearch,
   parseStats,
 } from './markets'
+import { goneHashes, sessionStore } from './sweep'
 
 /** Same-origin proxy (Cloudflare Worker in prod, Vite middleware in dev). The OpenSea key stays server-side. */
 const PROXY = '/api/opensea'
@@ -169,23 +171,74 @@ export function useCollectionRow(slug: string) {
   return { info: info.data ?? undefined, stats: stats.data, loading: info.isLoading || stats.isLoading }
 }
 
-/** The cheapest OpenSea listings of a collection (price ascending). */
-export function useOpenSeaListings(slug: string | undefined, limit = 6) {
-  const { configured, known } = useOpenSeaConfigured()
-  const q = useQuery({
-    queryKey: ['os-listings', slug, limit],
-    enabled: !!slug && configured,
-    ...common,
-    queryFn: async ({ signal }): Promise<OsOrder[]> =>
-      parseListings(await orNone(get({ op: 'listings', slug: slug!, limit: String(limit) }, signal))),
+type MarketListings = {
+  at: number
+  stale: boolean
+  count: number
+  sources: Record<string, number>
+  floor: { price: string; tokenId: string; source: string } | null
+  listings: MarketListing[]
+}
+type MarketSales = { at: number; stale: boolean; day: { count: number; volume: string }; sales: MarketSale[] }
+
+async function market<T>(path: string, signal?: AbortSignal): Promise<T> {
+  const res = await fetch(`${MARKET_PREFIX}/${path}`, { signal }).catch((e) => {
+    if ((e as Error).name === 'AbortError') throw e
+    throw new MarketError('Could not reach the market service.', 'NETWORK', 0)
   })
+  const body = (await res.json().catch(() => ({}))) as T & { name?: string; message?: string }
+  if (!res.ok)
+    throw new MarketError(body.message || 'The market request failed.', body.name || `HTTP_${res.status}`, res.status)
+  return body
+}
+
+/** A market row as the buy flow's order. Prices are wei; only ETH and WETH have 18 decimals we can be sure of here. */
+const toOrder = (l: MarketListing): OsOrder => ({
+  hash: l.hash ?? '',
+  chain: 'ethereum',
+  protocolAddress: l.protocol ?? '',
+  price: { amount: BigInt(l.price), decimals: 18, symbol: l.currency },
+  tokenId: l.tokenId,
+  maker: l.seller ?? undefined,
+  remaining: 1,
+})
+
+/**
+ * One collection's merged market from our server (api/_lib/market.ts): each NFT once at its cheapest, cheapest first,
+ * shared by every visitor. Rows that failed to buy here in the last while are left out (sweep.ts `goneHashes`).
+ */
+export function useMarketListings(slug: string | undefined) {
+  const q = useQuery({
+    queryKey: ['market-listings', slug],
+    enabled: !!slug,
+    ...common,
+    queryFn: ({ signal }) => market<MarketListings>(`listings?slug=${encodeURIComponent(slug!)}`, signal),
+  })
+  const gone = goneHashes(sessionStore())
+  const listings = q.data?.listings
+    .filter((l) => l.hash && !gone.has(l.hash) && ['ETH', 'WETH'].includes(l.currency))
+    .map(toOrder)
   return {
-    listings: q.data,
-    loading: !!slug && (!known || (configured && q.isLoading)),
-    needsKey: (known && !configured) || needsKey(q.error),
+    listings,
+    /** The cheapest in ETH across every source. */
+    floor: listings?.find((l) => l.price.symbol === 'ETH')?.price,
+    stale: !!q.data?.stale,
+    loading: !!slug && q.isLoading,
+    needsKey: needsKey(q.error),
     error: q.error,
     refetch: q.refetch,
   }
+}
+
+/** The week's sales, newest first, each with its transaction. */
+export function useMarketSales(slug: string | undefined) {
+  const q = useQuery({
+    queryKey: ['market-sales', slug],
+    enabled: !!slug,
+    ...common,
+    queryFn: ({ signal }) => market<MarketSales>(`sales?slug=${encodeURIComponent(slug!)}`, signal),
+  })
+  return { sales: q.data?.sales, day: q.data?.day, loading: !!slug && q.isLoading, error: q.error }
 }
 
 /** One NFT on OpenSea: details, its best listing and best offer. */
