@@ -1,6 +1,6 @@
 import styled from 'styled-components/macro'
 
-import { bevel, color, space, text } from '@/theme/tokens'
+import { bevel, color, space, text } from './floor/tokens'
 
 /** Shared Trade layout: the content column and the network toolbar, used by both the Tokens and NFTs tabs. */
 
@@ -9,8 +9,6 @@ export const Body = styled.div`
   flex-direction: column;
   gap: ${space[3]};
   padding: ${space[3]} ${space[4]} 0;
-  max-width: 500px;
-  margin: 0 auto;
   .narrow & {
     padding: ${space[2]} ${space[3]} 0;
   }

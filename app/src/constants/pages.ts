@@ -94,8 +94,8 @@ const Pages: Record<string, Page> = {
     label: 'Trade',
     icon: SwapIcon[0],
     minSize: {
-      width: 520,
-      height: 720,
+      width: 1120,
+      height: 760,
     },
   },
   auction: {

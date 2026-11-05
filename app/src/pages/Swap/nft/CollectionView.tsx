@@ -6,13 +6,13 @@ import { useAccount, useReadContract, useSwitchChain } from 'wagmi'
 
 import LoadingHourglass from '@/assets/loading_hourglass.gif'
 import NftImage from '@/components/NftImage'
-import { Chip, Eyebrow, Skeleton, StatusBox } from '@/components/Retro'
 import type { SupportedChainId } from '@/config/wagmi'
 import { chains, explorerUrl, mainnet } from '@/config/wagmi'
 import { cleanText } from '@/desktop/files/sanitize'
 import { txWords, useTx } from '@/miyamints/useTx'
-import { bevel, color, space, text } from '@/theme/tokens'
 
+import { Chip, Eyebrow, Skeleton, StatusBox } from '../floor/retro'
+import { bevel, color, space, text } from '../floor/tokens'
 import { erc721Abi, poolFactoryAbi } from './abi'
 import type { OsOrder, Price } from './markets'
 import { bestQuote, collectionUrl, formatPrice, venuesFor } from './markets'
@@ -55,12 +55,34 @@ const Hero = styled.div`
   }
 `
 
+const Stats = styled.dl`
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+  gap: 1px;
+  margin: 0;
+  background: ${color.dark};
+  border: 1px solid ${color.dark};
+  div {
+    padding: ${space[2]};
+    background: ${color.well};
+  }
+  dt {
+    font-size: ${text.xs};
+    color: ${color.inkMuted};
+  }
+  dd {
+    margin: 0;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+  }
+`
+
 const Tiles = styled.ul`
   list-style: none;
   margin: 0;
   padding: 0;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
   gap: ${space[2]};
   .narrow & {
     grid-template-columns: repeat(3, 1fr);
@@ -223,7 +245,7 @@ export default function CollectionView({
   const wrongChain = isConnected && walletChain !== chainId
 
   const os = useOpenSeaCollection(chainId, address)
-  const listings = useOpenSeaListings(os.slug, 6)
+  const listings = useOpenSeaListings(os.slug, 20)
   const factory = poolFactoryFor(chainId)
   const pools = usePoolsForCollection(chainId, factory, address)
   const onchainName = useReadContract({
@@ -316,6 +338,31 @@ export default function CollectionView({
           </div>
         </Hero>
 
+        {os.stats && (
+          <Stats aria-label="Collection figures">
+            <div>
+              <dt>Floor</dt>
+              <dd>{os.stats.floor ? formatPrice(os.stats.floor) : '–'}</dd>
+            </div>
+            <div>
+              <dt>Best offer</dt>
+              <dd>{os.bestOffer ? formatPrice(os.bestOffer.price) : '–'}</dd>
+            </div>
+            <div>
+              <dt>Sales 7d</dt>
+              <dd>{os.stats.sales7d ?? '–'}</dd>
+            </div>
+            <div>
+              <dt>Volume 7d</dt>
+              <dd>{os.stats.volume7d !== undefined ? `${os.stats.volume7d.toFixed(1)} ETH` : '–'}</dd>
+            </div>
+            <div>
+              <dt>Owners</dt>
+              <dd>{os.stats.owners?.toLocaleString('en-US') ?? '–'}</dd>
+            </div>
+          </Stats>
+        )}
+
         {(cheapest || topOffer || poolLines.length > 0) && (
           <Best aria-label="Best prices">
             {cheapest && (
@@ -354,6 +401,36 @@ export default function CollectionView({
           </Best>
         )}
       </Card>
+
+      {os.slug && (listings.loading || (listings.listings && listings.listings.length > 0)) && (
+        <Card aria-label="Cheapest on OpenSea">
+          <Eyebrow>Cheapest on OpenSea</Eyebrow>
+          <Hint>Tap one to see it everywhere and buy it here.</Hint>
+          {listings.loading ? (
+            <Tiles>
+              {[0, 1, 2].map((i) => (
+                <li key={i}>
+                  <Skeleton h="140px" />
+                </li>
+              ))}
+            </Tiles>
+          ) : (
+            <Tiles>
+              {listings
+                .listings!.filter((l) => l.tokenId)
+                .map((l) => (
+                  <ListingTile
+                    key={l.hash}
+                    chainId={chainId}
+                    contract={address}
+                    listing={l}
+                    onOpen={() => onOpenItem(l.tokenId!)}
+                  />
+                ))}
+            </Tiles>
+          )}
+        </Card>
+      )}
 
       <Card aria-label="Markets">
         <Eyebrow>Where it trades</Eyebrow>
@@ -464,36 +541,6 @@ export default function CollectionView({
           <Hint>Random pools work only for ERC-721.</Hint>
         )}
       </Card>
-
-      {os.slug && (listings.loading || (listings.listings && listings.listings.length > 0)) && (
-        <Card aria-label="Cheapest on OpenSea">
-          <Eyebrow>Cheapest on OpenSea</Eyebrow>
-          <Hint>Tap one to see it everywhere and buy it here.</Hint>
-          {listings.loading ? (
-            <Tiles>
-              {[0, 1, 2].map((i) => (
-                <li key={i}>
-                  <Skeleton h="140px" />
-                </li>
-              ))}
-            </Tiles>
-          ) : (
-            <Tiles>
-              {listings
-                .listings!.filter((l) => l.tokenId)
-                .map((l) => (
-                  <ListingTile
-                    key={l.hash}
-                    chainId={chainId}
-                    contract={address}
-                    listing={l}
-                    onOpen={() => onOpenItem(l.tokenId!)}
-                  />
-                ))}
-            </Tiles>
-          )}
-        </Card>
-      )}
 
       <Card aria-label="Find one NFT">
         <Eyebrow>Find one NFT</Eyebrow>

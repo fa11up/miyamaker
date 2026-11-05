@@ -6,16 +6,18 @@ import { useAccount, useSwitchChain } from 'wagmi'
 
 import LoadingHourglass from '@/assets/loading_hourglass.gif'
 import NftImage from '@/components/NftImage'
-import { Chip, Eyebrow, Skeleton, StatusBox } from '@/components/Retro'
 import type { SupportedChainId } from '@/config/wagmi'
 import { chains, mainnet, pickerChains } from '@/config/wagmi'
 import { groupByCollection } from '@/desktop/files/indexer/parse'
 import { useWalletNfts } from '@/desktop/files/useWalletFiles'
 import { txWords, useTx } from '@/miyamints/useTx'
-import { bevel, color, space, text } from '@/theme/tokens'
 
 import type { SwapChainId, SwapToken } from '../constants'
+import { Chip, Eyebrow, Skeleton, StatusBox } from '../floor/retro'
+import { bevel, color, space, text } from '../floor/tokens'
 import { Body, ChainTabs, Toolbar } from '../layout'
+import type { BoardRow } from '../MarketBoard'
+import { CollectionTable, TokenTable } from '../MarketBoard'
 import type { CollectionRef } from '../tradePath'
 import { poolFactoryAbi } from './abi'
 import CollectionView from './CollectionView'
@@ -25,8 +27,8 @@ import type { PoolMode } from './pool'
 import { filterPools, MODE, MODE_HINT, MODE_LABEL, poolTitle } from './pool'
 import PoolView from './PoolView'
 import { Card, Field, Head, Hint, Prose, PushButton } from './ui'
-import type { Pool } from './usePools'
 import { contractForSlug, useOpenSeaOwned, useOpenSeaSearch } from './useMarkets'
+import type { Pool } from './usePools'
 import { poolFactoryFor, usePools, usePoolsForCollection } from './usePools'
 
 const isPoolChain = (id: number | undefined): id is SupportedChainId => chains.some((c) => c.id === id)
@@ -54,7 +56,7 @@ const Row = styled.button`
   text-align: left;
   cursor: pointer;
   &:hover {
-    background: ${color.highlight};
+    background: ${color.hover};
   }
   &:active {
     box-shadow: ${bevel.pressed};
@@ -135,7 +137,7 @@ const PickRow = styled.button`
   text-align: left;
   cursor: pointer;
   &:hover {
-    background: ${color.highlight};
+    background: ${color.hover};
   }
   &:active {
     box-shadow: ${bevel.pressed};
@@ -225,6 +227,8 @@ const shortAddress = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`
 export default function NftTrade({
   pool,
   collection,
+  board,
+  onTradeToken,
   onOpenPool,
   onOpenCollection,
   onSwapToken,
@@ -232,6 +236,8 @@ export default function NftTrade({
 }: {
   pool?: Address
   collection?: CollectionRef
+  board: { rows: BoardRow[]; failed: boolean }
+  onTradeToken: (t: SwapToken) => void
   onOpenPool: (pool: Address | undefined) => void
   onOpenCollection: (ref: CollectionRef | undefined) => void
   onSwapToken: (p: { chainId: SwapChainId; sell?: SwapToken; buy?: SwapToken }) => void
@@ -278,7 +284,8 @@ export default function NftTrade({
 
   // Your collections: OpenSea's view of the wallet when the key is set, else the desktop indexer (Ethereum).
   const yours = useMemo(() => {
-    if (owned.groups) return owned.groups.map((g) => ({ contract: g.contract, name: g.name, image: g.image, count: g.ids.length }))
+    if (owned.groups)
+      return owned.groups.map((g) => ({ contract: g.contract, name: g.name, image: g.image, count: g.ids.length }))
     if (!walletNfts.data) return []
     return groupByCollection(walletNfts.data.nfts.filter((n) => n.chainId === chainId)).map((f) => ({
       contract: f.contract,
@@ -435,6 +442,9 @@ export default function NftTrade({
         </StatusBox>
       )}
 
+      {!query && <TokenTable rows={board.rows} failed={board.failed} onTrade={onTradeToken} />}
+      {!query && chainId === mainnet.id && <CollectionTable onOpen={openCollection} />}
+
       {!query && yours.length > 0 && (
         <Card aria-label="Your collections">
           <Eyebrow>Your NFTs on {chain.name}</Eyebrow>
@@ -545,7 +555,9 @@ export default function NftTrade({
               {create.tx.phase !== 'idle' && (
                 <StatusBox tone={create.tx.phase === 'error' ? 'error' : create.tx.phase === 'done' ? 'ok' : 'info'}>
                   {create.busy && <img src={LoadingHourglass} alt="" />}
-                  <span>{create.tx.phase === 'done' ? 'Pool started. It is in the list above.' : txWords(create.tx)}</span>
+                  <span>
+                    {create.tx.phase === 'done' ? 'Pool started. It is in the list above.' : txWords(create.tx)}
+                  </span>
                 </StatusBox>
               )}
             </Card>

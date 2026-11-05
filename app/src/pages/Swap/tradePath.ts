@@ -53,6 +53,7 @@ export function parseTradePath(pathname: string): {
     if (tokenId) collection.tokenId = tokenId
     return { mode: 'nfts', collection }
   }
+
   const pool = parts[2] && ADDRESS.test(parts[2]) ? (parts[2] as `0x${string}`) : undefined
   return pool ? { mode: 'nfts', pool } : { mode: 'nfts' }
 }
@@ -63,5 +64,6 @@ export function tradePath(mode: TradeMode, pool?: string, collection?: Collectio
     const base = `${TRADE_PATH}/nfts/collection/${collection.chainId}/${collection.address}`
     return collection.tokenId ? `${base}/${collection.tokenId}` : base
   }
+
   return pool ? `${TRADE_PATH}/nfts/${pool}` : `${TRADE_PATH}/nfts`
 }

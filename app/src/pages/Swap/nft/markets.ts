@@ -34,7 +34,14 @@ export type Venue = {
 export const VENUES: Venue[] = [
   { id: 'miyapool', name: 'MiyaPool', fees: '0% fees', chains: [1, 11155111, 4663], data: 'onchain', inApp: true },
   // In-app OpenSea fills never add optional creator fees; only ones a collection enforces apply.
-  { id: 'opensea', name: 'OpenSea', fees: '1% fee + any required creator fee', chains: [1, 4663], data: 'opensea', inApp: true },
+  {
+    id: 'opensea',
+    name: 'OpenSea',
+    fees: '1% fee + any required creator fee',
+    chains: [1, 4663],
+    data: 'opensea',
+    inApp: true,
+  },
   { id: 'blur', name: 'Blur', fees: '0% fee + creator fee set on Blur', chains: [1], data: 'none', inApp: false },
 ]
 
@@ -141,13 +148,17 @@ export const formatPrice = (p: Price | undefined) =>
 const family = (symbol: string) => symbol.toUpperCase().replace(/^W(?=ETH$)/, '')
 
 /** Compare prices in one currency family (scaled to 18 decimals). */
-const scaled = (p: Price) => (p.decimals <= 18 ? p.amount * 10n ** BigInt(18 - p.decimals) : p.amount / 10n ** BigInt(p.decimals - 18))
+const scaled = (p: Price) =>
+  p.decimals <= 18 ? p.amount * 10n ** BigInt(18 - p.decimals) : p.amount / 10n ** BigInt(p.decimals - 18)
 
 /**
  * The cheapest (`lowest`) or highest offer among venue quotes in the same money as the first priced one (ETH and
  * WETH count as one). MiyaPool joins with its pool token priced in ETH through 0x (pairs.ts).
  */
-export function bestQuote<T extends { price?: Price }>(quotes: T[], pick: 'lowest' | 'highest' = 'lowest'): T | undefined {
+export function bestQuote<T extends { price?: Price }>(
+  quotes: T[],
+  pick: 'lowest' | 'highest' = 'lowest'
+): T | undefined {
   const priced = quotes.filter((q): q is T & { price: Price } => !!q.price && q.price.amount > 0n)
   if (!priced.length) return undefined
   const fam = family(priced[0]!.price.symbol)
@@ -163,7 +174,8 @@ export function bestQuote<T extends { price?: Price }>(quotes: T[], pick: 'lowes
 /* ---------- OpenSea responses ---------- */
 
 const str = (v: unknown) => (typeof v === 'string' ? v : undefined)
-const obj = (v: unknown) => (v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : undefined)
+const obj = (v: unknown) =>
+  v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : undefined
 const arr = (v: unknown) => (Array.isArray(v) ? v : [])
 
 export type OsCollection = {
@@ -206,7 +218,9 @@ export type OsStats = { floor?: Price; owners?: number; sales7d?: number; volume
 
 export function parseStats(j: unknown): OsStats {
   const total = obj(obj(j)?.total)
-  const seven = arr(obj(j)?.intervals).map(obj).find((i) => i?.interval === 'seven_day')
+  const seven = arr(obj(j)?.intervals)
+    .map(obj)
+    .find((i) => i?.interval === 'seven_day')
   return {
     floor: priceFromFloat(total?.floor_price, total?.floor_price_symbol),
     owners: typeof total?.num_owners === 'number' ? (total.num_owners as number) : undefined,
@@ -232,7 +246,8 @@ const KNOWN_SYMBOLS: Record<string, string> = {
   '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2': 'WETH',
 }
 
-const symbolFor = (currency: string) => KNOWN_SYMBOLS[currency.toLowerCase()] || (/^0x/i.test(currency) ? undefined : currency)
+const symbolFor = (currency: string) =>
+  KNOWN_SYMBOLS[currency.toLowerCase()] || (/^0x/i.test(currency) ? undefined : currency)
 
 export function parseOrder(j: unknown): OsOrder | undefined {
   const o = obj(j)
@@ -244,10 +259,15 @@ export function parseOrder(j: unknown): OsOrder | undefined {
   if (status && status !== 'ACTIVE') return undefined
   const priceObj = obj(o.price)
   // Listings: price.current is the whole order, price_per_item one item. Offers: price_per_item.
-  const price = priceFromApi(o.price_per_item, symbolFor) || priceFromApi(priceObj?.current, symbolFor) || priceFromApi(priceObj, symbolFor)
+  const price =
+    priceFromApi(o.price_per_item, symbolFor) ||
+    priceFromApi(priceObj?.current, symbolFor) ||
+    priceFromApi(priceObj, symbolFor)
   if (!price) return undefined
   const params = obj(obj(o.protocol_data)?.parameters)
-  const nft = arr(params?.offer).map(obj).find((i) => i && (i.itemType === 2 || i.itemType === 3))
+  const nft = arr(params?.offer)
+    .map(obj)
+    .find((i) => i && (i.itemType === 2 || i.itemType === 3))
   const asset = obj(o.asset)
   const id = str(asset?.identifier) ?? (nft ? String(nft.identifierOrCriteria) : undefined)
   return {
@@ -299,7 +319,11 @@ export const parseSearch = (j: unknown): OsSearchHit[] =>
     .filter((r) => r?.type === 'collection')
     .map((r) => obj(r!.collection))
     .filter((c) => !!c && !!str(c.collection) && c.is_disabled !== true && c.is_nsfw !== true)
-    .map((c) => ({ slug: str(c!.collection)!, name: str(c!.name) || str(c!.collection)!, image: str(c!.image_url) || undefined }))
+    .map((c) => ({
+      slug: str(c!.collection)!,
+      name: str(c!.name) || str(c!.collection)!,
+      image: str(c!.image_url) || undefined,
+    }))
 
 export type OwnedGroup = { contract: string; slug?: string; name: string; image?: string; ids: string[] }
 
@@ -310,7 +334,13 @@ export function groupAccountNfts(j: unknown): OwnedGroup[] {
     const n = obj(raw)
     const contract = str(n?.contract)?.toLowerCase()
     if (!n || !contract || n.is_disabled === true || n.is_nsfw === true) continue
-    const g = map.get(contract) || { contract, slug: str(n.collection), name: str(n.collection) || contract, image: undefined, ids: [] }
+    const g = map.get(contract) || {
+      contract,
+      slug: str(n.collection),
+      name: str(n.collection) || contract,
+      image: undefined,
+      ids: [],
+    }
     g.ids.push(String(n.identifier))
     g.image = g.image || str(n.display_image_url) || str(n.image_url) || undefined
     map.set(contract, g)
@@ -324,7 +354,14 @@ export function groupAccountNfts(j: unknown): OwnedGroup[] {
 type AbiParam = { name?: string; type: string; components?: readonly AbiParam[] }
 
 /** OpenSea sometimes wraps a value as `{ value }` (Address). */
-const unwrap = (v: unknown) => (v && typeof v === 'object' && !Array.isArray(v) && 'value' in (v as object) && Object.keys(v as object).every((k) => k === 'value' || k === 'typeAsString') ? (v as { value: unknown }).value : v)
+const unwrap = (v: unknown) =>
+  v &&
+  typeof v === 'object' &&
+  !Array.isArray(v) &&
+  'value' in (v as object) &&
+  Object.keys(v as object).every((k) => k === 'value' || k === 'typeAsString')
+    ? (v as { value: unknown }).value
+    : v
 
 /** One input_data value converted to what the ABI type expects (bigint for ints, objects for tuples). */
 export function toAbiValue(param: AbiParam, raw: unknown): unknown {
@@ -354,7 +391,8 @@ export function toAbiValue(param: AbiParam, raw: unknown): unknown {
   }
 
   if (t === 'address') {
-    if (typeof v !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(v)) throw new Error(`${param.name || t} is not an address.`)
+    if (typeof v !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(v))
+      throw new Error(`${param.name || t} is not an address.`)
     return v
   }
 
@@ -369,7 +407,11 @@ export function toAbiValue(param: AbiParam, raw: unknown): unknown {
 }
 
 /** The positional args for a Seaport function from OpenSea's named `input_data`. */
-export function seaportArgs(fn: { inputs: readonly AbiParam[] }, input: unknown, aliases: Record<string, string> = {}): unknown[] {
+export function seaportArgs(
+  fn: { inputs: readonly AbiParam[] },
+  input: unknown,
+  aliases: Record<string, string> = {}
+): unknown[] {
   const o = obj(input)
   if (!o) throw new Error('The fill data is missing.')
   return fn.inputs.map((p) => toAbiValue(p, o[p.name!] ?? (aliases[p.name!] ? o[aliases[p.name!]!] : undefined)))
@@ -490,7 +532,9 @@ export function planFill(resp: unknown, ctx: FillContext): FillPlan | { ok: fals
         ok: false,
         error: 'OpenSea added an optional fee to this fill. miyaOS only pays what the order requires.',
       }
-    const conduitKey = String(unwrap(input.fulfillerConduitKey) ?? unwrap(parameters?.fulfillerConduitKey) ?? `0x${'0'.repeat(64)}`)
+    const conduitKey = String(
+      unwrap(input.fulfillerConduitKey) ?? unwrap(parameters?.fulfillerConduitKey) ?? `0x${'0'.repeat(64)}`
+    )
     const args = seaportArgs(fn, input, ctx.aliases)
 
     if (ctx.side === 'buy') {
@@ -498,7 +542,7 @@ export function planFill(resp: unknown, ctx: FillContext): FillPlan | { ok: fals
       if (!nft) return { ok: false, error: 'This order is not for this NFT.' }
       const pay = money(consideration)
       if (!pay.length) return { ok: false, error: 'The order has no price.' }
-      const token = pay[0]!.token
+      const { token } = pay[0]!
       if (pay.some((i) => i.token !== token || i.itemType !== pay[0]!.itemType))
         return { ok: false, error: 'The order is priced in more than one token. Use the OpenSea link.' }
       const native = pay[0]!.itemType === 0
@@ -529,13 +573,13 @@ export function planFill(resp: unknown, ctx: FillContext): FillPlan | { ok: fals
       (i) =>
         i.token === contract &&
         i.recipient === offerer &&
-        ((i.itemType === 2 || i.itemType === 3) ? i.id === tokenId : i.itemType === 4 || i.itemType === 5)
+        (i.itemType === 2 || i.itemType === 3 ? i.id === tokenId : i.itemType === 4 || i.itemType === 5)
     )
     if (!wants) return { ok: false, error: 'This offer is not for this NFT.' }
     const gives = money(offer)
     if (!gives.length || gives.some((i) => i.itemType !== 1 || i.token !== gives[0]!.token))
       return { ok: false, error: 'This offer is not a plain token offer. Use the OpenSea link.' }
-    const token = gives[0]!.token
+    const { token } = gives[0]!
     const gross = gives.reduce((s, i) => s + part(i.start), 0n)
     const lines: FillLine[] = [{ label: 'Offer', amount: gross }]
     const cuts = { opensea: 0n, creator: 0n, seller: 0n }
@@ -549,7 +593,17 @@ export function planFill(resp: unknown, ctx: FillContext): FillPlan | { ok: fals
     if (cuts.creator) lines.push({ label: LABEL.creator, amount: -cuts.creator })
     if (cuts.seller) lines.push({ label: 'Back to the bidder', amount: -cuts.seller })
     if (fees >= gross) return { ok: false, error: 'After fees this offer pays nothing.' }
-    return { ok: true, functionName, to, value, args, currency: { native: false, token }, lines, total: gross - fees, conduitKey }
+    return {
+      ok: true,
+      functionName,
+      to,
+      value,
+      args,
+      currency: { native: false, token },
+      lines,
+      total: gross - fees,
+      conduitKey,
+    }
   } catch (e) {
     return { ok: false, error: (e as Error).message || 'The fill data could not be read.' }
   }

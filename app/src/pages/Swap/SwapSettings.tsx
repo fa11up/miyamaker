@@ -1,9 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import styled from 'styled-components/macro'
 
-import { bevel, color, space, text } from '@/theme/tokens'
-
 import { SLIPPAGE_MAX_BPS, SLIPPAGE_MIN_BPS, SLIPPAGE_PRESETS_BPS } from './constants'
+import { bevel, color, space, text } from './floor/tokens'
 
 const Wrap = styled.div`
   position: relative;

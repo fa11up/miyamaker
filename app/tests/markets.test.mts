@@ -98,6 +98,16 @@ test('big integers survive JSON.parse after quoteBigInts', () => {
   assert.equal(quoteBigInts('{"e":"a\\"1234567890123456789"}'), '{"e":"a\\"1234567890123456789"}')
 })
 
+test('quoteBigInts leaves long decimals as numbers (OpenSea sends 16+ fraction digits in volumes)', () => {
+  const text = '{"volume": 0.4335819821334922, "big": 2454.626698788311123, "e": 1.5e+25, "f": 12345678901234567e2, "n": [0.1234567890123456789,7]}'
+  const j = JSON.parse(quoteBigInts(text))
+  assert.equal(j.volume, 0.4335819821334922)
+  assert.equal(j.big, 2454.626698788311123)
+  assert.equal(j.e, 1.5e25)
+  assert.equal(j.f, 12345678901234567e2)
+  assert.deepEqual(j.n, [0.1234567890123456789, 7])
+})
+
 const guards = () => ({
   sameOrigin,
   clientKey,

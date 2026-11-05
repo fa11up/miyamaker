@@ -215,8 +215,16 @@ export function quoteBigInts(text: string): string {
       while (j < text.length && text[j]! >= '0' && text[j]! <= '9') j += 1
       const next = text[j]
       const digits = j - i - (c === '-' ? 1 : 0)
-      const whole = next !== '.' && next !== 'e' && next !== 'E'
-      out += whole && digits >= 16 ? `"${text.slice(i, j)}"` : text.slice(i, j)
+      if (next === '.' || next === 'e' || next === 'E') {
+        // A decimal stays a number: its fraction and exponent go through whole, however many digits they have.
+        j += 1
+        while (j < text.length && /[0-9eE+-]/.test(text[j]!)) j += 1
+        out += text.slice(i, j)
+        i = j
+        continue
+      }
+
+      out += digits >= 16 ? `"${text.slice(i, j)}"` : text.slice(i, j)
       i = j
       continue
     }
