@@ -21,6 +21,7 @@ import { useNFTsList } from '@/pages/Auction/useNFTsList'
 import { setNFTsList } from '@/store/collections/actions'
 import { useAppDispatch, useAppSelector } from '@/store/hooks'
 import { closeWindow, minimizeWindow } from '@/store/windows/actions'
+import { useFullscreen } from '@/store/windows/hooks'
 import type { PageKey } from '@/store/windows/reducer'
 
 /* Desktop: the window is a fixed size and the two panels share it. Phones: the panels take their natural height and
@@ -51,6 +52,7 @@ const page = Pages.auction
 const pageId = page?.id as PageKey
 
 export default function AuctionPage() {
+  const [fullscreen, toggleFullscreen] = useFullscreen('auction')
   // Window mgmt
   const dispatch = useAppDispatch()
   const close = () => dispatch(closeWindow({ value: pageId }))
@@ -128,6 +130,9 @@ export default function AuctionPage() {
           if (e.cancelable) e.stopPropagation()
           close()
         }}
+        fullscreen={fullscreen}
+        fullscreenBtn
+        onFullscreen={() => toggleFullscreen()}
         minimizeBtn
         onMinimize={(e) => {
           if (e.cancelable) e.stopPropagation()

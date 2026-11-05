@@ -30,13 +30,16 @@ const IconButton = styled.button<{ hoverState?: string }>`
     line-height: 1.25;
     text-align: center;
     border: 1px dotted transparent;
+    /* A soft light halo keeps the label readable on any wallpaper. */
+    text-shadow: 0 0 2px rgba(255, 255, 255, 0.9), 0 0 4px rgba(255, 255, 255, 0.6);
   }
 
   &:hover .label,
   &:focus-visible .label {
     background: ${color.accent};
-    color: ${color.highlight};
-    border-color: ${color.highlight};
+    color: ${color.ink};
+    text-shadow: none;
+    border-color: ${color.ink};
   }
 
   &:hover .icon,

@@ -168,7 +168,7 @@ export function useDropMusic() {
         }
 
         if (!cfg.factory || !cfg.vault || chain?.id !== cfg.chainId) {
-          throw new Error(`Music drops are not deployed on ${chain?.name || 'this network'} yet. Uploads are saved.`)
+          throw new Error('Releasing opens soon. Your uploads are saved.')
         }
 
         const chainId = cfg.chainId as ChainId

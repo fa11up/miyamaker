@@ -733,7 +733,7 @@ export default function DropMusicWindow() {
       ? `Live on ${music.cfg.name}.`
       : music.wrongChain
       ? 'Soundcheck: this network is not supported. You can still upload.'
-      : `Soundcheck: music drops are not live on ${music.cfg.name} yet. You can still upload.`
+      : 'Soundcheck: releasing opens soon. You can still upload.'
   const activeStep = STEPS.find((s) => drop.steps[s.id] === 'active')
   const priceWords = price.ok ? `${formatEther(price.wei)} ETH` : ''
   const supplyWords = supply.ok ? (supply.supply ? `edition of ${supply.supply}` : 'open edition') : ''
@@ -838,7 +838,7 @@ export default function DropMusicWindow() {
             {music.ready ? (
               <Chip tone="ok">Live on {music.cfg.name}</Chip>
             ) : (
-              <Chip tone="warn">{music.wrongChain ? 'Unsupported network' : `Not live on ${music.cfg.name} yet`}</Chip>
+              <Chip tone="warn">{music.wrongChain ? 'Unsupported network' : 'Opens soon'}</Chip>
             )}
           </Head>
 
@@ -1222,10 +1222,10 @@ export default function DropMusicWindow() {
                     <StatusBox tone="info">
                       <span>
                         {music.wrongChain
-                          ? 'Switch your wallet to Ethereum, Sepolia or Robinhood Chain.'
+                          ? 'Switch your wallet to Ethereum or Robinhood Chain.'
                           : music.deployed
                           ? `Connect a wallet on ${music.cfg.name} to release.`
-                          : `Soundcheck mode: music editions are not deployed on ${music.cfg.name} yet (set VITE_MUSIC_FACTORY_${music.cfg.chainId} and VITE_MUSIC_VAULT_${music.cfg.chainId}). You can still upload; the links are kept here to launch later.`}
+                          : 'Releasing opens soon. You can still upload now; your links are kept here for when it opens.'}
                       </span>
                     </StatusBox>
                   )}

@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import styled from 'styled-components/macro'
 
 import { SplitMeter } from '@/components/LaunchKit'
@@ -91,7 +92,7 @@ export function priceLine(form: LaunchForm): string {
 export function supplyLine(form: LaunchForm): string {
   if (form.type === 'drop') {
     const s = parseWhole(form.supply, { min: 1, max: 100_000, label: 'Supply' })
-    return s.ok ? `${s.n.toLocaleString('en-US')} pieces` : '—'
+    return s.ok ? `${s.n.toLocaleString('en-US')} ${s.n === 1 ? 'piece' : 'pieces'}` : '—'
   }
 
   if (form.type === 'auction') return '1 piece'
@@ -119,7 +120,17 @@ export default function Preview({
   compact?: boolean
 }) {
   const name = form.name.trim() || 'Your collection'
-  const art = imageUrl ? <img src={imageUrl} alt="" /> : <span>Your artwork shows here</span>
+  // A pasted link that does not load says so instead of showing a broken image.
+  const [broken, setBroken] = useState<string>()
+  useEffect(() => setBroken(undefined), [imageUrl])
+  const art =
+    imageUrl && broken === imageUrl ? (
+      <span>We could not load that link. Check that it opens in a new tab, or upload the file instead.</span>
+    ) : imageUrl ? (
+      <img src={imageUrl} alt="" onError={() => setBroken(imageUrl)} />
+    ) : (
+      <span>Your artwork shows here</span>
+    )
   if (compact) {
     return (
       <Card $compact aria-label="Preview">

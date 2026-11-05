@@ -15,6 +15,9 @@ export { mainnet, robinhood, sepolia }
 
 /** Chains miyaOS supports. The first entry is the default. */
 export const chains = [mainnet, sepolia, robinhood] as const satisfies readonly [Chain, ...Chain[]]
+
+/** The chains a network picker offers: test networks only in development builds. */
+export const pickerChains = chains.filter((c) => import.meta.env.DEV || !('testnet' in c && c.testnet))
 export type SupportedChainId = (typeof chains)[number]['id']
 
 /**

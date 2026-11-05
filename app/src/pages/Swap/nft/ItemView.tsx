@@ -155,7 +155,7 @@ export default function ItemView({
         <VenueList>
           {venuesFor(chainId).map((v) => {
             if (v.id === 'miyapool') {
-              if (!factory) return <VenueRow key={v.id} venue={v} note={`MiyaPool is not live on ${chain.name} yet.`} />
+              if (!factory) return <VenueRow key={v.id} venue={v} note={'MiyaPool opens soon.'} />
               if (inPool)
                 return (
                   <VenueRow key={v.id} venue={v} note={`It is in the ${MODE_LABEL[inPool.mode]} pool. Take it out for 1 ${inPool.symbol}.`}>

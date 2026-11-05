@@ -13,7 +13,7 @@ export const color = {
   shadow: '#6f6894',
   dark: '#14101f',
   ink: '#1b1530',
-  inkMuted: '#4a4466',
+  inkMuted: '#332d4d', // 5.4:1 on face, AA for body text
   accent: '#d97ada', // miya pink
   accentDark: '#a2479f',
   titleFrom: '#d97ada',

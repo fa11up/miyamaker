@@ -168,6 +168,7 @@ export const Key = styled.button`
 /** A round chrome bead with a glyph on it. `$orb` is the big glass play button. */
 export const Bead = styled.button.attrs({ type: 'button' })<{ $size: number; $lit?: boolean; $orb?: boolean }>`
   all: unset;
+  position: relative;
   box-sizing: border-box;
   display: grid;
   place-items: center;
@@ -186,6 +187,13 @@ export const Bead = styled.button.attrs({ type: 'button' })<{ $size: number; $li
     ${({ $orb, $lit }) => ($orb && $lit ? '0 0 calc(8px + var(--lvl) * 16px) #ff5ce8' : '0 0 0 transparent')};
   svg {
     filter: drop-shadow(0 1px 0 rgba(255, 255, 255, 0.5));
+  }
+  /* Small beads keep their look but take a 24px tap. */
+  &::after {
+    content: '';
+    position: absolute;
+    inset: ${({ $size }) => Math.min(0, ($size - 24) / 2)}px;
+    border-radius: 50%;
   }
   &:active:not(:disabled) {
     transform: translateY(1px);
@@ -264,8 +272,28 @@ export function Dial({
   const drag = useRef<{ y: number; start: number } | null>(null)
   const clamp = (v: number) => Math.min(max, Math.max(min, Number((Math.round(v / step) * step).toFixed(4))))
   const angle = ((value - min) / (max - min) - 0.5) * SWEEP
+  const big = Math.max(step, (max - min) / 10)
+
+  // The wheel turns the knob. React's onWheel is passive, so the page would scroll too.
+  const box = useRef<HTMLDivElement>(null)
+  const latest = useRef({ value, onChange, clamp })
+  latest.current = { value, onChange, clamp }
+  useEffect(() => {
+    const node = box.current
+    if (!node) return undefined
+    const turn = (e: WheelEvent) => {
+      e.preventDefault()
+      const { value: v, onChange: set, clamp: fit } = latest.current
+      set(fit(v + (e.deltaY < 0 ? step : -step)))
+    }
+
+    node.addEventListener('wheel', turn, { passive: false })
+    return () => node.removeEventListener('wheel', turn)
+  }, [step])
+
   return (
     <DialBox
+      ref={box}
       role="slider"
       tabIndex={0}
       aria-label={label}
@@ -287,10 +315,13 @@ export function Dial({
       }}
       onDoubleClick={onReset}
       onKeyDown={(e) => {
-        const by = { ArrowUp: step, ArrowRight: step, ArrowDown: -step, ArrowLeft: -step }[e.key]
-        if (by) {
+        const by = { ArrowUp: step, ArrowRight: step, ArrowDown: -step, ArrowLeft: -step, PageUp: big, PageDown: -big }[
+          e.key
+        ]
+        const to = { Home: min, End: max }[e.key]
+        if (by || to !== undefined) {
           e.preventDefault()
-          onChange(clamp(value + by))
+          onChange(clamp(to ?? value + (by as number)))
         }
       }}
     >

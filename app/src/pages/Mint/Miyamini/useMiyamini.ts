@@ -31,6 +31,8 @@ export function useMiyaminiState() {
   })
 
   const [name, price, totalSupply, maxSupply, mintOpen] = result.data || []
+  // Every call failing (RPC down) is an error, not a closed mint with nothing minted.
+  const allFailed = !!result.data && result.data.every((r) => r.status === 'failure')
   return {
     name: name?.result,
     price: price?.result,
@@ -38,7 +40,7 @@ export function useMiyaminiState() {
     maxSupply: maxSupply?.result !== undefined ? Number(maxSupply.result) : undefined,
     mintOpen: mintOpen?.result,
     isLoading: result.isLoading,
-    isError: result.isError && !result.data,
+    isError: (result.isError && !result.data) || allFailed,
     refetch: result.refetch,
   }
 }
@@ -136,5 +138,6 @@ export function describeError(error: unknown): { message: string; cancelled: boo
   if (/insufficient funds/i.test(base?.details || text)) {
     return { message: 'Not enough ETH to cover the mint and gas.', cancelled: false }
   }
+
   return { message: text, cancelled: false }
 }

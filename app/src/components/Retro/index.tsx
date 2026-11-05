@@ -165,11 +165,11 @@ export const BigButton = styled.button`
   outline: 1px solid ${color.dark};
   outline-offset: -1px;
   background: ${color.accent};
-  color: ${color.highlight};
+  color: ${color.ink};
   font-family: ${font.display};
   font-size: ${text.lg};
   letter-spacing: 0.06em;
-  text-shadow: 2px 2px 0 ${color.accentDark};
+  text-shadow: 2px 2px 0 #f5c6f6;
   box-shadow: inset -2px -2px ${color.accentDark}, inset 2px 2px #f5c6f6;
   cursor: pointer;
 

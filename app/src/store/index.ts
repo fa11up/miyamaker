@@ -17,7 +17,7 @@ const store = configureStore({
     collections,
   },
   middleware: (getDefaultMiddleware) =>
-    getDefaultMiddleware({ thunk: true }).concat(save({ states: PERSISTED_KEYS, debounce: 1000 })),
+    getDefaultMiddleware({ thunk: true }).concat(save({ states: PERSISTED_KEYS, debounce: 250 })),
   preloadedState: load({ states: PERSISTED_KEYS, disableWarnings: import.meta.env.NODE_ENV === 'test' }),
 })
 

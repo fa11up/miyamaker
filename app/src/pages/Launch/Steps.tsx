@@ -101,7 +101,7 @@ const TYPES: { id: LaunchType; title: string; body: string; icon: string }[] = [
   {
     id: 'editions',
     title: 'Editions',
-    body: 'Copies of one artwork or one song. Anyone can buy a copy at your price.',
+    body: 'Copies of one artwork. Anyone can buy a copy at your price. Releasing a song? Drop Music is made for that.',
     icon: DropMusicIcon,
   },
 ]
@@ -618,8 +618,9 @@ export function AlignStep({
   return (
     <Stack>
       <Lead>
-        Give a share of every sale to a cause you back. That share buys a token and adds it to a shared pool, so the
-        community grows with your art. You also earn a cut of that pool&apos;s trading fees.
+        Every sale is split three ways, and you keep most of it. At least {minAlignmentBps / 100}% goes to a community
+        fund (a vault) that buys a token and adds it to a shared pool, so the community grows with your art. You also
+        earn part of that pool&apos;s trading fees. miya keeps {protocolFeeBps / 100}%.
       </Lead>
       <div role="radiogroup" aria-label="Alignment vault" style={{ display: 'grid', gap: space[2] }}>
         <VaultCard

@@ -77,7 +77,9 @@ const FALLBACK = GLYPHS['?'] as string
 
 /** Folds text into what the font can draw: capitals, accents dropped, anything else a question mark. */
 export function foldText(text: string) {
-  return Array.from(text.normalize('NFKD').replace(/[̀-ͯ]/g, '').toUpperCase())
+  // Separators the 4x5 font has no glyph for become ones it has.
+  const plain = text.replace(/[·•|]/g, '-').replace(/…/g, '...').replace(/[‘’]/g, "'").replace(/[–—]/g, '-')
+  return Array.from(plain.normalize('NFKD').replace(/[̀-ͯ]/g, '').toUpperCase())
     .map((c) => (GLYPHS[c] ? c : '?'))
     .join('')
 }

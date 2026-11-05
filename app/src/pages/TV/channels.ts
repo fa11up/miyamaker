@@ -68,7 +68,7 @@ export const CHANNELS: Channel[] = [
     name: 'fish tank',
     tagline: 'reality, 24/7, on fishtank.live',
     description:
-      'Contestants live in a house covered in cameras while viewers watch and meddle. fishtank.live does not allow embedding (X-Frame-Options: SAMEORIGIN), so watch it there and chat here.',
+      'Contestants live in a house covered in cameras while viewers watch and meddle. fishtank.live only plays on its own site, so it opens in a new tab. Chat stays here.',
     href: 'https://www.fishtank.live/',
     cta: 'Watch on fishtank.live',
     links: [{ label: 'fishtank.live', href: 'https://www.fishtank.live/' }],

@@ -196,10 +196,10 @@ const CTA = styled.button`
   min-height: 40px;
   padding: 0 ${space[4]};
   background: ${color.accent};
-  color: ${color.highlight};
+  color: ${color.ink};
   font-family: ${font.display};
   font-size: ${text.sm};
-  text-shadow: 1px 1px 0 ${color.accentDark};
+  text-shadow: 1px 1px 0 #f5c6f6;
   box-shadow: inset -2px -2px ${color.accentDark}, inset 2px 2px #f5c6f6;
   cursor: pointer;
   &:focus-visible {

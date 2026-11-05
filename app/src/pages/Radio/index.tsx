@@ -8,7 +8,7 @@ import Pages from '@/constants/pages'
 import type { RadioApi } from '@/context/RadioProvider'
 import { playableUrl, useRadio, useRadioClock } from '@/context/RadioProvider'
 import { estimateKbps, formatDuration } from '@/music/audio'
-import { MUSIC_CHAINS, musicConfig } from '@/music/config'
+import { LISTED_MUSIC_CHAINS, musicConfig } from '@/music/config'
 import { positionLabel } from '@/music/queue'
 import { musicDropsSource, stationSource } from '@/music/sources'
 import type { PlaylistSource, Track } from '@/music/types'
@@ -355,7 +355,7 @@ export default function RadioWindow() {
 
   // Adapters: on-chain music drops per supported chain, plus the curated stations file.
   const sources = useMemo<PlaylistSource[]>(
-    () => [...MUSIC_CHAINS.map((c) => musicDropsSource(c.chainId)), stationSource],
+    () => [...LISTED_MUSIC_CHAINS.map((c) => musicDropsSource(c.chainId)), stationSource],
     []
   )
   const defaultSource = `drops:${musicConfig(chainId).chainId}`
@@ -374,6 +374,7 @@ export default function RadioWindow() {
       )})`
     : 'MIYA RADIO *** NO TRACK LOADED'
 
+  const [checked, setChecked] = useState(false)
   const loadSource = async (id = defaultSource) => {
     const source = sources.find((s) => s.id === id) || sources[0]
     if (!source) return
@@ -382,6 +383,7 @@ export default function RadioWindow() {
     try {
       const tracks = await source.load()
       radio.enqueue(tracks)
+      if (!tracks.length) setChecked(true)
       setStatus(
         tracks.length
           ? { text: `Added ${tracks.length} track${tracks.length === 1 ? '' : 's'} from ${source.label}.` }
@@ -606,7 +608,7 @@ export default function RadioWindow() {
             {/* The cleft: window controls on the right lobe, options on the left. */}
             <Bead
               $size={13}
-              style={at(186, 30)}
+              style={at(181, 31)}
               aria-label="Options"
               title="Options"
               aria-expanded={menu === 'options'}
@@ -616,7 +618,7 @@ export default function RadioWindow() {
             </Bead>
             <Bead
               $size={13}
-              style={at(203, 25)}
+              style={at(205, 25)}
               aria-label="Track info"
               title="Track info"
               aria-expanded={menu === 'info'}
@@ -626,7 +628,7 @@ export default function RadioWindow() {
             </Bead>
             <Bead
               $size={13}
-              style={at(324, 25)}
+              style={at(322, 25)}
               aria-label="Minimize"
               title="Minimize"
               onClick={() => dispatch(minimizeWindow({ value: pageId }))}
@@ -644,9 +646,9 @@ export default function RadioWindow() {
             </Bead>
             <Bead
               $size={13}
-              style={at(341, 30)}
+              style={at(346, 31)}
               aria-label="Close"
-              title="Close"
+              title={radio.playing ? 'Close (music keeps playing in the taskbar)' : 'Close'}
               onClick={() => dispatch(closeWindow({ value: pageId }))}
             >
               <svg
@@ -841,6 +843,7 @@ export default function RadioWindow() {
                     nowDuration={duration}
                     sources={sources}
                     busy={busy}
+                    checked={checked}
                     onLoad={loadSource}
                     onDropMusic={() => openApp('dropmusic')}
                     onTestTone={import.meta.env.DEV ? loadTestTone : undefined}

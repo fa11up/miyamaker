@@ -190,12 +190,10 @@ export const ProgressBarUploader = ({ request, onRequest }: ProgressBarUploaderP
     <FlexContainer>
       <TextContainer>
         <p>
-          Infinite Uploader lets you upload your files <b>permanently</b> on Arweave through Irys Network
+          Store a file <b>forever</b>. Files you upload here stay online for good on Arweave, a permanent storage
+          network. You pay a small one-time fee from your wallet.
         </p>
-        <p>
-          Uploading on Arweave is very cheap! But remember to switch to a L2 chain like Arbitrum or Polygon for lower
-          gas fees and faster transaction times
-        </p>
+        <p>Launch does this for you, so you only need this for extra files.</p>
       </TextContainer>
       <DashedBorderContainer
         className={``}

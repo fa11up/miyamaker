@@ -34,6 +34,7 @@ import BackToMints from '@/pages/Mint/BackToMints'
 import { StatusChip } from '@/pages/Mint/Home'
 import type { LiveMintCard } from '@/pages/Mint/liveMints'
 import { formatEthShort, toCard } from '@/pages/Mint/liveMints'
+import MintNeeds from '@/pages/Mint/MintNeeds'
 import { erc721mAbi } from '@/pages/Mint/Miyamini/abi'
 import { describeError } from '@/pages/Mint/Miyamini/useMiyamini'
 import type { ReadResult } from '@/pages/Mint/useLiveMints'
@@ -202,6 +203,7 @@ export default function LiveMintView({ card, onBack }: { card: LiveMintCard; onB
     if (isLoading) return off('Loading…')
     if (isError) return off('Unavailable')
     if (live.status === 'soldout') return off('Sold out')
+    if (live.status === 'unknown') return off('Unavailable')
     if (live.status !== 'open') return off('Mint closed')
     if (!tx.isConnected)
       return { label: 'Connect wallet', disabled: !openConnectModal, onClick: () => openConnectModal?.() }
@@ -243,7 +245,11 @@ export default function LiveMintView({ card, onBack }: { card: LiveMintCard; onB
             />
           </div>
           <div style={{ display: 'flex', gap: space[2], alignItems: 'center', flexWrap: 'wrap' }}>
-            {isError ? <Chip tone="warn">RPC unavailable</Chip> : <StatusChip status={live.status} />}
+            {isError ? (
+              <Chip tone="warn">RPC unavailable</Chip>
+            ) : (
+              <StatusChip status={live.status} loading={isLoading} />
+            )}
             <BackToMints onBack={onBack} />
           </div>
         </Head>
@@ -323,6 +329,7 @@ export default function LiveMintView({ card, onBack }: { card: LiveMintCard; onB
               <strong>{formatEthShort(tx.balance)}</strong>
             </StatRow>
           )}
+          {!tx.isConnected && <MintNeeds chainName={live.chainName} />}
 
           <BigButton type="button" disabled={action.disabled} onClick={action.onClick}>
             {action.label}
