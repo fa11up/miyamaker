@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { clockDigits, digitPath, foldText, textPath, textWidth } from '../src/pages/Radio/pixelFont.ts'
+import { clockDigits, digitPath, foldText, hasJapanese, pixelsToPath, textPath, textWidth } from '../src/pages/Radio/pixelFont.ts'
 
 test('text folds to capitals, drops accents, and marks what the font lacks', () => {
   assert.equal(foldText('Café milady'), 'CAFE MILADY')
@@ -17,6 +17,19 @@ test('width counts cells, and a space draws nothing', () => {
 
 test('the second character is drawn one cell along', () => {
   assert.match(textPath(' I'), /^M5 0/)
+})
+
+test('Japanese is told apart from what the 4x5 font can draw', () => {
+  assert.ok(hasJapanese('IMDガールズ'))
+  assert.ok(hasJapanese('金庫のドル'))
+  assert.ok(hasJapanese('ひらがな'))
+  assert.ok(!hasJapanese('Café milady - 3:03'))
+})
+
+test('canvas pixels become rectangles, one per solid run', () => {
+  const px = (a: number) => [0, 0, 0, a]
+  const rgba = [...px(255), ...px(255), ...px(0), ...px(127), ...px(0), ...px(0), ...px(0), ...px(128)]
+  assert.equal(pixelsToPath(rgba, 4, 2), 'M0 0h2v1h-2zM3 1h1v1h-1z')
 })
 
 test('every digit draws, and eight lights the most', () => {
