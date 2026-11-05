@@ -1,11 +1,21 @@
 import WingHeartIcon from 'assets/miya_website_logo_2-removebg-preview.png?preset=icon&resize=true'
 import type { CSSProperties, ReactNode } from 'react'
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import styled, { keyframes } from 'styled-components/macro'
 
 import { font } from '@/theme/tokens'
 
-import { CELL_H, CELL_W, clockDigits, DIGIT_H, digitPath, textPath, textWidth } from './pixelFont'
+import {
+  CELL_H,
+  CELL_W,
+  clockDigits,
+  DIGIT_H,
+  digitPath,
+  hasJapanese,
+  pixelsToPath,
+  textPath,
+  textWidth,
+} from './pixelFont'
 
 export const wingHeart = WingHeartIcon[0]
 
@@ -58,8 +68,84 @@ const MarqueeBox = styled.div`
   }
 `
 
+const KANJI_H = 8
+const KANJI_BASELINE = 6
+const KANJI_STEP = 4
+const KANJI_FONT = `${KANJI_H}px 'Misaki Gothic'`
+
+/** Japanese needs 8x8 dots: drawn through Misaki on a canvas, then back into the same kind of whole-pixel path. */
+function drawKanji(text: string) {
+  const ctx = document.createElement('canvas').getContext('2d', { willReadFrequently: true })
+  if (!ctx) return undefined
+  ctx.font = KANJI_FONT
+  const w = Math.ceil(ctx.measureText(text).width)
+  // Resizing a canvas clears its font too.
+  ctx.canvas.width = Math.max(1, w)
+  ctx.canvas.height = KANJI_H
+  ctx.font = KANJI_FONT
+  ctx.fillText(text, 0, KANJI_BASELINE)
+  return { text, w, d: pixelsToPath(ctx.getImageData(0, 0, ctx.canvas.width, KANJI_H).data, ctx.canvas.width, KANJI_H) }
+}
+
+function KanjiMarquee({ value, width, style }: { value: string; width: number; style?: CSSProperties }) {
+  const [drawn, setDrawn] = useState<{ value: string; fits: boolean; step: number; w: number; d: string }>()
+
+  useEffect(() => {
+    let live = true
+    const upper = value.toUpperCase()
+    const draw = () => {
+      if (!live) return
+      const single = drawKanji(upper)
+      if (!single) return
+      const fits = single.w <= width
+      const line = fits ? single : drawKanji(`${upper}  ***  `)
+      const both = fits || !line ? line : drawKanji(line.text + line.text)
+      if (line && both) setDrawn({ value, fits, step: line.w, w: both.w, d: both.d })
+    }
+
+    document.fonts.load(KANJI_FONT, value).then(draw, draw)
+    return () => {
+      live = false
+    }
+  }, [value, width])
+
+  const ready = drawn?.value === value ? drawn : undefined
+  const steps = ready ? Math.ceil(ready.step / KANJI_STEP) : 0
+  return (
+    <MarqueeBox
+      className="marquee"
+      title={value}
+      style={{
+        ...style,
+        width,
+        height: KANJI_H,
+        marginTop: -1,
+        ['--marquee-x' as string]: `${-steps * KANJI_STEP}px`,
+        ['--marquee-n' as string]: steps,
+        ['--marquee-s' as string]: `${steps * 0.16}s`,
+      }}
+    >
+      {ready && (
+        <svg
+          className={ready.fits ? undefined : 'run'}
+          style={{ display: 'block' }}
+          width={ready.w}
+          height={KANJI_H}
+          viewBox={`0 0 ${ready.w} ${KANJI_H}`}
+          fill="currentColor"
+          shapeRendering="crispEdges"
+          aria-hidden="true"
+        >
+          <path d={ready.d} />
+        </svg>
+      )}
+    </MarqueeBox>
+  )
+}
+
 /** One line of pixel text that scrolls a cell at a time when it doesn't fit. */
 export function Marquee({ value, width, style }: { value: string; width: number; style?: CSSProperties }) {
+  if (hasJapanese(value)) return <KanjiMarquee value={value} width={width} style={style} />
   const fits = textWidth(value) <= width
   const shown = fits ? value : `${value}  ***  `
   const chars = textWidth(shown) / CELL_W
@@ -68,9 +154,9 @@ export function Marquee({ value, width, style }: { value: string; width: number;
       className="marquee"
       title={value}
       style={{
+        ...style,
         width,
         height: CELL_H,
-        ...style,
         ['--marquee-x' as string]: `${-textWidth(shown)}px`,
         ['--marquee-n' as string]: chars,
         ['--marquee-s' as string]: `${chars * 0.2}s`,

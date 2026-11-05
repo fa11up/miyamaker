@@ -165,6 +165,13 @@ export const ThemedGlobalStyle = createGlobalStyle`
   font-display: swap;
 }
 
+/* The radio screen's Japanese, 8x8 dots by Num Kadoma. Only fetched when a Japanese title comes on. */
+@font-face {
+  font-family: 'Misaki Gothic';
+  src: url("/fonts/misaki/misaki_gothic.woff2") format("woff2");
+  font-display: swap;
+}
+
 :root {
   --taskbar-h: ${TASKBAR_HEIGHT.desktop}px;
   @media (max-width: 768px) {

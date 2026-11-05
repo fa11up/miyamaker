@@ -100,6 +100,29 @@ export function textPath(text: string) {
   return d
 }
 
+/** Hiragana, katakana, kanji and full-width forms: more than the 4x5 font can draw. */
+export const hasJapanese = (text: string) => /[\u3000-\u30ff\u3400-\u9fff\uf900-\ufaff\uff00-\uffef]/.test(text)
+
+/** Canvas RGBA data as one path of whole pixels, each solid run a single rectangle. */
+export function pixelsToPath(rgba: ArrayLike<number>, width: number, height: number) {
+  let d = ''
+  for (let y = 0; y < height; y += 1) {
+    let x = 0
+    while (x < width) {
+      const solid = (at: number) => (rgba[(y * width + at) * 4 + 3] as number) >= 128
+      if (solid(x)) {
+        const start = x
+        while (x < width && solid(x)) x += 1
+        d += `M${start} ${y}h${x - start}v1h${start - x}z`
+      } else {
+        x += 1
+      }
+    }
+  }
+
+  return d
+}
+
 // The seven segments as x, y, width, height.
 const SEGMENTS: Record<string, readonly [number, number, number, number]> = {
   a: [1, 0, 7, 2],
