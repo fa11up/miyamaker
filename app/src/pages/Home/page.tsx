@@ -6,6 +6,7 @@ import styled, { keyframes } from 'styled-components/macro'
 import License from '@/components/License'
 import { explorerUrl } from '@/config/wagmi'
 import { IMDUSD_TREASURY, IMDUSD_V1, INFER, INFER_SUPPLY, LINKS, MIYA, MIYANET_CHAIN_ID } from '@/constants/miyanet'
+import { BUILD_PATH } from '@/pages/Build/starters'
 import { bevel, color, font, space, text } from '@/theme/tokens'
 
 import { BadgeWall, HitCounter } from './Badges'
@@ -423,6 +424,7 @@ export default function Home() {
     { id: SECTIONS.imdusd, label: 'imdUSD', note: 'the dollar' },
     { id: SECTIONS.map, label: 'How it fits', note: 'the big picture' },
     { id: SECTIONS.ring, label: 'Webring', note: 'more miya sites' },
+    { label: 'Build', note: 'with the swarm', onClick: () => navigate(BUILD_PATH) },
     { label: 'Guestbook', note: 'chat on miyatv', onClick: () => navigate('/tv') },
   ]
 

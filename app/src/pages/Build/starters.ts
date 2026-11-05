@@ -22,5 +22,7 @@ export const STARTERS = [
 
 export type BuildType = '' | 'question' | 'build' | 'launch'
 
+/** Build lives inside the miyanet window, at /about/build. */
+export const BUILD_PATH = '/about/build'
 export const buildPath = (idea: string, type: BuildType = '') =>
-  `/build?${new URLSearchParams({ idea, ...(type ? { type } : {}) }).toString()}`
+  `${BUILD_PATH}?${new URLSearchParams({ idea, ...(type ? { type } : {}) }).toString()}`

@@ -85,10 +85,12 @@ export function useWalletPosition(which: Legacy = 'miya') {
       { address: IMDUSD_V1, abi: erc20Abi, chainId: MIYANET_CHAIN_ID, functionName: 'balanceOf', args: [holder] },
       { ...redeemer, functionName: 'claimable', args: [holder] },
       { ...redeemer, functionName: 'vestingOf', args: [holder] },
+      // INFER paid at once for this token: above zero once this wallet has burned some (every first burn pays).
+      { ...redeemer, functionName: 'paidImmediately', args: [legacy.address, holder] },
     ],
     query: { enabled: !!address, refetchInterval: 20_000 },
   })
-  const [legacyBal, allowance, inferBal, imdusdBal, claimable, vesting] = balances.data || []
+  const [legacyBal, allowance, inferBal, imdusdBal, claimable, vesting, paidNow] = balances.data || []
   const legacyBalance = legacyBal?.result
 
   const split = useReadContracts({
@@ -100,6 +102,7 @@ export function useWalletPosition(which: Legacy = 'miya') {
   const v = vesting?.result
   return {
     legacy: legacyBalance,
+    burnedFor: paidNow?.result,
     allowance: allowance?.result,
     infer: inferBal?.result,
     imdusd: imdusdBal?.result,

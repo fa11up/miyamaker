@@ -149,16 +149,6 @@ const Pages: Record<string, Page> = {
       height: 397,
     },
   },
-  build: {
-    id: 'build',
-    path: '/build',
-    label: 'Build with the swarm',
-    icon: GearIcon[0],
-    minSize: {
-      width: 760,
-      height: 720,
-    },
-  },
   dropmusic: {
     id: 'dropmusic',
     path: '/drop-music',
