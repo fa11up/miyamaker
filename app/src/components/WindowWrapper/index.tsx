@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import styled from 'styled-components/macro'
 
+import type { TitleSkin } from '@/components/TitleBar'
 import { bevel, color } from '@/theme/tokens'
 
 /** Classic raised window frame. Content below the title bar fills the remaining height. */
@@ -26,16 +27,68 @@ const WindowFrame = styled.div`
     min-height: 0;
   }
 
+  /* The frame around a themed app takes the same material as its header. */
+  /* Only the frame: an app that paints no background of its own still sits on the window face. */
+  &[data-skin] > .window-body {
+    background-color: ${color.face};
+  }
+  &[data-skin='miyanet'] {
+    background: linear-gradient(180deg, #24135f, #0d0828);
+    box-shadow: inset 0 0 0 1px #5b37b8, 4px 6px 0 rgba(20, 16, 31, 0.35);
+  }
+  &[data-skin='floor'] {
+    background: #0a0f13;
+    box-shadow: inset 0 0 0 1px #ffb000, 4px 6px 0 rgba(20, 16, 31, 0.45);
+  }
+  &[data-skin='aqua'] {
+    background: linear-gradient(90deg, #bcc8de, #f7faff 50%, #bcc8de);
+    box-shadow: inset 0 0 0 1px #7f92b8, 4px 6px 0 rgba(11, 31, 92, 0.3);
+  }
+  &[data-skin='tv'] {
+    background: #14111c;
+    box-shadow: inset 0 0 0 1px #4a4658, 4px 6px 0 rgba(20, 16, 31, 0.45);
+  }
+  &[data-skin='chrome'] {
+    background: linear-gradient(135deg, #fff, #a2aac2 40%, #e4e8f4 60%, #7f86a6);
+    box-shadow: inset 0 0 0 1px #10101d, 4px 6px 0 rgba(20, 16, 31, 0.35);
+  }
+
+  &[data-skin='mint'] {
+    background: linear-gradient(180deg, #ff9fd6, #9a5fe0);
+    box-shadow: inset 0 0 0 1px #5a1466, 4px 6px 0 rgba(20, 16, 31, 0.3);
+  }
+  &[data-skin='launch'] {
+    background: linear-gradient(180deg, #17694f, #0d3b2e);
+    box-shadow: inset 0 0 0 1px #e8c766, 4px 6px 0 rgba(20, 16, 31, 0.3);
+  }
+  &[data-skin='auction'] {
+    background: linear-gradient(180deg, #6b2a1c, #3b130c);
+    box-shadow: inset 0 0 0 1px #d9b45b, 4px 6px 0 rgba(20, 16, 31, 0.35);
+  }
+  &[data-skin='manager'] {
+    background: linear-gradient(180deg, #5c6470, #2c323b);
+    box-shadow: inset 0 0 0 1px #101318, 4px 6px 0 rgba(20, 16, 31, 0.35);
+  }
+  &[data-skin='files'] {
+    background: linear-gradient(180deg, #f7e27a, #d9b93f);
+    box-shadow: inset 0 0 0 1px #8a6f12, 4px 6px 0 rgba(20, 16, 31, 0.25);
+  }
+  &[data-skin='upload'] {
+    background: linear-gradient(180deg, #0a3a78, #04102e);
+    box-shadow: inset 0 0 0 1px #27d3ff, 4px 6px 0 rgba(20, 16, 31, 0.35);
+  }
+  /* Display keeps the window face: the classic grey dialog under a blue bar. */
+
   @media (max-width: 768px) {
     padding: 0;
     box-shadow: none;
   }
 `
 
-export default function WindowWrapper({ children }: { children: ReactNode }) {
+export default function WindowWrapper({ children, skin }: { children: ReactNode; skin?: TitleSkin }) {
   const [titleBar, ...rest] = Array.isArray(children) ? children : [children]
   return (
-    <WindowFrame className="window-frame">
+    <WindowFrame className="window-frame" data-skin={skin}>
       {titleBar}
       <div className="window-body">{rest}</div>
     </WindowFrame>

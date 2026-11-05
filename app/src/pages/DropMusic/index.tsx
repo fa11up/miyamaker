@@ -811,8 +811,9 @@ export default function DropMusicWindow() {
   )
 
   return (
-    <WindowWrapper>
+    <WindowWrapper skin="aqua">
       <TitleBar
+        skin="aqua"
         closeBtn
         onClose={(e) => {
           if (e.cancelable) e.stopPropagation()

@@ -220,8 +220,9 @@ export default function MintPage() {
   }
 
   return (
-    <WindowWrapper>
+    <WindowWrapper skin="mint">
       <TitleBar
+        skin="mint"
         closeBtn
         onClose={(e) => {
           if (e.cancelable) e.stopPropagation()

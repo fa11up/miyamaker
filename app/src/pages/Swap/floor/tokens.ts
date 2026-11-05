@@ -43,7 +43,7 @@ const mono = `ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace`
 export const font = { ui: mono, display: mono, body: mono, mono } as const
 
 export const text = {
-  xs: '11px',
+  xs: '12px',
   sm: '13px',
   md: '13px',
   lg: '16px',

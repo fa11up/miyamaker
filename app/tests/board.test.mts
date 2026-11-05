@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { changeTone, formatChange, formatCompactUsd, formatUsd, quoteFrom } from '../src/pages/Swap/board.ts'
+import { changeTone, ethInUsd, formatChange, formatCompactUsd, formatUsd, quoteFrom } from '../src/pages/Swap/board.ts'
 
 const A = '0xAAaaAAaaAAaaAAaaAAaaAAaaAAaaAAaaAAaaAAaa'
 const B = '0xbbBBbbBBbbBBbbBBbbBBbbBBbbBBbbBBbbBBbbBB'
@@ -48,4 +48,10 @@ test('change shows its sign and tone', () => {
   assert.equal(changeTone(-1), 'down')
   assert.equal(changeTone(0), 'flat')
   assert.equal(changeTone(undefined), 'flat')
+})
+
+test('ETH amounts read in dollars when the price is known', () => {
+  assert.equal(ethInUsd(700000000000000000n, 2250), '≈ $1,575')
+  assert.equal(ethInUsd(700000000000000000n, undefined), '')
+  assert.equal(ethInUsd(undefined, 2250), '')
 })

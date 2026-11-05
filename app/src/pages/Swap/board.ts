@@ -45,6 +45,12 @@ export function formatCompactUsd(n: number | undefined): string {
   return `$${Math.round(n)}`
 }
 
+/** "≈ $1,557" for an ETH amount in wei, when the ETH price is known. */
+export function ethInUsd(wei: bigint | undefined, ethUsd: number | undefined): string {
+  if (wei === undefined || !ethUsd) return ''
+  return `≈ ${formatUsd((Number(wei / 10n ** 12n) / 1e6) * ethUsd)}`
+}
+
 export function formatChange(n: number | undefined): string {
   if (n === undefined || !Number.isFinite(n)) return '–'
   if (Math.abs(n) < 0.05) return '0.0%'

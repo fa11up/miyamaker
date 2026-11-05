@@ -17,7 +17,7 @@ import { Chip, Eyebrow, Skeleton, StatusBox } from '../floor/retro'
 import { bevel, color, space, text } from '../floor/tokens'
 import { Body, ChainTabs, Toolbar } from '../layout'
 import type { BoardRow } from '../MarketBoard'
-import { CollectionTable, TokenTable } from '../MarketBoard'
+import { BadgeWall, CollectionTable, TokenTable } from '../MarketBoard'
 import type { CollectionRef } from '../tradePath'
 import { poolFactoryAbi } from './abi'
 import CollectionView from './CollectionView'
@@ -97,6 +97,33 @@ const Empty = styled.div`
   b {
     font-size: ${text.md};
   }
+`
+
+const FindRow = styled.div`
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: ${space[2]};
+  align-items: center;
+  button {
+    flex: none;
+    width: max-content;
+    padding: 0 ${space[3]};
+    overflow: visible;
+  }
+  .slim & {
+    grid-template-columns: minmax(0, 1fr);
+  }
+`
+
+const Soon = styled.div`
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: ${space[2]};
+  padding: ${space[2]} ${space[3]};
+  border: 1px dashed ${color.dark};
+  font-size: ${text.sm};
+  color: ${color.inkMuted};
 `
 
 const CreateRow = styled.div`
@@ -232,7 +259,6 @@ export default function NftTrade({
   onOpenPool,
   onOpenCollection,
   onSwapToken,
-  onShowTokens,
 }: {
   pool?: Address
   collection?: CollectionRef
@@ -241,7 +267,6 @@ export default function NftTrade({
   onOpenPool: (pool: Address | undefined) => void
   onOpenCollection: (ref: CollectionRef | undefined) => void
   onSwapToken: (p: { chainId: SwapChainId; sell?: SwapToken; buy?: SwapToken }) => void
-  onShowTokens: () => void
 }) {
   const { address, chainId: walletChainId, isConnected } = useAccount()
   const { switchChain, isPending: switching } = useSwitchChain()
@@ -391,16 +416,19 @@ export default function NftTrade({
 
   return (
     <Body>
-      {chainPicker}
-
-      <Field
-        type="search"
-        value={query}
-        onChange={(e) => setQuery(e.target.value)}
-        placeholder={marketsHere ? 'Search collections, or paste an address' : 'Search pools, or paste an address'}
-        aria-label="Search collections by name, or paste a collection address"
-        spellCheck={false}
-      />
+      <FindRow>
+        <Field
+          type="search"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder={
+            marketsHere ? 'Search NFT collections, or paste an address' : 'Search pools, or paste an address'
+          }
+          aria-label="Search collections by name, or paste a collection address"
+          spellCheck={false}
+        />
+        {chainPicker}
+      </FindRow>
 
       {lookup.collection && (
         <Picks aria-label="Pasted address">
@@ -463,17 +491,10 @@ export default function NftTrade({
       )}
 
       {!factory ? (
-        <Empty role="status" data-pools-not-deployed>
-          <b>NFT pools open soon</b>
-          <Prose>
-            Pools will let you sell an NFT for a token and buy one back, with no fees. Until then, you can still swap
-            tokens.
-            {marketsHere ? ` You can still see ${otherMarkets(chainId)}: search or paste an address above.` : ''}
-          </Prose>
-          <PushButton type="button" onClick={onShowTokens}>
-            Swap tokens instead
-          </PushButton>
-        </Empty>
+        <Soon role="status" data-pools-not-deployed>
+          <Chip tone="warn">Opens soon</Chip>
+          <span>NFT pools: sell an NFT for a token and buy one back, with no fees.</span>
+        </Soon>
       ) : (
         <>
           <Card aria-label="How NFT pools work">
@@ -571,6 +592,7 @@ export default function NftTrade({
           )}
         </>
       )}
+      {!query && <BadgeWall />}
       <Footer>
         {factory ? `Pools on ${chain.name}: no fees, no owner, the contracts cannot be changed or paused. ` : ''}
         {marketsHere

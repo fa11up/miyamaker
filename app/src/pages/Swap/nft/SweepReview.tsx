@@ -13,8 +13,10 @@ import type { SupportedChainId } from '@/config/wagmi'
 import { chains, explorerUrl, mainnet, wagmiConfig } from '@/config/wagmi'
 import { describeError } from '@/miyamints/errors'
 
+import { ethInUsd } from '../board'
 import { Eyebrow, Skeleton, StatusBox } from '../floor/retro'
 import { bevel, color, space, text } from '../floor/tokens'
+import { useEthUsd } from '../MarketBoard'
 import type { FillPlan, OsOrder } from './markets'
 import { formatAmount, formatPrice, OPENSEA_CHAIN, planFill } from './markets'
 import { INPUT_ALIASES, SEAPORT_ADDRESSES, seaportAbi } from './seaport'
@@ -120,6 +122,7 @@ export default function SweepReview({
   const osChain = OPENSEA_CHAIN[chainId]
   const balance = useBalance({ address: me, chainId, query: { enabled: !!me } })
 
+  const ethUsd = useEthUsd()
   const [runs, setRuns] = useState<Record<string, Run>>({})
   const [running, setRunning] = useState(false)
   const [finished, setFinished] = useState(false)
@@ -308,7 +311,9 @@ export default function SweepReview({
                 ))}
                 <div className="total">
                   <dt>You pay at most</dt>
-                  <dd>{eth(totals.total)}</dd>
+                  <dd>
+                    {eth(totals.total)} {ethInUsd(totals.total, ethUsd)}
+                  </dd>
                 </div>
               </Lines>
               <Hint>

@@ -11,8 +11,10 @@ import { chains, explorerUrl, mainnet } from '@/config/wagmi'
 import { cleanText } from '@/desktop/files/sanitize'
 import { txWords, useTx } from '@/miyamints/useTx'
 
+import { ethInUsd } from '../board'
 import { Chip, Eyebrow, Skeleton, StatusBox } from '../floor/retro'
 import { bevel, color, space, text } from '../floor/tokens'
+import { useEthUsd } from '../MarketBoard'
 import { erc721Abi, poolFactoryAbi } from './abi'
 import type { OsOrder, Price } from './markets'
 import { bestQuote, collectionUrl, formatAmount, formatPrice, venuesFor } from './markets'
@@ -77,6 +79,12 @@ const Stats = styled.dl`
     font-weight: 700;
     font-variant-numeric: tabular-nums;
   }
+  small {
+    display: block;
+    font-size: ${text.xs};
+    font-weight: 400;
+    color: ${color.inkMuted};
+  }
 `
 
 const Tiles = styled.ul`
@@ -105,6 +113,9 @@ const TileButton = styled.button`
   cursor: pointer;
   &:active {
     box-shadow: ${bevel.pressed};
+  }
+  &:hover {
+    background: ${color.hover};
   }
   &[data-picked] {
     box-shadow: ${bevel.pressed};
@@ -301,6 +312,7 @@ export default function CollectionView({
     query: { staleTime: Infinity },
   })
   const [lookup, setLookup] = useState('')
+  const ethUsd = useEthUsd()
   const [sweeping, setSweeping] = useState(false)
   const [sweepCount, setSweepCount] = useState(3)
   const canSweep = sweepable(listings.listings ?? [], me)
@@ -390,8 +402,11 @@ export default function CollectionView({
         {os.stats && (
           <Stats aria-label="Collection figures">
             <div>
-              <dt>Floor</dt>
-              <dd>{os.stats.floor ? formatPrice(os.stats.floor) : '–'}</dd>
+              <dt title="The cheapest one for sale right now">Floor</dt>
+              <dd>
+                {os.stats.floor ? formatPrice(os.stats.floor) : 'None for sale'}
+                {os.stats.floor?.symbol === 'ETH' && <small>{ethInUsd(os.stats.floor.amount, ethUsd)}</small>}
+              </dd>
             </div>
             <div>
               <dt>Best offer</dt>
@@ -412,7 +427,8 @@ export default function CollectionView({
           </Stats>
         )}
 
-        {(cheapest || topOffer || poolLines.length > 0) && (
+        {/* The figures above already give OpenSea's prices; this is for comparing them against our pools. */}
+        {poolLines.length > 0 && (
           <Best aria-label="Best prices">
             {cheapest && (
               <div className="line">
@@ -465,7 +481,7 @@ export default function CollectionView({
         canSweep.length >= 2 && (
           <SweepBar aria-label="Sweep the floor">
             <label htmlFor="sweep-count">
-              <b>Sweep</b> the {sweepCount} cheapest
+              <b>Sweep:</b> buy the {sweepCount} cheapest
             </label>
             <input
               id="sweep-count"
@@ -475,7 +491,9 @@ export default function CollectionView({
               value={sweepCount}
               onChange={(e) => setSweepCount(Number(e.target.value))}
             />
-            <strong>{formatAmount(sumPrices(pickedListings), 18, 4)} ETH</strong>
+            <strong title={ethInUsd(sumPrices(pickedListings), ethUsd)}>
+              {formatAmount(sumPrices(pickedListings), 18, 4)} ETH
+            </strong>
             <PushButton type="button" onClick={() => setSweeping(true)}>
               Review sweep
             </PushButton>
@@ -485,8 +503,8 @@ export default function CollectionView({
 
       {os.slug && (listings.loading || (listings.listings && listings.listings.length > 0)) && (
         <Card aria-label="Cheapest on OpenSea">
-          <Eyebrow>Cheapest on OpenSea</Eyebrow>
-          <Hint>Tap one to see it everywhere and buy it here.</Hint>
+          <Eyebrow>Cheapest for sale</Eyebrow>
+          <Hint>Press one to see it and buy it here.</Hint>
           {listings.loading ? (
             <Tiles>
               {[0, 1, 2].map((i) => (

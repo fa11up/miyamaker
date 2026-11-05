@@ -303,8 +303,9 @@ export default function StationPage() {
   const ready = !!audio && !!cleanLine(title, 120) && !!cleanLine(artist, 80) && rights
 
   return (
-    <WindowWrapper>
+    <WindowWrapper skin="chrome">
       <TitleBar
+        skin="chrome"
         closeBtn
         onClose={(e) => {
           if (e.cancelable) e.stopPropagation()

@@ -39,8 +39,9 @@ export default function MiyanetPage() {
   }
 
   return (
-    <WindowWrapper>
+    <WindowWrapper skin="miyanet">
       <TitleBar
+        skin="miyanet"
         closeBtn
         onClose={(e) => {
           if (e.cancelable) e.stopPropagation()

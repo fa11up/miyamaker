@@ -384,8 +384,14 @@ export default function DisplayProperties() {
   }
 
   return (
-    <WindowWrapper>
-      <TitleBar minimizeBtn closeBtn onMinimize={() => dispatch(minimizeWindow({ value: ID }))} onClose={close}>
+    <WindowWrapper skin="display">
+      <TitleBar
+        skin="display"
+        minimizeBtn
+        closeBtn
+        onMinimize={() => dispatch(minimizeWindow({ value: ID }))}
+        onClose={close}
+      >
         Display Properties
       </TitleBar>
       <Root

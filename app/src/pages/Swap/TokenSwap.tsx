@@ -937,7 +937,7 @@ export default function TokenSwap({
         </ActionDock>
 
         <Footer>
-          Prices from 0x on {chainName}. You approve only 0x AllowanceHolder, and only the amount you swap.
+          Best price found by 0x on {chainName}. You approve only the 0x contract, and only the amount you swap.
         </Footer>
       </Body>
 

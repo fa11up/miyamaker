@@ -400,8 +400,9 @@ export default function TV() {
   const native = nativeChatFor(channel, source)
 
   return (
-    <WindowWrapper>
+    <WindowWrapper skin="tv">
       <TitleBar
+        skin="tv"
         closeBtn
         onClose={(e) => {
           if (e.cancelable) e.stopPropagation()

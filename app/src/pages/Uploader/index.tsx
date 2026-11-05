@@ -29,8 +29,9 @@ export default function MintPage() {
     dispatch(finalizeUploadOrder({ requestFrom: uploadRequest?.requestFrom || '', result }))
 
   return (
-    <WindowWrapper>
+    <WindowWrapper skin="upload">
       <TitleBar
+        skin="upload"
         closeBtn
         onClose={(e) => {
           if (e.cancelable) e.stopPropagation()

@@ -164,6 +164,7 @@ export default function SwapSettings({
         aria-expanded={open}
         aria-haspopup="dialog"
         aria-label={`Settings. Max slippage ${slippageBps / 100}%`}
+        title={`Slippage: your swap cancels if the price moves more than ${slippageBps / 100}%`}
         onClick={() => setOpen((o) => !o)}
         disabled={disabled}
         data-swap-settings
