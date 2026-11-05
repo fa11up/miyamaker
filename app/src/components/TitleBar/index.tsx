@@ -47,9 +47,34 @@ const ChromeButton = styled.button`
 `
 
 /** Apps with a look of their own carry it into their header. The buttons and dragging behave the same everywhere. */
-export type TitleSkin = 'miyanet' | 'floor' | 'aqua' | 'tv' | 'chrome'
+export type TitleSkin =
+  | 'miyanet'
+  | 'floor'
+  | 'aqua'
+  | 'tv'
+  | 'chrome'
+  | 'mint'
+  | 'launch'
+  | 'auction'
+  | 'manager'
+  | 'files'
+  | 'upload'
+  | 'display'
 
-const MARK: Record<TitleSkin, string> = { miyanet: '✦', floor: '●', aqua: '♪', tv: '●', chrome: '♥' }
+const MARK: Record<TitleSkin, string> = {
+  miyanet: '✦',
+  floor: '●',
+  aqua: '♪',
+  tv: '●',
+  chrome: '♥',
+  mint: '♥',
+  launch: '▲',
+  auction: '♦',
+  manager: '⚙',
+  files: '▤',
+  upload: '∞',
+  display: '▣',
+}
 
 const StyledTitleBar = styled.div`
   flex: 0 0 auto;
@@ -206,6 +231,165 @@ const StyledTitleBar = styled.div`
     ${ChromeButton}.close {
       color: #fff;
       background: radial-gradient(circle at 36% 26%, #fff 0 5%, #ff9df0 16%, #c82bd0 42%, #57107f 100%);
+    }
+  }
+
+  /* Mint: pink candy, the paint of its own background. */
+  &[data-skin='mint'] {
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.45) 0%, rgba(255, 255, 255, 0.1) 46%, transparent 50%),
+      linear-gradient(90deg, #ff6fb5, #c04fd8 60%, #7a3fd0);
+    color: #fff;
+    .mark {
+      color: #ffe3f3;
+    }
+    .title-bar {
+      font-family: ${font.display};
+      letter-spacing: 0.04em;
+      text-shadow: 1px 1px 0 #5a1466;
+    }
+    ${ChromeButton} {
+      border-radius: 4px;
+      color: #5a1466;
+      background: linear-gradient(180deg, #fff, #ffc2e6);
+      box-shadow: 0 0 0 1px #5a1466;
+    }
+    ${ChromeButton}:hover {
+      background: linear-gradient(180deg, #fff, #ff9fd6);
+    }
+  }
+
+  /* Launch: laurel green and gold, the launchpad's wreath. */
+  &[data-skin='launch'] {
+    background: linear-gradient(90deg, #0d3b2e, #17694f 65%, #2a8a63);
+    border-bottom: 1px solid #e8c766;
+    color: #ffe9a8;
+    .mark {
+      color: #e8c766;
+    }
+    .title-bar {
+      font-family: ${font.display};
+      letter-spacing: 0.05em;
+      text-shadow: 1px 1px 0 #06201a;
+    }
+    ${ChromeButton} {
+      color: #0d3b2e;
+      background: linear-gradient(180deg, #fff3c4, #e8c766);
+      box-shadow: 0 0 0 1px #06201a;
+    }
+    ${ChromeButton}:hover {
+      background: linear-gradient(180deg, #fff, #f2d98a);
+    }
+  }
+
+  /* Auction: a sale room's mahogany and gold. */
+  &[data-skin='auction'] {
+    background: repeating-linear-gradient(92deg, rgba(0, 0, 0, 0.1) 0 2px, transparent 2px 7px),
+      linear-gradient(180deg, #6b2a1c, #3b130c);
+    border-bottom: 1px solid #d9b45b;
+    color: #f4dd9c;
+    .mark {
+      color: #d9b45b;
+    }
+    .title-bar {
+      font-family: Georgia, 'Times New Roman', serif;
+      letter-spacing: 0.08em;
+      text-shadow: 1px 1px 0 #1d0805;
+    }
+    ${ChromeButton} {
+      color: #3b130c;
+      background: linear-gradient(180deg, #f4dd9c, #b98f3e);
+      box-shadow: 0 0 0 1px #1d0805;
+    }
+    ${ChromeButton}:hover {
+      background: linear-gradient(180deg, #fff0c4, #d9b45b);
+    }
+  }
+
+  /* Manager: a control panel, brushed steel and a status strip. */
+  &[data-skin='manager'] {
+    background: repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.05) 0 1px, transparent 1px 2px),
+      linear-gradient(180deg, #5c6470, #2c323b);
+    border-bottom: 2px solid #ff4fd8;
+    color: #f2f4f8;
+    .mark {
+      color: #ff9df0;
+    }
+    .title-bar {
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      text-shadow: 1px 1px 0 #101318;
+    }
+    ${ChromeButton} {
+      color: #101318;
+      background: linear-gradient(180deg, #e6e9ee, #9aa2ae);
+      box-shadow: 0 0 0 1px #101318;
+    }
+    ${ChromeButton}:hover {
+      background: linear-gradient(180deg, #fff, #c0c6d0);
+    }
+  }
+
+  /* My Files: a manila folder, the tab of its own icon. */
+  &[data-skin='files'] {
+    background: linear-gradient(180deg, #f7e27a, #d9b93f);
+    border-bottom: 1px solid #8a6f12;
+    color: #3a2d00;
+    .mark {
+      color: #6e5500;
+    }
+    .title-bar {
+      text-shadow: 0 1px 0 rgba(255, 255, 255, 0.5);
+    }
+    ${ChromeButton} {
+      color: #3a2d00;
+      background: linear-gradient(180deg, #fff8d6, #e9d27a);
+      box-shadow: 0 0 0 1px #6e5500;
+    }
+    ${ChromeButton}:hover {
+      background: #fffbe8;
+    }
+  }
+
+  /* Upload: files kept forever, deep space and a cyan glow. */
+  &[data-skin='upload'] {
+    background: radial-gradient(1px 1px at 40px 8px, #fff 99%, transparent),
+      radial-gradient(1px 1px at 110px 18px, #9be8ff 99%, transparent),
+      linear-gradient(90deg, #04102e, #0a3a78 70%, #0f6fa8);
+    background-size: 160px 26px, 160px 26px, 100% 100%;
+    color: #c9f3ff;
+    .mark {
+      color: #5fe0ff;
+      font-size: 15px;
+      text-shadow: 0 0 6px #27d3ff;
+    }
+    .title-bar {
+      letter-spacing: 0.06em;
+      text-shadow: 0 0 5px rgba(39, 211, 255, 0.55);
+    }
+    ${ChromeButton} {
+      color: #04102e;
+      background: linear-gradient(180deg, #e4faff, #7fdcf5);
+      box-shadow: 0 0 0 1px #04102e;
+    }
+    ${ChromeButton}:hover {
+      background: #e4faff;
+    }
+  }
+
+  /* Display: the settings blue of every computer of the time. */
+  &[data-skin='display'] {
+    background: linear-gradient(90deg, #000080, #1084d0);
+    color: #fff;
+    .mark {
+      color: #c9e6ff;
+    }
+    ${ChromeButton} {
+      color: #000;
+      background: #c0c0c0;
+      box-shadow: inset -1px -1px #000, inset 1px 1px #fff, inset -2px -2px #808080;
+    }
+    ${ChromeButton}:hover {
+      background: #dcdcdc;
     }
   }
 

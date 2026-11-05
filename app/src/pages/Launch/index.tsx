@@ -416,8 +416,9 @@ export default function LaunchPage() {
   const royalty = parseRoyaltyPct(form.royaltyPct)
 
   return (
-    <WindowWrapper>
+    <WindowWrapper skin="launch">
       <TitleBar
+        skin="launch"
         closeBtn
         onClose={(e) => {
           if (e.cancelable) e.stopPropagation()

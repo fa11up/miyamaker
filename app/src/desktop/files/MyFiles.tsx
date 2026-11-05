@@ -388,8 +388,9 @@ export default function MyFiles() {
   }
 
   return (
-    <WindowWrapper>
+    <WindowWrapper skin="files">
       <TitleBar
+        skin="files"
         minimizeBtn
         fullscreenBtn
         closeBtn

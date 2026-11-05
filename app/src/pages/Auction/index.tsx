@@ -123,8 +123,9 @@ export default function AuctionPage() {
   }, [dispatch, nftsList])
 
   return (
-    <WindowWrapper>
+    <WindowWrapper skin="auction">
       <TitleBar
+        skin="auction"
         closeBtn
         onClose={(e) => {
           if (e.cancelable) e.stopPropagation()

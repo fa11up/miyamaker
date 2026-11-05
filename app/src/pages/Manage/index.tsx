@@ -139,8 +139,9 @@ export default function ManagePage() {
   const current = mine.launches.find((l) => collection && keyOf(l) === keyOf({ chainId, address: collection }))
 
   return (
-    <WindowWrapper>
+    <WindowWrapper skin="manager">
       <TitleBar
+        skin="manager"
         closeBtn
         onClose={(e) => {
           if (e.cancelable) e.stopPropagation()
