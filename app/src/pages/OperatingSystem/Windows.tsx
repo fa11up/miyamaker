@@ -4,7 +4,7 @@ import type { DraggableData } from 'react-draggable'
 import Draggable from 'react-draggable'
 import { useWindowSize } from 'usehooks-ts'
 
-import { useWindowPosition } from '@/store/windows/hooks'
+import { useWindowDimensions, useWindowPosition } from '@/store/windows/hooks'
 
 const DummyWindow = ({
   innerRef,
@@ -49,6 +49,33 @@ const DummyWindow = ({
       {children}
     </div>
   )
+}
+
+type Edge = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw'
+const EDGES: Edge[] = ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw']
+const GRIP = 6 // px of edge that takes the pointer
+const CORNER = 14
+const CURSOR: Record<Edge, string> = {
+  n: 'ns-resize',
+  s: 'ns-resize',
+  e: 'ew-resize',
+  w: 'ew-resize',
+  ne: 'nesw-resize',
+  sw: 'nesw-resize',
+  nw: 'nwse-resize',
+  se: 'nwse-resize',
+}
+const gripStyle = (edge: Edge): React.CSSProperties => {
+  const corner = edge.length === 2
+  const style: React.CSSProperties = { position: 'absolute', zIndex: 3, cursor: CURSOR[edge], touchAction: 'none' }
+  // Inside the frame (the window clips what hangs outside), over its bevel.
+  if (edge.includes('n')) style.top = 0
+  if (edge.includes('s')) style.bottom = 0
+  if (edge.includes('w')) style.left = 0
+  if (edge.includes('e')) style.right = 0
+  if (corner) return { ...style, width: CORNER, height: CORNER }
+  if (edge === 'n' || edge === 's') return { ...style, left: CORNER / 2, right: CORNER / 2, height: GRIP }
+  return { ...style, top: CORNER / 2, bottom: CORNER / 2, width: GRIP }
 }
 
 const DraggableWrapper = ({
@@ -166,9 +193,69 @@ export default function Windows({
     []
   )
 
+  // Edges and corners resize the window (not on phones, maximized, or a shaped window like the radio). The size
+  // people pick is kept, and the window never goes smaller than its own layout allows, nor past the desktop.
+  const [savedSize, saveSize] = useWindowDimensions(identifier)
+  const [liveSize, setLiveSize] = useState<{ width: number; height: number }>()
+  const resizable = !mobile && !shaped
+  const size = (resizable && (liveSize ?? savedSize)) || baseSize
+  const minSize = { width: Math.min(baseSize.width, 480), height: Math.min(baseSize.height, 360) }
+  const { width: viewWidth } = useWindowSize()
+
   // A window taller than the desktop shrinks to fit above the taskbar and scrolls inside.
   const available = Math.max(0, viewHeight - 34)
-  const height = !shaped && available && baseSize.height > available ? available : baseSize.height
+  const height = !shaped && available && size.height > available ? available : size.height
+  const width = !shaped && viewWidth && size.width > viewWidth ? viewWidth : size.width
+
+  const startResize = (edge: Edge) => (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0 || !dragPosition) return
+    e.preventDefault()
+    e.stopPropagation()
+    onClick()
+    const grip = e.currentTarget
+    grip.setPointerCapture(e.pointerId)
+    const start = { x: e.clientX, y: e.clientY, w: width, h: height, left: dragPosition.x, top: dragPosition.y }
+    let last = { size: { width: start.w, height: start.h }, pos: { x: start.left, y: start.top } }
+    const move = (ev: PointerEvent) => {
+      const dx = ev.clientX - start.x
+      const dy = ev.clientY - start.y
+      let { w } = start
+      let { h } = start
+      let { left, top } = start
+      if (edge.includes('e')) w = Math.min(start.w + dx, viewWidth - start.left)
+      if (edge.includes('s')) h = Math.min(start.h + dy, available - start.top)
+      if (edge.includes('w')) {
+        w = Math.min(start.w - dx, start.left + start.w)
+        w = Math.max(minSize.width, w)
+        left = start.left + start.w - w
+      }
+
+      if (edge.includes('n')) {
+        h = Math.min(start.h - dy, start.top + start.h)
+        h = Math.max(minSize.height, h)
+        top = start.top + start.h - h
+      }
+
+      w = Math.max(minSize.width, Math.round(w))
+      h = Math.max(minSize.height, Math.round(h))
+      last = { size: { width: w, height: h }, pos: { x: Math.round(left), y: Math.round(top) } }
+      setLiveSize(last.size)
+      if (edge.includes('w') || edge.includes('n')) setDragPosition(last.pos)
+    }
+
+    const up = () => {
+      grip.removeEventListener('pointermove', move)
+      grip.removeEventListener('pointerup', up)
+      grip.removeEventListener('pointercancel', up)
+      saveSize(last.size.width, last.size.height)
+      updatePosition(last.pos.x, last.pos.y)
+      setLiveSize(undefined)
+    }
+
+    grip.addEventListener('pointermove', move)
+    grip.addEventListener('pointerup', up)
+    grip.addEventListener('pointercancel', up)
+  }
 
   const [dummyWindowsArray, setdummyWindowsArray] = useState<{ x: number; y: number; i: number }[]>([])
 
@@ -227,7 +314,7 @@ export default function Windows({
           label={label}
           style={{
             height: mobile ? 'auto' : height,
-            width: mobile ? 'auto' : baseSize.width,
+            width: mobile ? 'auto' : width,
             position: 'absolute',
             pointerEvents: shaped ? 'none' : 'all',
             zIndex: baseDepth + 101,
@@ -236,6 +323,16 @@ export default function Windows({
           }}
         >
           {children}
+          {resizable &&
+            EDGES.map((edge) => (
+              <div
+                key={edge}
+                aria-hidden
+                data-resize={edge}
+                style={gripStyle(edge)}
+                onPointerDown={startResize(edge)}
+              />
+            ))}
         </DummyWindow>
       </DraggableWrapper>
       {!mobile &&
@@ -246,7 +343,7 @@ export default function Windows({
               style={{
                 position: 'absolute',
                 height: mobile ? 'auto' : height,
-                width: mobile ? 'auto' : baseSize.width,
+                width: mobile ? 'auto' : width,
                 zIndex: baseDepth + i,
                 transform: `translateX(${element.x}px) translateY(${element.y}px)`,
                 userSelect: 'none',

@@ -5,7 +5,7 @@ import Pages from '@/constants/pages'
 import { findLastObject } from '@/utils/findLastObject'
 
 import { useAppDispatch, useAppSelector } from '../hooks'
-import { toggleFullscreen, updateWindowPosition } from './actions'
+import { toggleFullscreen, updateWindowPosition, updateWindowSize } from './actions'
 import type { PageKey } from './reducer'
 
 export function useWindows(): [PageKey[], PageKey[], PageKey[], PageKey[]] {
@@ -33,6 +33,18 @@ export function useWindowPosition(id: PageKey): [{ x: number; y: number } | unde
   )
 
   return [position, updatePosition]
+}
+
+export function useWindowDimensions(
+  id: PageKey
+): [{ width: number; height: number } | undefined, (width: number, height: number) => void] {
+  const size = useAppSelector((state) => state.windows.size?.[id])
+  const dispatch = useAppDispatch()
+  const updateSize = useCallback(
+    (width: number, height: number) => dispatch(updateWindowSize({ value: id, size: { width, height } })),
+    [id]
+  )
+  return [size, updateSize]
 }
 
 export function useFullscreen(id: PageKey): [boolean, () => void] {
