@@ -110,6 +110,7 @@ export default function Playlist({
   checked,
   onLoad,
   onDropMusic,
+  onUpload,
   onTestTone,
   onInfo,
 }: {
@@ -122,6 +123,7 @@ export default function Playlist({
   checked?: boolean
   onLoad: (id: string) => void
   onDropMusic: () => void
+  onUpload: () => void
   onTestTone?: () => void
   onInfo: () => void
 }) {
@@ -169,9 +171,9 @@ export default function Playlist({
             <p>No tracks yet</p>
             {checked ? (
               <span>
-                No music drops are out yet.{' '}
-                <button type="button" onClick={onDropMusic}>
-                  Release your own
+                Nothing out yet.{' '}
+                <button type="button" onClick={onUpload}>
+                  Upload a track
                 </button>
               </span>
             ) : (
@@ -253,6 +255,15 @@ export default function Playlist({
                 {src.label}
               </button>
             ))}
+            <button
+              type="button"
+              onClick={() => {
+                onUpload()
+                setMenu(undefined)
+              }}
+            >
+              Upload a track
+            </button>
             {onTestTone && (
               <button
                 type="button"
@@ -302,7 +313,7 @@ export default function Playlist({
                 setMenu(undefined)
               }}
             >
-              Release your own
+              Release an edition
             </button>
           </Menu>
         )}

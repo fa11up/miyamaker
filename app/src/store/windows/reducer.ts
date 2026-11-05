@@ -14,6 +14,7 @@ import {
   setToFront,
   toggleFullscreen,
   updateWindowPosition,
+  updateWindowSize,
 } from './actions'
 
 export type PageKey = Extract<keyof typeof Pages, string>
@@ -32,6 +33,8 @@ export interface UserState {
   minimized: PageKey[]
   onTop?: PageKey[]
   position: { [key: PageKey]: { x: number; y: number } }
+  /** Sizes people dragged a window to; kept after it closes so it reopens the same size. */
+  size?: { [key: PageKey]: { width: number; height: number } }
   uploadRequests: Record<string, { requestFrom: string; timestamp: number; label?: string; result?: any; value?: any }>
 }
 
@@ -105,6 +108,11 @@ export default createReducer(initialState, (builder) =>
       const { value: page, position } = action.payload
       if (position && (position.x < 0 || position.y < 0)) return
       state.position[page] = position
+    })
+    .addCase(updateWindowSize, (state, action) => {
+      const { value: page, size } = action.payload
+      if (!(size.width > 0 && size.height > 0)) return
+      state.size = { ...(state.size ?? {}), [page]: size }
     })
     .addCase(toggleFullscreen, (state, action) => {
       const { value: page } = action.payload

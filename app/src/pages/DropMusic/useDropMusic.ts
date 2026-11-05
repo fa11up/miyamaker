@@ -110,11 +110,10 @@ export function useDropMusic() {
       undefined,
       getIrysToken(chain?.id || 1),
       chain
-    )
-    if (!tx) {
+    ).catch((e) => {
       mark(id, 'error')
-      throw new Error('Upload failed. Check your wallet has funds for Irys on this network and try again.')
-    }
+      throw e
+    })
 
     mark(id, 'done')
     return `ar://${tx}`

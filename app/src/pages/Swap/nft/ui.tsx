@@ -2,10 +2,10 @@ import styled from 'styled-components/macro'
 import type { Address } from 'viem'
 
 import NftImage from '@/components/NftImage'
-import { BigButton, Panel } from '@/components/Retro'
 import type { SupportedChainId } from '@/config/wagmi'
-import { bevel, color, font, space, text } from '@/theme/tokens'
 
+import { BigButton, Panel } from '../floor/retro'
+import { bevel, color, font, space, text } from '../floor/tokens'
 import type { PoolKind } from './pool'
 import { useNftMeta } from './usePools'
 
@@ -168,7 +168,7 @@ export const ActionDock = styled.div`
   margin: 0 -${space[4]};
   padding: ${space[2]} ${space[4]};
   background: ${color.face};
-  box-shadow: inset 0 1px 0 ${color.highlight}, 0 -2px 0 ${color.shadow};
+  box-shadow: inset 0 1px 0 ${color.dark};
   .narrow & {
     margin: 0 -${space[3]};
     padding: ${space[2]} ${space[3]};
@@ -220,7 +220,7 @@ const TileBox = styled.button`
     display: grid;
     place-items: center;
     background: ${color.accent};
-    color: ${color.highlight};
+    color: ${color.onAccent};
     font-weight: 700;
     box-shadow: ${bevel.raised};
   }

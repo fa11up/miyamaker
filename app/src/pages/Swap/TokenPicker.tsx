@@ -1,12 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import styled from 'styled-components/macro'
 
-import { Skeleton } from '@/components/Retro'
-import { bevel, color, font, space, text } from '@/theme/tokens'
-
 import type { SwapChainId, SwapToken } from './constants'
 import { sameAddress } from './constants'
 import { feeFree } from './fee'
+import { Skeleton } from './floor/retro'
+import { bevel, color, font, space, text } from './floor/tokens'
 import { searchTokens } from './tokenList'
 import { useCustomToken } from './useTokens'
 
@@ -212,7 +211,7 @@ const Row = styled.button<{ selected?: boolean }>`
     flex: none;
     font-size: ${text.xs};
     padding: 2px ${space[1]};
-    background: ${color.highlight};
+    background: ${color.well};
     box-shadow: ${bevel.sunken};
     color: ${color.success};
   }
@@ -244,7 +243,7 @@ const Note = styled.div<{ tone?: 'warn' }>`
   padding: ${space[2]};
   font-size: ${text.sm};
   line-height: 1.35;
-  background: ${({ tone }) => (tone === 'warn' ? '#fff3cd' : color.well)};
+  background: ${({ tone }) => (tone === 'warn' ? color.faceLight : color.well)};
   box-shadow: ${bevel.sunken};
   color: ${({ tone }) => (tone === 'warn' ? color.warning : color.inkMuted)};
 `

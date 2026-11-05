@@ -7,9 +7,7 @@ import { formatUnits, parseUnits } from 'viem'
 import { useAccount, useSwitchChain } from 'wagmi'
 
 import LoadingHourglass from '@/assets/loading_hourglass.gif'
-import { BigButton, Eyebrow, Panel, Skeleton, StatusBox, Well } from '@/components/Retro'
 import { explorerUrl } from '@/config/wagmi'
-import { bevel, color, font, space, text } from '@/theme/tokens'
 
 import { SwapApiError } from './api'
 import type { SwapChainId, SwapToken } from './constants'
@@ -23,6 +21,8 @@ import {
   SWAP_CHAINS,
 } from './constants'
 import { FEE_BPS, FEE_CHAIN_IDS, feeApplies, feeFree } from './fee'
+import { BigButton, Eyebrow, Panel, Skeleton, StatusBox, Well } from './floor/retro'
+import { bevel, color, font, space, text } from './floor/tokens'
 import { Body, ChainTabs, Toolbar } from './layout'
 import SwapSettings from './SwapSettings'
 import { quickPicks } from './tokenList'
@@ -110,8 +110,8 @@ const AmountRow = styled.div`
   }
   /* A readout, not a field: flat, no inset, so it does not look typeable. */
   output {
-    background: rgba(255, 255, 255, 0.35);
-    border: 1px dashed ${color.shadow};
+    background: ${color.face};
+    border: 1px dashed ${color.dark};
   }
   output.empty {
     color: ${color.shadow};
@@ -263,7 +263,7 @@ const FreeTag = styled.span`
   display: inline-block;
   padding: 1px ${space[2]};
   background: ${color.success};
-  color: ${color.highlight};
+  color: ${color.onAccent};
   font-weight: 700;
 `
 
@@ -284,7 +284,7 @@ const ActionDock = styled.div`
   margin: 0 -${space[4]};
   padding: ${space[2]} ${space[4]};
   background: ${color.face};
-  box-shadow: inset 0 1px 0 ${color.highlight}, 0 -2px 0 ${color.shadow};
+  box-shadow: inset 0 1px 0 ${color.dark};
   .narrow & {
     margin: 0 -${space[3]};
     padding: ${space[2]} ${space[3]};

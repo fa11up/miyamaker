@@ -7,6 +7,9 @@ export const closeWindow = createAction<{ value: PageKey }>('windows/closeWindow
 export const updateWindowPosition = createAction<{ value: PageKey; position: { x: number; y: number } }>(
   'windows/updateWindowPosition'
 )
+export const updateWindowSize = createAction<{ value: PageKey; size: { width: number; height: number } }>(
+  'windows/updateWindowSize'
+)
 export const toggleFullscreen = createAction<{ value: PageKey }>('windows/toggleFullscreen')
 export const setToFront = createAction<{ value: PageKey }>('windows/setToFront')
 export const minimizeWindow = createAction<{ value: PageKey }>('windows/minimizeWindow')

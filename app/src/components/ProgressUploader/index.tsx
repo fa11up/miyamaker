@@ -105,17 +105,26 @@ export const ProgressBarUploader = ({ request, onRequest }: ProgressBarUploaderP
     // Reset the progress bar
     setProgress(0)
 
-    // Get a reference to our Bundlr singleton
-    const res = await fundAndUpload(
-      selectedFile,
-      [
-        { name: 'Content-Type', value: selectedFile.type },
-        { name: 'application-id', value: 'MiyaOS' },
-      ],
-      undefined,
-      getIrysToken(chain?.id || 1),
-      chain
-    )
+    let res: string
+    try {
+      res = await fundAndUpload(
+        selectedFile,
+        [
+          { name: 'Content-Type', value: selectedFile.type },
+          { name: 'application-id', value: 'MiyaOS' },
+        ],
+        undefined,
+        getIrysToken(chain?.id || 1),
+        chain,
+        setMessage
+      )
+    } catch (e) {
+      setMessage((e as Error).message)
+      setTxProcessing(false)
+      return
+    }
+
+    setMessage('')
 
     setUploadTxId(res)
     setFileUrl(`${GATEWAY_BASE}${res}`)

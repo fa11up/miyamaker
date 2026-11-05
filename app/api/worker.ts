@@ -1,12 +1,20 @@
 // Cloudflare Worker: the 0x and OpenSea proxies (keys injected server-side, see api/_lib), the apex -> www redirect,
 // and everything else from the static build in dist/ (wrangler.jsonc).
+import { verifyMessage } from 'viem'
+
 import { handleOpenSeaRequest, OPENSEA_PROXY_PATH } from './_lib/opensea'
+import type { D1Like } from './_lib/station'
+import { d1Store, gatewayContentType, handleStationRequest, STATION_PATH } from './_lib/station'
 import { clientKey, createRateLimiter, handleZeroExRequest, PROXY_PREFIX, sameOrigin } from './_lib/zeroex'
 
 type Env = {
   ASSETS: { fetch: (request: Request) => Promise<Response> }
   ZEROX_API_KEY?: string
   OPENSEA_API_KEY?: string
+  /** The radio's community station (migrations/). */
+  DB?: D1Like
+  /** Wallets that can remove any station track, comma-separated. */
+  STATION_ADMINS?: string
 }
 
 const APEX = 'miyamaker.com'
@@ -17,6 +25,7 @@ const guards = {
   readLimiter: createRateLimiter({ capacity: 120, perSecond: 2 }),
   fillLimiter: createRateLimiter({ capacity: 10, perSecond: 0.2 }),
 }
+const stationLimiter = createRateLimiter({ capacity: 20, perSecond: 0.2 })
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -36,6 +45,23 @@ export default {
         { method: request.method, url: request.url, headers: request.headers, body },
         { OPENSEA_API_KEY: env.OPENSEA_API_KEY },
         guards
+      )
+    }
+
+    if (url.pathname === STATION_PATH || url.pathname.startsWith(`${STATION_PATH}/`)) {
+      const body = request.method === 'POST' ? (await request.text()).slice(0, 4096) : undefined
+      return handleStationRequest(
+        { method: request.method, url: request.url, headers: request.headers, body },
+        {
+          store: env.DB ? d1Store(env.DB) : undefined,
+          admins: (env.STATION_ADMINS ?? '').split(',').map((a) => a.trim()).filter(Boolean),
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          verify: (address, message, signature) => verifyMessage({ address: address as any, message, signature: signature as any }).catch(() => false),
+          contentType: gatewayContentType,
+          sameOrigin,
+          clientKey,
+          limiter: stationLimiter,
+        }
       )
     }
 

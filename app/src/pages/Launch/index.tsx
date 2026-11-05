@@ -1,5 +1,6 @@
 import { useConnectModal } from '@rainbow-me/rainbowkit'
 import { useEffect, useState } from 'react'
+import { useLocation } from 'react-router-dom'
 import styled from 'styled-components/macro'
 import { useElementSize } from 'usehooks-ts'
 import { useAccount, useSwitchChain } from 'wagmi'
@@ -11,7 +12,7 @@ import TitleBar from '@/components/TitleBar'
 import WindowWrapper from '@/components/WindowWrapper'
 import { explorerUrl } from '@/config/wagmi'
 import Pages from '@/constants/pages'
-import type { LaunchForm, StepKey } from '@/miyamints/launch'
+import type { LaunchForm, LaunchType, StepKey } from '@/miyamints/launch'
 import {
   AUCTION_TIME_BUFFER_SECONDS,
   EMPTY_FORM,
@@ -38,6 +39,8 @@ import Preview, { priceLine, supplyLine, TYPE_LABEL } from './Preview'
 import type { Pick } from './Steps'
 import { AlignStep, ArtStep, SaleStep, TypeStep } from './Steps'
 import { useLaunch } from './useLaunch'
+
+const LAUNCH_TYPES: LaunchType[] = ['drop', 'auction', 'editions']
 
 const STEP_LABEL: Record<StepKey, string> = {
   type: 'Type',
@@ -196,7 +199,17 @@ export default function LaunchPage() {
   const rules = useRegistryRules(net.chainId, net.addresses.registry)
   const launch = useLaunch()
 
-  const [form, setForm] = useState<LaunchForm>(EMPTY_FORM)
+  // /launch?type=drop|auction|editions (miyanet's "Launch your own") opens with that kind picked.
+  const location = useLocation()
+  const askedType = new URLSearchParams(location.search).get('type')
+  const [form, setForm] = useState<LaunchForm>(() =>
+    LAUNCH_TYPES.includes(askedType as LaunchType) ? { ...EMPTY_FORM, type: askedType as LaunchType } : EMPTY_FORM
+  )
+  useEffect(() => {
+    // Already open: a new pick only replaces the kind while nothing has been typed yet.
+    if (LAUNCH_TYPES.includes(askedType as LaunchType) && !form.name.trim())
+      setForm((f) => ({ ...f, type: askedType as LaunchType }))
+  }, [askedType])
   const [stepIdx, setStepIdx] = useState(0)
   const [shown, setShown] = useState<Partial<Record<StepKey, boolean>>>({})
   const [image, setImage] = useState<Pick>()

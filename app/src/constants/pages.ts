@@ -94,8 +94,8 @@ const Pages: Record<string, Page> = {
     label: 'Trade',
     icon: SwapIcon[0],
     minSize: {
-      width: 520,
-      height: 720,
+      width: 1120,
+      height: 760,
     },
   },
   auction: {
@@ -147,6 +147,16 @@ const Pages: Record<string, Page> = {
     minSize: {
       width: 540,
       height: 397,
+    },
+  },
+  station: {
+    id: 'station',
+    path: '/station',
+    label: 'Community station',
+    icon: RadioIcon[0],
+    minSize: {
+      width: 640,
+      height: 680,
     },
   },
   dropmusic: {

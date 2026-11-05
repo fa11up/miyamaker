@@ -19,6 +19,7 @@ import {
 import { describeError } from '@/pages/Mint/Miyamini/useMiyamini'
 import { bevel, color, font, space, text } from '@/theme/tokens'
 
+import PixelFire from './PixelFire'
 import type { Moon } from './useMiyanet'
 import { useMiyanetTx, useRedemptionState, useWalletPosition } from './useMiyanet'
 import { DataTable, NewTag, PortalBox, PushButton, y2k } from './y2k'
@@ -194,6 +195,34 @@ function moonLine(moon: Moon | undefined) {
   return `Next full moon in ${inBlocks(moon.start - moon.block)} (block ${moon.start})`
 }
 
+/** Shown in place of the burn form once a wallet has burned its last MIYA or MXXN. */
+const Burned = styled.div`
+  display: flex;
+  align-items: center;
+  gap: ${space[4]};
+  padding: ${space[3]} ${space[4]};
+  background: ${y2k.night};
+  box-shadow: ${bevel.sunken};
+  color: #fff;
+  > div {
+    display: flex;
+    flex-direction: column;
+    gap: ${space[1]};
+    font-size: ${text.sm};
+    line-height: 1.5;
+  }
+  b {
+    font-family: ${font.display};
+    font-weight: 400;
+    font-size: ${text.xl};
+    color: ${y2k.tape};
+    text-shadow: 2px 2px 0 #e0006b;
+  }
+  small {
+    color: #c9d4ff;
+  }
+`
+
 const Row = styled.div`
   display: flex;
   gap: ${space[2]};
@@ -279,6 +308,9 @@ export default function Claim({ id, style }: { id?: string; style?: CSSPropertie
   else if (needsApproval || (tx.isAwaitingWallet && tx.lastAction === 'approve')) step = 2
 
   const vestingLeft = wallet.vesting ? wallet.vesting.total - wallet.vesting.claimed : 0n
+  // Burned some before and none left: the fire, not a form that can only say "No MIYA in this wallet".
+  const burnedAll =
+    tx.isConnected && !tx.wrongChain && wallet.legacy === 0n && (wallet.burnedFor ?? 0n) > 0n && !tx.isConfirming
   const closesOn = state.closesAt
     ? new Date(state.closesAt * 1000).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
     : undefined
@@ -334,14 +366,20 @@ export default function Claim({ id, style }: { id?: string; style?: CSSPropertie
         </Text>
       )}
 
-      <Steps aria-label="Steps">
-        {['Connect', 'Approve', 'Burn'].map((s, i) => (
-          <li key={s} aria-current={step === i + 1 ? 'step' : undefined} className={step > i + 1 ? 'done' : undefined}>
-            <b>{step > i + 1 ? '✓' : i + 1}</b>
-            {s}
-          </li>
-        ))}
-      </Steps>
+      {!burnedAll && (
+        <Steps aria-label="Steps">
+          {['Connect', 'Approve', 'Burn'].map((s, i) => (
+            <li
+              key={s}
+              aria-current={step === i + 1 ? 'step' : undefined}
+              className={step > i + 1 ? 'done' : undefined}
+            >
+              <b>{step > i + 1 ? '✓' : i + 1}</b>
+              {s}
+            </li>
+          ))}
+        </Steps>
+      )}
 
       <DataTable>
         <tbody>
@@ -384,47 +422,66 @@ export default function Claim({ id, style }: { id?: string; style?: CSSPropertie
         </tbody>
       </DataTable>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: space[2] }}>
-        <Label htmlFor="legacy-amount">{symbol} to burn</Label>
-        <AmountField>
-          <input
-            id="legacy-amount"
-            inputMode="decimal"
-            placeholder="0.0"
-            value={input}
-            disabled={busy || !tx.isConnected}
-            onChange={(e) => setInput(e.target.value.replace(/[^0-9.]/g, ''))}
-          />
-          <PushButton
-            type="button"
-            disabled={busy || wallet.legacy === undefined}
-            onClick={() => wallet.legacy !== undefined && setInput(formatUnits(wallet.legacy, 18))}
-          >
-            Max
-          </PushButton>
-        </AmountField>
-        <Row>
-          <Text as="span">You get</Text>
-          <strong style={{ fontSize: text.lg, fontVariantNumeric: 'tabular-nums' }}>{num(out)} INFER</strong>
-        </Row>
-        {tx.isConnected && amount === wallet.legacy && wallet.redeemLater !== undefined && wallet.redeemLater > 0n && (
-          <Fine>
-            {num(wallet.redeemNow)} now, {num(wallet.redeemLater)} paid out over 13 weeks.
-          </Fine>
-        )}
-      </div>
+      {burnedAll ? (
+        <Burned role="status">
+          <PixelFire />
+          <div>
+            <b>{symbol} burned.</b>
+            <span>
+              It is gone for good, and the INFER is yours: {num(wallet.burnedFor, 18, 0)} INFER paid to this wallet at
+              once{vestingLeft > 0n ? ', and more paying out below' : ''}.
+            </span>
+            <small>Holding {which === 'miya' ? 'MXXN' : 'MIYA'} too? Switch above to burn it.</small>
+          </div>
+        </Burned>
+      ) : (
+        <>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: space[2] }}>
+            <Label htmlFor="legacy-amount">{symbol} to burn</Label>
+            <AmountField>
+              <input
+                id="legacy-amount"
+                inputMode="decimal"
+                placeholder="0.0"
+                value={input}
+                disabled={busy || !tx.isConnected}
+                onChange={(e) => setInput(e.target.value.replace(/[^0-9.]/g, ''))}
+              />
+              <PushButton
+                type="button"
+                disabled={busy || wallet.legacy === undefined}
+                onClick={() => wallet.legacy !== undefined && setInput(formatUnits(wallet.legacy, 18))}
+              >
+                Max
+              </PushButton>
+            </AmountField>
+            <Row>
+              <Text as="span">You get</Text>
+              <strong style={{ fontSize: text.lg, fontVariantNumeric: 'tabular-nums' }}>{num(out)} INFER</strong>
+            </Row>
+            {tx.isConnected &&
+              amount === wallet.legacy &&
+              wallet.redeemLater !== undefined &&
+              wallet.redeemLater > 0n && (
+                <Fine>
+                  {num(wallet.redeemNow)} now, {num(wallet.redeemLater)} paid out over 13 weeks.
+                </Fine>
+              )}
+          </div>
 
-      <Warning>
-        <img src={WarningIcon} alt="" />
-        <span>
-          <strong>Burning is permanent.</strong> You cannot undo it. Approve only lets the claim use the exact amount
-          you typed.
-        </span>
-      </Warning>
+          <Warning>
+            <img src={WarningIcon} alt="" />
+            <span>
+              <strong>Burning is permanent.</strong> You cannot undo it. Approve only lets the claim use the exact
+              amount you typed.
+            </span>
+          </Warning>
 
-      <BigButton type="button" disabled={action.disabled} onClick={action.onClick}>
-        {action.label}
-      </BigButton>
+          <BigButton type="button" disabled={action.disabled} onClick={action.onClick}>
+            {action.label}
+          </BigButton>
+        </>
+      )}
 
       {vestingLeft > 0n && (
         <Row>

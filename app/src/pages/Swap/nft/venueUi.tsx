@@ -1,8 +1,7 @@
 import type { ReactNode } from 'react'
 import styled from 'styled-components/macro'
 
-import { bevel, color, space, text } from '@/theme/tokens'
-
+import { bevel, color, space, text } from '../floor/tokens'
 import type { Venue } from './markets'
 
 /** Building blocks for the Markets section: one row per venue, a link-out button and the best-price banner. */

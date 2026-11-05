@@ -1,5 +1,6 @@
 import { useConnectModal } from '@rainbow-me/rainbowkit'
 import type { KeyboardEvent } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import styled, { css, keyframes } from 'styled-components/macro'
 import { useElementSize } from 'usehooks-ts'
@@ -404,6 +405,7 @@ const SECTIONS: { id: Section; label: string }[] = [
 ]
 
 export default function DropMusicWindow() {
+  const navigate = useNavigate()
   const dispatch = useAppDispatch()
   const [fullscreen, toggleFullscreen] = useFullscreen(pageId)
   const radio = useRadio()
@@ -1225,7 +1227,19 @@ export default function DropMusicWindow() {
                           ? 'Switch your wallet to Ethereum or Robinhood Chain.'
                           : music.deployed
                           ? `Connect a wallet on ${music.cfg.name} to release.`
-                          : 'Releasing opens soon. You can still upload now; your links are kept here for when it opens.'}
+                          : 'Releasing editions opens soon. Want it heard now? Put it on the radio, no edition needed.'}
+                        {!music.wrongChain && !music.deployed && (
+                          <>
+                            {' '}
+                            <button
+                              type="button"
+                              style={{ all: 'unset', cursor: 'pointer', textDecoration: 'underline' }}
+                              onClick={() => navigate('/station')}
+                            >
+                              Open the community station
+                            </button>
+                          </>
+                        )}
                       </span>
                     </StatusBox>
                   )}

@@ -4,12 +4,12 @@ import type { Address } from 'viem'
 import { useAccount, useReadContract } from 'wagmi'
 
 import NftImage from '@/components/NftImage'
-import { Chip, Eyebrow, Skeleton } from '@/components/Retro'
 import type { SupportedChainId } from '@/config/wagmi'
 import { chains, explorerUrl, mainnet } from '@/config/wagmi'
 import { cleanText } from '@/desktop/files/sanitize'
-import { color, space } from '@/theme/tokens'
 
+import { Chip, Eyebrow, Skeleton } from '../floor/retro'
+import { color, space } from '../floor/tokens'
 import { erc721Abi } from './abi'
 import FillReview from './FillReview'
 import type { OsOrder } from './markets'
@@ -158,7 +158,11 @@ export default function ItemView({
               if (!factory) return <VenueRow key={v.id} venue={v} note={'MiyaPool opens soon.'} />
               if (inPool)
                 return (
-                  <VenueRow key={v.id} venue={v} note={`It is in the ${MODE_LABEL[inPool.mode]} pool. Take it out for 1 ${inPool.symbol}.`}>
+                  <VenueRow
+                    key={v.id}
+                    venue={v}
+                    note={`It is in the ${MODE_LABEL[inPool.mode]} pool. Take it out for 1 ${inPool.symbol}.`}
+                  >
                     <PushButton type="button" onClick={() => onOpenPool(inPool.address)}>
                       Open the pool
                     </PushButton>

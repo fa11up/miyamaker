@@ -1,18 +1,19 @@
 import { useQuery } from '@tanstack/react-query'
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import styled from 'styled-components/macro'
 
-import { Chip, Skeleton } from '@/components/Retro'
+import { Chip } from '@/components/Retro'
 import { LINKS } from '@/constants/miyanet'
-import { bevel, color, font, space, text } from '@/theme/tokens'
+import { buildPath, STARTERS } from '@/pages/Build/starters'
+import { bevel, color, space, text } from '@/theme/tokens'
 
-import { PushButton, y2k } from './y2k'
+import { PushButton } from './y2k'
 
 /**
- * Search the IdentityMD swarm from inside miyanet. Matching runs locally over INFER BOX's public skill list
- * (CORS-open, no sign-in). Evaluating and paying for a request needs a BOX sign-in on box.imdusd.com, which
- * refuses to be framed, so the last step hands the query over in a new tab as ?q= (BOX prefills its idea box after sign-in; also copied
- * to the clipboard as a fallback).
+ * The way into the swarm from miyanet. Searching (or one of the three starters) opens the Build window on this site,
+ * where INFER BOX checks the idea, prices it and takes the payment. The health line reads INFER BOX's public swarm
+ * state (CORS-open, no sign-in).
  */
 type Skill = { id: string; role: string; description: string; accepted: number; attempts: number }
 export type SwarmHealth = {
@@ -24,8 +25,6 @@ export type SwarmHealth = {
 type SwarmResponse = { health: SwarmHealth; skills: Skill[] }
 
 const SWARM_URL = `${LINKS.box}api/public/swarm`
-const MAX_RESULTS = 6
-const EXAMPLES = ['launch a token', 'build a mint site', 'audit my contract']
 
 /** INFER BOX's public swarm health and skill list (shared by the search box and the ticker). */
 export function useSwarm() {
@@ -102,48 +101,6 @@ const Hints = styled.div`
   }
 `
 
-const Results = styled.ol`
-  list-style: none;
-  margin: 0;
-  padding: ${space[3]};
-  background: ${y2k.paper};
-  box-shadow: ${bevel.sunken};
-  display: flex;
-  flex-direction: column;
-  gap: ${space[3]};
-  counter-reset: hit;
-`
-
-const Result = styled.li`
-  counter-increment: hit;
-  display: grid;
-  grid-template-columns: 2.2em minmax(0, 1fr);
-  font-family: ${font.body};
-  &::before {
-    content: counter(hit) '.';
-    font-weight: 700;
-    color: ${color.inkMuted};
-  }
-  strong {
-    display: block;
-    font-family: ${font.ui};
-    font-size: ${text.sm};
-    color: ${color.link};
-    text-decoration: underline;
-    word-break: break-word;
-  }
-  p {
-    margin: 2px 0;
-    font-size: ${text.sm};
-    line-height: 1.5;
-    color: ${color.ink};
-  }
-  small {
-    font-size: ${text.xs};
-    color: ${color.success};
-  }
-`
-
 const Meta = styled.div`
   display: flex;
   gap: ${space[2]} ${space[3]};
@@ -154,21 +111,6 @@ const Meta = styled.div`
   color: ${color.highlight};
 `
 
-const Panel = styled.div`
-  display: flex;
-  flex-direction: column;
-  gap: ${space[2]};
-  padding: ${space[3]};
-  background: ${y2k.paper};
-  box-shadow: ${bevel.raised};
-  ${Meta} {
-    color: ${color.ink};
-  }
-`
-
-const words = (s: string) => s.toLowerCase().match(/[a-z0-9]+/g) || []
-
-/** Rank skills by how many query words hit the id/description, ties broken by how often the swarm accepts them. */
 /**
  * The plane sometimes reports agentsOnline as 0 while work is plainly flowing (seats enrolled, answers accepted), so
  * a bare "0 agents online" would misstate the swarm. Fall back to the enrolled seat count in that case.
@@ -180,46 +122,11 @@ export function swarmSize(h: SwarmHealth | undefined): string | undefined {
   return undefined
 }
 
-export function rankSkills(skills: Skill[], query: string): Skill[] {
-  const q = words(query).filter((w) => w.length > 2)
-  if (!q.length) return []
-  return skills
-    .map((s) => {
-      const hay = `${s.id.replace(/-/g, ' ')} ${s.description}`.toLowerCase()
-      const score = q.reduce((n, w) => n + (hay.includes(w) ? 1 : 0), 0)
-      return { s, score }
-    })
-    .filter((r) => r.score > 0)
-    .sort((a, b) => b.score - a.score || b.s.accepted - a.s.accepted)
-    .slice(0, MAX_RESULTS)
-    .map((r) => r.s)
-}
-
 export default function SwarmSearch() {
+  const navigate = useNavigate()
   const [input, setInput] = useState('')
-  const [query, setQuery] = useState('')
-  const [copied, setCopied] = useState(false)
   const swarm = useSwarm()
-
-  const results = useMemo(() => rankSkills(swarm.data?.skills || [], query), [swarm.data, query])
   const h = swarm.data?.health
-
-  const search = (q: string) => {
-    setInput(q)
-    setQuery(q.trim())
-    setCopied(false)
-  }
-
-  const openBox = async () => {
-    try {
-      if (query) await navigator.clipboard.writeText(query)
-      setCopied(!!query)
-    } catch {
-      setCopied(false)
-    }
-
-    window.open(query ? `${LINKS.box}?q=${encodeURIComponent(query)}#box` : LINKS.box, '_blank', 'noopener,noreferrer')
-  }
 
   return (
     <Engine aria-label="Search the swarm">
@@ -227,7 +134,7 @@ export default function SwarmSearch() {
         role="search"
         onSubmit={(e) => {
           e.preventDefault()
-          search(input)
+          if (input.trim()) navigate(buildPath(input.trim()))
         }}
       >
         <input
@@ -241,9 +148,9 @@ export default function SwarmSearch() {
 
       <Hints>
         <span>Try:</span>
-        {EXAMPLES.map((q) => (
-          <button key={q} type="button" onClick={() => search(q)}>
-            {q}
+        {STARTERS.map((s) => (
+          <button key={s.label} type="button" onClick={() => navigate(buildPath(s.idea, s.type))}>
+            {s.label}
           </button>
         ))}
         <span style={{ marginLeft: 'auto' }}>
@@ -257,47 +164,7 @@ export default function SwarmSearch() {
         </span>
       </Hints>
 
-      {swarm.isLoading && query && <Skeleton h="48px" />}
-      {query && !swarm.isLoading && (
-        <Panel>
-          {results.length ? (
-            <>
-              <Meta>
-                <span>
-                  Skills that match <strong>&ldquo;{query}&rdquo;</strong>:
-                </span>
-              </Meta>
-              <Results>
-                {results.map((s) => (
-                  <Result key={s.id}>
-                    <div>
-                      <strong>{s.id}</strong>
-                      <p>{s.description}</p>
-                      <small>
-                        {s.role}, the swarm accepted {s.attempts ? Math.round((s.accepted / s.attempts) * 100) : 0}% of{' '}
-                        {s.attempts.toLocaleString('en-US')} tries
-                      </small>
-                    </div>
-                  </Result>
-                ))}
-              </Results>
-            </>
-          ) : (
-            <Meta>No skill matches those words. INFER BOX can still sharpen the idea with you.</Meta>
-          )}
-          <Meta>
-            <PushButton type="button" onClick={openBox}>
-              Send to INFER BOX ↗
-            </PushButton>
-            <span style={{ flex: '1 1 240px' }}>
-              {copied
-                ? 'Your idea is waiting in BOX (and copied). Sign in, check it, and pay in imdUSD if it passes.'
-                : 'BOX checks your idea and gives you a price. Pay in imdUSD and the swarm builds it.'}
-            </span>
-          </Meta>
-        </Panel>
-      )}
-      {h && !query && (
+      {h && (
         <Meta style={{ fontSize: text.xs, opacity: 0.85 }}>
           The swarm finished {h.jobsDoneLastDay} jobs in the last day, across {swarm.data?.skills.length} skills.
         </Meta>

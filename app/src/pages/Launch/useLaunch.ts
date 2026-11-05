@@ -76,11 +76,10 @@ export function useLaunch() {
       undefined,
       getIrysToken(chain?.id || 1),
       chain
-    )
-    if (!tx) {
+    ).catch((e) => {
       mark(id, 'error')
-      throw new Error('The upload did not go through. Check this wallet has a little ETH for storage and try again.')
-    }
+      throw e
+    })
 
     mark(id, 'done')
     return `ar://${tx}`

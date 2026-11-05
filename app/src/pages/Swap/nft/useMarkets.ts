@@ -52,7 +52,8 @@ async function call(init: { query: Record<string, string>; body?: unknown; signa
     throw new MarketError('Marketplace prices need an API key.', 'MARKET_NOT_CONFIGURED', res.status)
   }
 
-  if (!res.ok) throw new MarketError(body?.message || 'The market request failed.', body?.name || `HTTP_${res.status}`, res.status)
+  if (!res.ok)
+    throw new MarketError(body?.message || 'The market request failed.', body?.name || `HTTP_${res.status}`, res.status)
   return body
 }
 
@@ -125,7 +126,8 @@ export function useOpenSeaCollection(chainId: number, address: string | undefine
     queryKey: ['os-stats', slug],
     enabled: !!slug,
     ...common,
-    queryFn: async ({ signal }): Promise<OsStats> => parseStats(await orNone(get({ op: 'stats', slug: slug! }, signal))),
+    queryFn: async ({ signal }): Promise<OsStats> =>
+      parseStats(await orNone(get({ op: 'stats', slug: slug! }, signal))),
   })
   const offer = useQuery({
     queryKey: ['os-offer', slug],
@@ -150,6 +152,23 @@ export function useOpenSeaCollection(chainId: number, address: string | undefine
   }
 }
 
+/** One row of the market table: details and stats by known slug, no contract lookup and no offers (fewer requests). */
+export function useCollectionRow(slug: string) {
+  const info = useQuery({
+    queryKey: ['os-collection', slug],
+    ...common,
+    staleTime: 5 * 60_000,
+    queryFn: async ({ signal }): Promise<OsCollection | null> =>
+      parseCollection(await orNone(get({ op: 'collection', slug }, signal))) || null,
+  })
+  const stats = useQuery({
+    queryKey: ['os-stats', slug],
+    ...common,
+    queryFn: async ({ signal }): Promise<OsStats> => parseStats(await orNone(get({ op: 'stats', slug }, signal))),
+  })
+  return { info: info.data ?? undefined, stats: stats.data, loading: info.isLoading || stats.isLoading }
+}
+
 /** The cheapest OpenSea listings of a collection (price ascending). */
 export function useOpenSeaListings(slug: string | undefined, limit = 6) {
   const { configured, known } = useOpenSeaConfigured()
@@ -170,7 +189,12 @@ export function useOpenSeaListings(slug: string | undefined, limit = 6) {
 }
 
 /** One NFT on OpenSea: details, its best listing and best offer. */
-export function useOpenSeaItem(chainId: number, address: string | undefined, slug: string | undefined, id: string | undefined) {
+export function useOpenSeaItem(
+  chainId: number,
+  address: string | undefined,
+  slug: string | undefined,
+  id: string | undefined
+) {
   const chain = OPENSEA_CHAIN[chainId]
   const { configured, known } = useOpenSeaConfigured()
   const nft = useQuery({
@@ -238,7 +262,8 @@ export function useOpenSeaSearch(chainId: number, query: string) {
     enabled,
     ...common,
     staleTime: 5 * 60_000,
-    queryFn: async ({ signal }): Promise<OsSearchHit[]> => parseSearch(await orNone(get({ op: 'search', query: q, chain: chain! }, signal))),
+    queryFn: async ({ signal }): Promise<OsSearchHit[]> =>
+      parseSearch(await orNone(get({ op: 'search', query: q, chain: chain! }, signal))),
   })
   return {
     hits: enabled ? r.data || [] : [],

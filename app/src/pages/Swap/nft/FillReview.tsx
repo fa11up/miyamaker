@@ -7,16 +7,16 @@ import { erc20Abi, zeroAddress } from 'viem'
 import { useAccount, useBalance, useReadContract, useReadContracts, useSwitchChain } from 'wagmi'
 
 import LoadingHourglass from '@/assets/loading_hourglass.gif'
-import { Eyebrow, Skeleton, StatusBox } from '@/components/Retro'
 import type { SupportedChainId } from '@/config/wagmi'
 import { chains, explorerUrl, mainnet } from '@/config/wagmi'
 import { txWords, useTx } from '@/miyamints/useTx'
-import { bevel, color, space, text } from '@/theme/tokens'
 
+import { Eyebrow, Skeleton, StatusBox } from '../floor/retro'
+import { bevel, color, space, text } from '../floor/tokens'
 import { erc721Abi } from './abi'
 import type { FillPlan, OsOrder } from './markets'
 import { formatAmount, OPENSEA_CHAIN, planFill, usesSeaportItself } from './markets'
-import { conduitControllerAbi, CONDUIT_CONTROLLER, INPUT_ALIASES, seaportAbi, SEAPORT_ADDRESSES } from './seaport'
+import { CONDUIT_CONTROLLER, conduitControllerAbi, INPUT_ALIASES, SEAPORT_ADDRESSES, seaportAbi } from './seaport'
 import { Action, Card, Head, Hint, LinkButton, Prose, Stat } from './ui'
 import { fetchFulfillment, MarketError } from './useMarkets'
 
@@ -165,7 +165,13 @@ export default function FillReview({
       { address: erc20, abi: erc20Abi, functionName: 'symbol', chainId },
       { address: erc20, abi: erc20Abi, functionName: 'decimals', chainId },
       { address: erc20, abi: erc20Abi, functionName: 'balanceOf', args: [me || zeroAddress], chainId },
-      { address: erc20, abi: erc20Abi, functionName: 'allowance', args: [me || zeroAddress, operator || zeroAddress], chainId },
+      {
+        address: erc20,
+        abi: erc20Abi,
+        functionName: 'allowance',
+        args: [me || zeroAddress, operator || zeroAddress],
+        chainId,
+      },
     ],
     query: { enabled: !!erc20 && !!me },
   })
@@ -223,7 +229,8 @@ export default function FillReview({
       return { label: switching ? 'Switching…' : `Switch to ${chain.name}`, onClick: () => switchChain({ chainId }) }
     if (tx.tx.phase === 'wallet') return { label: 'Confirm in wallet…', disabled: true }
     if (tx.tx.phase === 'pending') return { label: 'Waiting for the network…', disabled: true }
-    if (tx.tx.phase === 'done' && tx.tx.id === 'fill') return { label: side === 'buy' ? 'Bought' : 'Sold', disabled: true }
+    if (tx.tx.phase === 'done' && tx.tx.id === 'fill')
+      return { label: side === 'buy' ? 'Bought' : 'Sold', disabled: true }
     if (!ok) return { label: data.isLoading ? 'Getting the order…' : 'Cannot fill here', disabled: true }
     if (!operator) return { label: 'Checking…', disabled: true }
     if (short) return { label: `Not enough ${symbol}`, disabled: true }
@@ -232,14 +239,26 @@ export default function FillReview({
         label: `Allow ${symbol} for this buy`,
         step: `Step 1 of 2: let Seaport (OpenSea's contract) take exactly ${fmt(ok.total)}. Then buy.`,
         onClick: () =>
-          tx.run('approve', { address: erc20, abi: erc20Abi, functionName: 'approve', args: [operator, ok.total], chainId }),
+          tx.run('approve', {
+            address: erc20,
+            abi: erc20Abi,
+            functionName: 'approve',
+            args: [operator, ok.total],
+            chainId,
+          }),
       }
     if (needsNft)
       return {
         label: `Allow OpenSea to move ${title}`,
         step: `Step 1 of 2: a one-time approval so Seaport can hand this NFT to the bidder. Then sell.`,
         onClick: () =>
-          tx.run('approve', { address: contract, abi: erc721Abi, functionName: 'setApprovalForAll', args: [operator, true], chainId }),
+          tx.run('approve', {
+            address: contract,
+            abi: erc721Abi,
+            functionName: 'setApprovalForAll',
+            args: [operator, true],
+            chainId,
+          }),
       }
     return side === 'buy'
       ? { label: `Buy for ${fmt(ok.total)}`, onClick: fill }

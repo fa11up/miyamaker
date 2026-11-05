@@ -5,11 +5,13 @@ import { defineConfig, loadEnv, searchForWorkspaceRoot } from 'vite'
 import macrosPlugin from 'vite-plugin-babel-macros'
 import dynamicImport from 'vite-plugin-dynamic-import'
 import imagePresets, { widthPreset } from 'vite-plugin-image-presets'
+import { verifyMessage } from 'viem'
 import { nodePolyfills } from 'vite-plugin-node-polyfills'
 import { VitePWA } from 'vite-plugin-pwa'
 import svgr from 'vite-plugin-svgr'
 
 import { handleOpenSeaRequest, OPENSEA_PROXY_PATH } from './api/_lib/opensea'
+import { gatewayContentType, handleStationRequest, memoryStore, STATION_PATH } from './api/_lib/station'
 import { clientKey, createRateLimiter, handleZeroExRequest, PROXY_PREFIX, sameOrigin } from './api/_lib/zeroex'
 
 /**
@@ -74,11 +76,47 @@ function openSeaDevProxy(env: Record<string, string>): Plugin {
   }
 }
 
+/** Dev-only stand-in for the Worker's station route, kept in memory. STATION_ADMINS from the shell. */
+function stationDevProxy(): Plugin {
+  const store = memoryStore()
+  const limiter = createRateLimiter({ capacity: 200, perSecond: 5 })
+  return {
+    name: 'miya-station-dev-proxy',
+    configureServer(server) {
+      server.middlewares.use(STATION_PATH, async (req, res) => {
+        const headers = new Headers()
+        for (const [k, v] of Object.entries(req.headers)) if (typeof v === 'string') headers.set(k, v)
+        let body = ''
+        if (req.method === 'POST') for await (const chunk of req) body += chunk
+        const host = req.headers.host || 'localhost'
+        const rest = req.url && req.url !== '/' ? req.url : ''
+        const response = await handleStationRequest(
+          { method: req.method || 'GET', url: `http://${host}${STATION_PATH}${rest}`, headers, body },
+          {
+            store,
+            admins: (process.env.STATION_ADMINS ?? '').split(',').filter(Boolean),
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            verify: (address, message, signature) => verifyMessage({ address: address as any, message, signature: signature as any }).catch(() => false),
+            contentType: gatewayContentType,
+            sameOrigin,
+            clientKey,
+            limiter,
+          }
+        )
+        res.statusCode = response.status
+        response.headers.forEach((value, key) => res.setHeader(key, value))
+        res.end(await response.text())
+      })
+    },
+  }
+}
+
 export default defineConfig(({ mode }) => ({
   base: '/',
   plugins: [
     zeroExDevProxy(loadEnv(mode, __dirname, ['ZEROX_'])),
     openSeaDevProxy(loadEnv(mode, __dirname, ['OPENSEA_'])),
+    stationDevProxy(),
     react(),
     dynamicImport(),
     svgr(),

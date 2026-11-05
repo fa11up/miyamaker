@@ -1,16 +1,15 @@
 /* eslint-disable @typescript-eslint/return-await */
 /* eslint-disable no-underscore-dangle */
 import { WebIrys } from '@irys/sdk'
-import { getAccount } from '@wagmi/core'
+import { getAccount, switchChain } from '@wagmi/core'
 import type { Address, Chain } from 'viem'
 import { createWalletClient, custom } from 'viem'
 import { mainnet } from 'viem/chains'
 
 import { wagmiConfig } from '@/config/wagmi'
 
-interface WindowWithEthereum extends Window {
-  ethereum?: any
-}
+/** The chain Irys is paid on for a token. Storage is paid on Ethereum whatever network the wallet is on for the rest. */
+const PAYMENT_CHAIN: Record<string, Chain> = { ethereum: mainnet }
 
 /**
  * Creates a new Irys object with the specified configuration.
@@ -21,16 +20,19 @@ interface WindowWithEthereum extends Window {
  * @returns {Promise<WebIrys>} - A reference to the initialized Irys object.
  */
 const getIrys = async (
-  url: string = import.meta.env.VITE_IRYS_NODE || '',
-  token: string = import.meta.env.VITE_IRYS_TOKEN || '',
+  url: string = import.meta.env.VITE_IRYS_NODE || 'https://uploader.irys.xyz',
+  token: string = import.meta.env.VITE_IRYS_TOKEN || 'ethereum',
   chain: Chain = mainnet
 ): Promise<WebIrys> => {
-  await (window as WindowWithEthereum).ethereum.enable()
+  // The connected wallet, whichever kind (extension, WalletConnect, ...), not whatever sits on window.ethereum.
   const account = getAccount(wagmiConfig)
+  if (!account.address || !account.connector) throw new Error('Connect a wallet first.')
+  const payChain = PAYMENT_CHAIN[token] ?? chain
+  const eip1193 = (await account.connector.getProvider()) as Parameters<typeof custom>[0]
   const provider = createWalletClient({
     account: account.address,
-    chain,
-    transport: custom(window.ethereum),
+    chain: payChain,
+    transport: custom(eip1193),
   })
   // @ts-expect-error injected
   provider.getSigner = () => provider
@@ -48,6 +50,8 @@ const getIrys = async (
 
   // Otherwise
   webIrys.tokenConfig.sendTx = async (data): Promise<string> => {
+    // Money sent to Irys on any other chain is lost, so the wallet moves first, and viem refuses a mismatch.
+    if (getAccount(wagmiConfig).chainId !== payChain.id) await switchChain(wagmiConfig, { chainId: payChain.id as 1 })
     const hash = await provider.sendTransaction({
       to: data.to,
       value: data.amount,

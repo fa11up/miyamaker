@@ -1,19 +1,20 @@
-import SwapBanner from 'assets/SwapBanner.jpg'
-import type { KeyboardEvent } from 'react'
 import { useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate, useNavigationType } from 'react-router-dom'
 import styled from 'styled-components/macro'
 import { useElementSize } from 'usehooks-ts'
 
-import { Chip } from '@/components/Retro'
 import TitleBar from '@/components/TitleBar'
 import WindowWrapper from '@/components/WindowWrapper'
 import Pages from '@/constants/pages'
 import { useAppDispatch } from '@/store/hooks'
 import { closeWindow, minimizeWindow } from '@/store/windows/actions'
 import { useFullscreen } from '@/store/windows/hooks'
-import { color, space, text } from '@/theme/tokens'
 
+import type { SwapToken } from './constants'
+import { DEFAULT_PAIR } from './constants'
+import { Chip } from './floor/retro'
+import { color, font, space, text } from './floor/tokens'
+import { Tape, useBoard } from './MarketBoard'
 import NftTrade from './nft/NftTrade'
 import type { SwapPreset } from './TokenSwap'
 import TokenSwap from './TokenSwap'
@@ -25,99 +26,100 @@ const page = Pages.swap
 const Root = styled.div`
   position: relative;
   height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: ${color.well};
+  color: ${color.ink};
+  font-family: ${font.mono};
+  font-size: ${text.sm};
+  /* miyaOS sets its pixel font on every element; the floor is all one mono face. */
+  * {
+    font-family: inherit;
+  }
+  a {
+    color: ${color.link};
+  }
+`
+
+const Bar = styled.header`
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: ${space[3]};
+  padding: ${space[2]} ${space[3]};
+  background: ${color.face};
+  border-bottom: 1px solid ${color.dark};
+  h1 {
+    margin: 0;
+    font-size: ${text.lg};
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    color: ${color.accent};
+  }
+  p {
+    margin: 0;
+    font-size: ${text.xs};
+    color: ${color.inkMuted};
+  }
+  .status {
+    margin-left: auto;
+  }
+`
+
+const Floor = styled.div`
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 380px;
+  &.one {
+    grid-template-columns: minmax(0, 1fr);
+  }
+`
+
+const Pane = styled.div`
+  min-height: 0;
+  min-width: 0;
   overflow-y: auto;
   overflow-x: hidden;
-  background: ${color.face};
-`
-
-/* The artwork alone: no title on it (the window title already says Trade). */
-const Banner = styled.div`
-  height: 96px;
-  background: url(${SwapBanner}) center 62% / cover no-repeat;
-  image-rendering: pixelated;
-  .narrow & {
-    height: 72px;
-  }
-`
-
-/* Win9x property-sheet tabs: the selected one is the window face, so it joins the content below. */
-const TabStrip = styled.div`
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: ${space[2]};
-  padding: ${space[2]} ${space[4]} 0;
-  background: ${color.shadow};
-  box-shadow: inset 0 -1px 0 ${color.highlight};
-  .narrow & {
-    padding: ${space[2]} ${space[3]} 0;
-  }
-`
-
-const ModeTabs = styled.div`
-  display: flex;
-  gap: 2px;
-  button {
-    position: relative;
-    height: 34px;
-    min-width: 108px;
-    padding: 0 ${space[4]};
-    border: none;
-    background: ${color.light};
-    color: ${color.inkMuted};
-    font-size: ${text.md};
-    cursor: pointer;
-    box-shadow: inset 1px 1px ${color.highlight}, inset -1px 0 ${color.dark}, inset -2px 0 ${color.shadow};
-    .narrow & {
-      height: 40px;
-      min-width: 0;
-      flex: 1;
-    }
-    &:hover {
-      color: ${color.ink};
-    }
-    &:focus-visible {
-      outline: 1px dotted ${color.dark};
-      outline-offset: -5px;
-    }
-  }
-  button[aria-selected='true'] {
-    height: 38px;
-    margin-bottom: -1px;
-    background: ${color.face};
-    color: ${color.ink};
-    font-weight: 700;
-    z-index: 1;
-    .narrow & {
-      height: 44px;
-    }
-  }
-  .narrow & {
-    flex: 1;
-  }
-`
-
-const Status = styled.div`
-  padding-bottom: ${space[2]};
-`
-
-const Panel = styled.div`
   &[hidden] {
     display: none;
   }
+  &.dock {
+    border-left: 1px solid ${color.dark};
+    background: ${color.face};
+  }
+  .one &.dock {
+    border-left: none;
+  }
 `
 
-const MODES: { id: TradeMode; label: string }[] = [
-  { id: 'tokens', label: 'Tokens' },
-  { id: 'nfts', label: 'NFTs' },
-]
+/* One column: the market and the swap take turns. */
+const PaneTabs = styled.div`
+  flex: none;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  border-bottom: 1px solid ${color.dark};
+  button {
+    min-height: 44px;
+    border: none;
+    background: ${color.face};
+    color: ${color.inkMuted};
+    font-size: ${text.sm};
+    cursor: pointer;
+  }
+  button[aria-selected='true'] {
+    color: ${color.accent};
+    font-weight: 700;
+    box-shadow: inset 0 -2px 0 ${color.accent};
+  }
+`
 
 /**
- * Trade (was "miya swaps"): Tokens swaps ERC-20s through 0x; NFTs trades NFTs through the zero-fee MiyaPool pools
- * and shows every other market a collection trades on (OpenSea in-app, Blur as a link).
- * Both tabs stay mounted so switching never loses a trade in progress. The tab and pool live in the path
- * (/trade, /trade/nfts, /trade/nfts/<pool>, /trade/nfts/collection/<chain>/<address>[/<id>]) so they can be shared
- * and Back works.
+ * Trade: one floor for tokens and NFTs. The market (token prices, collections, pools, any collection or NFT) fills the
+ * left, and the 0x swap stays docked on the right, so neither ever hides the other; in a narrow window they take turns.
+ * Both stay mounted so nothing loses a trade in progress. The view lives in the path (/trade, /trade/nfts,
+ * /trade/nfts/<pool>, /trade/nfts/collection/<chain>/<address>[/<id>]) so it can be shared and Back works.
  */
 export default function TradePage() {
   const [fullscreen, toggleFullscreen] = useFullscreen('swap')
@@ -127,24 +129,37 @@ export default function TradePage() {
 
   const [rootRef, { width }] = useElementSize()
   const narrow = width > 0 && width <= 440
+  const oneColumn = width > 0 && width < 820
+  const slim = width > 0 && width < 980
+  const board = useBoard()
 
   const location = useLocation()
   const navigationType = useNavigationType()
   const navigate = useNavigate()
   const initial = useRef(parseTradePath(location.pathname))
-  const [mode, setMode] = useState<TradeMode>(initial.current.mode)
   const [pool, setPool] = useState<`0x${string}` | undefined>(initial.current.pool)
   const [collection, setCollection] = useState<CollectionRef | undefined>(initial.current.collection)
   const [offline, setOffline] = useState(false)
   const [preset, setPreset] = useState<SwapPreset>()
-  const tabRefs = useRef<(HTMLButtonElement | null)[]>([])
+  const [pane, setPane] = useState<'market' | 'swap'>('market')
+
+  /** Put a token in the docked swap: buy it with ETH (or sell it, if it is ETH already). */
+  const tradeToken = (t: SwapToken) => {
+    const [eth, infer] = DEFAULT_PAIR[1]
+    setPreset(
+      t.symbol === eth.symbol
+        ? { key: Date.now(), chainId: 1, sell: eth, buy: infer }
+        : { key: Date.now(), chainId: 1, sell: eth, buy: t }
+    )
+    setPane('swap')
+  }
 
   const go = (nextMode: TradeMode, nextPool?: `0x${string}`, nextCollection?: CollectionRef) => {
-    setMode(nextMode)
     if (nextMode === 'nfts') {
       setPool(nextPool)
       setCollection(nextPool ? undefined : nextCollection)
     }
+
     const path =
       nextMode === 'nfts' ? tradePath(nextMode, nextPool, nextPool ? undefined : nextCollection) : tradePath(nextMode)
     if (location.pathname !== path) navigate(path)
@@ -156,20 +171,11 @@ export default function TradePage() {
     if (!location.pathname.startsWith(TRADE_PATH)) return
     const next = parseTradePath(location.pathname)
     if (location.pathname === TRADE_PATH && navigationType !== 'POP') return
-    setMode(next.mode)
     if (next.mode === 'nfts') {
       setPool(next.pool)
       setCollection(next.collection)
     }
   }, [location.pathname, navigationType])
-
-  const onTabKey = (e: KeyboardEvent, index: number) => {
-    if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return
-    e.preventDefault()
-    const next = (index + (e.key === 'ArrowRight' ? 1 : MODES.length - 1)) % MODES.length
-    go(MODES[next]!.id, pool, collection)
-    tabRefs.current[next]?.focus()
-  }
 
   return (
     <WindowWrapper>
@@ -190,53 +196,47 @@ export default function TradePage() {
       >
         {page?.label}
       </TitleBar>
-      <Root ref={rootRef} className={narrow ? 'narrow' : undefined}>
-        <Banner role="img" aria-label="Trade: two winged figures holding hands in an open field" />
-        <TabStrip>
-          <ModeTabs role="tablist" aria-label="What to trade">
-            {MODES.map((m, i) => (
-              <button
-                key={m.id}
-                ref={(el) => {
-                  tabRefs.current[i] = el
-                }}
-                type="button"
-                role="tab"
-                id={`trade-tab-${m.id}`}
-                aria-selected={mode === m.id}
-                aria-controls={`trade-panel-${m.id}`}
-                tabIndex={mode === m.id ? 0 : -1}
-                onClick={() => go(m.id, pool, collection)}
-                onKeyDown={(e) => onTabKey(e, i)}
-                data-trade-tab={m.id}
-              >
-                {m.label}
-              </button>
-            ))}
-          </ModeTabs>
-          {offline && mode === 'tokens' && (
-            <Status>
-              <Chip tone="warn">Offline</Chip>
-            </Status>
+      <Root ref={rootRef} className={[narrow && 'narrow', slim && 'slim'].filter(Boolean).join(' ') || undefined}>
+        <Bar>
+          <h1>TRADE</h1>
+          {!narrow && <p>Tokens and NFTs, one floor.</p>}
+          {offline && (
+            <span className="status">
+              <Chip tone="warn">Swap offline</Chip>
+            </span>
           )}
-        </TabStrip>
-
-        <Panel id="trade-panel-tokens" role="tabpanel" aria-labelledby="trade-tab-tokens" hidden={mode !== 'tokens'}>
-          <TokenSwap preset={preset} onOffline={setOffline} />
-        </Panel>
-        <Panel id="trade-panel-nfts" role="tabpanel" aria-labelledby="trade-tab-nfts" hidden={mode !== 'nfts'}>
-          <NftTrade
-            pool={pool}
-            collection={collection}
-            onOpenPool={(p) => go('nfts', p)}
-            onOpenCollection={(c) => go('nfts', undefined, c)}
-            onSwapToken={(p) => {
-              setPreset({ ...p, key: Date.now() })
-              go('tokens')
-            }}
-            onShowTokens={() => go('tokens')}
-          />
-        </Panel>
+        </Bar>
+        <Tape rows={board.rows} onTrade={tradeToken} />
+        {oneColumn && (
+          <PaneTabs role="tablist" aria-label="Market or swap">
+            <button type="button" role="tab" aria-selected={pane === 'market'} onClick={() => setPane('market')}>
+              Market
+            </button>
+            <button type="button" role="tab" aria-selected={pane === 'swap'} onClick={() => setPane('swap')}>
+              Swap
+            </button>
+          </PaneTabs>
+        )}
+        <Floor className={oneColumn ? 'one' : undefined}>
+          <Pane hidden={oneColumn && pane !== 'market'} data-trade-market>
+            <NftTrade
+              pool={pool}
+              collection={collection}
+              board={board}
+              onTradeToken={tradeToken}
+              onOpenPool={(p) => go('nfts', p)}
+              onOpenCollection={(c) => go('nfts', undefined, c)}
+              onSwapToken={(p) => {
+                setPreset({ ...p, key: Date.now() })
+                setPane('swap')
+              }}
+              onShowTokens={() => setPane('swap')}
+            />
+          </Pane>
+          <Pane className="dock" hidden={oneColumn && pane !== 'swap'} data-trade-swap>
+            <TokenSwap preset={preset} onOffline={setOffline} />
+          </Pane>
+        </Floor>
       </Root>
     </WindowWrapper>
   )

@@ -96,6 +96,16 @@ export const legacyRedeemerAbi = [
   { type: 'function', name: 'rateB', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
   {
     type: 'function',
+    name: 'paidImmediately',
+    stateMutability: 'view',
+    inputs: [
+      { name: 'legacy', type: 'address' },
+      { name: 'holder', type: 'address' },
+    ],
+    outputs: [{ type: 'uint256' }],
+  },
+  {
+    type: 'function',
     name: 'advanceClock',
     stateMutability: 'nonpayable',
     inputs: [
