@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { isWalletRefusal, MAX_SWEEP, pickCheapest, sumPrices, sweepable, sweepTotals } from '../src/pages/Swap/nft/sweep.ts'
+import { GONE_MS, goneHashes, isWalletRefusal, markGone, MAX_SWEEP, pickCheapest, sumPrices, sweepable, sweepTotals } from '../src/pages/Swap/nft/sweep.ts'
 
 const l = (tokenId: string | undefined, amount: bigint, extra = {}) => ({
   hash: `h${tokenId}`,
@@ -52,4 +52,17 @@ test('only a refusal in the wallet stops the sweep', () => {
   assert.equal(isWalletRefusal('MetaMask Tx Signature: User denied transaction signature.'), true)
   assert.equal(isWalletRefusal('execution reverted'), false)
   assert.equal(isWalletRefusal('insufficient funds'), false)
+})
+
+test('a listing that failed to buy stays hidden for a while, then returns', () => {
+  const data = new Map<string, string>()
+  const store = { getItem: (k: string) => data.get(k) ?? null, setItem: (k: string, v: string) => void data.set(k, v) }
+  markGone(store, '0xa', 1000)
+  markGone(store, '0xb', 2000)
+  assert.deepEqual([...goneHashes(store, 3000)], ['0xa', '0xb'])
+  assert.deepEqual([...goneHashes(store, 1000 + GONE_MS)], ['0xb'])
+  assert.deepEqual([...goneHashes(store, 2000 + GONE_MS)], [])
+  assert.equal(goneHashes(undefined).size, 0)
+  data.set('miya-market-gone', 'not json')
+  assert.equal(goneHashes(store).size, 0)
 })

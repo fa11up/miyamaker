@@ -21,7 +21,7 @@ import type { FillPlan, OsOrder } from './markets'
 import { formatAmount, formatPrice, OPENSEA_CHAIN, planFill } from './markets'
 import { INPUT_ALIASES, SEAPORT_ADDRESSES, seaportAbi } from './seaport'
 import type { ItemState } from './sweep'
-import { isWalletRefusal, SWEEP_STATE_WORDS, sweepTotals } from './sweep'
+import { isWalletRefusal, markGone, sessionStore, SWEEP_STATE_WORDS, sweepTotals } from './sweep'
 import { Action, Card, Head, Hint, LinkButton, Prose } from './ui'
 import { fetchFulfillment, MarketError } from './useMarkets'
 
@@ -205,6 +205,7 @@ export default function SweepReview({
             ;({ request } = await simulateContract(wagmiConfig, call as any))
           } catch (e) {
             // Sold, cancelled or expired while the sweep ran: no prompt, no transaction, on to the next.
+            markGone(sessionStore(), listing.hash)
             set(listing.hash, { state: 'gone', note: describeError(e) })
             // eslint-disable-next-line no-continue
             continue

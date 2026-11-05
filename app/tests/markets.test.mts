@@ -8,6 +8,7 @@ import { decodeFunctionData, encodeFunctionData } from 'viem'
 import { handleOpenSeaRequest, openSeaGet, openSeaPost, quoteBigInts } from '../api/_lib/opensea.ts'
 import { clientKey, createRateLimiter, sameOrigin } from '../api/_lib/zeroex.ts'
 import {
+  lowerPrice,
   bestQuote,
   collectionUrl,
   formatAmount,
@@ -516,4 +517,13 @@ test('seaportArgs maps OpenSea names (orders → advancedOrders) and unwraps { v
   assert.equal((args[0] as any[])[0].numerator, 1n)
   assert.equal((args[2] as any[][])[0]![0].itemIndex, 0n)
   assert.throws(() => seaportArgs(fn, { orders: 'x' }, INPUT_ALIASES), /list/)
+})
+
+test('lowerPrice compares only the same token', () => {
+  const eth = (amount: bigint) => ({ amount, decimals: 18, symbol: 'ETH' })
+  assert.equal(lowerPrice(eth(5n), eth(3n))?.amount, 3n)
+  assert.equal(lowerPrice(eth(3n), eth(5n))?.amount, 3n)
+  assert.equal(lowerPrice(undefined, eth(5n))?.amount, 5n)
+  assert.equal(lowerPrice(eth(5n), { amount: 1n, decimals: 18, symbol: 'WETH' })?.amount, 5n)
+  assert.equal(lowerPrice(undefined, undefined), undefined)
 })

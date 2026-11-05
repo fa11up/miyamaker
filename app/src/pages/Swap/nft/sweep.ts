@@ -71,3 +71,38 @@ export const SWEEP_STATE_WORDS: Record<ItemState, string> = {
   failed: 'Failed, not bought',
   stopped: 'Not bought',
 }
+
+/**
+ * The "gone" memory: a listing that failed to buy (sold, cancelled) is hidden on this visitor's screen for a while,
+ * since the shared market list can lag it by a minute. A failed hash comes back on its own if it was a false alarm.
+ */
+export const GONE_MS = 15 * 60_000
+const GONE_KEY = 'miya-market-gone'
+type Store = { getItem: (key: string) => string | null; setItem: (key: string, value: string) => void }
+
+export const sessionStore = (): Store | undefined => {
+  try {
+    return typeof sessionStorage === 'undefined' ? undefined : sessionStorage
+  } catch {
+    return undefined
+  }
+}
+
+function readGone(store: Store | undefined, now: number): Record<string, number> {
+  try {
+    const all = JSON.parse(store?.getItem(GONE_KEY) ?? '{}') as Record<string, number>
+    return Object.fromEntries(Object.entries(all).filter(([, at]) => now - at < GONE_MS))
+  } catch {
+    return {}
+  }
+}
+
+export const goneHashes = (store: Store | undefined, now = Date.now()) => new Set(Object.keys(readGone(store, now)))
+
+export function markGone(store: Store | undefined, hash: string, now = Date.now()) {
+  try {
+    store?.setItem(GONE_KEY, JSON.stringify({ ...readGone(store, now), [hash]: now }))
+  } catch {
+    // Private windows: it simply stays listed until the next refresh.
+  }
+}
