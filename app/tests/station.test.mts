@@ -130,7 +130,7 @@ test('text is reduced to one plain line, and that is what must be signed', async
   const title = 'Night Tone'
   const fields = { txId: AUDIO, title, artist: 'miya', wallet: uploader.address, at: T }
   const signature = await uploader.signMessage({ message: addMessage(fields) })
-  const r = await s.post('/add', { ...fields, title: `  Night\n‮Tone `, signature })
+  const r = await s.post('/add', { ...fields, title: `  Night\n\u202eTone `, signature })
   assert.equal(r.status, 200)
   assert.equal((await s.list()).tracks[0].title, 'Night Tone')
 })
