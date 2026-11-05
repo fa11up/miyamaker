@@ -136,6 +136,8 @@ const TileButton = styled.button`
   }
 `
 
+const TILE_PAGE = 24
+
 const SweepBar = styled.div`
   display: grid;
   grid-template-columns: auto minmax(80px, 1fr) auto auto;
@@ -344,6 +346,10 @@ export default function CollectionView({
   const ethUsd = useEthUsd()
   const [sweeping, setSweeping] = useState(false)
   const [sweepCount, setSweepCount] = useState(3)
+  // Each tile looks up its own image, so the grid grows on request rather than asking for every listing at once.
+  const [tileLimit, setTileLimit] = useState(TILE_PAGE)
+  const listed = (listings.listings ?? []).filter((l) => l.tokenId)
+  const shownListings = listed.slice(0, tileLimit)
   const canSweep = sweepable(listings.listings ?? [], me)
   const pickedListings = pickCheapest(canSweep, Math.min(sweepCount, canSweep.length))
   const create = useTx(() => pools.refetch())
@@ -549,19 +555,22 @@ export default function CollectionView({
             </Tiles>
           ) : (
             <Tiles>
-              {listings
-                .listings!.filter((l) => l.tokenId)
-                .map((l) => (
-                  <ListingTile
-                    picked={!sweeping && pickedListings.some((p) => p.hash === l.hash)}
-                    key={l.hash}
-                    chainId={chainId}
-                    contract={address}
-                    listing={l}
-                    onOpen={() => onOpenItem(l.tokenId!)}
-                  />
-                ))}
+              {shownListings.map((l) => (
+                <ListingTile
+                  picked={!sweeping && pickedListings.some((p) => p.hash === l.hash)}
+                  key={l.hash}
+                  chainId={chainId}
+                  contract={address}
+                  listing={l}
+                  onOpen={() => onOpenItem(l.tokenId!)}
+                />
+              ))}
             </Tiles>
+          )}
+          {!listings.loading && listed.length > shownListings.length && (
+            <PushButton type="button" onClick={() => setTileLimit((n) => n + TILE_PAGE)}>
+              Show more ({listed.length - shownListings.length} left)
+            </PushButton>
           )}
         </Card>
       )}
