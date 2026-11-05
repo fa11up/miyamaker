@@ -48,10 +48,6 @@ const WindowFrame = styled.div`
     background: #14111c;
     box-shadow: inset 0 0 0 1px #4a4658, 4px 6px 0 rgba(20, 16, 31, 0.45);
   }
-  &[data-skin='chrome'] {
-    background: linear-gradient(135deg, #fff, #a2aac2 40%, #e4e8f4 60%, #7f86a6);
-    box-shadow: inset 0 0 0 1px #10101d, 4px 6px 0 rgba(20, 16, 31, 0.35);
-  }
 
   &[data-skin='mint'] {
     background: linear-gradient(180deg, #ff9fd6, #9a5fe0);
@@ -76,6 +72,10 @@ const WindowFrame = styled.div`
   &[data-skin='upload'] {
     background: linear-gradient(180deg, #0a3a78, #04102e);
     box-shadow: inset 0 0 0 1px #27d3ff, 4px 6px 0 rgba(20, 16, 31, 0.35);
+  }
+  &[data-skin='station'] {
+    background: linear-gradient(180deg, #ffa928, #ff7a18);
+    box-shadow: inset 0 0 0 1px #2a0a5e, 4px 6px 0 rgba(42, 10, 94, 0.3);
   }
   /* Display keeps the window face: the classic grey dialog under a blue bar. */
 

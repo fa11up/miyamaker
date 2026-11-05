@@ -17,6 +17,7 @@ import { LISTED_MUSIC_CHAINS, musicConfig } from '@/music/config'
 import type { MusicItem } from '@/music/discovery'
 import { discoverMusic } from '@/music/discovery'
 import { addKnownCollection, onKnownCollectionsChange } from '@/music/known'
+import { useAddToRadio } from '@/music/useAddToRadio'
 import { useOpenApp } from '@/music/useOpenApp'
 import { describeError } from '@/pages/Mint/Miyamini/useMiyamini'
 import { bevel, color, space, text } from '@/theme/tokens'
@@ -249,6 +250,7 @@ function MintEdition({ item }: { item: MusicItem }) {
 /** Mint → Music: on-chain music drops with a play button that hands the track to miya radio. */
 export default function MusicDrops({ onBack }: { onBack: () => void }) {
   const radio = useRadio()
+  const addToRadio = useAddToRadio()
   const openApp = useOpenApp()
   const { chainId: walletChain } = useAccount()
   const [chainId, setChainId] = useState(musicConfig(walletChain).chainId)
@@ -385,7 +387,7 @@ export default function MusicDrops({ onBack }: { onBack: () => void }) {
                   <Small type="button" onClick={() => radio.playNow(item.track)}>
                     Play
                   </Small>
-                  <Small type="button" onClick={() => radio.enqueue(item.track)}>
+                  <Small type="button" onClick={() => addToRadio(item.track)}>
                     Add to radio
                   </Small>
                 </Actions>

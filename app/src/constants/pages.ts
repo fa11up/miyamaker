@@ -156,7 +156,7 @@ const Pages: Record<string, Page> = {
     icon: RadioIcon[0],
     minSize: {
       width: 640,
-      height: 680,
+      height: 780,
     },
   },
   dropmusic: {
