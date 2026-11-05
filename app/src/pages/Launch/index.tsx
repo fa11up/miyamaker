@@ -43,7 +43,7 @@ const STEP_LABEL: Record<StepKey, string> = {
   type: 'Type',
   art: 'Artwork',
   sale: 'Price & supply',
-  align: 'Alignment',
+  align: 'Community',
   review: 'Review',
 }
 
@@ -116,7 +116,7 @@ const Rail = styled.ol`
   }
   [aria-current='step'] .n {
     background: ${color.accent};
-    color: ${color.highlight};
+    color: ${color.ink};
     box-shadow: none;
   }
   .narrow & .label {
@@ -345,7 +345,7 @@ export default function LaunchPage() {
 
   const primary = (() => {
     if (step !== 'review') return { label: `Next: ${STEP_LABEL[STEP_ORDER[stepIdx + 1] as StepKey]}`, onClick: goNext }
-    if (!net.deployed) return { label: `Not live on ${net.chain.name} yet`, disabled: true }
+    if (!net.deployed) return { label: 'Opens soon', disabled: true }
     if (!isConnected) return { label: 'Connect wallet', onClick: () => openConnectModal?.() }
     if (walletChainId !== net.chainId) {
       return { label: `Switch to ${net.chain.name}`, onClick: () => switchChain({ chainId: net.chainId }) }
@@ -396,7 +396,7 @@ export default function LaunchPage() {
   const statusChip = net.deployed ? (
     <Chip tone="ok">Live on {net.chain.name}</Chip>
   ) : (
-    <Chip tone="warn">Not live on {net.chain.name} yet</Chip>
+    <Chip tone="warn">Opens soon</Chip>
   )
 
   const success = launch.result
@@ -434,8 +434,8 @@ export default function LaunchPage() {
           {!net.deployed && !success && (
             <StatusBox tone="info" role="status">
               <span>
-                Launching is not open on {net.chain.name} yet: the new miya contracts are not deployed on this network.
-                You can still fill everything in and see the preview. The Create button turns on when they go live.
+                Launching opens soon. You can try every step now and see how collectors will see your work, but you
+                cannot publish yet. The Create button turns on when launch opens.
               </span>
             </StatusBox>
           )}
@@ -564,7 +564,7 @@ export default function LaunchPage() {
                           ? defaultVault.symbol
                             ? `Your share buys ${defaultVault.symbol} and adds it to the ${defaultVault.symbol} pool.`
                             : 'The vault miya set up for this network.'
-                          : `No default vault on ${net.chain.name} yet.`,
+                          : 'The community vault opens with launch.',
                       }}
                       customVault={{
                         status:

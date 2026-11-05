@@ -68,7 +68,7 @@ const Art = styled(Well)`
     align-items: center;
     justify-content: center;
     background: ${color.accent};
-    color: ${color.highlight};
+    color: ${color.ink};
     box-shadow: inset -2px -2px ${color.accentDark}, inset 2px 2px #f5c6f6, 2px 2px 0 ${color.dark};
   }
 `

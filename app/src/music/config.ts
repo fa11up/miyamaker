@@ -19,6 +19,9 @@ export const MUSIC_CHAINS: MusicChainConfig[] = [mainnet, sepolia, robinhood].ma
   return { chainId: c.id, name: c.name, factory: a.erc1155Factory, vault: a.defaultVault }
 })
 
+/** Music chains a picker or the radio lists: test networks only in development builds. */
+export const LISTED_MUSIC_CHAINS = MUSIC_CHAINS.filter((c) => import.meta.env.DEV || c.chainId !== sepolia.id)
+
 export function musicConfig(chainId: number | undefined): MusicChainConfig {
   return MUSIC_CHAINS.find((c) => c.chainId === chainId) || (MUSIC_CHAINS[0] as MusicChainConfig)
 }

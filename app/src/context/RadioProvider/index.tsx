@@ -408,6 +408,8 @@ export default function RadioProvider({ children }: { children: ReactNode }) {
   )
   const advanceRef = useRef(advance)
   advanceRef.current = advance
+  // Tracks that failed in a row: a bad one is skipped, but a queue where nothing loads stops instead of looping.
+  const failStreakRef = useRef(0)
 
   // Element events (attached once). Events from the inactive element are ignored.
   useEffect(() => {
@@ -431,7 +433,10 @@ export default function RadioProvider({ children }: { children: ReactNode }) {
         setClock((c) => ({ ...c, duration: Number.isFinite(el.duration) ? el.duration : c.duration }))
       )
       on(el, 'play', () => setPlaying(true))
-      on(el, 'playing', () => setLoading(false))
+      on(el, 'playing', () => {
+        failStreakRef.current = 0
+        setLoading(false)
+      })
       on(el, 'canplay', () => setLoading(false))
       on(el, 'waiting', () => setLoading(true))
       on(el, 'pause', () => setPlaying(false))
@@ -455,7 +460,18 @@ export default function RadioProvider({ children }: { children: ReactNode }) {
 
         setLoading(false)
         setPlaying(false)
-        setError('Could not load this track.')
+        failStreakRef.current += 1
+        const others = queueRef.current.tracks.length - 1
+        if (wantPlayRef.current && failStreakRef.current <= others) {
+          setError(`Skipped ${track.title || 'this track'}: could not load.`)
+          const { id } = track
+          setTimeout(() => {
+            if (currentRef.current?.id === id) advanceRef.current(false)
+          }, 1500)
+          return
+        }
+
+        setError(`Could not load ${track.title || 'this track'}.`)
       })
     })
     return () => cleanups.forEach((c) => c())

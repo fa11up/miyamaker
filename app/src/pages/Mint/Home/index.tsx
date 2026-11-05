@@ -320,7 +320,9 @@ const STATUS_TONE: Record<LiveMintStatus, 'ok' | 'warn' | 'off'> = {
   unknown: 'off',
 }
 
-export function StatusChip({ status }: { status: LiveMintStatus }) {
+/** `loading` false with an unknown status means the chain could not be read, so say so instead of "Checking…". */
+export function StatusChip({ status, loading = true }: { status: LiveMintStatus; loading?: boolean }) {
+  if (status === 'unknown' && !loading) return <Chip tone="warn">Can&apos;t reach chain</Chip>
   return <Chip tone={STATUS_TONE[status]}>{STATUS_LABEL[status]}</Chip>
 }
 
@@ -374,7 +376,7 @@ function MintCard({
         />
         <CardRow>
           <span>{card.chainName}</span>
-          <StatusChip status={card.status} />
+          <StatusChip status={card.status} loading={loading} />
         </CardRow>
         {soon ? (
           <Blurb style={{ fontSize: text.xs }}>{card.blurb || 'Mint opens soon.'}</Blurb>
@@ -437,7 +439,7 @@ function Featured({
       </Frame>
       <FeatureIntro>
         <Chips>
-          <StatusChip status={card.status} />
+          <StatusChip status={card.status} loading={loading} />
           <Chip>{card.chainName}</Chip>
         </Chips>
         <div>

@@ -160,7 +160,7 @@ const Item = styled.button`
   &.selected .label,
   &:focus-visible .label {
     background: ${color.accent};
-    color: ${color.highlight};
+    color: ${color.ink};
   }
   &.selected .thumb,
   &.selected img.folder {

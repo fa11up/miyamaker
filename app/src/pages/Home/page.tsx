@@ -116,6 +116,49 @@ const Tagline = styled.p`
   }
 `
 
+/** The way in for someone who came for NFTs, not the swarm. */
+const Start = styled.div`
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: ${space[2]} ${space[3]};
+  max-width: 64ch;
+  padding: ${space[2]} ${space[3]};
+  background: ${color.faceLight};
+  color: ${color.ink};
+  box-shadow: ${bevel.raised};
+  font-size: ${text.sm};
+  line-height: 1.45;
+  > div {
+    flex: 1 1 260px;
+  }
+  b {
+    display: block;
+  }
+  button {
+    min-height: 32px;
+    padding: 0 ${space[3]};
+    border: none;
+    border-radius: 0;
+    background: ${color.face};
+    color: ${color.ink};
+    box-shadow: ${bevel.raised};
+    font-family: ${font.ui};
+    font-size: ${text.sm};
+    cursor: pointer;
+  }
+  button.primary {
+    background: ${color.accent};
+  }
+  button:active {
+    box-shadow: ${bevel.pressed};
+  }
+  button:focus-visible {
+    outline: 1px dotted ${color.dark};
+    outline-offset: -4px;
+  }
+`
+
 const Portal = styled.div`
   display: grid;
   grid-template-columns: 184px minmax(0, 1fr);
@@ -395,6 +438,18 @@ export default function Home() {
         <Tagline>
           Your start page for the <em>miyanet</em> on Ethereum. Ask the swarm, a crowd of AI helpers, to build things.
         </Tagline>
+        <Start>
+          <div>
+            <b>miyamaker: make and collect NFTs</b>
+            An NFT is a piece of art or music you own, recorded on Ethereum. Collect one, or sell your own.
+          </div>
+          <button type="button" className="primary" onClick={() => navigate('/mint')}>
+            Mint an NFT
+          </button>
+          <button type="button" onClick={() => navigate('/launch')}>
+            Launch my art
+          </button>
+        </Start>
         <SwarmSearch />
       </Masthead>
 

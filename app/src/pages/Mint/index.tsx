@@ -27,6 +27,7 @@ import { useLiveMints } from '@/pages/Mint/useLiveMints'
 import type { TokenMetadata } from '@/store/collections/reducer'
 import { useAppDispatch } from '@/store/hooks'
 import { closeWindow, minimizeWindow } from '@/store/windows/actions'
+import { useFullscreen } from '@/store/windows/hooks'
 import type { PageKey } from '@/store/windows/reducer'
 
 const page = Pages.mint
@@ -76,6 +77,7 @@ export type Token = {
 }
 
 export default function MintPage() {
+  const [fullscreen, toggleFullscreen] = useFullscreen('mint')
   // Window mgmt
   const dispatch = useAppDispatch()
   const close = () => dispatch(closeWindow({ value: pageId }))
@@ -225,6 +227,9 @@ export default function MintPage() {
           if (e.cancelable) e.stopPropagation()
           close()
         }}
+        fullscreen={fullscreen}
+        fullscreenBtn
+        onFullscreen={() => toggleFullscreen()}
         minimizeBtn
         onMinimize={(e) => {
           if (e.cancelable) e.stopPropagation()

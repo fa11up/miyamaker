@@ -360,7 +360,7 @@ export default function CollectionView({
         <VenueList>
           {venues.map((v) => {
             if (v.id === 'miyapool') {
-              if (!factory) return <VenueRow key={v.id} venue={v} note={`MiyaPool is not live on ${chain.name} yet.`} />
+              if (!factory) return <VenueRow key={v.id} venue={v} note={'MiyaPool opens soon.'} />
               if (pools.loading) return <VenueRow key={v.id} venue={v} note="Looking for a pool…" />
               return (
                 <VenueRow

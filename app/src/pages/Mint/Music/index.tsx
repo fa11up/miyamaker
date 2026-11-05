@@ -13,7 +13,7 @@ import { explorerUrl } from '@/config/wagmi'
 import { useRadio } from '@/context/RadioProvider'
 import { erc1155InstanceAbi } from '@/music/abi'
 import { formatDuration } from '@/music/audio'
-import { MUSIC_CHAINS, musicConfig } from '@/music/config'
+import { LISTED_MUSIC_CHAINS, musicConfig } from '@/music/config'
 import type { MusicItem } from '@/music/discovery'
 import { discoverMusic } from '@/music/discovery'
 import { addKnownCollection, onKnownCollectionsChange } from '@/music/known'
@@ -110,7 +110,7 @@ const PlayOver = styled.button`
   border: none;
   border-radius: 0;
   background: ${color.accent};
-  color: ${color.highlight};
+  color: ${color.ink};
   box-shadow: inset -2px -2px ${color.accentDark}, inset 2px 2px #f5c6f6, 2px 2px 0 ${color.dark};
   cursor: pointer;
   display: flex;
@@ -304,7 +304,7 @@ export default function MusicDrops({ onBack }: { onBack: () => void }) {
 
         <Toolbar aria-label="Find music">
           <select aria-label="Network" value={chainId} onChange={(e) => setChainId(Number(e.target.value))}>
-            {MUSIC_CHAINS.map((c) => (
+            {LISTED_MUSIC_CHAINS.map((c) => (
               <option key={c.chainId} value={c.chainId}>
                 {c.name}
               </option>
@@ -323,7 +323,7 @@ export default function MusicDrops({ onBack }: { onBack: () => void }) {
           <Small type="button" onClick={() => query.refetch()} disabled={query.isFetching}>
             {query.isFetching ? 'Scanning…' : 'Refresh'}
           </Small>
-          {!cfg.factory && <Chip tone="warn">Factory not configured</Chip>}
+          {!cfg.factory && <Chip tone="warn">Opens soon</Chip>}
         </Toolbar>
         {addError && (
           <StatusBox tone="error" role="alert">
@@ -343,17 +343,16 @@ export default function MusicDrops({ onBack }: { onBack: () => void }) {
         ) : items.length === 0 ? (
           <Panel>
             <p style={{ margin: 0 }}>
-              No music drops found on {cfg.name} yet.{' '}
               {cfg.factory
-                ? 'Be the first to release one.'
-                : 'Music editions are not deployed on this network yet; paste a collection address above to check one.'}
+                ? `No music drops on ${cfg.name} yet. Be the first to release one.`
+                : 'No music drops yet. Songs you can collect will show up here when music releases open.'}
             </p>
             <BigButton
               type="button"
               style={{ maxWidth: 280, minHeight: 40, fontSize: text.sm }}
               onClick={() => openApp('dropmusic')}
             >
-              Drop Music
+              I make music: release a song
             </BigButton>
           </Panel>
         ) : (

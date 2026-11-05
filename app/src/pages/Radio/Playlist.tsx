@@ -71,6 +71,14 @@ const Empty = styled.div`
     margin: 0;
     font-weight: 700;
   }
+  button {
+    all: unset;
+    cursor: pointer;
+    text-decoration: underline;
+  }
+  button:focus-visible {
+    outline: 1px dotted currentColor;
+  }
 `
 
 const Foot = styled.div`
@@ -99,6 +107,7 @@ export default function Playlist({
   nowDuration,
   sources,
   busy,
+  checked,
   onLoad,
   onDropMusic,
   onTestTone,
@@ -109,6 +118,8 @@ export default function Playlist({
   nowDuration: number
   sources: PlaylistSource[]
   busy: boolean
+  /** ADD was pressed and found nothing: say there are no drops yet instead of asking again. */
+  checked?: boolean
   onLoad: (id: string) => void
   onDropMusic: () => void
   onTestTone?: () => void
@@ -156,7 +167,16 @@ export default function Playlist({
         {queue.tracks.length === 0 ? (
           <Empty>
             <p>No tracks yet</p>
-            <span>Press ADD to load music drops.</span>
+            {checked ? (
+              <span>
+                No music drops are out yet.{' '}
+                <button type="button" onClick={onDropMusic}>
+                  Release your own
+                </button>
+              </span>
+            ) : (
+              <span>Press ADD to load music drops.</span>
+            )}
           </Empty>
         ) : (
           <List ref={listRef}>

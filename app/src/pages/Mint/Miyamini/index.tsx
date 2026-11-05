@@ -26,6 +26,7 @@ import BackToMints from '@/pages/Mint/BackToMints'
 import { LIVE_MINTS } from '@/pages/Mint/liveMints'
 import { bevel, color, space, text } from '@/theme/tokens'
 
+import MintNeeds from '../MintNeeds'
 import { describeError, useMiyaminiMint, useMiyaminiState, useTokenMeta } from './useMiyamini'
 
 /** Product choice: cap a single transaction at 10 tokens (the contract itself has no per-tx limit we rely on). */
@@ -294,8 +295,10 @@ export default function MiyaminiMint({
               <Chip tone="off">Sold out</Chip>
             ) : state.mintOpen ? (
               <Chip tone="ok">Mint open</Chip>
-            ) : (
+            ) : state.mintOpen === false ? (
               <Chip tone="warn">Mint closed</Chip>
+            ) : (
+              <Chip tone="off">Reading chain</Chip>
             )}
             {onBack && <BackToMints onBack={onBack} />}
           </div>
@@ -435,11 +438,11 @@ export default function MiyaminiMint({
             </StatusBox>
           )}
 
-          <Muted>
-            {tx.isConnected && tx.balance !== undefined
-              ? `Wallet balance: ${formatEth(tx.balance)} ETH on Ethereum`
-              : 'Mints on Ethereum mainnet. Price is per token, plus gas.'}
-          </Muted>
+          {tx.isConnected && tx.balance !== undefined ? (
+            <Muted>Wallet balance: {formatEth(tx.balance)} ETH on Ethereum</Muted>
+          ) : (
+            !tx.isConnected && <MintNeeds />
+          )}
           <Details>
             <div>
               <span>Contract</span>

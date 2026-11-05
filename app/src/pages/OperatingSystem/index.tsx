@@ -23,6 +23,7 @@ import { MOBILE_BREAKPOINT } from '@/theme/tokens'
 import AppSwitcher from './AppSwitcher'
 import Background from './Background'
 import FourthWall from './FourthWall'
+import NotFound from './NotFound'
 import Windows from './Windows'
 
 const Foreground = styled.div`
@@ -105,12 +106,15 @@ export default function OperatingSystem() {
   const { width, height } = useWindowSize()
   const isMobile = width > 0 && width <= MOBILE_BREAKPOINT
   const [switcherOpen, setSwitcherOpen] = useState(false)
+  const [missing, setMissing] = useState<string>()
 
   /* Redux stuff */
   const dispatch = useAppDispatch()
   const [windows, zindex, fullScreen, minimized] = useWindows()
   const onTop = useAppSelector((state) => state.windows.onTop)
   const firstLoad = useAppSelector((state) => state.experience.firstLoad)
+  // The boot screen greets visitors to the desktop itself; a shared link (/mint/...) goes straight to its window.
+  const [bootHere] = useState(() => location.pathname === '/')
 
   const handleOpen = (id: string) => {
     if (windows.includes(id)) {
@@ -139,10 +143,23 @@ export default function OperatingSystem() {
       return
     }
 
+    // App names match whatever their case (/MINT is /mint); the rest of the path is left alone.
+    const lower = location.pathname.replace(/^\/[^/]+/, (head) => head.toLowerCase())
+    if (lower !== location.pathname) {
+      navigate(`${lower}${location.search}`, { replace: true })
+      return
+    }
+
     // Sub-paths open their window too (e.g. /mint/miyamini opens Mint, which picks the view from the path).
     const page = Object.values(Pages).find(
       (p) => p.path === location.pathname || location.pathname.startsWith(`${p.path}/`)
     )
+    if (!page && location.pathname !== '/') {
+      setMissing(location.pathname)
+      navigate('/', { replace: true })
+      return
+    }
+
     if (!page || !width) return
     if (!windows.includes(page.id)) {
       handleOpen(page.id)
@@ -175,6 +192,7 @@ export default function OperatingSystem() {
             mobile={isMobile || fullScreen.includes(window)}
             baseDepth={zindex.indexOf(window) * 1000 + 2000 + (onTop?.includes(window) ? 100000 : 0)}
             identifier={window}
+            label={page.label}
             baseSize={page.minSize}
             shaped={page.shaped}
             onClick={() => zindex.indexOf(window) !== zindex.length - 1 && dispatch(setToFront({ value: window }))}
@@ -195,7 +213,7 @@ export default function OperatingSystem() {
           <title>🖤🖤🖤🖤🖤🖤🖤🖤🖤🖤🖤🖤</title>
         )}
       </Helmet>
-      {firstLoad && <OsLoader />}
+      {firstLoad && bootHere && <OsLoader />}
       <Background />
       <Foreground>
         <WindowContainer mobile={isMobile}>{MemoizedWindows}</WindowContainer>
@@ -230,6 +248,7 @@ export default function OperatingSystem() {
         />
       )}
       <DesktopOverlays />
+      {missing && <NotFound path={missing} onClose={() => setMissing(undefined)} />}
     </div>
   )
 }

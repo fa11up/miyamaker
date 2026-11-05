@@ -114,10 +114,10 @@ export default function TaskBar({
           <VerticalSeparator />
           {mobile ? (
             <ButtonContainer>
-              <MobileButton className="free-height" onClick={onHome} aria-label="Show desktop">
+              <MobileButton className="free-height" onClick={onHome}>
                 Desktop
               </MobileButton>
-              <MobileButton className="free-height" onClick={onOpenSwitcher} aria-label="Switch programs">
+              <MobileButton className="free-height" onClick={onOpenSwitcher} title="Switch programs">
                 Programs{active.length ? ` (${active.length})` : ''}
               </MobileButton>
             </ButtonContainer>
@@ -134,6 +134,7 @@ export default function TaskBar({
                       className={`free-height free-width ${focus === id ? 'focus-taskbar' : ''}`}
                       onClick={() => onClick(id)}
                       title={page.label}
+                      aria-pressed={focus === id && !minimized.includes(id)}
                     >
                       <img
                         src={page.icon?.src}
@@ -172,7 +173,11 @@ export default function TaskBar({
                 alt=""
               />
             </ButtonIcon>
-            {block && !mobile && <BlockNumber title="Latest block">{block}</BlockNumber>}
+            {block && !mobile && (
+              <BlockNumber title="Latest Ethereum block. A new one comes about every 12 seconds; if this number moves, you are online.">
+                {block}
+              </BlockNumber>
+            )}
           </InsetContainer>
         </Row>
       </TaskBarStyled>

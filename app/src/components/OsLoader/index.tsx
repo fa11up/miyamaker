@@ -64,7 +64,7 @@ const asciiArt: FixedLengthArray<{ content: string; className?: string; chars: n
     speed: 0,
   },
   {
-    content: 'System boot finished successfully, press any key to continue...',
+    content: 'System boot finished successfully, click or press any key to continue...',
     className: 'mobile-none',
     chars: 1,
     speed: 30,
@@ -132,9 +132,13 @@ const Container = styled.pre`
   }
 `
 
+const reducedMotion = () =>
+  typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+
 export default function OsLoader() {
-  const [booted, setBooted] = useState(false)
-  const [currentLine, setLine] = useState(-1)
+  // Reduced motion: no typewriter, the whole screen at once.
+  const [booted, setBooted] = useState(reducedMotion)
+  const [currentLine, setLine] = useState(() => (reducedMotion() ? asciiArt.length - 1 : -1))
   const dispatch = useDispatch()
   const rowRef = useRef<HTMLDivElement>(null)
 
@@ -143,20 +147,20 @@ export default function OsLoader() {
     rowRef.current?.focus({ preventScroll: true })
   }, [])
 
-  const close = (code?: string) => {
-    if (code === 'KeyS') {
-      dispatch(load())
-      return
-    }
+  // Once the last line is up, carry on by itself.
+  useEffect(() => {
+    if (!booted) return undefined
+    const timer = setTimeout(() => dispatch(load()), 1500)
+    return () => clearTimeout(timer)
+  }, [booted])
 
-    if (booted) {
-      dispatch(load())
-    }
+  const close = (code?: string) => {
+    if (code === 'KeyS' || booted) dispatch(load())
   }
 
   // we assign a key to the typewriter component so that it remounts when the line changes
   return (
-    <Row ref={rowRef} onKeyDownCapture={(e) => close(e.code)} tabIndex={0} onClick={() => close()}>
+    <Row data-boot ref={rowRef} onKeyDownCapture={(e) => close(e.code)} tabIndex={0} onClick={() => close('KeyS')}>
       <Container>
         {asciiArt.map((line, i) => (
           <span

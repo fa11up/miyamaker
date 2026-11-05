@@ -55,8 +55,8 @@ export const retroButton = css`
 
   &.primary {
     background-color: ${color.accent};
-    color: ${color.highlight};
-    text-shadow: 1px 1px 0 ${color.accentDark};
+    color: ${color.ink};
+    text-shadow: 1px 1px 0 #f5c6f6;
     &:hover:not(:disabled) {
       background-color: #e48fe5;
     }

@@ -6,6 +6,7 @@ import type { Artwork } from '@/components/ArtViewer'
 import { toArtwork } from '@/components/ArtViewer'
 import { NormalButton } from '@/components/Button/NormalButton'
 import NftImage from '@/components/NftImage'
+import { Chip } from '@/components/Retro'
 import ImageWrapper from '@/pages/Auction/ImageWrapper'
 import { lotAction } from '@/pages/Auction/lotAction'
 import { useAuctionData } from '@/pages/Auction/useAuctionData'
@@ -113,6 +114,14 @@ export default function AuctionProduct({
           </Wrapper>
           <Description title={name}>{name}</Description>
           <Description>{getTokenAttribute(attributes, 'Artist')}</Description>
+          {endTime > 0 &&
+            (lotAction(endTime, settled, Date.now()) === 'Bid' ? (
+              <Chip tone="ok">Live</Chip>
+            ) : (
+              <Chip tone="off">
+                Ended {new Date(endTime * 1000).toLocaleDateString(undefined, { month: 'short', year: 'numeric' })}
+              </Chip>
+            ))}
           {/* <Description> */}
           {/*  Current bid: {product.currentBid} {product.currency} */}
           {/* </Description> */}

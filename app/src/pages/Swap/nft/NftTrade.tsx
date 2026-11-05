@@ -8,7 +8,7 @@ import LoadingHourglass from '@/assets/loading_hourglass.gif'
 import NftImage from '@/components/NftImage'
 import { Chip, Eyebrow, Skeleton, StatusBox } from '@/components/Retro'
 import type { SupportedChainId } from '@/config/wagmi'
-import { chains, mainnet } from '@/config/wagmi'
+import { chains, mainnet, pickerChains } from '@/config/wagmi'
 import { groupByCollection } from '@/desktop/files/indexer/parse'
 import { useWalletNfts } from '@/desktop/files/useWalletFiles'
 import { txWords, useTx } from '@/miyamints/useTx'
@@ -307,7 +307,7 @@ export default function NftTrade({
   const chainPicker = (
     <Toolbar>
       <ChainTabs role="group" aria-label="Network">
-        {chains.map((c) => (
+        {pickerChains.map((c) => (
           <button
             key={c.id}
             type="button"
@@ -454,10 +454,10 @@ export default function NftTrade({
 
       {!factory ? (
         <Empty role="status" data-pools-not-deployed>
-          <b>NFT pools are not on {chain.name} yet</b>
+          <b>NFT pools open soon</b>
           <Prose>
-            Pools let you sell an NFT for a token and buy one back, with no fees. They open here when the pool contract
-            goes live on {chain.name}.
+            Pools will let you sell an NFT for a token and buy one back, with no fees. Until then, you can still swap
+            tokens.
             {marketsHere ? ` You can still see ${otherMarkets(chainId)}: search or paste an address above.` : ''}
           </Prose>
           <PushButton type="button" onClick={onShowTokens}>
