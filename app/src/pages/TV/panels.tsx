@@ -16,7 +16,7 @@ import { focusLength, mmss } from './focusTimer'
 import { fetchTapes, reviewTape, submitTape } from './publicAccess'
 import type { Point } from './issMath'
 import { bearing, compass, destination, headingLabel, mapSegments, nightSide, viewFan, viewRing } from './issMath'
-import { formatDistance, parseVitals, SQUEEK_API } from './squeek'
+import { formatDistance, parseLifetimeMetres, parseVitals, SQUEEK_API } from './squeek'
 
 /* Each channel's own sidebar, in the same dark walnut and cream as its chat. */
 
@@ -598,6 +598,11 @@ export function SqueekPanel() {
     queryFn: async () => parseVitals(await (await fetch(`${SQUEEK_API}/status`)).json()),
     refetchInterval: 5000,
   })
+  const lifetime = useQuery({
+    queryKey: ['squeek-lifetime'],
+    queryFn: async () => parseLifetimeMetres(await (await fetch(`${SQUEEK_API}/measurement/stats?range=7d`)).json()),
+    refetchInterval: 60_000,
+  }).data
   const v = status.data
   return (
     <Panel>
@@ -622,9 +627,8 @@ export function SqueekPanel() {
               <b>{v.metresPerMinute.toFixed(1)} m/min</b>
             </div>
             <div>
-              {/* The feed's running counter, which carries on from run to run, so not "this run". */}
-              <span>Distance</span>
-              <b>{formatDistance(v.distanceMetres)}</b>
+              <span>All time</span>
+              <b>{lifetime === undefined ? '–' : formatDistance(lifetime)}</b>
             </div>
           </Wheel>
         </>
