@@ -111,16 +111,13 @@ const KICK_SLUG = /^[A-Za-z0-9_-]{1,64}$/
 const X_BROADCAST_ID = /^[A-Za-z0-9]{8,32}$/
 
 /** The player URL for a source. Muted autoplay so channel surfing doesn't blast audio. */
-export function embedSrc(source: Source, muted = true): string {
+export function embedSrc(source: Source): string {
   if (source.provider === 'kick') {
-    return `https://player.kick.com/${encodeURIComponent(source.slug)}?autoplay=true&muted=${muted}`
+    return `https://player.kick.com/${encodeURIComponent(source.slug)}?autoplay=true&muted=false`
   }
 
   return `https://studio.x.com/embed/broadcast/${encodeURIComponent(source.broadcastId)}?dnt=true&lang=en`
 }
-
-/** Only Kick's player takes sound from outside (its `muted` setting). X's has its own button and nothing we can set. */
-export const hasSoundSwitch = (source: Source | undefined) => source?.provider === 'kick'
 
 /** Where to watch the source on its own site. */
 export function watchUrl(source: Source): string {

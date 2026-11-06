@@ -63,7 +63,7 @@ test('fish tank is external (it cannot be framed), squeekchain and kick are ifra
 test('embed and watch URLs', () => {
   assert.equal(
     embedSrc({ provider: 'kick', slug: 'someone', label: 's' }),
-    'https://player.kick.com/someone?autoplay=true&muted=true'
+    'https://player.kick.com/someone?autoplay=true&muted=false'
   )
   assert.equal(
     embedSrc({ provider: 'x-broadcast', broadcastId: '1qGoNYoyoRlKv', label: 'x' }),
