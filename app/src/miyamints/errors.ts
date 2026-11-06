@@ -35,6 +35,8 @@ const FRIENDLY: Record<string, string> = {
 }
 
 /** A wallet / contract error as one plain sentence. */
+const TX_GENERIC_WORDS = 'That did not go through. Nothing moved. Try again.'
+
 export function describeError(error: unknown): string {
   if (!error) return ''
   if (error instanceof BaseError) {
@@ -47,7 +49,7 @@ export function describeError(error: unknown): string {
     }
 
     // Anything else viem says is for developers: it can name functions and quote calldata.
-    return 'That did not go through. Nothing moved. Try again.'
+    return TX_GENERIC_WORDS
   }
 
   return (error as Error)?.message || 'Something went wrong.'
@@ -69,7 +71,10 @@ export function plainTxError(error: unknown, fallback: string = TX_RETRY_WORDS):
   if (!error) return ''
   const words = describeError(error)
   if (error instanceof BaseError) {
-    return words === error.shortMessage || words.startsWith('The contract said no') ? fallback : words
+    // Not the generic line: here a step may already have spent something, so "nothing moved" could be untrue.
+    return words === TX_GENERIC_WORDS || words === error.shortMessage || words.startsWith('The contract said no')
+      ? fallback
+      : words
   }
 
   if (REJECTED.test(words)) return 'You cancelled in your wallet.'

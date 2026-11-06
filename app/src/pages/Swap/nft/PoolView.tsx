@@ -495,13 +495,13 @@ export default function PoolView({
     if (plan === 'approve' && batches)
       return {
         label: `Sell ${nfts(sellUnits)} for ${sellUnits.toString()} ${symbol}`,
-        step: `One signature: lets this pool move your ${title} NFTs and sells, all or nothing.`,
+        step: `One signature: lets this pool move all your ${title} NFTs until you revoke it, and sells, all or nothing.`,
         onClick: deposit,
       }
     if (plan === 'approve')
       return {
         label: `Allow the pool to take ${title}`,
-        step: `Step 1 of 2: let this pool move your ${title} NFTs (one time). Then sell.`,
+        step: `Step 1 of 2: this lets the pool move all your ${title} NFTs, until you revoke it. Then sell.`,
         onClick: deposit,
       }
     return {

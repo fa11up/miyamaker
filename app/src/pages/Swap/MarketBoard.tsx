@@ -144,6 +144,7 @@ const TapeBar = styled.div`
     align-items: baseline;
     gap: ${space[2]};
     padding: ${space[2]} ${space[3]};
+    min-height: 32px;
     border: none;
     background: none;
     color: ${color.ink};
