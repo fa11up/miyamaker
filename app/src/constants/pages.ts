@@ -76,8 +76,8 @@ const Pages: Record<string, Page> = {
     label: 'Infinite Upload',
     icon: ExecutableIcon[0],
     minSize: {
-      width: 600,
-      height: 475,
+      width: 720,
+      height: 500,
     },
   },
   manager: {
