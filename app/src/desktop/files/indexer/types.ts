@@ -18,6 +18,11 @@ export interface OwnedNft {
   hostedFull?: string
   /** Why it is in the Scam folder. */
   scamReason?: string
+  /** Waiting for Etherscan's word on its contract. */
+  checking?: boolean
+  tokenType?: 'ERC721' | 'ERC1155'
+  /** How many this wallet holds, for ERC-1155. */
+  balance?: string
 }
 
 export interface IndexerResult {
@@ -26,6 +31,8 @@ export interface IndexerResult {
   source: string
   /** true when the adapter stopped early (page / chunk limits) */
   partial: boolean
+  /** true when only the collections miyaOS knows were read, not the wallet's full list */
+  limited?: boolean
 }
 
 /**

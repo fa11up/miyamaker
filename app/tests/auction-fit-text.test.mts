@@ -40,8 +40,8 @@ test('sizes are whole pixels, descending, and never below 12px', () => {
 
 test('lotAction: Bid only while the auction is running', () => {
   assert.equal(lotAction(2000, false, 1_000_000), 'Bid')
-  assert.equal(lotAction(1000, false, 1_000_000), 'View', 'ends exactly now')
-  assert.equal(lotAction(500, false, 1_000_000), 'View', 'ended')
-  assert.equal(lotAction(2000, true, 1_000_000), 'View', 'settled')
-  assert.equal(lotAction(0, false, 1_000_000), 'View', 'chain has not answered')
+  assert.equal(lotAction(1000, false, 1_000_000), 'Open lot', 'ends exactly now')
+  assert.equal(lotAction(500, false, 1_000_000), 'Open lot', 'ended')
+  assert.equal(lotAction(2000, true, 1_000_000), 'Open lot', 'settled')
+  assert.equal(lotAction(0, false, 1_000_000), 'Open lot', 'chain has not answered')
 })

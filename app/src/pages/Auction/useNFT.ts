@@ -1,6 +1,7 @@
 import type { Address } from 'viem'
 import { useReadContracts } from 'wagmi'
 
+import { AUCTION_CHAIN_ID } from '@/constants/contracts'
 import type { ContractMetadata } from '@/store/collections/reducer'
 import { useMetadata } from '@/utils/nftMetadata'
 import { resolveMetadataUri, resolveUri } from '@/utils/resolveUri'
@@ -11,6 +12,7 @@ export function useNFT({ address }: { address: Address }) {
     contracts: [
       {
         address,
+        chainId: AUCTION_CHAIN_ID,
         functionName: 'contractURI',
         abi: [
           {
@@ -30,6 +32,7 @@ export function useNFT({ address }: { address: Address }) {
       },
       {
         address,
+        chainId: AUCTION_CHAIN_ID,
         functionName: 'symbol',
         abi: [
           {

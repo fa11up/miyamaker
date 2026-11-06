@@ -1,28 +1,32 @@
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore
+import type { RefObject } from 'react'
 import { useEffect, useRef, useState } from 'react'
-import styled from 'styled-components/macro'
+import styled, { keyframes } from 'styled-components/macro'
 import { useAccount } from 'wagmi'
 
 import SearchDirectory from '@/assets/search_directory.png'
 import { ConnectedButton, LinkButton } from '@/components/Button'
+import { StatusBox } from '@/components/Retro'
 import { Spinner } from '@/components/Spinner'
 import { formatBytes } from '@/utils/formatBytes'
-import { fundAndUpload, fundAndUploadFolder } from '@/utils/fundAndUpload'
+import { folderBytes, fundAndUpload, fundAndUploadFolder } from '@/utils/fundAndUpload'
 import getIrysToken from '@/utils/getIrysToken'
 import { isJunkFile } from '@/utils/myUploads'
-
-import ProgressBar from '../ProgressBar'
+import { useStorageQuote } from '@/utils/useStorageQuote'
 
 interface ProgressBarUploaderProps {
   request?: { requestFrom: string; timestamp: number; label?: string; result?: any }
   onRequest?: (value: string) => void
+  /** The element that takes dropped files. Defaults to the uploader itself. */
+  dropArea?: RefObject<HTMLElement>
+  onBusyChange?: (busy: boolean) => void
 }
 
 const FlexContainer = styled.div`
   display: flex;
   flex-direction: column;
-  gap: 1.5rem;
+  gap: 0.75rem;
   height: 100%;
 `
 
@@ -33,6 +37,7 @@ const TextContainer = styled.div`
 
 const ButtonContainer = styled.div`
   display: flex;
+  margin-top: auto;
   width: 100%;
   justify-content: end;
   align-items: center;
@@ -46,6 +51,63 @@ const DashedBorderContainer = styled.div`
   padding: 1rem;
   text-align: center;
   z-index: 50;
+
+  &[data-dragging='true'] {
+    border-width: 2px;
+    border-style: dashed;
+    border-color: #e901b7;
+    background-color: rgba(233, 1, 183, 0.12);
+  }
+`
+
+/* A phone has nothing to drag from, so it only gets Browse. */
+const DragWords = styled.p`
+  @media (max-width: 640px), (hover: none) {
+    display: none;
+  }
+`
+
+const PriceLine = styled.p`
+  margin: 0;
+  line-height: 1.4;
+`
+
+const stripes = keyframes`
+  to {
+    background-position: 36px 0;
+  }
+`
+
+/* The storage service reports no progress, so this says only that the work is still going. */
+const BusyBar = styled.div`
+  height: 16px;
+  padding: 2px;
+  box-shadow: inset -2px -2px #dfdfdf, inset 2px 2px #808080;
+
+  > span {
+    display: block;
+    height: 100%;
+    background-image: linear-gradient(90deg, #e901b7 0 16px, transparent 0 18px);
+    background-size: 18px 100%;
+    animation: ${stripes} 900ms linear infinite;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    > span {
+      animation: none;
+    }
+  }
+`
+
+const Message = styled(StatusBox)`
+  flex: 0 0 auto;
+  align-items: center;
+  flex-wrap: wrap;
+  overflow-wrap: anywhere;
+  > span {
+    flex: 1 1 12rem;
+    min-width: 0;
+  }
 `
 
 const FileRow = styled.div`
@@ -108,21 +170,33 @@ async function readDropped(entry: FileSystemEntry): Promise<File[]> {
   }
 }
 
-export const ProgressBarUploader = ({ request, onRequest }: ProgressBarUploaderProps) => {
+type Status = { tone: 'info' | 'ok' | 'error'; words: string; copy?: string }
+
+export const ProgressBarUploader = ({ request, onRequest, dropArea, onBusyChange }: ProgressBarUploaderProps) => {
   const [selectedFile, setSelectedFile] = useState<File | undefined>(undefined)
   const [selectedFolder, setSelectedFolder] = useState<Folder>()
   const [choosing, setChoosing] = useState(false)
   const fileInput = useRef<HTMLInputElement>(null)
   const folderInput = useRef<HTMLInputElement>(null)
   const [fileUrl, setFileUrl] = useState<string>('')
-  const [progress, setProgress] = useState<number>(0)
   const [txProcessing, setTxProcessing] = useState<boolean>(false)
-  const [message, setMessage] = useState<string>('')
+  const [message, setMessage] = useState<Status>()
+  const [dragging, setDragging] = useState(false)
+  const [copied, setCopied] = useState(false)
+  const own = useRef<HTMLDivElement>(null)
 
   // eslint-disable-next-line unused-imports/no-unused-vars
   const [uploadTxId, setUploadTxId] = useState<string | null>(null)
 
-  const { chain } = useAccount()
+  const { chain, isConnected } = useAccount()
+  const showStatus = (words: string) => setMessage({ tone: 'info', words })
+
+  useEffect(() => onBusyChange?.(txProcessing), [txProcessing, onBusyChange])
+
+  const problem = selectedFolder ? folderProblem(selectedFolder) : ''
+  const chosenBytes = selectedFolder ? folderBytes(selectedFolder.files) : selectedFile?.size
+  const quote = useStorageQuote(problem ? undefined : chosenBytes)
+  const chosen = !!selectedFile || !!selectedFolder
 
   const GATEWAY_BASE = (import.meta.env.VITE_IRYS_GATEWAY || 'https://gateway.irys.xyz/').endsWith('/')
     ? import.meta.env.VITE_IRYS_GATEWAY || 'https://gateway.irys.xyz/'
@@ -136,8 +210,7 @@ export const ProgressBarUploader = ({ request, onRequest }: ProgressBarUploaderP
       event.target.value = ''
       return
     }
-    setMessage('')
-    setProgress(0)
+    setMessage(undefined)
     setSelectedFile(undefined)
     setSelectedFolder(undefined)
     setFileUrl('')
@@ -148,11 +221,28 @@ export const ProgressBarUploader = ({ request, onRequest }: ProgressBarUploaderP
   }
 
   const pickFolder = (folder: Folder) => {
-    setProgress(0)
+    const trouble = folderProblem(folder)
     setFileUrl('')
     setSelectedFile(undefined)
     setSelectedFolder(folder)
-    setMessage(folderProblem(folder))
+    setMessage(trouble ? { tone: 'error', words: trouble } : undefined)
+  }
+
+  /** After a finished upload the choice is cleared, so pressing the button can never pay for the same thing twice. */
+  const startOver = () => {
+    setSelectedFile(undefined)
+    setSelectedFolder(undefined)
+    setFileUrl('')
+    setMessage(undefined)
+    setCopied(false)
+    setChoosing(false)
+  }
+
+  /** Files or a folder when the device can pick a folder; a phone goes straight to files. */
+  const browse = () => {
+    const folderless = window.matchMedia?.('(hover: none)').matches
+    if (request || folderless) fileInput.current?.click()
+    else setChoosing(true)
   }
 
   const handleFolderUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -164,10 +254,12 @@ export const ProgressBarUploader = ({ request, onRequest }: ProgressBarUploaderP
     event.target.value = ''
   }
 
-  const handleDrop = async (event: React.DragEvent<HTMLDivElement>) => {
+  const handleDrop = async (event: DragEvent) => {
     event.preventDefault()
+    if (!event.dataTransfer || txProcessing) return
     setChoosing(false)
     const loose = Array.from(event.dataTransfer.files)
+    if (!loose.length) return
     // The drop's contents are gone after the first await, so take the entries now.
     const entries = Array.from(event.dataTransfer.items)
       .map((item) => item.webkitGetAsEntry?.())
@@ -182,15 +274,53 @@ export const ProgressBarUploader = ({ request, onRequest }: ProgressBarUploaderP
       pickFolder(groupFiles(loose))
       return
     }
-    setMessage('')
+    setMessage(undefined)
     setFileUrl('')
     setSelectedFolder(undefined)
     setSelectedFile(loose[0])
   }
 
+  // A file let go anywhere else would make the browser leave miyaOS and open it.
+  const dropHandler = useRef(handleDrop)
+  dropHandler.current = handleDrop
+  useEffect(() => {
+    const area = dropArea?.current ?? own.current
+    const hasFiles = (e: DragEvent) => !!e.dataTransfer?.types.includes('Files')
+    const hold = (e: DragEvent) => {
+      if (hasFiles(e)) e.preventDefault()
+    }
+    let depth = 0
+    const enter = (e: DragEvent) => {
+      if (!hasFiles(e)) return
+      depth += 1
+      setDragging(true)
+    }
+    const leave = (e: DragEvent) => {
+      if (!hasFiles(e)) return
+      depth = Math.max(0, depth - 1)
+      if (!depth) setDragging(false)
+    }
+    const drop = (e: DragEvent) => {
+      depth = 0
+      setDragging(false)
+      if (hasFiles(e)) dropHandler.current(e)
+    }
+    window.addEventListener('dragover', hold)
+    window.addEventListener('drop', hold)
+    area?.addEventListener('dragenter', enter)
+    area?.addEventListener('dragleave', leave)
+    area?.addEventListener('drop', drop)
+    return () => {
+      window.removeEventListener('dragover', hold)
+      window.removeEventListener('drop', hold)
+      area?.removeEventListener('dragenter', enter)
+      area?.removeEventListener('dragleave', leave)
+      area?.removeEventListener('drop', drop)
+    }
+  }, [dropArea])
+
   const uploadFolder = async (folder: Folder) => {
     setTxProcessing(true)
-    setProgress(0)
     try {
       const { manifestId, firstPath, listed } = await fundAndUploadFolder(
         folder.name,
@@ -198,16 +328,19 @@ export const ProgressBarUploader = ({ request, onRequest }: ProgressBarUploaderP
         undefined,
         getIrysToken(chain?.id || 1),
         chain,
-        setMessage
+        showStatus
       )
+      const address = `ar://${manifestId}/`
       setFileUrl(`${GATEWAY_BASE}${manifestId}/${firstPath}`)
-      setMessage(
-        listed
-          ? `Stored for good: ar://${manifestId}/`
-          : `Stored: ar://${manifestId}/ The second signature was skipped, so it will not show in Your uploads.`
-      )
+      setMessage({
+        tone: 'ok',
+        copy: address,
+        words: listed
+          ? `Stored for good: ${address}`
+          : `Stored: ${address} The second signature was skipped, so it will not show in Your uploads.`,
+      })
     } catch (e) {
-      setMessage((e as Error).message)
+      setMessage({ tone: 'error', words: (e as Error).message })
     } finally {
       setTxProcessing(false)
     }
@@ -215,27 +348,21 @@ export const ProgressBarUploader = ({ request, onRequest }: ProgressBarUploaderP
 
   useEffect(() => {
     if (request?.label) {
-      setMessage(request.label)
+      showStatus(request.label)
     }
   }, [request])
 
   const handleUpload = async () => {
-    setMessage('')
+    if (txProcessing || fileUrl) return
+    setMessage(undefined)
+    setCopied(false)
     if (selectedFolder) {
-      const problem = folderProblem(selectedFolder)
-      if (problem) setMessage(problem)
-      else await uploadFolder(selectedFolder)
+      if (!problem) await uploadFolder(selectedFolder)
       return
     }
-    // handle your file upload logic here
-    if (!selectedFile) {
-      setMessage('Please select a file first')
-      return
-    }
+    if (!selectedFile) return
 
     setTxProcessing(true)
-    // Reset the progress bar
-    setProgress(0)
 
     let res: string
     try {
@@ -248,15 +375,15 @@ export const ProgressBarUploader = ({ request, onRequest }: ProgressBarUploaderP
         undefined,
         getIrysToken(chain?.id || 1),
         chain,
-        setMessage
+        showStatus
       )
     } catch (e) {
-      setMessage((e as Error).message)
+      setMessage({ tone: 'error', words: (e as Error).message })
       setTxProcessing(false)
       return
     }
 
-    setMessage('')
+    setMessage({ tone: 'ok', copy: `ar://${res}`, words: `Stored for good: ar://${res}` })
 
     setUploadTxId(res)
     setFileUrl(`${GATEWAY_BASE}${res}`)
@@ -327,24 +454,33 @@ export const ProgressBarUploader = ({ request, onRequest }: ProgressBarUploaderP
     setTxProcessing(false)
   }
 
+  const copyAddress = async (address: string) => {
+    await navigator.clipboard?.writeText(address)
+    setCopied(true)
+  }
+
+  const paid = quote.state === 'priced' || quote.state === 'failed'
+  const priceWords =
+    quote.state === 'free'
+      ? 'Free. This one is small enough.'
+      : quote.state === 'loading'
+        ? 'Checking the price…'
+        : quote.state === 'failed'
+          ? "Couldn't get the price. Your wallet shows it before you pay."
+          : quote.state === 'priced'
+            ? `Storage: ${quote.words}, plus Ethereum gas. Paid once. A little extra stays on your storage balance for next time.`
+            : ''
+
   return (
-    <FlexContainer>
+    <FlexContainer ref={own}>
       <TextContainer>
-        <p>
-          Store files or whole folders <b>forever</b>. Whatever you upload here stays online for good on Arweave, a
-          permanent storage network. You pay a small one-time fee from your wallet.
-        </p>
-        <p>
-          Anything you store here shows under Your uploads in Launch. File and folder names are saved publicly with
-          them.
-        </p>
+        <p>Store files or folders for good on Arweave, a permanent storage network.</p>
+        <p>Anyone can see what you upload, including its name. It can never be deleted.</p>
       </TextContainer>
-      <DashedBorderContainer
-        className={``}
-        onDragOver={(event) => event.preventDefault()}
-        onDrop={handleDrop}
-      >
-        <p className="text-gray-400 mb-2">Drag and drop files {request ? '' : 'or a folder '}here</p>
+      <DashedBorderContainer data-dragging={dragging}>
+        <DragWords>
+          {dragging ? 'Drop to add' : `Drag and drop files ${request ? '' : 'or a folder '}here`}
+        </DragWords>
         <input ref={fileInput} type="file" multiple={!request} onChange={handleFileUpload} style={{ display: 'none' }} />
         <input
           ref={folderInput}
@@ -359,56 +495,70 @@ export const ProgressBarUploader = ({ request, onRequest }: ProgressBarUploaderP
             for one file wants one id back, so it goes straight to files. */}
         {choosing ? (
           <>
-            <button onClick={() => fileInput.current?.click()}>Files</button>
-            <button style={{ marginLeft: '0.5rem' }} onClick={() => folderInput.current?.click()}>
+            <button disabled={txProcessing} onClick={() => fileInput.current?.click()}>
+              Files
+            </button>
+            <button disabled={txProcessing} style={{ marginLeft: '0.5rem' }} onClick={() => folderInput.current?.click()}>
               Folder
             </button>
           </>
         ) : (
-          <button onClick={() => (request ? fileInput.current?.click() : setChoosing(true))}>Browse</button>
+          <button disabled={txProcessing} onClick={browse}>
+            Browse
+          </button>
         )}
       </DashedBorderContainer>
 
-      {(selectedFile || selectedFolder) && (
-        <>
-          <FileRow>
-            <div key="1" className="flex items-center mb-2 text-background-contrast">
-              <span className="mr-2">
-                {selectedFolder
-                  ? `${selectedFolder.name}/ ${selectedFolder.files.length} file${
-                      selectedFolder.files.length === 1 ? '' : 's'
-                    }, ${formatBytes(selectedFolder.size)}`
-                  : selectedFile && `${selectedFile.name} ${formatBytes(selectedFile.size)}`}
-              </span>
-            </div>
-            <FileButtonRow>
-              {fileUrl && (
-                <LinkButton target="_blank" rel="noreferrer noopener" href={fileUrl} style={{ gap: '0.5rem' }}>
-                  <img src={SearchDirectory} alt="Search file" style={{ width: '16px', border: 'none' }} /> Check upload
-                </LinkButton>
-              )}
-            </FileButtonRow>
-          </FileRow>
-        </>
+      {chosen && (
+        <FileRow>
+          <span style={{ minWidth: 0, overflowWrap: 'anywhere' }}>
+            {selectedFolder
+              ? `${selectedFolder.name}/ ${selectedFolder.files.length} file${
+                  selectedFolder.files.length === 1 ? '' : 's'
+                }, ${formatBytes(selectedFolder.size)}`
+              : selectedFile && `${selectedFile.name} ${formatBytes(selectedFile.size)}`}
+          </span>
+          <FileButtonRow>
+            {fileUrl && (
+              <LinkButton target="_blank" rel="noreferrer noopener" href={fileUrl} style={{ gap: '0.5rem' }}>
+                <img src={SearchDirectory} alt="" style={{ width: '16px', border: 'none' }} /> Check upload
+              </LinkButton>
+            )}
+          </FileButtonRow>
+        </FileRow>
       )}
-      <div style={{ marginTop: 'auto' }}>
-        <ProgressBar width={progress} />
-      </div>
+      {chosen && !fileUrl && priceWords && <PriceLine>{priceWords}</PriceLine>}
+      {message && (
+        <Message tone={message.tone} role={message.tone === 'error' ? 'alert' : 'status'}>
+          <span>{message.words}</span>
+          {message.copy && <button onClick={() => copyAddress(message.copy as string)}>{copied ? 'Copied' : 'Copy'}</button>}
+        </Message>
+      )}
+      {txProcessing && (
+        <BusyBar aria-hidden>
+          <span />
+        </BusyBar>
+      )}
       <ButtonContainer>
-        {message && (
-          <div className="text-red-500" style={{ flex: 1, minWidth: 0, overflowWrap: 'anywhere' }}>
-            {message}
-          </div>
+        {fileUrl ? (
+          <button onClick={startOver}>Upload another</button>
+        ) : (
+          <ConnectedButton
+            onClick={handleUpload}
+            // Connecting a wallet is always allowed; only the upload itself waits for something to send and its price.
+            disabled={txProcessing || (isConnected && (!chosen || !!problem || quote.state === 'loading'))}
+          >
+            {txProcessing ? (
+              <>
+                <Spinner /> Uploading
+              </>
+            ) : paid ? (
+              'Upload and pay'
+            ) : (
+              'Upload'
+            )}
+          </ConnectedButton>
         )}
-        <ConnectedButton onClick={handleUpload} disabled={txProcessing}>
-          {txProcessing ? (
-            <>
-              <Spinner /> Uploading
-            </>
-          ) : (
-            'Upload'
-          )}
-        </ConnectedButton>
       </ButtonContainer>
     </FlexContainer>
   )

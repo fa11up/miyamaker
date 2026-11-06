@@ -10,6 +10,10 @@ export const AUCTION_CONTRACT: ContractAddresses = {
   [sepolia.id]: '0xc5def3e07c426dd40248e694e5f428b04c52a129',
 }
 
+/** Auctions run on Ethereum whatever network the wallet is on. A development build can set VITE_AUCTION_CHAIN_ID to Sepolia. */
+export const AUCTION_CHAIN_ID =
+  import.meta.env.DEV && Number(import.meta.env.VITE_AUCTION_CHAIN_ID) === sepolia.id ? sepolia.id : mainnet.id
+
 export const DEFAULT_NFT_CONTRACT: ContractAddresses = {
   [mainnet.id]: '0xaE6f241885d5eeD67ca97728d4e423Aaf9D81C59',
   [sepolia.id]: '0x2e28b5cc90d8a9e4d661417568eb83bdd2df26c3',

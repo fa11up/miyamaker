@@ -23,6 +23,8 @@ export type Artwork = {
   /** Extra label rows, e.g. ['Dimensions', '5ft x 4ft']. Empty values are skipped. */
   details?: [string, string | undefined][]
   link?: string
+  /** Shown first on the label, for art that can't be trusted. */
+  warning?: string
 }
 
 /** The app the viewer was opened from, whose materials it wears. */
@@ -83,6 +85,7 @@ const Stage = styled.div<{ $grab: boolean; $zoomed: boolean }>`
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+  container-type: size;
   background: radial-gradient(ellipse at center, #2a2440 0%, #0d0a16 75%);
   box-shadow: ${bevel.sunken};
   touch-action: none;
@@ -96,11 +99,12 @@ const Art = styled.img`
   position: absolute;
   inset: 0;
   margin: auto;
-  /* The site's img rule sets width: 100%. With it, only a picture as wide as the stage keeps its proportions. */
-  width: auto;
-  height: auto;
-  max-width: calc(100% - 48px);
-  max-height: calc(100% - 48px);
+  /* Every piece hangs in the same square, so the frame stays put while the arrows step through a set. */
+  box-sizing: border-box;
+  width: min(100cqw - 48px, 100cqh - 48px);
+  height: min(100cqw - 48px, 100cqh - 48px);
+  max-width: none;
+  object-fit: contain;
   box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6);
   transform-origin: center center;
   will-change: transform;
@@ -173,6 +177,16 @@ const Label = styled.aside`
   `}
 `
 
+const LabelWarning = styled.p`
+  margin: 0 0 ${space[3]};
+  padding: ${space[1]} ${space[2]};
+  border: 1px solid #ff5a74;
+  background: #5c1226;
+  color: #fff;
+  font-size: 13px;
+  line-height: 1.4;
+`
+
 const LabelTitle = styled.h2`
   margin: 0;
   font-family: ${font.ui};
@@ -240,6 +254,7 @@ const SKINS: Record<ViewerSkin, ReturnType<typeof css>> = {
     }
     ${Art} {
       border: none;
+      background: #07040c;
       box-shadow:
         0 0 0 1px #5f7a68,
         0 0 26px rgba(200, 16, 46, 0.25),
@@ -301,6 +316,8 @@ const SKINS: Record<ViewerSkin, ReturnType<typeof css>> = {
     }
     ${Art} {
       border: none;
+      padding: 10px;
+      background: #fffdf6;
       box-shadow:
         0 0 0 1px #4a2f08,
         0 0 0 7px #c9a24c,
@@ -577,13 +594,7 @@ export default function ArtViewer({
                 alt=""
                 aria-hidden
                 draggable={false}
-                style={{
-                  filter: 'blur(4px)',
-                  boxShadow: 'none',
-                  width: 'calc(100% - 48px)',
-                  height: 'calc(100% - 48px)',
-                  objectFit: 'contain',
-                }}
+                style={{ filter: 'blur(4px)', boxShadow: 'none' }}
               />
             )}
             <Art
@@ -645,6 +656,7 @@ export default function ArtViewer({
 
           {showLabel && (
             <Label aria-label="About this artwork">
+              {item.warning && <LabelWarning role="note">{item.warning}</LabelWarning>}
               <LabelTitle>{item.name}</LabelTitle>
               {item.artist && item.artist !== 'undefined' && <LabelArtist>{item.artist}</LabelArtist>}
               {details.length > 0 && (

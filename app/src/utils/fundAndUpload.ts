@@ -3,6 +3,8 @@ import type { Chain } from 'viem'
 
 import getIrys from './getIrys'
 import { pathInFolder } from './myUploads'
+import type { UploadStage } from './uploadError'
+import { uploadErrorWords } from './uploadError'
 
 type Tag = {
   name: string
@@ -23,18 +25,9 @@ const CREDIT_POLL_MS = 10_000
 const CREDIT_WAIT_MS = 15 * 60_000
 
 /** Plain words for what went wrong; the raw error stays in the console. */
-function uploadError(e: unknown): Error {
-  const raw = String((e as { shortMessage?: string })?.shortMessage || (e as Error)?.message || e)
+function uploadError(e: unknown, stage: UploadStage): Error {
   console.error('Upload failed', e)
-  if (/user rejected|user denied|rejected the request|denied transaction/i.test(raw))
-    return new Error('You cancelled it in your wallet. Nothing was uploaded.')
-  if (/insufficient funds|exceeds the balance/i.test(raw))
-    return new Error('This wallet needs a little more ETH on Ethereum to pay for storage and gas.')
-  if (/402|not enough/i.test(raw))
-    return new Error(
-      'Irys has not counted your storage payment yet. Try again in a few minutes; you will not pay twice.'
-    )
-  return new Error(`The upload did not go through: ${raw.split('\n')[0]!.slice(0, 160)}`)
+  return new Error(uploadErrorWords(e, stage))
 }
 
 /**
@@ -42,14 +35,19 @@ function uploadError(e: unknown): Error {
  * credited, so after paying this waits for it rather than uploading into a "not enough funds". What was paid stays
  * on the wallet's Irys balance, so trying again after a timeout does not pay again.
  */
-async function ensureFunded(irys: WebIrys, size: number, status?: UploadStatus) {
+async function ensureFunded(irys: WebIrys, size: number, setStage: (stage: UploadStage) => void, status?: UploadStatus) {
   if (size <= FREE_BYTES) return
   const price = await irys.getPrice(size)
   const balance = await irys.getLoadedBalance()
-  if (balance.isGreaterThan(price)) return
+  if (balance.isGreaterThan(price)) {
+    setStage('paid')
+    return
+  }
   status?.('Pay for storage in your wallet (once, on Ethereum).')
+  setStage('paying')
   await irys.fund(price.multipliedBy(PRICE_MARGIN).minus(balance).integerValue())
-  status?.('Waiting for Irys to count your payment. This can take a few minutes.')
+  setStage('paid')
+  status?.('Waiting for the storage service to count your payment. This can take a few minutes.')
   const deadline = Date.now() + CREDIT_WAIT_MS
   // eslint-disable-next-line no-await-in-loop
   while (!(await irys.getLoadedBalance()).isGreaterThanOrEqualTo(price)) {
@@ -65,6 +63,9 @@ async function ensureFunded(irys: WebIrys, size: number, status?: UploadStatus) 
 const BUNDLE_BYTES_PER_FILE = 2048
 const MAX_NAME = 200
 
+/** What a folder's bundle will weigh, which is what it is priced on. */
+export const folderBytes = (files: File[]) => files.reduce((sum, file) => sum + file.size + BUNDLE_BYTES_PER_FILE, 0)
+
 /**
  * Stores a folder, then signs a small record of it. The files go up as one bundle signed by a throwaway key, so only
  * the record ties the folder to this wallet, and it is written last: a failed upload never lists a broken folder.
@@ -79,10 +80,10 @@ async function fundAndUploadFolder(
   status?: UploadStatus
 ): Promise<{ manifestId: string; firstPath: string; listed: boolean }> {
   let manifestId = ''
+  let stage: UploadStage = 'free'
   try {
     const irys = await getIrys(url, token, chain)
-    const size = files.reduce((sum, file) => sum + file.size + BUNDLE_BYTES_PER_FILE, 0)
-    await ensureFunded(irys, size, status)
+    await ensureFunded(irys, folderBytes(files), (next) => (stage = next), status)
     status?.('Sign in your wallet, twice: once for the files, once for your record of the folder.')
     const prepared = files.map((file) => {
       const copy = new File([file], file.name, { type: file.type })
@@ -96,7 +97,7 @@ async function fundAndUploadFolder(
     })
     const receipt = await irys.uploadFolder(prepared)
     manifestId = receipt?.manifestId || ''
-    if (!manifestId) throw new Error('Irys did not return a folder id.')
+    if (!manifestId) throw new Error('The storage service did not return a folder id.')
     const firstPath = prepared[0]?.webkitRelativePath || ''
     try {
       await irys.upload(JSON.stringify({ manifest: manifestId, files: files.length }), {
@@ -115,7 +116,7 @@ async function fundAndUploadFolder(
       return { manifestId, firstPath, listed: false }
     }
   } catch (e) {
-    throw uploadError(e)
+    throw uploadError(e, stage)
   }
 }
 
@@ -127,9 +128,10 @@ async function fundAndUploadSingleFile(
   chain?: Chain,
   status?: UploadStatus
 ): Promise<string> {
+  let stage: UploadStage = 'free'
   try {
     const irys = await getIrys(url, token, chain)
-    await ensureFunded(irys, file.size, status)
+    await ensureFunded(irys, file.size, (next) => (stage = next), status)
     status?.('Sign the upload in your wallet.')
     // The name is what "Your uploads" shows later. It is public, like the rest of the tags.
     const named = file.name ? [...tags, { name: 'File-Name', value: file.name.slice(0, MAX_NAME) }] : tags
@@ -137,7 +139,7 @@ async function fundAndUploadSingleFile(
     console.log(`Uploaded successfully. ${GATEWAY_BASE}${receipt.id}`)
     return receipt.id
   } catch (e) {
-    throw uploadError(e)
+    throw uploadError(e, stage)
   }
 }
 

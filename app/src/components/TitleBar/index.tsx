@@ -40,7 +40,7 @@ const ChromeButton = styled.button`
       display: none;
     }
     width: 36px;
-    height: 30px;
+    height: 32px;
     svg {
       transform: scale(1.4);
     }
@@ -387,6 +387,24 @@ const StyledTitleBar = styled.div`
     }
     ${ChromeButton}:hover {
       background: #dcdcdc;
+    }
+  }
+
+  /* Phones: every skin's buttons keep the tap target, the round ones staying round. */
+  @media (max-width: 768px) {
+    &[data-skin] ${ChromeButton} {
+      width: 36px;
+      height: 32px;
+    }
+    &[data-skin='tv'] ${ChromeButton},
+    &[data-skin='manager'] ${ChromeButton},
+    &[data-skin='upload'] ${ChromeButton} {
+      width: 32px;
+    }
+    &[data-skin='tv'],
+    .react-draggable:not(.is-focused) &[data-skin='tv'] {
+      height: 46px;
+      background-size: 256px 46px;
     }
   }
 

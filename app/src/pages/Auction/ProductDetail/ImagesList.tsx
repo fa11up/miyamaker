@@ -67,7 +67,7 @@ const Images = styled.button`
 
 const Counter = styled.div`
   text-align: center;
-  font-size: 0.65rem;
+  font-size: 0.75rem;
 `
 
 export default function ImagesList({

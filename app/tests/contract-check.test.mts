@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
 import { handleContractCheck, readVerdict } from '../api/_lib/contractcheck.ts'
-import { scamReason, splitScam } from '../src/desktop/files/scam.ts'
+import { fileLabel, fileType, scamReason, splitScam } from '../src/desktop/files/scam.ts'
 
 const A = `0x${'a'.repeat(40)}`
 const B = `0x${'b'.repeat(40)}`
@@ -137,7 +137,7 @@ test('a scam file loses its link and never loads from its own server', () => {
       nft({ spam: true }),
       nft({ contract: B }),
     ],
-    {},
+    { [B]: true },
     () => false,
   )
   assert.equal(clean.length, 1)
@@ -146,4 +146,45 @@ test('a scam file loses its link and never loads from its own server', () => {
   assert.equal(scam[0]?.externalUrl, '')
   assert.equal(scam[1]?.image, '')
   assert.equal(scam[1]?.fullImage, '')
+})
+
+test("a scam file loses the words it wrote about itself", () => {
+  const { scam } = splitScam(
+    [nft({ spam: true, name: 'Claim 5000 USDC', description: 'at evil.test', collectionName: 'Free USDC', tokenId: '7' })],
+    {},
+    () => false,
+  )
+  assert.equal(scam[0]?.name, '#7')
+  assert.equal(scam[0]?.description, '')
+  assert.equal(scam[0]?.collectionName, '')
+})
+
+test('a contract with no answer yet waits apart from the main folders, stripped like a scam file', () => {
+  const held = nft({ hostedThumb: 'https://cdn.test/t.png', name: 'Claim now' })
+  const waiting = splitScam([held], {}, () => false)
+  assert.equal(waiting.clean.length, 0)
+  assert.equal(waiting.scam.length, 0)
+  assert.equal(waiting.checking[0]?.checking, true)
+  assert.equal(waiting.checking[0]?.image, 'https://cdn.test/t.png')
+  assert.equal(waiting.checking[0]?.externalUrl, '')
+  assert.equal(waiting.checking[0]?.name, '#1')
+
+  assert.equal(splitScam([held], { [A]: true }, () => false).clean.length, 1, 'verified')
+  assert.equal(splitScam([held], { [A]: false }, () => false).scam.length, 1, 'not verified')
+  assert.equal(splitScam([held], {}, () => true).clean.length, 1, 'our own collections never wait')
+})
+
+test('a file is labelled by its name, or a short id', () => {
+  const long = '1'.repeat(78)
+  assert.equal(fileLabel(nft({ name: 'vitalik.eth', tokenId: long })), 'vitalik.eth')
+  assert.equal(fileLabel(nft({ name: `#${long}`, tokenId: long })), '#1111…1111')
+  assert.equal(fileLabel(nft({ name: '', tokenId: '12' })), '#12')
+  assert.equal(fileLabel(nft({ name: 'Claim now', tokenId: '12', scamReason: 'x' })), '#12', 'a scam file keeps its id')
+})
+
+test('the type row says what the indexer said', () => {
+  assert.equal(fileType(nft({ tokenType: 'ERC1155', balance: '3' })), 'ERC-1155, you hold 3')
+  assert.equal(fileType(nft({ tokenType: 'ERC1155' })), 'ERC-1155 token')
+  assert.equal(fileType(nft({ tokenType: 'ERC721' })), 'ERC-721 token')
+  assert.equal(fileType(nft()), 'NFT')
 })
