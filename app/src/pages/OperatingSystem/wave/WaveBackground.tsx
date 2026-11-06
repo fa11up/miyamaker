@@ -188,13 +188,13 @@ export default function WaveBackground() {
   return <Canvas key={`${generation}-${reducedMotion}`} ref={canvasRef} blend={blend?.mode || 'normal'} aria-hidden data-wave="webgl" />
 }
 
-/** No-WebGL wave: the same crest, frozen, as an SVG (foam line + soft swell). */
+/** No-WebGL wave: the same crest, frozen, as an SVG (soft swell). */
 function StaticWave({ w, h }: { w: number; h: number }) {
   const d = useMemo(() => {
     const p = crestParams(w, h, taskbarHeight())
     const pts: string[] = []
     for (let x = 0; x <= w + 8; x += 8) pts.push(`${x},${(h - crestHeight(x, 0, p)).toFixed(1)}`)
-    return { line: `M${pts.join(' L')}`, fill: `M0,${h} L${pts.join(' L')} L${w + 8},${h} Z` }
+    return { fill: `M0,${h} L${pts.join(' L')} L${w + 8},${h} Z` }
   }, [w, h])
   return (
     <Fallback viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" aria-hidden data-wave-fallback="">
@@ -209,7 +209,6 @@ function StaticWave({ w, h }: { w: number; h: number }) {
       </defs>
       <path d={d.fill} fill="url(#miya-wave-fill)" />
       <path d={d.fill} fill="url(#miya-wave-lines)" />
-      <path d={d.line} fill="none" stroke="#fff3fb" strokeOpacity="0.55" strokeWidth="2.5" />
     </Fallback>
   )
 }

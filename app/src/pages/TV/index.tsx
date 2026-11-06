@@ -3,6 +3,7 @@ import styled from 'styled-components/macro'
 import { useElementSize } from 'usehooks-ts'
 
 import { Eyebrow } from '@/components/Retro'
+import { pinstripe, y2kSkin } from '@/components/Retro/y2k'
 import TitleBar from '@/components/TitleBar'
 import WindowWrapper from '@/components/WindowWrapper'
 import Pages from '@/constants/pages'
@@ -11,8 +12,9 @@ import { closeWindow, minimizeWindow } from '@/store/windows/actions'
 import { useFullscreen } from '@/store/windows/hooks'
 import { bevel, color, font, space, text } from '@/theme/tokens'
 
+import { gel } from '../DropMusic/y2k'
 import type { Channel } from './channels'
-import { CHANNELS, indexOfNumber, nativeChatFor, stepChannel, watchUrl } from './channels'
+import { CHANNELS, hasSoundSwitch, indexOfNumber, nativeChatFor, stepChannel, watchUrl } from './channels'
 import ChatPanel from './chat/ChatPanel'
 import Screen from './Screen'
 import Static, { useReducedMotion } from './Static'
@@ -21,6 +23,7 @@ const page = Pages.tv
 
 /* ---------- layout ---------- */
 
+/** miyatv's own material: atomic purple, the see-through plastic of every console of the time. */
 const Root = styled.div`
   position: relative;
   height: 100%;
@@ -30,7 +33,26 @@ const Root = styled.div`
   gap: ${space[2]};
   padding: ${space[2]};
   overflow: hidden;
-  background: ${color.face};
+  ${y2kSkin({
+    ink: '#1a0838',
+    inkSoft: '#4a2a86',
+    material: `${pinstripe(
+      0.07
+    )}, radial-gradient(420px 260px at 92% -50px, rgba(255, 255, 255, 0.45), transparent 70%),
+      radial-gradient(360px 360px at -40px 105%, rgba(198, 255, 61, 0.22), transparent 70%),
+      linear-gradient(165deg, #8a4ff0 0%, #5b2bc4 48%, #2c0f66 100%)`,
+    head: '#ffffff',
+    headShadow: '#1a0838',
+    frost: 'rgba(247, 241, 255, 0.92)',
+    edge: '#1a0838',
+    glow: 'rgba(154, 92, 240, 0.28)',
+    gelTop: '#efffb8',
+    gelBottom: '#c6ff3d',
+    gelInk: '#1a0838',
+    smallTop: '#f2e6ff',
+    smallBottom: '#b98cff',
+    link: '#3b1fbf',
+  })}
   &:focus {
     outline: none;
   }
@@ -61,41 +83,43 @@ const ChannelList = styled.nav`
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
   padding: ${space[1]};
-  background: ${color.well};
-  box-shadow: ${bevel.sunken};
+  border: 1px solid #1a0838;
+  border-radius: 14px;
+  background: rgba(26, 8, 56, 0.55);
+  box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.45);
 
   button {
     display: grid;
     grid-template-columns: 30px 1fr;
     align-items: center;
     gap: ${space[1]};
-    padding: ${space[2]} ${space[1]};
-    border: none;
+    padding: ${space[2]} ${space[2]};
+    border: 1px solid transparent;
+    border-radius: 12px;
     background: transparent;
     text-align: left;
     cursor: pointer;
-    color: ${color.ink};
+    color: #f2e6ff;
     font-size: ${text.sm};
     line-height: 1.2;
   }
   button:hover {
-    background: ${color.light};
+    background: rgba(255, 255, 255, 0.14);
   }
   button[aria-current='true'] {
-    background: ${color.titleTo};
-    color: ${color.highlight};
+    ${gel('#efffb8', '#c6ff3d', '#1a0838')}
   }
   .num {
     font-family: ${font.mono};
     font-size: 13px;
-    opacity: 0.8;
+    opacity: 0.85;
   }
   .kind {
     display: block;
     font-size: 11px;
-    opacity: 0.75;
+    opacity: 0.8;
   }
 `
 
@@ -117,12 +141,15 @@ const TvColumn = styled.div`
 /** The TV set: dark plastic body, rounded glass, and a control strip. */
 const Bezel = styled.div`
   padding: 14px 14px 10px;
-  border-radius: 14px;
-  background: linear-gradient(180deg, #3a3354 0%, #221d36 100%);
-  box-shadow: inset 2px 2px 0 #5d5480, inset -2px -2px 0 #0d0a17, 3px 4px 0 rgba(20, 16, 31, 0.35);
+  border: 1px solid #1a0838;
+  border-radius: 22px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.4) 0%, rgba(255, 255, 255, 0.06) 8%, transparent 14%),
+    linear-gradient(180deg, rgba(154, 92, 240, 0.92) 0%, rgba(58, 22, 130, 0.96) 100%);
+  box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.28), inset 0 -6px 10px rgba(0, 0, 0, 0.3),
+    0 4px 0 rgba(26, 8, 56, 0.45);
   .narrow & {
     padding: 6px 6px 4px;
-    border-radius: 8px;
+    border-radius: 12px;
   }
 `
 
@@ -135,7 +162,7 @@ const Glass = styled.div`
   overflow: hidden;
   border-radius: 18px / 14px;
   background: #000;
-  box-shadow: 0 0 0 3px #0d0a17, inset 0 0 40px rgba(0, 0, 0, 0.7);
+  box-shadow: 0 0 0 2px #1a0838, 0 0 0 4px #d7dcec, 0 0 0 5px #1a0838, inset 0 0 40px rgba(0, 0, 0, 0.7);
   .narrow & {
     border-radius: 8px;
     max-height: none;
@@ -175,30 +202,40 @@ const Controls = styled.div`
     display: flex;
     gap: 2px;
   }
-  .dial button {
-    width: 40px;
+  .dial button,
+  .sound {
+    flex: 0 0 auto;
+    ${gel('#f2e6ff', '#b98cff', '#1a0838')}
+    min-width: 46px;
     height: 34px;
-    border: none;
-    background: ${color.face};
-    box-shadow: ${bevel.raised};
-    color: ${color.ink};
+    padding: 0 ${space[2]};
     font-size: 12px;
     line-height: 1;
+    white-space: nowrap;
     cursor: pointer;
   }
-  .dial button:active {
-    box-shadow: ${bevel.pressed};
+  .dial button:active,
+  .sound:active:not(:disabled) {
+    transform: translateY(1px);
+  }
+  .sound[aria-pressed='true'] {
+    ${gel('#efffb8', '#c6ff3d', '#1a0838')}
+  }
+  .sound:disabled {
+    ${gel('#efedf4', '#c8c3d4', '#5d5870')}
+    cursor: not-allowed;
   }
   .lcd {
     min-width: 46px;
     padding: 4px 6px;
+    border-radius: 8px;
     text-align: center;
     font-family: ${font.mono};
     font-size: 20px;
     font-weight: 700;
-    color: #6dff8f;
-    background: #08150c;
-    box-shadow: inset 1px 1px #000, inset -1px -1px #2b4a33;
+    color: #c6ff3d;
+    background: #0e0420;
+    box-shadow: inset 0 2px 4px #000, 0 1px 0 rgba(255, 255, 255, 0.35);
   }
   .name {
     flex: 1 1 auto;
@@ -240,8 +277,10 @@ const Controls = styled.div`
 
 const About = styled.div`
   padding: ${space[2]} ${space[3]};
-  background: ${color.well};
-  box-shadow: ${bevel.sunken};
+  border: 1px solid #1a0838;
+  border-radius: 14px;
+  background: rgba(247, 241, 255, 0.92);
+  box-shadow: inset 0 2px 0 #fff, 0 3px 0 rgba(26, 8, 56, 0.35);
   font-size: 14px;
   font-family: ${font.body};
   line-height: 1.45;
@@ -283,6 +322,10 @@ const Side = styled.div`
   }
   > section:last-child {
     flex: 1 1 auto;
+    border: 1px solid #1a0838;
+    border-radius: 14px;
+    overflow: hidden;
+    box-shadow: 0 3px 0 rgba(26, 8, 56, 0.35);
   }
 `
 
@@ -339,8 +382,15 @@ export default function TV() {
   const [sourceIndex, setSourceIndex] = useState(0)
   const [staticOn, setStaticOn] = useState(false)
   const [osd, setOsd] = useState(true)
+  // Streams start silent, the only way browsers let them autoplay. Sound stays on across channels once chosen.
+  const [muted, setMuted] = useState(true)
   const staticTimer = useRef<ReturnType<typeof setTimeout>>()
   const osdTimer = useRef<ReturnType<typeof setTimeout>>()
+
+  // miyatv keeps its one shape. A window left maximized by an older version comes back to it.
+  useEffect(() => {
+    if (fullscreen) toggleFullscreen()
+  }, [fullscreen, toggleFullscreen])
 
   const channel = CHANNELS[index] ?? CHANNELS[0]!
   const sources = channel.kind === 'iframe' ? channel.sources : []
@@ -380,6 +430,11 @@ export default function TV() {
 
   const step = (d: number) => tune(stepChannel(CHANNELS.length, index, d))
 
+  const toggleSound = () => {
+    setMuted((m) => !m)
+    flash()
+  }
+
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (isTyping(e.target) || e.metaKey || e.ctrlKey || e.altKey) return
     if (/^[0-9]$/.test(e.key)) {
@@ -388,6 +443,9 @@ export default function TV() {
         e.preventDefault()
         tune(i)
       }
+    } else if ((e.key === 'm' || e.key === 'M') && hasSoundSwitch(source)) {
+      e.preventDefault()
+      toggleSound()
     } else if (e.key === 'ArrowUp' || e.key === 'PageUp' || e.key === '+') {
       e.preventDefault()
       step(1)
@@ -408,9 +466,6 @@ export default function TV() {
           if (e.cancelable) e.stopPropagation()
           dispatch(closeWindow({ value: 'tv' }))
         }}
-        fullscreen={fullscreen}
-        fullscreenBtn
-        onFullscreen={() => toggleFullscreen()}
         minimizeBtn
         onMinimize={(e) => {
           if (e.cancelable) e.stopPropagation()
@@ -425,7 +480,7 @@ export default function TV() {
         tabIndex={-1}
         onKeyDown={onKeyDown}
         data-testid="miyatv"
-        aria-label="miyatv. Number keys change channel, arrow up and down step through channels."
+        aria-label="miyatv. Number keys change channel, arrow up and down step through channels, M turns the sound on or off."
       >
         <ChannelList className="channel-list" aria-label="Channels">
           <Eyebrow style={{ padding: '2px 4px 4px' }}>channels</Eyebrow>
@@ -443,7 +498,7 @@ export default function TV() {
         <TvColumn>
           <Bezel>
             <Glass>
-              <Screen channel={channel} source={source} />
+              <Screen channel={channel} source={source} muted={muted} />
               <Static playing={staticOn} reducedMotion={reducedMotion} />
               {(osd || staticOn) && (
                 <Osd aria-hidden>
@@ -462,6 +517,22 @@ export default function TV() {
                   CH ▲
                 </button>
               </div>
+              {source && (
+                <button
+                  type="button"
+                  className="sound"
+                  aria-pressed={!muted}
+                  disabled={!hasSoundSwitch(source)}
+                  title={
+                    hasSoundSwitch(source)
+                      ? `Sound ${muted ? 'off' : 'on'} (M). Set the level with the player's own volume slider.`
+                      : 'This player has its own sound button. Use the one on the picture.'
+                  }
+                  onClick={toggleSound}
+                >
+                  {!hasSoundSwitch(source) ? '♪ In player' : muted ? '♪ Sound off' : '♪ Sound on'}
+                </button>
+              )}
               <span className="lcd" aria-live="polite" aria-label={`Channel ${channel.number}`}>
                 {pad(channel.number)}
               </span>

@@ -134,6 +134,7 @@ export default function Windows({
   label,
   baseDepth = 2000,
   shaped = false,
+  fixedSize = false,
 }: {
   children: ReactNode
   baseSize: { width: number; height: number }
@@ -145,6 +146,7 @@ export default function Windows({
   label?: string
   baseDepth?: number
   shaped?: boolean
+  fixedSize?: boolean
 }) {
   // in-component state
   const [dragPosition, setDragPosition] = useState<{ x: number; y: number } | undefined>()
@@ -197,7 +199,7 @@ export default function Windows({
   // people pick is kept, and the window never goes smaller than its own layout allows, nor past the desktop.
   const [savedSize, saveSize] = useWindowDimensions(identifier)
   const [liveSize, setLiveSize] = useState<{ width: number; height: number }>()
-  const resizable = !mobile && !shaped
+  const resizable = !mobile && !shaped && !fixedSize
   const size = (resizable && (liveSize ?? savedSize)) || baseSize
   const minSize = { width: Math.min(baseSize.width, 480), height: Math.min(baseSize.height, 360) }
   const { width: viewWidth } = useWindowSize()

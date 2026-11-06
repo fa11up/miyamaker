@@ -10,7 +10,7 @@ import { bevel, color, font, space, text } from '@/theme/tokens'
 
 export const TYPE_LABEL = { drop: 'Fixed-price drop', auction: 'Auction', editions: 'Editions', '': 'Not picked yet' }
 
-const Card = styled.aside<{ $compact?: boolean }>`
+export const PreviewCard = styled.aside<{ $compact?: boolean }>`
   background: ${color.face};
   box-shadow: ${bevel.raised};
   padding: ${space[3]};
@@ -133,7 +133,7 @@ export default function Preview({
     )
   if (compact) {
     return (
-      <Card $compact aria-label="Preview">
+      <PreviewCard $compact aria-label="Preview">
         <Art $compact>{art}</Art>
         <div style={{ minWidth: 0 }}>
           <Eyebrow>{TYPE_LABEL[form.type]}</Eyebrow>
@@ -142,12 +142,12 @@ export default function Preview({
             {priceLine(form)} · {supplyLine(form)}
           </div>
         </div>
-      </Card>
+      </PreviewCard>
     )
   }
 
   return (
-    <Card aria-label="Preview">
+    <PreviewCard aria-label="Preview">
       <Eyebrow>Preview: how collectors see it</Eyebrow>
       <Art>{art}</Art>
       <div style={{ display: 'flex', flexDirection: 'column', gap: space[1] }}>
@@ -170,6 +170,6 @@ export default function Preview({
           <SplitMeter protocolBps={protocolBps} alignmentBps={alignmentBps} vaultName={vaultName} compact />
         </div>
       )}
-    </Card>
+    </PreviewCard>
   )
 }

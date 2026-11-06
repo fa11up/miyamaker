@@ -1,9 +1,9 @@
 /**
  * The surfable crest of the desktop wave. One function, used twice:
- *  - the fragment shader draws the foam line with the same formula (see shader.ts, `crest()`),
+ *  - the fragment shader draws the swell's edge with the same formula (see shader.ts, `crest()`),
  *  - the desktop pet rides on `crestHeight()`.
  * Both read the same params (sent to the GPU as uniforms) and the same clock (`bus.frameTime`),
- * so the board sits on the line the user sees. Kept import-free so `node --test` can run it.
+ * so the board sits on the edge the user sees. Kept import-free so `node --test` can run it.
  *
  * Units are CSS px. `x` runs left to right across the canvas, heights are measured up from the
  * canvas bottom (the bottom of the viewport, under the taskbar).

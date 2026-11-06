@@ -296,6 +296,12 @@ export default function Claim({ id, style }: { id?: string; style?: CSSPropertie
     if (amount === undefined || amount === 0n) return { label: 'Enter an amount', disabled: true, onClick: idle }
     if (tooMuch) return { label: `More than your ${symbol}`, disabled: true, onClick: idle }
     // Approving moves nothing, so it works any time; the burn waits for the full moon.
+    if (needsApproval && tx.canBatch && !moonShut)
+      return {
+        label: `Burn ${symbol} for INFER`,
+        disabled: false,
+        onClick: () => tx.approveAndRedeem(amount as bigint),
+      }
     if (needsApproval)
       return { label: `Approve ${symbol}`, disabled: false, onClick: () => tx.approve(amount as bigint) }
     if (moonShut) return { label: 'Opens at the next full moon', disabled: true, onClick: idle }
@@ -305,7 +311,7 @@ export default function Claim({ id, style }: { id?: string; style?: CSSPropertie
   // Which of the three steps the person is on: connect, approve, burn.
   let step = 3
   if (!tx.isConnected || tx.wrongChain) step = 1
-  else if (needsApproval || (tx.isAwaitingWallet && tx.lastAction === 'approve')) step = 2
+  else if ((needsApproval && !tx.canBatch) || (tx.isAwaitingWallet && tx.lastAction === 'approve')) step = 2
 
   const vestingLeft = wallet.vesting ? wallet.vesting.total - wallet.vesting.claimed : 0n
   // Burned some before and none left: the fire, not a form that can only say "No MIYA in this wallet".

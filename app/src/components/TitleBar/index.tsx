@@ -67,11 +67,11 @@ const MARK: Record<TitleSkin, string> = {
   aqua: '♪',
   tv: '●',
   mint: '♥',
-  launch: '▲',
+  launch: '✦',
   auction: '♦',
   manager: '⚙',
   files: '▤',
-  upload: '∞',
+  upload: '◎',
   display: '▣',
   station: '★',
 }
@@ -190,24 +190,28 @@ const StyledTitleBar = styled.div`
 
   /* miyatv: the set's black plastic, with a red tally light. */
   &[data-skin='tv'] {
-    background: repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.03) 0 1px, transparent 1px 3px),
-      linear-gradient(180deg, #33303f, #14111c);
-    color: #e8e4f4;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.62) 0%, rgba(255, 255, 255, 0.12) 48%, transparent 52%),
+      linear-gradient(90deg, #2c0f66, #5b2bc4 55%, #9a5cf0);
+    color: #fff;
     .mark {
-      color: #ff3b3b;
-      text-shadow: 0 0 6px #ff3b3b;
+      color: #c6ff3d;
+      text-shadow: 0 0 6px #c6ff3d;
     }
     .title-bar {
-      letter-spacing: 0.16em;
-      text-transform: uppercase;
+      text-shadow: 1px 1px 0 #1a0838;
     }
     ${ChromeButton} {
-      background: linear-gradient(180deg, #4a4658, #24212f);
-      color: #e8e4f4;
-      box-shadow: 0 0 0 1px #000, inset 0 1px 0 rgba(255, 255, 255, 0.2);
+      width: 18px;
+      border-radius: 50%;
+      color: #1a0838;
+      background: radial-gradient(circle at 36% 28%, #fff 0 10%, #efd9ff 28%, #b98cff 56%, #5b2bc4 100%);
+      box-shadow: 0 0 0 1px #1a0838;
     }
     ${ChromeButton}:hover {
-      background: linear-gradient(180deg, #5d586e, #2f2b3c);
+      filter: brightness(1.08);
+    }
+    ${ChromeButton}.close {
+      background: radial-gradient(circle at 36% 28%, #fff 0 10%, #ffc2e0 28%, #ff5fae 56%, #c81a78 100%);
     }
   }
 
@@ -237,24 +241,28 @@ const StyledTitleBar = styled.div`
 
   /* Launch: laurel green and gold, the launchpad's wreath. */
   &[data-skin='launch'] {
-    background: linear-gradient(90deg, #0d3b2e, #17694f 65%, #2a8a63);
-    border-bottom: 1px solid #e8c766;
-    color: #ffe9a8;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.62) 0%, rgba(255, 255, 255, 0.12) 48%, transparent 52%),
+      linear-gradient(90deg, #06504a, #0a9a7c 55%, #17d99a);
+    color: #fff;
     .mark {
-      color: #e8c766;
+      color: #ffe27a;
+      text-shadow: 1px 1px 0 #06302c;
     }
     .title-bar {
-      font-family: ${font.display};
-      letter-spacing: 0.05em;
-      text-shadow: 1px 1px 0 #06201a;
+      text-shadow: 1px 1px 0 #06302c;
     }
     ${ChromeButton} {
-      color: #0d3b2e;
-      background: linear-gradient(180deg, #fff3c4, #e8c766);
-      box-shadow: 0 0 0 1px #06201a;
+      width: 18px;
+      border-radius: 50%;
+      color: #06302c;
+      background: radial-gradient(circle at 36% 28%, #fff 0 10%, #fff2a8 28%, #f2b91f 56%, #a86f00 100%);
+      box-shadow: 0 0 0 1px #06302c;
     }
     ${ChromeButton}:hover {
-      background: linear-gradient(180deg, #fff, #f2d98a);
+      filter: brightness(1.08);
+    }
+    ${ChromeButton}.close {
+      background: radial-gradient(circle at 36% 28%, #fff 0 10%, #ffc2e0 28%, #ff5fae 56%, #c81a78 100%);
     }
   }
 
@@ -284,72 +292,80 @@ const StyledTitleBar = styled.div`
 
   /* Manager: a control panel, brushed steel and a status strip. */
   &[data-skin='manager'] {
-    background: repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.05) 0 1px, transparent 1px 2px),
-      linear-gradient(180deg, #5c6470, #2c323b);
-    border-bottom: 2px solid #ff4fd8;
-    color: #f2f4f8;
+    background: repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.07) 0 1px, transparent 1px 3px),
+      linear-gradient(180deg, #f1f3f7 0%, #c3cad5 46%, #8e97a6 52%, #c9cfd9 100%);
+    color: #14181f;
     .mark {
-      color: #ff9df0;
+      color: #1f6fff;
+      text-shadow: 0 0 5px rgba(31, 111, 255, 0.8);
     }
     .title-bar {
-      letter-spacing: 0.12em;
-      text-transform: uppercase;
-      text-shadow: 1px 1px 0 #101318;
+      text-shadow: 0 1px 0 rgba(255, 255, 255, 0.7);
     }
     ${ChromeButton} {
-      color: #101318;
-      background: linear-gradient(180deg, #e6e9ee, #9aa2ae);
-      box-shadow: 0 0 0 1px #101318;
+      width: 18px;
+      border-radius: 50%;
+      color: #14181f;
+      background: radial-gradient(circle at 36% 28%, #fff 0 10%, #eef1f6 28%, #aab2bf 56%, #5f6876 100%);
+      box-shadow: 0 0 0 1px #14181f;
     }
     ${ChromeButton}:hover {
-      background: linear-gradient(180deg, #fff, #c0c6d0);
+      filter: brightness(1.08);
+    }
+    ${ChromeButton}.close {
+      background: radial-gradient(circle at 36% 28%, #fff 0 10%, #ffc2c2 28%, #ff5252 56%, #b01313 100%);
     }
   }
 
   /* My Files: a manila folder, the tab of its own icon. */
   &[data-skin='files'] {
-    background: linear-gradient(180deg, #f7e27a, #d9b93f);
-    border-bottom: 1px solid #8a6f12;
-    color: #3a2d00;
+    background: repeating-linear-gradient(0deg, rgba(120, 255, 170, 0.06) 0 1px, transparent 1px 3px),
+      linear-gradient(90deg, #120a1c, #2a1230 60%, #4c1830);
+    color: #cfe8d3;
     .mark {
-      color: #6e5500;
+      color: #ff3d5e;
+      text-shadow: 0 0 6px #ff3d5e;
     }
     .title-bar {
-      text-shadow: 0 1px 0 rgba(255, 255, 255, 0.5);
+      letter-spacing: 0.08em;
+      text-shadow: 0 0 5px rgba(160, 255, 190, 0.45);
     }
     ${ChromeButton} {
-      color: #3a2d00;
-      background: linear-gradient(180deg, #fff8d6, #e9d27a);
-      box-shadow: 0 0 0 1px #6e5500;
+      color: #cfe8d3;
+      background: #1c1226;
+      box-shadow: 0 0 0 1px #5f7a68;
     }
     ${ChromeButton}:hover {
-      background: #fffbe8;
+      background: #33203f;
     }
   }
 
   /* Upload: files kept forever, deep space and a cyan glow. */
   &[data-skin='upload'] {
-    background: radial-gradient(1px 1px at 40px 8px, #fff 99%, transparent),
-      radial-gradient(1px 1px at 110px 18px, #9be8ff 99%, transparent),
-      linear-gradient(90deg, #04102e, #0a3a78 70%, #0f6fa8);
-    background-size: 160px 26px, 160px 26px, 100% 100%;
-    color: #c9f3ff;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.62) 0%, rgba(255, 255, 255, 0.12) 48%, transparent 52%),
+      linear-gradient(90deg, #0a1f6e, #1b3fb0 45%, #7a4fe0 72%, #ff8fd6 90%, #ffe27a);
+    color: #fff;
     .mark {
-      color: #5fe0ff;
+      color: #c8f6ff;
       font-size: 15px;
-      text-shadow: 0 0 6px #27d3ff;
+      text-shadow: 0 0 6px #27b8ff;
     }
     .title-bar {
-      letter-spacing: 0.06em;
-      text-shadow: 0 0 5px rgba(39, 211, 255, 0.55);
+      letter-spacing: 0.04em;
+      text-shadow: 1px 1px 0 #040c34;
     }
     ${ChromeButton} {
-      color: #04102e;
-      background: linear-gradient(180deg, #e4faff, #7fdcf5);
-      box-shadow: 0 0 0 1px #04102e;
+      width: 18px;
+      border-radius: 50%;
+      color: #04123a;
+      background: radial-gradient(circle at 36% 28%, #fff 0 10%, #c8f6ff 28%, #27b8ff 56%, #0a56b0 100%);
+      box-shadow: 0 0 0 1px #04123a;
     }
     ${ChromeButton}:hover {
-      background: #e4faff;
+      filter: brightness(1.08);
+    }
+    ${ChromeButton}.close {
+      background: radial-gradient(circle at 36% 28%, #fff 0 10%, #ffe2f5 28%, #ff8fd6 56%, #c81a78 100%);
     }
   }
 

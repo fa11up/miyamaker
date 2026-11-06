@@ -10,6 +10,7 @@ import LoadingHourglass from '@/assets/loading_hourglass.gif'
 import type { SupportedChainId } from '@/config/wagmi'
 import { chains, explorerUrl, mainnet } from '@/config/wagmi'
 import { txWords, useTx } from '@/miyamints/useTx'
+import { useCanBatch } from '@/utils/batch'
 
 import { Eyebrow, Skeleton, StatusBox } from '../floor/retro'
 import { bevel, color, space, text } from '../floor/tokens'
@@ -211,17 +212,17 @@ export default function FillReview({
   const needs20 = side === 'buy' && !!erc20 && allowance !== undefined && ok !== undefined && allowance < ok.total
   const needsNft = side === 'sell' && nftApproved.data === false
   const short = side === 'buy' && ok && balance !== undefined && balance < ok.total
+  const batches = useCanBatch(chainId)
 
-  const fill = () =>
-    ok &&
-    tx.run('fill', {
-      address: ok.to as Address,
-      abi: seaportAbi,
-      functionName: ok.functionName,
-      args: ok.args,
-      value: ok.value,
-      chainId,
-    })
+  const fillCall = ok && {
+    address: ok.to as Address,
+    abi: seaportAbi,
+    functionName: ok.functionName,
+    args: ok.args,
+    value: ok.value,
+    chainId,
+  }
+  const fill = () => fillCall && tx.run('fill', fillCall)
 
   const action = (() => {
     if (!isConnected) return { label: 'Connect wallet', onClick: () => openConnectModal?.() }
@@ -234,32 +235,44 @@ export default function FillReview({
     if (!ok) return { label: data.isLoading ? 'Getting the order…' : 'Cannot fill here', disabled: true }
     if (!operator) return { label: 'Checking…', disabled: true }
     if (short) return { label: `Not enough ${symbol}`, disabled: true }
-    if (needs20)
+    if (needs20) {
+      const allow = { address: erc20, abi: erc20Abi, functionName: 'approve', args: [operator, ok.total], chainId }
+      if (batches)
+        return {
+          label: `Buy for ${fmt(ok.total)}`,
+          step: `One signature: lets Seaport (OpenSea's contract) take exactly ${fmt(
+            ok.total
+          )} and buys, all or nothing.`,
+          onClick: () => tx.runBatch('fill', [allow, fillCall], 'approve'),
+        }
       return {
         label: `Allow ${symbol} for this buy`,
         step: `Step 1 of 2: let Seaport (OpenSea's contract) take exactly ${fmt(ok.total)}. Then buy.`,
-        onClick: () =>
-          tx.run('approve', {
-            address: erc20,
-            abi: erc20Abi,
-            functionName: 'approve',
-            args: [operator, ok.total],
-            chainId,
-          }),
+        onClick: () => tx.run('approve', allow),
       }
-    if (needsNft)
+    }
+
+    if (needsNft) {
+      const allow = {
+        address: contract,
+        abi: erc721Abi,
+        functionName: 'setApprovalForAll',
+        args: [operator, true],
+        chainId,
+      }
+      if (batches)
+        return {
+          label: `Sell for ${fmt(ok.total)}`,
+          step: `One signature: lets Seaport hand this NFT to the bidder and sells, all or nothing.`,
+          onClick: () => tx.runBatch('fill', [allow, fillCall], 'approve'),
+        }
       return {
         label: `Allow OpenSea to move ${title}`,
         step: `Step 1 of 2: a one-time approval so Seaport can hand this NFT to the bidder. Then sell.`,
-        onClick: () =>
-          tx.run('approve', {
-            address: contract,
-            abi: erc721Abi,
-            functionName: 'setApprovalForAll',
-            args: [operator, true],
-            chainId,
-          }),
+        onClick: () => tx.run('approve', allow),
       }
+    }
+
     return side === 'buy'
       ? { label: `Buy for ${fmt(ok.total)}`, onClick: fill }
       : { label: `Sell for ${fmt(ok.total)}`, onClick: fill }

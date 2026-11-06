@@ -1,5 +1,5 @@
 import { useQueryClient } from '@tanstack/react-query'
-import { simulateContract, waitForTransactionReceipt, writeContract } from '@wagmi/core'
+import { readContract, simulateContract, waitForTransactionReceipt, writeContract } from '@wagmi/core'
 import { useCallback, useState } from 'react'
 import type { Address, Hash } from 'viem'
 import { parseEventLogs } from 'viem'
@@ -21,6 +21,8 @@ import type { LaunchForm, LaunchType, Resolved } from '@/miyamints/launch'
 import { buildAuctionArgs, buildDropArgs, buildEditionArgs, makeSalt } from '@/miyamints/launch'
 import { rememberLaunch } from '@/miyamints/local'
 import { addKnownCollection } from '@/music/known'
+import { tryBatch } from '@/utils/batch'
+import { instanceAddressAbi } from '@/utils/batchCalls'
 import { fundAndUpload } from '@/utils/fundAndUpload'
 import getIrysToken from '@/utils/getIrysToken'
 
@@ -183,6 +185,75 @@ export function useLaunch() {
 
         let inst = instance
         let deployHash = hashes.deploy
+        let firstHash: Hash | undefined
+        const firstCall = (target: Address) =>
+          form.type === 'auction'
+            ? {
+                address: target,
+                abi: auctionInstanceAbi,
+                functionName: 'queuePiece' as const,
+                args: [(call as { queue: { tokenURI: string } }).queue.tokenURI],
+                value: (call as { queue: { value: bigint } }).queue.value,
+              }
+            : {
+                address: target,
+                abi: erc1155InstanceAbi,
+                functionName: 'addEdition' as const,
+                args: (call as { edition: readonly unknown[] }).edition,
+              }
+
+        // Create it and add the first piece as one signature. Its address is fixed by the salt, so the second call
+        // can name it in advance; if anything is off, the whole batch reverts and nothing was created.
+        if (!inst && form.type !== 'drop') {
+          const {
+            address: factory,
+            abi,
+            functionName,
+            args,
+          } = call as {
+            address: Address
+            abi: readonly unknown[]
+            functionName: string
+            args: readonly [`0x${string}`, unknown]
+          }
+          const predicted = await readContract(wagmiConfig, {
+            address: factory,
+            abi: instanceAddressAbi,
+            functionName: 'computeInstanceAddress',
+            args: [args[0], address],
+            chainId,
+          }).catch(() => undefined)
+          const sent =
+            predicted &&
+            (await tryBatch([{ address: factory, abi, functionName, args }, firstCall(predicted)], {
+              account: address,
+              chainId,
+              onAsk: () => mark('deploy', 'active'),
+              onSent: () => mark('first', 'active'),
+            }))
+          if (sent) {
+            const logs = sent.receipts.flatMap((receipt) => receipt.logs ?? [])
+            inst = (
+              form.type === 'auction'
+                ? parseEventLogs({ abi: auctionFactoryAbi, eventName: 'InstanceCreated', logs: logs as never })
+                : parseEventLogs({ abi: erc1155FactoryAbi, eventName: 'InstanceCreated', logs: logs as never })
+            )[0]?.args.instance
+            if (!inst) throw new Error('Created, but the new address was not in the receipt. Check the explorer.')
+            deployHash = sent.hash
+            setHashes((h) => ({ ...h, deploy: sent.hash }))
+            rememberLaunch(chainId, inst, form.type)
+            if (form.type === 'editions') addKnownCollection(chainId, inst)
+            setInstance(inst)
+            mark('deploy', 'done')
+            // Same address as named means the first piece went in with it. Otherwise it goes in as its own step below.
+            if (inst.toLowerCase() === predicted.toLowerCase()) {
+              firstHash = sent.hash
+              setHashes((h) => ({ ...h, first: sent.hash }))
+              mark('first', 'done')
+            }
+          }
+        }
+
         if (!inst) {
           mark('deploy', 'active')
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -209,31 +280,14 @@ export function useLaunch() {
           mark('deploy', 'done')
         }
 
-        let firstHash: Hash | undefined
-        if (form.type !== 'drop') {
+        if (form.type !== 'drop' && !firstHash) {
           mark('first', 'active')
-          if (form.type === 'auction') {
-            const { request } = await simulateContract(wagmiConfig, {
-              account: address,
-              chainId,
-              address: inst,
-              abi: auctionInstanceAbi,
-              functionName: 'queuePiece',
-              args: [(call as { queue: { tokenURI: string } }).queue.tokenURI],
-              value: (call as { queue: { value: bigint } }).queue.value,
-            })
-            firstHash = await writeContract(wagmiConfig, request)
-          } else {
-            const { request } = await simulateContract(wagmiConfig, {
-              account: address,
-              chainId,
-              address: inst,
-              abi: erc1155InstanceAbi,
-              functionName: 'addEdition',
-              args: (call as { edition: readonly [string, bigint, bigint, string, number, bigint, bigint] }).edition,
-            })
-            firstHash = await writeContract(wagmiConfig, request)
-          }
+          const { request } = await simulateContract(wagmiConfig, {
+            account: address,
+            chainId,
+            ...firstCall(inst),
+          } as never)
+          firstHash = await writeContract(wagmiConfig, request as never)
 
           setHashes((h) => ({ ...h, first: firstHash }))
           const receipt = await waitForTransactionReceipt(wagmiConfig, { hash: firstHash, chainId })

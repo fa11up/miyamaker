@@ -28,13 +28,32 @@ import { closeWindow, minimizeWindow } from '@/store/windows/actions'
 import { useFullscreen } from '@/store/windows/hooks'
 import { color, space, text } from '@/theme/tokens'
 
+import { y2kSkin } from '../../components/Retro/y2k'
 import LegacyManage from './Legacy'
 import MiyamintsManage from './MiyamintsManage'
 
+/** Manager's own material: the brushed metal of a Y2K control deck, with blue LED accents. */
 const Layout = styled.div`
   height: 100%;
   overflow-y: auto;
   overflow-x: hidden;
+  ${y2kSkin({
+    ink: '#14181f',
+    inkSoft: '#3b4552',
+    material: `repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.05) 0 1px, rgba(0, 0, 0, 0.04) 1px 2px, transparent 2px 3px),
+      linear-gradient(180deg, #e1e5ec 0%, #bcc3ce 100%)`,
+    head: '#14181f',
+    headShadow: 'rgba(255, 255, 255, 0.7)',
+    frost: 'rgba(244, 246, 250, 0.93)',
+    edge: '#3b4552',
+    glow: 'rgba(36, 120, 255, 0.16)',
+    gelTop: '#a9d4ff',
+    gelBottom: '#1f6fff',
+    gelInk: '#04122e',
+    smallTop: '#f4f6fa',
+    smallBottom: '#aab2bf',
+    link: '#0b4fd1',
+  })}
 `
 
 const Inner = styled.div`
