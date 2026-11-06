@@ -79,10 +79,6 @@ const WindowFrame = styled.div`
     background: linear-gradient(180deg, #1b3fb0, #040c34);
     box-shadow: inset 0 0 0 1px #27b8ff, 4px 6px 0 rgba(4, 12, 52, 0.35);
   }
-  &[data-skin='station'] {
-    background: linear-gradient(180deg, #ffa928, #ff7a18);
-    box-shadow: inset 0 0 0 1px #2a0a5e, 4px 6px 0 rgba(42, 10, 94, 0.3);
-  }
   /* Display keeps the window face: the classic grey dialog under a blue bar. */
 
   @media (max-width: 768px) {

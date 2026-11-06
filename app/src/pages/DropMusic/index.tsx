@@ -1,6 +1,5 @@
 import { useConnectModal } from '@rainbow-me/rainbowkit'
 import type { KeyboardEvent } from 'react'
-import { useNavigate } from 'react-router-dom'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import styled, { css, keyframes } from 'styled-components/macro'
 import { useElementSize } from 'usehooks-ts'
@@ -54,8 +53,10 @@ import { formatBytes } from '@/utils/formatBytes'
 import { resolveUri } from '@/utils/resolveUri'
 
 import ReleasePreview from './ReleasePreview'
+import waterSkin from './skin/water.webp'
 import type { StageStatus } from './Stage'
 import Stage from './Stage'
+import StationAdd from './StationAdd'
 import { STEPS, useDropMusic, useMusicChain } from './useDropMusic'
 import { useStudioPlayer, useWaveformPeaks } from './useStudioPlayer'
 import { brushedSilver, gel, y2k } from './y2k'
@@ -67,9 +68,7 @@ const Layout = styled.div`
   overflow-y: auto;
   overflow-x: hidden;
   color: ${y2k.ink};
-  background: radial-gradient(60% 40% at 85% 0%, rgba(255, 255, 255, 0.95), transparent 70%),
-    radial-gradient(50% 35% at 0% 100%, rgba(39, 211, 255, 0.45), transparent 75%),
-    linear-gradient(165deg, #eaf3ff 0%, #b9d4ff 38%, #8fb6f5 62%, #dbe7ff 100%);
+  background: #125cc4 url(${waterSkin}) 0 0 / 512px 512px;
 
   /* Everything in the session panel: pills and soft-edged wells instead of the OS's square bevels. */
   section button:not([role='tab']) {
@@ -130,7 +129,8 @@ const Head = styled.header`
   p {
     margin: 2px 0 0;
     font-size: ${text.sm};
-    color: ${y2k.ink};
+    color: #fff;
+    text-shadow: 0 1px 2px #04205c, 0 0 4px #04205c;
     max-width: 60ch;
   }
 `
@@ -405,7 +405,6 @@ const SECTIONS: { id: Section; label: string }[] = [
 ]
 
 export default function DropMusicWindow() {
-  const navigate = useNavigate()
   const dispatch = useAppDispatch()
   const [fullscreen, toggleFullscreen] = useFullscreen(pageId)
   const radio = useRadio()
@@ -1229,21 +1228,22 @@ export default function DropMusicWindow() {
                           : music.deployed
                           ? `Connect a wallet on ${music.cfg.name} to release.`
                           : 'Releasing editions opens soon. Want it heard now? Put it on the radio, no edition needed.'}
-                        {!music.wrongChain && !music.deployed && (
-                          <>
-                            {' '}
-                            <button
-                              type="button"
-                              style={{ all: 'unset', cursor: 'pointer', textDecoration: 'underline' }}
-                              onClick={() => navigate('/station')}
-                            >
-                              Open the community station
-                            </button>
-                          </>
-                        )}
                       </span>
                     </StatusBox>
                   )}
+
+                  <StationAdd
+                    key={mode === 'upload' ? audio?.url : form.audioUri}
+                    title={form.title}
+                    artist={form.artist}
+                    duration={duration}
+                    audioFile={mode === 'upload' && !audioError ? audio?.file : undefined}
+                    coverFile={mode === 'upload' && cover?.check.ok ? cover.file : undefined}
+                    audioUri={mode === 'links' ? safeUri(form.audioUri) : undefined}
+                    coverUri={mode === 'links' ? safeUri(form.coverUri) : undefined}
+                    store={drop.store}
+                  />
+
                   {music.ready && music.vaultRegistered === false && (
                     <StatusBox tone="error">
                       <span>

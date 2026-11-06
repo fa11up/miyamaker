@@ -18,6 +18,7 @@ export const TRADE_PATH = '/trade'
 /** Old path prefix → new one. Longest match wins; the rest of the path and the query string are kept. */
 export const PATH_ALIASES: Record<string, string> = {
   '/swap': TRADE_PATH,
+  '/station': '/drop-music',
 }
 
 /** The current path for a legacy one (/swap → /trade, /swap/x?y → /trade/x?y), or undefined when it is not legacy. */

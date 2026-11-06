@@ -29,7 +29,6 @@ export function feather(side: Side, angle: number, length: number, width: number
       L * 0.35,
       w * 0.85
     )} ${at(0, 0)}Z`,
-    spine: `M${at(L * 0.3, -w * 0.2)}Q${at(L * 0.6, -w * 0.3)} ${at(L * 0.96, -w * 0.48)}`,
   }
 }
 

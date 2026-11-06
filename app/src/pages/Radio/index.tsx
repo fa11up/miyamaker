@@ -24,6 +24,11 @@ import { Glyph } from './Glyph'
 import { feather, HEART_PATH, pivot, tailFeather, VIEW } from './heartGeometry'
 import { at, Bead, Clock, Dial, Marquee, Menu, PixelText, Slider } from './parts'
 import Playlist from './Playlist'
+import chromeSkin from './skin/chrome.webp'
+import featherBackSkin from './skin/feather-back.webp'
+import featherTailSkin from './skin/feather-tail.webp'
+import featherSkin from './skin/feather.webp'
+import plateSkin from './skin/plate.webp'
 import type { RadioLayout } from './skins'
 import { loadLayout, saveLayout, skinById } from './skins'
 import type { VizKind } from './Visualizer'
@@ -113,24 +118,15 @@ const Layer = styled.svg`
   }
   .plume {
     cursor: grab;
-    fill: url(#radio-feather);
     stroke: #05060e;
-    stroke-width: 1.5;
-  }
-  .plume.back {
-    fill: url(#radio-feather-back);
-  }
-  .tail {
-    fill: url(#radio-tail);
-  }
-  .spine {
-    fill: none;
-    stroke: rgba(255, 255, 255, 0.35);
     stroke-width: 1.5;
   }
   .heart-body {
     cursor: grab;
     fill: url(#radio-plate);
+  }
+  .heart-light {
+    fill: url(#radio-plate-light);
   }
   .heart-rim {
     fill: none;
@@ -247,21 +243,72 @@ const TAIL = [
   { angle: -28, length: 86 },
 ]
 
+/** A feather's bitmap, laid along it: `transform` puts the picture's x down the feather and its y across it. */
+function FeatherSkin({
+  id,
+  image,
+  length,
+  across,
+  transform,
+}: {
+  id: string
+  image: string
+  length: number
+  across: number
+  transform: string
+}) {
+  return (
+    <pattern
+      id={id}
+      patternUnits="userSpaceOnUse"
+      width={length}
+      height={across * 2}
+      patternTransform={`${transform} translate(0 ${-across})`}
+    >
+      <image href={image} width={length} height={across * 2} preserveAspectRatio="none" />
+    </pattern>
+  )
+}
+
 function Wing({ side }: { side: 'left' | 'right' }) {
+  const { x, y } = pivot(side)
+  const plume = (f: { angle: number; length: number }, layer: 'back' | 'front') => {
+    const id = `radio-${side}-${layer}-${f.angle}`
+    return (
+      <g key={f.angle}>
+        <FeatherSkin
+          id={id}
+          image={layer === 'back' ? featherBackSkin : featherSkin}
+          length={f.length}
+          across={40}
+          transform={`translate(${x} ${y}) scale(${side === 'left' ? -1 : 1} 1) rotate(${-f.angle})`}
+        />
+        <path className="plume title-bar" fill={`url(#${id})`} d={feather(side, f.angle, f.length, 30).d} />
+      </g>
+    )
+  }
   return (
     <g className={`wing-${side}`}>
-      {BACK.map((f) => (
-        <path key={f.angle} className="plume back title-bar" d={feather(side, f.angle, f.length, 30).d} />
-      ))}
-      {FRONT.map((f) => {
-        const shape = feather(side, f.angle, f.length, 30)
-        return (
-          <g key={f.angle}>
-            <path className="plume title-bar" d={shape.d} />
-            <path className="spine" d={shape.spine} />
-          </g>
-        )
-      })}
+      {BACK.map((f) => plume(f, 'back'))}
+      {FRONT.map((f) => plume(f, 'front'))}
+    </g>
+  )
+}
+
+function TailPlume({ angle, length }: { angle: number; length: number }) {
+  const id = `radio-tail-${angle}`
+  const a = (angle * Math.PI) / 180
+  const [sin, cos] = [Math.sin(a).toFixed(4), Math.cos(a).toFixed(4)]
+  return (
+    <g>
+      <FeatherSkin
+        id={id}
+        image={featherTailSkin}
+        length={length}
+        across={32}
+        transform={`matrix(${sin} ${cos} ${cos} ${-Number(sin)} 500 600)`}
+      />
+      <path className="plume title-bar" fill={`url(#${id})`} d={tailFeather(angle, length, 28)} />
     </g>
   )
 }
@@ -479,7 +526,7 @@ export default function RadioWindow() {
         <Player style={{ zoom }}>
           <Layer viewBox={`0 0 ${VIEW.width} ${VIEW.height}`} aria-hidden="true">
             {TAIL.map((t) => (
-              <path key={t.angle} className="plume tail title-bar" d={tailFeather(t.angle, t.length, 28)} />
+              <TailPlume key={t.angle} angle={t.angle} length={t.length} />
             ))}
             <Wing side="left" />
             <Wing side="right" />
@@ -487,39 +534,17 @@ export default function RadioWindow() {
 
           <Layer viewBox={`0 0 ${PLAYER.width} ${PLAYER.height}`} aria-hidden="true">
             <defs>
-              <linearGradient id="radio-feather" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0" stopColor="#ffffff" />
-                <stop offset="0.2" stopColor="#a9b6d6" />
-                <stop offset="0.46" stopColor="#262c48" />
-                <stop offset="0.52" stopColor="#e3e9f8" />
-                <stop offset="0.68" stopColor="#59648a" />
-                <stop offset="1" stopColor="#0a0d1c" />
-              </linearGradient>
-              <linearGradient id="radio-feather-back" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0" stopColor="#8f9ac0" />
-                <stop offset="0.5" stopColor="#1b2038" />
-                <stop offset="0.56" stopColor="#6a769c" />
-                <stop offset="1" stopColor="#05060e" />
-              </linearGradient>
-              <linearGradient id="radio-tail" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0" stopColor="#59648a" />
-                <stop offset="0.5" stopColor="#c9d2ea" />
-                <stop offset="1" stopColor="#0a0d1c" />
-              </linearGradient>
-              <radialGradient id="radio-plate" cx="0.42" cy="0.24" r="0.9">
-                <stop offset="0" stopColor="#4d2478" />
-                <stop offset="0.45" stopColor="#23103e" />
-                <stop offset="1" stopColor="#07030f" />
+              <pattern id="radio-plate" patternUnits="userSpaceOnUse" width="256" height="256">
+                <image href={plateSkin} width="256" height="256" />
+              </pattern>
+              <radialGradient id="radio-plate-light" cx="0.42" cy="0.24" r="0.9">
+                <stop offset="0" stopColor="#c9a4ff" stopOpacity="0.3" />
+                <stop offset="0.45" stopColor="#23103e" stopOpacity="0.15" />
+                <stop offset="1" stopColor="#02010a" stopOpacity="0.8" />
               </radialGradient>
-              {/* Banded like a chrome ball reflecting a horizon: the look of late-90s rendered metal. */}
-              <linearGradient id="radio-chrome" x1="0" y1="0" x2="0.25" y2="1">
-                <stop offset="0" stopColor="#f6f8ff" />
-                <stop offset="0.3" stopColor="#a4adc6" />
-                <stop offset="0.48" stopColor="#4b5270" />
-                <stop offset="0.53" stopColor="#dfe5f5" />
-                <stop offset="0.75" stopColor="#8089a6" />
-                <stop offset="1" stopColor="#2c3048" />
-              </linearGradient>
+              <pattern id="radio-chrome" patternUnits="userSpaceOnUse" width="300" height="300">
+                <image href={chromeSkin} width="300" height="300" />
+              </pattern>
               {/* Rounds whatever it's applied to into a lit, bulging solid. */}
               <filter id="radio-solid" x="-15%" y="-15%" width="130%" height="130%" colorInterpolationFilters="sRGB">
                 <feGaussianBlur in="SourceAlpha" stdDeviation="2.2" result="height" />
@@ -543,6 +568,7 @@ export default function RadioWindow() {
 
             {/* The plate stays dark; only the rim around it catches the light. */}
             <path className="heart-body title-bar" transform={`scale(${SCALE})`} d={HEART_PATH} />
+            <path className="heart-light" transform={`scale(${SCALE})`} d={HEART_PATH} />
             <g filter="url(#radio-solid)">
               <path className="heart-rim" transform={`scale(${SCALE})`} d={HEART_PATH} />
             </g>
@@ -847,7 +873,7 @@ export default function RadioWindow() {
                     checked={checked}
                     onLoad={loadSource}
                     onDropMusic={() => openApp('dropmusic')}
-                    onUpload={() => openApp('station')}
+                    onUpload={() => openApp('dropmusic')}
                     onTestTone={import.meta.env.DEV ? loadTestTone : undefined}
                     onInfo={() => setMenu('info')}
                   />
