@@ -38,7 +38,9 @@ const Root = styled.section`
     outline: none;
     border-radius: 5px;
     background: linear-gradient(180deg, #f8efd9 0%, #dccfae 100%);
-    box-shadow: 0 2px 0 #6d5c3c, inset 0 1px 0 #fff;
+    box-shadow:
+      0 2px 0 #6d5c3c,
+      inset 0 1px 0 #fff;
     color: #2a1a0e;
     font-size: ${text.sm};
     text-shadow: none;
@@ -67,6 +69,16 @@ const Tabs = styled.div`
     color: ${glow.ink};
     font-weight: 700;
   }
+`
+
+/** The channel's panel. It never scrolls; the chat below takes the room that is left. */
+const Upper = styled.div`
+  flex: 0 0 auto;
+  display: flex;
+  max-height: 64%;
+  overflow: hidden;
+  border-radius: 4px;
+  box-shadow: 0 0 0 1px ${glow.line};
 `
 
 const Pane = styled.div`
@@ -269,7 +281,7 @@ function MessageText({ text: body }: { text: string }) {
           </a>
         ) : (
           <span key={i}>{seg.text}</span>
-        )
+        ),
       )}
     </>
   )
@@ -450,64 +462,49 @@ function OurChat({ room, roomLabel }: { room: string; roomLabel: string }) {
 export default function ChatPanel({
   room,
   roomLabel,
+  channelId,
   native,
   panel,
 }: {
   room: string
   roomLabel: string
+  /** The channel on now: its panel changes with it, the chat below does not. */
+  channelId: string
   native: NativeChat | undefined
-  /** The channel's own sidebar, shown first when it has one. */
-  panel?: { label: string; node: ReactNode }
+  /** The channel's own panel, above the chat. */
+  panel?: ReactNode
 }) {
-  const [tab, setTab] = useState<'panel' | 'ours' | 'native'>(panel ? 'panel' : 'ours')
+  const [tab, setTab] = useState<'ours' | 'native'>('ours')
+  // miyatv chat comes first on every channel.
+  useEffect(() => setTab('ours'), [channelId])
   const nativeTab = tab === 'native' && native
-  const panelTab = tab === 'panel' && panel
 
   return (
-    <Root aria-label="Chat">
-      <Tabs role="tablist">
-        {panel && (
-          <button type="button" role="tab" aria-selected={!!panelTab} onClick={() => setTab('panel')}>
-            {panel.label}
+    <Root aria-label="Sidebar">
+      {native && (
+        <Tabs role="tablist">
+          <button type="button" role="tab" aria-selected={!nativeTab} onClick={() => setTab('ours')}>
+            miyatv chat
           </button>
-        )}
-        <button
-          type="button"
-          role="tab"
-          aria-selected={tab === 'ours' || (!nativeTab && !panelTab)}
-          onClick={() => setTab('ours')}
-        >
-          miyatv chat
-        </button>
-        {native && (
           <button type="button" role="tab" aria-selected={!!nativeTab} onClick={() => setTab('native')}>
             {native.label}
           </button>
-        )}
-      </Tabs>
-      {panelTab ? (
-        panel.node
-      ) : nativeTab ? (
-        native.kind === 'iframe' ? (
-          <Frame
-            key={native.src}
-            src={native.src}
-            title={native.label}
-            sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-forms"
-            referrerPolicy="strict-origin-when-cross-origin"
-            loading="lazy"
-          />
-        ) : (
-          <Offline>
-            <strong>{native.label}</strong>
-            <span>This platform’s chat can’t be embedded here.</span>
-            <a href={native.href} target="_blank" rel="noopener noreferrer">
-              Open it on {new URL(native.href).host.replace(/^www\./, '')} ↗
-            </a>
-          </Offline>
-        )
+        </Tabs>
+      )}
+      {nativeTab ? (
+        <Frame
+          key={native.src}
+          src={native.src}
+          title={native.label}
+          sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-forms"
+          referrerPolicy="strict-origin-when-cross-origin"
+          loading="lazy"
+        />
       ) : (
-        <OurChat key={room} room={room} roomLabel={roomLabel} />
+        <>
+          {panel && <Upper key={channelId}>{panel}</Upper>}
+          <OurChat room={room} roomLabel={roomLabel} />
+        </>
       )}
     </Root>
   )

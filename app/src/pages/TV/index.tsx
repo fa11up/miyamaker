@@ -14,7 +14,7 @@ import { useFullscreen } from '@/store/windows/hooks'
 import { font, space, text } from '@/theme/tokens'
 
 import { TV_LIVE_PATH } from '../../../api/_lib/tvlive'
-import { CHANNELS, CHAT_DEFAULT, clampChat, indexOfNumber, nativeChatFor, stepChannel, watchUrl } from './channels'
+import { CHANNELS, CHAT_DEFAULT, CHAT_ROOM, clampChat, indexOfNumber, nativeChatFor, stepChannel, watchUrl } from './channels'
 import ChatPanel from './chat/ChatPanel'
 import Guide from './Guide'
 import { FocusPanel, IssPanel, PublicPanel, RadioPanel, SpottingPanel, SqueekPanel } from './panels'
@@ -310,8 +310,48 @@ const ChatHandle = styled.div`
   }
 `
 
+/** A small gold tab on the sidebar's border: it points the way the sidebar will go. */
+const SideTab = styled.button`
+  position: absolute;
+  z-index: 3;
+  top: 10px;
+  left: -9px;
+  width: 16px;
+  height: 30px;
+  padding: 0;
+  border: none;
+  border-radius: 4px 0 0 4px;
+  background: url(${goldSkin}) -40px 0 / 256px 256px;
+  box-shadow: 0 0 0 1px #2a1a04, inset 0 1px 0 rgba(255, 250, 220, 0.8);
+  color: #2a1a04;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 26px;
+  cursor: pointer;
+  &:hover,
+  &:focus-visible {
+    outline: none;
+    filter: brightness(1.15);
+  }
+  &.closed {
+    top: 18px;
+    left: auto;
+    right: 0;
+  }
+  .narrow & {
+    left: 0;
+    border-radius: 0 0 4px 0;
+  }
+  .narrow &.closed {
+    left: auto;
+    right: 0;
+    border-radius: 4px 0 0 4px;
+  }
+`
+
 /** Chat, framed in the same gold as the picture. */
 const Side = styled.div`
+  position: relative;
   min-height: 0;
   min-width: 0;
   display: flex;
@@ -519,16 +559,12 @@ export default function TV() {
 
   const panel = (() => {
     if (channel.id === 'lofi')
-      return {
-        label: 'focus',
-        node: <FocusPanel onRadio={() => tune(CHANNELS.findIndex((c) => c.id === 'miya-radio'))} />,
-      }
-    if (channel.id === 'monterey') return { label: 'spotting', node: <SpottingPanel /> }
-    if (channel.id === 'iss') return { label: 'tracker', node: <IssPanel /> }
-    if (channel.id === 'squeekchain') return { label: 'vitals', node: <SqueekPanel /> }
-    if (channel.id === 'miya-radio') return { label: 'station', node: <RadioPanel /> }
-    if (channel.id === 'public-access')
-      return { label: 'tapes', node: <PublicPanel tapeId={tapeId} onPick={setTapeId} /> }
+      return <FocusPanel onRadio={() => tune(CHANNELS.findIndex((c) => c.id === 'miya-radio'))} />
+    if (channel.id === 'monterey') return <SpottingPanel />
+    if (channel.id === 'iss') return <IssPanel />
+    if (channel.id === 'squeekchain') return <SqueekPanel />
+    if (channel.id === 'miya-radio') return <RadioPanel />
+    if (channel.id === 'public-access') return <PublicPanel tapeId={tapeId} onPick={setTapeId} />
     return undefined
   })()
 
@@ -687,15 +723,6 @@ export default function TV() {
                   />
                 </span>
               )}
-              <button
-                type="button"
-                className="toggle"
-                aria-pressed={chatOn}
-                title={`${chatOn ? 'Hide' : 'Show'} the sidebar (C). Hidden, the picture takes the whole cabinet.`}
-                onClick={toggleChat}
-              >
-                {chatOn ? 'Side on' : 'Side off'}
-              </button>
               {source && (
                 <a className="open" href={watchUrl(source)} target="_blank" rel="noopener noreferrer">
                   open ↗
@@ -724,9 +751,36 @@ export default function TV() {
               }}
             />
             <Side>
-              <ChatPanel key={channel.id} room={channel.id} roomLabel={channel.id} native={native} panel={panel} />
+              <SideTab
+                type="button"
+                aria-expanded
+                aria-label="Hide the sidebar"
+                title="Hide the sidebar (C)"
+                onClick={toggleChat}
+              >
+                ›
+              </SideTab>
+              <ChatPanel
+                room={CHAT_ROOM}
+                roomLabel={CHAT_ROOM}
+                channelId={channel.id}
+                native={native}
+                panel={panel}
+              />
             </Side>
           </>
+        )}
+        {!chatOn && (
+          <SideTab
+            type="button"
+            className="closed"
+            aria-expanded={false}
+            aria-label="Show the sidebar"
+            title="Show the sidebar (C)"
+            onClick={toggleChat}
+          >
+            ‹
+          </SideTab>
         )}
         {guideOpen && (
           <Guide
