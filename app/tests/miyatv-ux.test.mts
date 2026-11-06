@@ -15,7 +15,7 @@ import {
   toggleFocus,
 } from '../src/pages/TV/focusTimer.ts'
 import { headingLabel } from '../src/pages/TV/issMath.ts'
-import { formatDistance } from '../src/pages/TV/squeek.ts'
+import { formatDistance, parseLifetimeMetres } from '../src/pages/TV/squeek.ts'
 
 const channel = (id: string) => CHANNELS.find((c) => c.id === id)!
 
@@ -111,6 +111,12 @@ test('chat says what it is doing, and failed sign-ins keep library text off the 
   assert.equal(chatWaitLine('off'), 'Chat is offline right now. The stream still works.')
   assert.equal(signInProblem(new Error('User rejected the request.')), 'Signature cancelled.')
   assert.equal(signInProblem(new Error('invalid nonce')), 'Could not sign you in. Try again.')
+})
+
+test('squeekchain distance is the wheel\'s whole distance', () => {
+  assert.equal(formatDistance(parseLifetimeMetres({ lifetime: { observedDistanceMm: '9700144' } })!), '9.70 km')
+  assert.equal(parseLifetimeMetres({ error: 'invalid_query' }), undefined)
+  assert.equal(parseLifetimeMetres({ lifetime: { observedDistanceMm: 'nope' } }), undefined)
 })
 
 test('numbers are rounded, with units', () => {

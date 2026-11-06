@@ -11,7 +11,6 @@ export type SqueekVitals = {
   running: boolean
   rpm: number
   metresPerMinute: number
-  distanceMetres: number
   work: string
   blockHeight: string
   /** 0..1 through the current block. */
@@ -28,11 +27,19 @@ export function parseVitals(status: any): SqueekVitals {
     running: rpm > 0,
     rpm,
     metresPerMinute: (Number(m.speedMmPerSecond ?? 0) * 60) / 1000,
-    distanceMetres: Number(m.distanceMm ?? 0) / 1000,
     work: String(m.cumulativeWorkUnits ?? anchor.cumulativeWork ?? '0'),
     blockHeight: String(anchor.blockHeight ?? '0'),
     blockProgress: Math.min(1, Math.max(0, Number(anchor.blockProgress ?? 0) / BLOCK_UNITS)),
   }
+}
+
+/**
+ * The wheel's whole distance, or undefined if the feed has none. Not the status feed's `distanceMm`: that held one day's
+ * total (6,348,818 mm for 2026-11-05) and later read 0 with the work count unchanged, so it resets at no stated time.
+ */
+export function parseLifetimeMetres(stats: any): number | undefined {
+  const mm = Number(stats?.lifetime?.observedDistanceMm)
+  return Number.isFinite(mm) && mm >= 0 ? mm / 1000 : undefined
 }
 
 /** Distance rounded to what matters. */
