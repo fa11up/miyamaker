@@ -373,7 +373,13 @@ export default function MyFiles() {
   }, [address])
 
   const allNfts = nfts.data?.nfts
-  const checks = useContractChecks(useMemo(() => (allNfts ?? []).map((n) => n.contract), [allNfts]))
+  const checks = useContractChecks(
+    useMemo(
+      // Already flagged or our own: asking Etherscan would change nothing and use up its limit.
+      () => (allNfts ?? []).filter((n) => !n.spam && !findCollection(n.chainId, n.contract)).map((n) => n.contract),
+      [allNfts],
+    ),
+  )
   const { clean, scam } = useMemo(
     () => splitScam(allNfts ?? [], checks.data ?? {}, (n) => !!findCollection(n.chainId, n.contract)),
     [allNfts, checks.data],

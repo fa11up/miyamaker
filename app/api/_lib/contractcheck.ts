@@ -14,8 +14,9 @@ export const MAX_ADDRESSES = 20
 const VERIFIED_KEEP_MS = 30 * 86_400_000
 const UNVERIFIED_KEEP_MS = 6 * 3_600_000
 const ADDRESS = /^0x[0-9a-f]{40}$/
-/** Etherscan's free tier allows 5 calls a second. */
-const AT_ONCE = 3
+/** This key's plan allows 3 calls a second. One at a time and spaced, as other visitors may be asking too. */
+const SPACING_MS = 400
+const RETRY_MS = 1100
 
 export type ContractCheckDeps = {
   key?: string
@@ -26,6 +27,7 @@ export type ContractCheckDeps = {
   clientKey: (headers: Headers | undefined) => string
   limiter: (key: string) => boolean
   now?: () => number
+  wait?: (ms: number) => Promise<void>
 }
 
 export const etherscanReader = (key: string) => async (address: string) => {
@@ -76,22 +78,26 @@ export async function handleContractCheck(request: Request, deps: ContractCheckD
 
   const ask = deps.key ? deps.etherscan : undefined
   if (ask) {
-    for (let i = 0; i < toAsk.length; i += AT_ONCE) {
-      // eslint-disable-next-line no-await-in-loop
-      await Promise.all(
-        toAsk.slice(i, i + AT_ONCE).map(async (address) => {
-          const answer = await ask(address).catch((e: Error) => ({ result: e.message }))
-          const verdict = readVerdict(answer)
-          if (verdict === undefined) {
-            // Unknown is safe but silent, so the logs say why. Etherscan's words and the status, never the URL or key.
-            console.warn(`contract check: ${String((answer as { result?: unknown })?.result).slice(0, 120)}`)
-            return
-          }
-
-          verified[address] = verdict
-          await deps.cache.put(`contract-verified:v1:${address}`, { at: now, body: verdict }).catch(() => undefined)
-        }),
-      )
+    const wait = deps.wait ?? ((ms: number) => new Promise<void>((done) => setTimeout(done, ms)))
+    const call = (address: string) => ask(address).catch((e: Error) => ({ result: e.message }))
+    const words = (answer: unknown) => String((answer as { result?: unknown })?.result)
+    for (const [i, address] of toAsk.entries()) {
+      /* eslint-disable no-await-in-loop */
+      if (i) await wait(SPACING_MS)
+      let answer = await call(address)
+      if (/rate limit/i.test(words(answer))) {
+        await wait(RETRY_MS)
+        answer = await call(address)
+      }
+      const verdict = readVerdict(answer)
+      if (verdict === undefined) {
+        // Unknown is safe but silent, so the logs say why. Etherscan's words and the status, never the URL or key.
+        console.warn(`contract check: ${words(answer).slice(0, 120)}`)
+      } else {
+        verified[address] = verdict
+        await deps.cache.put(`contract-verified:v1:${address}`, { at: now, body: verdict }).catch(() => undefined)
+      }
+      /* eslint-enable no-await-in-loop */
     }
   }
 
