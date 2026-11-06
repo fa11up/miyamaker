@@ -77,6 +77,7 @@ const CURTAIN_MOST_MS = 15_000
 const PLAYING = 1
 const BUFFERING = 3
 const ENDED = 0
+const DEAD_SKIP_MS = 3000
 
 /**
  * A YouTube video we can actually turn up and down: the volume and mute come through YouTube's own API, so changing them
@@ -86,22 +87,27 @@ export default function YouTubePlayer({
   videoId,
   volume,
   muted,
+  paused = false,
   onAutoMuted,
   onEnded,
+  onDead,
 }: {
   videoId: string
   /** 0 to 1 */
   volume: number
   muted: boolean
+  paused?: boolean
   onAutoMuted?: () => void
   onEnded?: () => void
+  /** Pass it when there is something else to play: it's called a few seconds after a video turns out not to work. */
+  onDead?: () => void
 }) {
   const slot = useRef<HTMLDivElement>(null)
   const player = useRef<any>()
   const [failed, setFailed] = useState(false)
   const [curtain, setCurtain] = useState(true)
-  const latest = useRef({ volume, muted, onAutoMuted, onEnded })
-  latest.current = { volume, muted, onAutoMuted, onEnded }
+  const latest = useRef({ volume, muted, paused, onAutoMuted, onEnded, onDead })
+  latest.current = { volume, muted, paused, onAutoMuted, onEnded, onDead }
 
   useEffect(() => {
     setFailed(false)
@@ -109,6 +115,7 @@ export default function YouTubePlayer({
     let gone = false
     let check: ReturnType<typeof setTimeout>
     let lift: ReturnType<typeof setTimeout>
+    let skip: ReturnType<typeof setTimeout>
     // Whatever YouTube does, the picture is never left covered.
     const most = setTimeout(() => setCurtain(false), CURTAIN_MOST_MS)
     const host = document.createElement('div')
@@ -135,11 +142,12 @@ export default function YouTubePlayer({
             e.target.setVolume(Math.round(latest.current.volume * 100))
             if (latest.current.muted) e.target.mute()
             else e.target.unMute()
-            e.target.playVideo()
+            if (latest.current.paused) e.target.pauseVideo()
+            else e.target.playVideo()
             check = setTimeout(() => {
               const state = e.target.getPlayerState?.()
               // Quick, so a refused start isn't a frozen screen. A slow connection reads as buffering, not refused.
-              if (gone || state === PLAYING || state === BUFFERING) return
+              if (gone || latest.current.paused || state === PLAYING || state === BUFFERING) return
               e.target.mute()
               e.target.playVideo()
               latest.current.onAutoMuted?.()
@@ -152,7 +160,11 @@ export default function YouTubePlayer({
               lift = setTimeout(() => setCurtain(false), CURTAIN_AFTER_PLAY_MS)
             }
           },
-          onError: () => setFailed(true),
+          onError: () => {
+            setFailed(true)
+            clearTimeout(skip)
+            skip = setTimeout(() => latest.current.onDead?.(), DEAD_SKIP_MS)
+          },
         },
       })
     })
@@ -161,6 +173,7 @@ export default function YouTubePlayer({
       clearTimeout(check)
       clearTimeout(lift)
       clearTimeout(most)
+      clearTimeout(skip)
       player.current?.destroy?.()
       player.current = undefined
       host.remove()
@@ -176,15 +189,23 @@ export default function YouTubePlayer({
     else p.unMute()
   }, [volume, muted])
 
+  useEffect(() => {
+    const p = player.current
+    if (!p?.pauseVideo) return
+    if (paused) p.pauseVideo()
+    else p.playVideo()
+  }, [paused])
+
   return (
     <>
       <Slot ref={slot} />
-      {curtain && !failed && (
+      {/* Paused too: YouTube offers other videos over a paused picture. */}
+      {(curtain || paused) && !failed && (
         <Curtain
           aria-hidden
           style={{ backgroundImage: `url(https://i.ytimg.com/vi/${encodeURIComponent(videoId)}/hqdefault.jpg)` }}
         >
-          <span>Tuning in…</span>
+          <span>{paused ? 'Paused' : 'Tuning in…'}</span>
         </Curtain>
       )}
       {failed && (
@@ -193,6 +214,7 @@ export default function YouTubePlayer({
           <a href={`https://www.youtube.com/watch?v=${videoId}`} target="_blank" rel="noopener noreferrer">
             Try it on YouTube ↗
           </a>
+          {onDead && <span>Next tape coming up.</span>}
         </Failed>
       )}
     </>

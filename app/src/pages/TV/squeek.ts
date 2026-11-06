@@ -35,5 +35,9 @@ export function parseVitals(status: any): SqueekVitals {
   }
 }
 
+/** Distance rounded to what matters. */
+export const formatDistance = (metres: number) =>
+  metres >= 1000 ? `${(metres / 1000).toFixed(2)} km` : `${metres.toFixed(1)} m`
+
 /** Seconds for one turn of the drawn wheel, or 0 for not turning. Capped so it stays a wheel and not a blur. */
 export const wheelSeconds = (rpm: number) => (rpm > 0 ? Math.max(0.35, 60 / rpm) : 0)

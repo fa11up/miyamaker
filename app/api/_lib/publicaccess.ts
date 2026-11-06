@@ -66,6 +66,12 @@ export const airList = (approved: Tape[] = []): Tape[] => [
   ...approved.filter((t) => !HOUSE_TAPES.some((h) => h.videoId === t.videoId)),
 ]
 
+/** The tape after this one, round to the start again. */
+export function nextTapeId(tapes: Tape[], videoId?: string): string | undefined {
+  const at = tapes.findIndex((t) => t.videoId === videoId)
+  return tapes[(Math.max(at, 0) + 1) % (tapes.length || 1)]?.videoId
+}
+
 export interface TapeStore {
   list(limit: number): Promise<Tape[]>
   /** Removed rows too. */
@@ -126,6 +132,19 @@ export const reviewMessage = (f: { videoId: string; decision: string; wallet: st
     f.videoId
   }\nWallet: ${f.wallet.toLowerCase()}\nTime: ${f.at}\n\nThis costs nothing and sends no transaction.`
 
+/** Said on the page for anything that went wrong without a reason written for people. */
+export const NOT_SENT = 'That didn’t go through. Nothing was sent. Try again in a minute.'
+
+/** A refusal this API wrote for people to read, which the page shows as it is. */
+export class TapeRefusal extends Error {}
+
+/** The words for a failed send or review: a cancel, our own refusal, or the plain line. Library text never reaches the page. */
+export function tapeProblem(e: unknown): string {
+  if (e instanceof TapeRefusal) return e.message
+  const m = (e as { shortMessage?: string })?.shortMessage || (e as Error)?.message || ''
+  return /user rejected|user denied|rejected the request/i.test(m) ? 'You cancelled it in your wallet.' : NOT_SENT
+}
+
 const reply = (status: number, body: unknown) =>
   new Response(JSON.stringify(body), {
     status,
@@ -148,15 +167,15 @@ export async function handlePublicAccessRequest(
     return reply(200, { tapes: rows.filter((t) => t.approvedAt), pending: rows.filter((t) => !t.approvedAt), admins })
   }
 
-  if (request.method !== 'POST') return fail(405, 'Not allowed.')
-  if (!deps.sameOrigin(request.headers, url)) return fail(403, 'Wrong origin.')
+  if (request.method !== 'POST') return fail(405, NOT_SENT)
+  if (!deps.sameOrigin(request.headers, url)) return fail(403, 'Send tapes from miyamaker.com.')
   if (!deps.limiter(deps.clientKey(request.headers))) return fail(429, 'Too many requests. Wait a minute.')
 
   let body: Record<string, unknown>
   try {
     body = JSON.parse(request.body || '') as Record<string, unknown>
   } catch {
-    return fail(400, 'Bad request.')
+    return fail(400, NOT_SENT)
   }
 
   const videoId = String(body.videoId ?? '')
@@ -170,7 +189,7 @@ export async function handlePublicAccessRequest(
 
   if (url.pathname === `${PUBLIC_ACCESS_PATH}/review`) {
     const decision = String(body.decision ?? '')
-    if (decision !== 'approve' && decision !== 'remove') return fail(400, 'Approve or remove.')
+    if (decision !== 'approve' && decision !== 'remove') return fail(400, NOT_SENT)
     if (!(await deps.verify(wallet, reviewMessage({ videoId, decision, wallet, at }), signature)))
       return fail(401, 'The signature does not match the wallet.')
     const tape = await store.get(videoId)
@@ -184,7 +203,7 @@ export async function handlePublicAccessRequest(
     return reply(200, { ok: true })
   }
 
-  if (url.pathname !== `${PUBLIC_ACCESS_PATH}/submit`) return fail(404, 'Not found.')
+  if (url.pathname !== `${PUBLIC_ACCESS_PATH}/submit`) return fail(404, NOT_SENT)
   if (!(await deps.verify(wallet, submitMessage({ videoId, wallet, at }), signature)))
     return fail(401, 'The signature does not match the wallet.')
 

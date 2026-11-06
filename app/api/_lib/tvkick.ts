@@ -3,8 +3,8 @@
  * then the most-watched suitable English streams, up to three, biggest first. Answered through GET /api/tv/live.
  *
  * Kick's official API needs app credentials, so these are the public endpoints its own site uses. They can change or
- * refuse without notice: a failed check keeps the last answer, and with no answer at all the page falls back to the list
- * in channels.ts.
+ * refuse without notice: a failed check keeps the last answer, and with no answer at all the page says it could not check
+ * rather than guess at who is on.
  */
 import type { MarketCache } from './market'
 

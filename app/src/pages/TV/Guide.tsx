@@ -38,6 +38,12 @@ const Book = styled.div`
   box-shadow:
     inset 0 2px 5px rgba(0, 0, 0, 0.75),
     inset 0 0 0 1px rgba(20, 10, 2, 0.8);
+  /* It takes focus when the paper is clicked, so Escape still closes it. */
+  &:focus {
+    outline: none;
+  }
+  /* Print, so it drops the OS's crisp pixel setting: small type in this serif runs together without smoothing. */
+  -webkit-font-smoothing: antialiased;
   .narrow & {
     padding: ${SHEET_INSET_NARROW}px;
   }
@@ -137,10 +143,26 @@ const Mast = styled.header`
   .narrow & h2 {
     font-size: 28px;
   }
+  .narrow & button {
+    height: 40px;
+  }
   .narrow & .issue {
     order: 3;
     flex: 1 0 100%;
     font-size: 12px;
+  }
+`
+
+/** The shortcuts, for whoever has a keyboard. */
+const Keys = styled.footer`
+  flex: 0 0 auto;
+  margin: 0 ${space[4]} 6px;
+  padding-top: 4px;
+  border-top: 1px solid ${INK};
+  font-size: 13px;
+  font-style: italic;
+  .narrow & {
+    display: none;
   }
 `
 
@@ -265,15 +287,14 @@ const Listing = styled.div`
   .line {
     display: block;
     margin-top: 2px;
-    font-size: 13px;
+    font-size: 14px;
     line-height: 1.3;
   }
   .credit {
     display: block;
     margin-top: 3px;
-    font-size: 11px;
+    font-size: 12px;
     font-style: italic;
-    opacity: 0.8;
   }
   /* Above the listing-wide button. */
   .credit a {
@@ -313,8 +334,8 @@ const Listing = styled.div`
   .narrow & strong {
     font-size: 21px;
   }
-  .narrow & .line {
-    font-size: 14px;
+  .narrow & .credit a {
+    padding: 10px 2px;
   }
 `
 
@@ -374,29 +395,35 @@ export default function Guide({
   onClose: () => void
 }) {
   const close = useRef<HTMLButtonElement>(null)
-  const book = useRef<HTMLDivElement>(null)
   useEffect(() => {
     const before = document.activeElement as HTMLElement | null
     close.current?.focus()
-    // On a phone the set scrolls: the book opens at the top of it, not somewhere above the view.
-    book.current?.parentElement?.scrollTo?.({ top: 0 })
     return () => before?.focus?.()
   }, [])
 
   return (
     <Book
-      ref={book}
       role="dialog"
-      aria-label="miyatv guide"
+      aria-modal="true"
+      aria-label="miyaTV guide"
+      tabIndex={-1}
       data-testid="guide"
       onKeyDown={(e) => {
         e.stopPropagation()
         if (e.key === 'Escape') onClose()
+        // A number tunes straight from the page, as it does from the set.
+        if (/^[0-9]$/.test(e.key) && !e.metaKey && !e.ctrlKey && !e.altKey) {
+          const picked = channels.find((c) => c.number === Number(e.key))
+          if (picked) {
+            e.preventDefault()
+            onPick(picked.id)
+          }
+        }
       }}
     >
       <Mast>
         <h2>miyaTV Guide</h2>
-        <span className="issue">Every channel, all day, all night.</span>
+        <span className="issue">Press a channel to tune in.</span>
         <button ref={close} type="button" onClick={onClose}>
           Close
         </button>
@@ -446,6 +473,7 @@ export default function Guide({
           })}
         </Columns>
       </Pages>
+      <Keys>Keys: 1–{channels.length} channel · ↑↓ step · G guide · C chat · M mute</Keys>
     </Book>
   )
 }

@@ -9,7 +9,7 @@ import { color, font, space, text } from '@/theme/tokens'
 import type { NativeChat } from '../channels'
 import { linkify, shortAddress } from './linkify'
 import type { Badge, ChatMessage } from './protocol'
-import { cleanText, codePoints, MAX_MESSAGE_LENGTH } from './protocol'
+import { chatWaitLine, cleanText, codePoints, MAX_MESSAGE_LENGTH } from './protocol'
 import { CHAT_URL, useChatRoom, useChatSession } from './useChat'
 
 /** miyatv's chat, in the cabinet's dark walnut and cream. */
@@ -63,6 +63,9 @@ const Tabs = styled.div`
     cursor: pointer;
     font-size: ${text.xs};
     white-space: nowrap;
+    .narrow & {
+      min-height: 40px;
+    }
   }
   button[aria-selected='true'] {
     background: ${glow.screen};
@@ -71,14 +74,21 @@ const Tabs = styled.div`
   }
 `
 
-/** The channel's panel. It never scrolls; the chat below takes the room that is left. */
+/** The channel's panel. It scrolls only if it must, so no button is ever cut off; the chat below takes the room that is left. */
 const Upper = styled.div`
   flex: 0 0 auto;
-  display: flex;
   max-height: 64%;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
   border-radius: 4px;
   box-shadow: 0 0 0 1px ${glow.line};
+  .narrow & {
+    max-height: 55%;
+  }
+  /* Typing on a phone: the keyboard has taken half the screen, so the chat takes the rest. */
+  .narrow section:has(form input:focus) & {
+    display: none;
+  }
 `
 
 const Pane = styled.div`
@@ -192,6 +202,11 @@ const Composer = styled.form`
     color: ${glow.ink};
     font-size: 15px;
     font-family: ${font.body};
+    /* Under 16px, iPhone Safari zooms the page when the field is pressed. */
+    .narrow & {
+      height: 40px;
+      font-size: 16px;
+    }
   }
   button[type='submit'] {
     min-width: 56px;
@@ -222,6 +237,9 @@ const Composer = styled.form`
     color: ${glow.link};
     cursor: pointer;
     font-size: ${text.xs};
+    .narrow & {
+      padding: 8px 4px;
+    }
   }
   .over {
     color: #ff8fa3;
@@ -260,6 +278,13 @@ const Offline = styled.div`
   a {
     color: ${glow.link};
   }
+`
+
+const FreeLine = styled.p`
+  margin: 0;
+  text-align: center;
+  font-size: ${text.xs};
+  color: ${glow.muted};
 `
 
 const BADGE_LABEL: Record<Badge, string> = { mod: 'mod', miyamini: 'miyamini', infer: 'infer' }
@@ -346,8 +371,8 @@ function OurChat({ room, roomLabel }: { room: string; roomLabel: string }) {
   if (!CHAT_URL) {
     return (
       <Offline role="status">
-        <strong>chat offline</strong>
-        <span>miyatv chat isn’t connected on this deployment yet. The stream still works.</span>
+        <strong>Chat offline</strong>
+        <span>{chatWaitLine('off')}</span>
       </Offline>
     )
   }
@@ -386,15 +411,13 @@ function OurChat({ room, roomLabel }: { room: string; roomLabel: string }) {
       <Log
         ref={logRef}
         aria-live="polite"
-        aria-label={`${roomLabel} chat messages`}
+        aria-label="miyaTV chat messages"
         onScroll={(e) => {
           const el = e.currentTarget
           stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40
         }}
       >
-        {chat.messages.length === 0 && (
-          <li className="empty">{chat.status === 'open' ? 'No messages yet. Say hi.' : 'Tuning in…'}</li>
-        )}
+        {chat.messages.length === 0 && <li className="empty">{chatWaitLine(chat.status)}</li>}
         {chat.messages.map((m) => (
           <Line key={m.id} msg={m} canDelete={!!chat.me?.mod} onDelete={chat.remove} />
         ))}
@@ -445,15 +468,18 @@ function OurChat({ room, roomLabel }: { room: string; roomLabel: string }) {
           <span>Signing you in to the room…</span>
         </StatusBox>
       ) : (
-        <BigButton
-          type="button"
-          className="secondary"
-          style={{ minHeight: 44, fontSize: text.sm, fontFamily: font.ui, letterSpacing: 0 }}
-          disabled={signingIn}
-          onClick={() => (address ? signIn() : openConnectModal?.())}
-        >
-          {signingIn ? 'Check your wallet…' : address ? 'Sign in with Ethereum to chat' : 'Connect wallet to chat'}
-        </BigButton>
+        <>
+          <BigButton
+            type="button"
+            className="secondary"
+            style={{ minHeight: 44, fontSize: text.sm, fontFamily: font.ui, letterSpacing: 0 }}
+            disabled={signingIn}
+            onClick={() => (address ? signIn() : openConnectModal?.())}
+          >
+            {signingIn ? 'Check your wallet…' : address ? 'Sign a free message to chat' : 'Connect wallet to chat'}
+          </BigButton>
+          {address && <FreeLine>No gas. No permissions.</FreeLine>}
+        </>
       )}
     </Pane>
   )
@@ -484,7 +510,7 @@ export default function ChatPanel({
       {native && (
         <Tabs role="tablist">
           <button type="button" role="tab" aria-selected={!nativeTab} onClick={() => setTab('ours')}>
-            miyatv chat
+            miyaTV chat
           </button>
           <button type="button" role="tab" aria-selected={!!nativeTab} onClick={() => setTab('native')}>
             {native.label}

@@ -21,6 +21,12 @@ export function bearing(from: Point, to: Point): number {
 const COMPASS = ['north', 'northeast', 'east', 'southeast', 'south', 'southwest', 'west', 'northwest']
 export const compass = (degrees: number) => COMPASS[Math.round(((degrees % 360) + 360) / 45) % 8]!
 
+/** "Southeast · 134°" */
+export function headingLabel(degrees: number): string {
+  const word = compass(degrees)
+  return `${word[0]!.toUpperCase()}${word.slice(1)} · ${Math.round(((degrees % 360) + 360) % 360)}°`
+}
+
 /** Where you end up going `km` along a bearing. */
 export function destination(from: Point, heading: number, km: number): Point {
   const d = km / EARTH_KM
