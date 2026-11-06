@@ -17,11 +17,11 @@ import { gel } from '../DropMusic/y2k'
 /** Infinite Upload's own material: the rainbow sheen of a blank CD on a night-blue burner. */
 const Layout = styled.div`
   display: flex;
-  flex-direction: column;
+  align-items: center;
+  justify-content: center;
   padding: 0.5rem;
-  gap: 1rem;
   height: 100%;
-  overflow: auto;
+  overflow: hidden;
   ${y2kSkin({
     ink: '#07184a',
     inkSoft: '#2a3f80',
@@ -39,16 +39,15 @@ const Layout = styled.div`
     link: '#0b3fd1',
   })}
   position: relative;
-  overflow-x: hidden;
 
   /* A blank disc, half out of the window. */
   &::before {
     content: '';
     position: absolute;
-    right: -90px;
-    bottom: -110px;
-    width: 340px;
-    height: 340px;
+    right: -66px;
+    bottom: -78px;
+    width: 300px;
+    height: 300px;
     border-radius: 50%;
     pointer-events: none;
     background: radial-gradient(
@@ -64,8 +63,10 @@ const Layout = styled.div`
   ${Panel} {
     position: relative;
     z-index: 1;
-    flex: 0 0 auto;
-    max-width: 92%;
+    flex: 0 1 470px;
+    min-width: 0;
+    /* See-through enough that the disc still shows behind it. */
+    background: rgba(240, 248, 255, 0.84);
     color: #07184a;
     button {
       ${gel('#c8f6ff', '#27b8ff', '#04123a')}

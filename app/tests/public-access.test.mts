@@ -1,5 +1,6 @@
 // api/_lib/publicaccess.ts: miyatv's public access channel, nothing airs unreviewed. Run: yarn test
 import assert from 'node:assert/strict'
+import { statSync } from 'node:fs'
 import { test } from 'node:test'
 
 import type { PublicAccessDeps } from '../api/_lib/publicaccess.ts'
@@ -14,7 +15,7 @@ import {
   submitMessage,
 } from '../api/_lib/publicaccess.ts'
 
-import { BREAK_EVERY_MS, isBreakDue, nextSpotIndex } from '../src/pages/TV/commercials.ts'
+import { BREAK_EVERY_MS, COMMERCIALS, isBreakDue, nextSpotIndex } from '../src/pages/TV/commercials.ts'
 
 const ADMIN = '0x5167D014a056E43883e1BBEa5530c3c0dC993281'
 const ME = `0x${'a'.repeat(40)}`
@@ -132,4 +133,12 @@ test('commercials: at most every half hour, taking turns', () => {
   assert.equal(nextSpotIndex(undefined, 2), 0)
   assert.equal(nextSpotIndex({ at: 0, index: 0 }, 2), 1)
   assert.equal(nextSpotIndex({ at: 0, index: 1 }, 2), 0)
+})
+
+test('every film is on the site and small enough for Cloudflare to serve', () => {
+  for (const spot of COMMERCIALS) {
+    if (spot.kind !== 'video') continue
+    const { size } = statSync(new URL(`../public${spot.src}`, import.meta.url))
+    assert.ok(size < 25 * 1024 * 1024, `${spot.src} is ${size} bytes`)
+  }
 })

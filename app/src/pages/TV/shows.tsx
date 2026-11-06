@@ -450,6 +450,103 @@ const Spot = styled(Stage)`
   }
 `
 
+const FilmSpot = styled(Stage)`
+  background: #000;
+  video {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+  }
+  .tag {
+    position: absolute;
+    z-index: 2;
+    left: 14px;
+    top: 12px;
+    padding: 2px 8px;
+    background: rgba(16, 9, 4, 0.8);
+    color: #ffb347;
+    font-size: ${text.xs};
+  }
+  button {
+    position: absolute;
+    z-index: 2;
+    right: 14px;
+    bottom: 12px;
+    min-height: 30px;
+    padding: 0 12px;
+    border: none;
+    border-radius: 4px;
+    background: linear-gradient(180deg, #f8efd9 0%, #dccfae 100%);
+    box-shadow: 0 2px 0 #6d5c3c;
+    color: #2a1a0e;
+    font-size: ${text.xs};
+    cursor: pointer;
+  }
+`
+
+function VideoSpot({
+  spot,
+  volume,
+  muted,
+  onAutoMuted,
+  onDone,
+}: {
+  spot: Extract<Commercial, { kind: 'video' }>
+  volume: number
+  muted: boolean
+  onAutoMuted: () => void
+  onDone: () => void
+}) {
+  const film = useRef<HTMLVideoElement>(null)
+  const [played, setPlayed] = useState(0)
+
+  useEffect(() => {
+    const v = film.current
+    if (!v) return
+    v.volume = volume
+    v.muted = muted
+  }, [volume, muted])
+
+  useEffect(() => {
+    // The browser may refuse sound until someone has clicked: then it plays muted, like the channels do.
+    film.current?.play().catch(() => {
+      const v = film.current
+      if (!v) return
+      v.muted = true
+      onAutoMuted()
+      v.play().catch(onDone)
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const left = SKIP_AFTER_SECONDS - Math.floor(played)
+  return (
+    <FilmSpot data-testid="commercial">
+      {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+      <video
+        ref={film}
+        src={spot.src}
+        playsInline
+        preload="auto"
+        onTimeUpdate={(e) => setPlayed(e.currentTarget.currentTime)}
+        onEnded={onDone}
+        onError={onDone}
+      />
+      <span className="tag">Commercial</span>
+      {left <= 0 ? (
+        <button type="button" onClick={onDone}>
+          Skip ▶
+        </button>
+      ) : (
+        <button type="button" disabled>
+          Skip in {left}
+        </button>
+      )}
+    </FilmSpot>
+  )
+}
+
 function DrawnSpot({ spot, onDone }: { spot: Extract<Commercial, { kind: 'drawn' }>; onDone: () => void }) {
   const [left, setLeft] = useState(DRAWN_SECONDS)
   useEffect(() => {
@@ -528,16 +625,9 @@ export function PublicShow({
   const spotDone = useCallback(() => setSpot(undefined), [])
 
   if (spot?.kind === 'drawn') return <DrawnSpot spot={spot} onDone={spotDone} />
-  if (spot?.kind === 'youtube')
+  if (spot?.kind === 'video')
     return (
-      <YouTubePlayer
-        key={spot.id}
-        videoId={spot.videoId}
-        volume={volume}
-        muted={muted}
-        onAutoMuted={onAutoMuted}
-        onEnded={spotDone}
-      />
+      <VideoSpot key={spot.id} spot={spot} volume={volume} muted={muted} onAutoMuted={onAutoMuted} onDone={spotDone} />
     )
 
   return (

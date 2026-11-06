@@ -4,13 +4,19 @@ import styled from 'styled-components/macro'
 import type { Address } from 'viem'
 
 import { explorerUrl } from '@/config/wagmi'
-import { bevel, color, MOBILE_BREAKPOINT, space, text } from '@/theme/tokens'
+import { MOBILE_BREAKPOINT, space, text } from '@/theme/tokens'
 
 import { findCollection } from '../collections'
 import { shortAddress } from '../mints/dedupe'
 import { useOpenApp } from '../useOpenApp'
 import type { Selection } from './MyFiles'
 import { safeLinkUrl } from './sanitize'
+
+/** The same dark CRT as the My Files window it opens over. */
+const PHOSPHOR = '#cfe8d3'
+const MUTED = '#8fa897'
+const LINE = '#5f7a68'
+const SCREEN = '#07040c'
 
 const Backdrop = styled.div`
   position: absolute;
@@ -19,7 +25,7 @@ const Backdrop = styled.div`
   display: grid;
   place-items: center;
   padding: ${space[3]};
-  background: rgba(20, 16, 31, 0.25);
+  background: rgba(7, 4, 12, 0.6);
   @media (max-width: ${MOBILE_BREAKPOINT}px) {
     padding: 0;
     place-items: stretch;
@@ -31,9 +37,10 @@ const Dialog = styled.div`
   max-height: 100%;
   display: flex;
   flex-direction: column;
-  padding: 3px;
-  background: ${color.face};
-  box-shadow: ${bevel.raised}, 4px 6px 0 rgba(20, 16, 31, 0.25);
+  border: 1px solid ${LINE};
+  background: #120a1c;
+  color: ${PHOSPHOR};
+  box-shadow: 0 0 0 1px #000, 0 8px 24px rgba(0, 0, 0, 0.7), 0 0 26px rgba(200, 16, 46, 0.18);
 
   .bar {
     flex: 0 0 auto;
@@ -42,10 +49,12 @@ const Dialog = styled.div`
     justify-content: space-between;
     gap: ${space[2]};
     height: 26px;
-    padding: 0 3px 0 ${space[2]};
-    background: linear-gradient(90deg, ${color.titleFrom}, ${color.titleTo});
-    color: ${color.highlight};
-    font-weight: 700;
+    padding: 0 4px 0 ${space[2]};
+    background: repeating-linear-gradient(0deg, rgba(120, 255, 170, 0.06) 0 1px, transparent 1px 3px),
+      linear-gradient(90deg, #120a1c, #2a1230 60%, #4c1830);
+    color: ${PHOSPHOR};
+    letter-spacing: 0.06em;
+    text-shadow: 0 0 5px rgba(160, 255, 190, 0.45);
     font-size: ${text.sm};
     span {
       overflow: hidden;
@@ -56,11 +65,14 @@ const Dialog = styled.div`
       width: 20px;
       height: 18px;
       padding: 0;
-      border: none;
-      background: ${color.face};
-      box-shadow: ${bevel.raised};
-      color: ${color.dark};
+      border: 1px solid ${LINE};
+      background: #1c1226;
+      color: ${PHOSPHOR};
       cursor: pointer;
+      &:hover {
+        background: #c8102e;
+        color: #fff;
+      }
     }
   }
   .content {
@@ -76,8 +88,8 @@ const Dialog = styled.div`
     align-self: center;
     width: min(240px, 70%);
     aspect-ratio: 1;
-    background: ${color.well};
-    box-shadow: ${bevel.sunken};
+    border: 1px solid ${LINE};
+    background: ${SCREEN};
     padding: ${space[1]};
     display: grid;
     place-items: center;
@@ -95,7 +107,8 @@ const Dialog = styled.div`
     padding: ${space[4]};
     font-size: ${text.xl};
     font-weight: 700;
-    color: ${color.accentDark};
+    color: #ff5a74;
+    text-shadow: 0 0 8px rgba(255, 61, 94, 0.55);
     text-align: center;
     overflow-wrap: anywhere;
   }
@@ -107,7 +120,7 @@ const Dialog = styled.div`
     font-size: ${text.sm};
   }
   dt {
-    color: ${color.inkMuted};
+    color: ${MUTED};
   }
   dd {
     margin: 0;
@@ -118,7 +131,7 @@ const Dialog = styled.div`
     margin: 0;
     font-size: ${text.xs};
     line-height: 1.4;
-    color: ${color.inkMuted};
+    color: ${MUTED};
     white-space: pre-wrap;
     max-height: 7.5em;
     overflow: auto;
@@ -135,20 +148,30 @@ const Dialog = styled.div`
     align-items: center;
     min-height: 30px;
     padding: 0 ${space[3]};
-    border: none;
-    background: ${color.face};
-    box-shadow: ${bevel.raised};
-    color: ${color.ink};
+    border: 1px solid ${LINE};
+    background: #1c1226;
+    color: ${PHOSPHOR};
     font-size: ${text.sm};
     text-decoration: none;
     cursor: pointer;
+    &:hover {
+      background: #33203f;
+    }
     &:active {
-      box-shadow: ${bevel.pressed};
+      background: ${SCREEN};
+    }
+    &:focus-visible {
+      outline: 1px dotted ${PHOSPHOR};
+      outline-offset: 2px;
     }
   }
   .actions .primary {
-    outline: 1px solid ${color.dark};
-    outline-offset: -1px;
+    border-color: #ff5a74;
+    color: #fff;
+    background: #5c1226;
+    &:hover {
+      background: #c8102e;
+    }
   }
 
   @media (max-width: ${MOBILE_BREAKPOINT}px) {
