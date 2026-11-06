@@ -34,11 +34,14 @@ export interface CollectionsState {
   currentToken: TokenMetadata
 }
 
+/** currentTokenId before a lot has been chosen. Token ids start at 0, so 0 cannot mean this. */
+export const NO_LOT = -1
+
 export const initialState: CollectionsState = {
   nfts: [],
   currentNFTContract: DEFAULT_NFT_CONTRACT[mainnet.id] as Address,
   currentNFT: { name: '', description: '', image: '', external_link: '', collaborators: [] },
-  currentTokenId: 1,
+  currentTokenId: NO_LOT,
   currentToken: { name: '', description: '', image: '', external_url: '', attributes: [] },
 }
 
@@ -50,6 +53,9 @@ export default createReducer(initialState, (builder) =>
     .addCase(setCurrentNFT, (state, action) => {
       state.currentNFTContract = action.payload.nft
       state.currentNFT = action.payload.metadata as ContractMetadata
+      // A lot chosen in the last collection means nothing here; the detail panel opens on this one's first lot.
+      state.currentTokenId = NO_LOT
+      state.currentToken = initialState.currentToken
     })
     .addCase(setCurrentToken, (state, action) => {
       state.currentTokenId = action.payload.tokenId

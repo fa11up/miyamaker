@@ -711,7 +711,6 @@ export default function DropMusicWindow() {
       return { label: 'Connect wallet', disabled: !openConnectModal, onClick: () => openConnectModal?.() }
     if (drop.running) return { label: 'Working…', disabled: true, onClick: () => {} }
     if (done) return { label: 'Released', disabled: true, onClick: () => {} }
-    if (!music.ready) return { label: 'Upload files only', disabled: !valid, onClick: submit }
     if (drop.launched.instance) return { label: 'Retry: add edition', disabled: !valid, onClick: submit }
     return { label: 'Release music', disabled: !valid, onClick: submit }
   })()
@@ -1216,9 +1215,12 @@ export default function DropMusicWindow() {
                     </Well>
                   </details>
 
-                  <BigButton type="button" disabled={action.disabled} onClick={action.onClick}>
-                    {action.label}
-                  </BigButton>
+                  {/* Until editions open, a connected wallet's main button is the station's, below. */}
+                  {(music.ready || !isConnected) && (
+                    <BigButton type="button" disabled={action.disabled} onClick={action.onClick}>
+                      {action.label}
+                    </BigButton>
+                  )}
 
                   {!music.ready && (
                     <StatusBox tone="info">
@@ -1227,13 +1229,14 @@ export default function DropMusicWindow() {
                           ? 'Switch your wallet to Ethereum or Robinhood Chain.'
                           : music.deployed
                           ? `Connect a wallet on ${music.cfg.name} to release.`
-                          : 'Releasing editions opens soon. Want it heard now? Put it on the radio, no edition needed.'}
+                          : 'Releasing editions opens soon.'}
                       </span>
                     </StatusBox>
                   )}
 
                   <StationAdd
                     key={mode === 'upload' ? audio?.url : form.audioUri}
+                    primary={!music.ready}
                     title={form.title}
                     artist={form.artist}
                     duration={duration}

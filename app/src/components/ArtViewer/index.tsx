@@ -1,11 +1,15 @@
 import type { PointerEvent as ReactPointerEvent } from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import styled from 'styled-components/macro'
+import styled, { css } from 'styled-components/macro'
 
 import { NormalButton } from '@/components/Button/NormalButton'
 import { imageCandidates, prefetchImages } from '@/components/NftImage'
 import TitleBar from '@/components/TitleBar'
+import damaskSkin from '@/pages/Auction/skin/damask.webp'
+import giltSkin from '@/pages/Auction/skin/gilt.webp'
+import { paddleButton } from '@/pages/Auction/skin/paddle'
+import paperSkin from '@/pages/Auction/skin/paper.webp'
 import { bevel, color, font, space, text } from '@/theme/tokens'
 import { thumbFor } from '@/utils/artThumbs'
 import { ipfsPath } from '@/utils/ipfsGateways'
@@ -19,6 +23,9 @@ export type Artwork = {
   details?: [string, string | undefined][]
   link?: string
 }
+
+/** The app the viewer was opened from, whose materials it wears. */
+export type ViewerSkin = 'auction'
 
 const MIN_SCALE = 1
 const MAX_SCALE = 8
@@ -43,7 +50,7 @@ const Backdrop = styled.div`
   `}
 `
 
-const Frame = styled.div`
+const Frame = styled.div<{ $skin?: ViewerSkin }>`
   display: flex;
   flex-direction: column;
   width: min(1400px, 100%);
@@ -52,6 +59,7 @@ const Frame = styled.div`
   box-shadow: ${bevel.raised}, 0 20px 60px rgba(0, 0, 0, 0.55);
   padding: 3px;
   outline: none;
+  ${({ $skin }) => $skin && SKINS[$skin]}
 `
 
 const Body = styled.div`
@@ -85,6 +93,9 @@ const Art = styled.img`
   position: absolute;
   inset: 0;
   margin: auto;
+  /* The site's img rule sets width: 100%. With it, only a picture as wide as the stage keeps its proportions. */
+  width: auto;
+  height: auto;
   max-width: calc(100% - 48px);
   max-height: calc(100% - 48px);
   box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6);
@@ -210,6 +221,52 @@ const Hint = styled.div`
   color: ${color.inkMuted};
 `
 
+// ── skins ───────────────────────────────────────────────────────────────────
+
+const SKINS: Record<ViewerSkin, ReturnType<typeof css>> = {
+  /* The sale room: a gilt frame, the piece hung on the damask wall, its label on catalogue paper. */
+  auction: css`
+    padding: 0 6px 6px;
+    background: url(${giltSkin}) 0 0 / 128px 128px;
+    & *::selection {
+      background: #7a1620;
+      color: #f4dd9c;
+    }
+    box-shadow: inset 0 0 0 1px #4a2f08, 0 20px 60px rgba(0, 0, 0, 0.55);
+
+    ${Stage} {
+      background: radial-gradient(ellipse at center, transparent 45%, rgba(12, 2, 4, 0.72) 100%),
+        #3f0a12 url(${damaskSkin}) 0 0 / 360px 360px;
+      box-shadow: 0 0 0 1px #4a2f08;
+    }
+    ${Art} {
+      border: none;
+      box-shadow: 0 0 0 1px #4a2f08, 0 0 0 7px #c9a24c, 0 0 0 8px #4a2f08, 0 14px 40px rgba(8, 1, 2, 0.75);
+    }
+    ${Toolbar}, ${Label} {
+      background: #f6eeda url(${paperSkin}) 0 0 / 256px 256px;
+      box-shadow: 0 0 0 1px #4a2f08;
+      color: #2a1410;
+    }
+    ${Body} button {
+      ${paddleButton}
+    }
+    ${Label}, ${Label} * {
+      font-family: Georgia, 'Times New Roman', serif;
+    }
+    ${ZoomReadout} {
+      color: #2a1410;
+      font-family: Georgia, 'Times New Roman', serif;
+    }
+    ${LabelArtist}, ${LabelLink} {
+      color: #7a1620;
+    }
+    ${LabelRows} dt, ${Hint} {
+      color: #5f4030;
+    }
+  `,
+}
+
 // ── component ───────────────────────────────────────────────────────────────
 
 /**
@@ -220,10 +277,12 @@ export default function ArtViewer({
   items,
   startIndex = 0,
   onClose,
+  skin,
 }: {
   items: Artwork[]
   startIndex?: number
   onClose: () => void
+  skin?: ViewerSkin
 }) {
   const [index, setIndex] = useState(Math.min(Math.max(startIndex, 0), Math.max(items.length - 1, 0)))
   const [scale, setScale] = useState(1)
@@ -425,6 +484,7 @@ export default function ArtViewer({
   return createPortal(
     <Backdrop onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <Frame
+        $skin={skin}
         ref={frameRef}
         role="dialog"
         aria-modal="true"
@@ -432,7 +492,7 @@ export default function ArtViewer({
         tabIndex={-1}
         onKeyDown={onKeyDown}
       >
-        <TitleBar closeBtn onClose={onClose}>
+        <TitleBar skin={skin} closeBtn onClose={onClose}>
           Viewer — {item.name}
           {multiple ? ` (${index + 1} of ${items.length})` : ''}
         </TitleBar>

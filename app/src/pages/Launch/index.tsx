@@ -6,9 +6,9 @@ import { useElementSize } from 'usehooks-ts'
 import { useAccount, useSwitchChain } from 'wagmi'
 
 import LoadingHourglass from '@/assets/loading_hourglass.gif'
-import { SmallButton, SplitMeter, TxSteps } from '@/components/LaunchKit'
+import { DropZone, SmallButton, SplitMeter, TxSteps } from '@/components/LaunchKit'
 import { BigButton, Chip, DisplayTitle, Eyebrow, Panel, StatusBox, Well } from '@/components/Retro'
-import { pinstripe, y2kSkin } from '@/components/Retro/y2k'
+import { y2kSkin } from '@/components/Retro/y2k'
 import TitleBar from '@/components/TitleBar'
 import WindowWrapper from '@/components/WindowWrapper'
 import { explorerUrl } from '@/config/wagmi'
@@ -36,7 +36,8 @@ import { useFullscreen } from '@/store/windows/hooks'
 import { color, font, space, text } from '@/theme/tokens'
 import { resolveUri } from '@/utils/resolveUri'
 
-import { gel } from '../DropMusic/y2k'
+import goldSkin from './skin/gold.webp'
+import malachiteSkin from './skin/malachite.webp'
 import Preview, { PreviewCard, priceLine, supplyLine, TYPE_LABEL } from './Preview'
 import type { Pick } from './Steps'
 import { AlignStep, ArtStep, PhaseBox, SaleStep, TypeCard, TypeStep, VaultCard } from './Steps'
@@ -52,47 +53,129 @@ const STEP_LABEL: Record<StepKey, string> = {
   review: 'Review',
 }
 
-/** Launch's own material: a glossy emerald launchpad with a chrome-gold gleam. */
+/** Launch's own material: polished malachite, ivory panels and brushed champagne gold. */
 const Layout = styled.div`
   height: 100%;
-  overflow-y: auto;
+  /* Always there: a scrollbar coming and going with the step's height would nudge the page sideways. */
+  overflow-y: scroll;
   overflow-x: hidden;
   ${y2kSkin({
-    ink: '#06302c',
-    inkSoft: '#14574c',
-    material: `${pinstripe(0.1)}, radial-gradient(520px 300px at 90% -60px, rgba(255, 244, 190, 0.85), transparent 70%),
-      radial-gradient(420px 420px at -60px 110%, rgba(198, 255, 61, 0.45), transparent 70%),
-      linear-gradient(170deg, #17d99a 0%, #0a9a7c 42%, #06504a 100%)`,
-    head: '#ffffff',
-    headShadow: '#06302c',
-    frost: 'rgba(242, 255, 250, 0.9)',
-    edge: '#06302c',
-    glow: 'rgba(23, 217, 154, 0.28)',
-    gelTop: '#fff2a8',
-    gelBottom: '#f2b91f',
-    gelInk: '#3a2600',
-    smallTop: '#d8fff0',
-    smallBottom: '#4fe3b0',
-    link: '#075e8a',
+    ink: '#12261e',
+    inkSoft: '#4a5f53',
+    material: `linear-gradient(rgba(3, 26, 20, 0.34), rgba(3, 26, 20, 0.34)), url(${malachiteSkin}) 0 0 / 1024px 1024px`,
+    head: '#f4ecd2',
+    headShadow: '#02140f',
+    frost: '#fbf8ee',
+    edge: '#b39a5e',
+    glow: 'rgba(179, 154, 94, 0.08)',
+    gelTop: '#f0e0b2',
+    gelBottom: '#c9b27a',
+    gelInk: '#1c2a1e',
+    smallTop: '#fdfbf3',
+    smallBottom: '#ece5cf',
+    link: '#0b5d45',
   })}
+  /* Square up the Y2K layer's pills and take the gloss off: stone and metal, not plastic. */
+  && ${Panel}, && ${Well}, && ${StatusBox} {
+    border-radius: 4px;
+    box-shadow: 0 1px 3px rgba(2, 20, 15, 0.35);
+  }
+  && ${BigButton}, && ${SmallButton} {
+    border-radius: 3px;
+    filter: none;
+  }
+  && ${BigButton} {
+    font-family: ${font.ui};
+    font-size: ${text.sm};
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+  && ${BigButton}:not(:disabled):not(.secondary) {
+    border: 1px solid #6e5a2a;
+    background: #c9b27a url(${goldSkin}) 0 0 / 256px 256px;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55), 0 1px 3px rgba(2, 20, 15, 0.5);
+    color: #1c2a1e;
+    &:hover {
+      filter: brightness(1.06);
+    }
+  }
+  && ${BigButton}.secondary:not(:disabled), && ${SmallButton}:not(:disabled) {
+    border: 1px solid #b39a5e;
+    background: #fdfbf3;
+    box-shadow: 0 1px 2px rgba(2, 20, 15, 0.25);
+    color: #12261e;
+    &:hover {
+      background: #f7f1dd;
+    }
+  }
+  && ${SmallButton}[aria-pressed='true']:not(:disabled) {
+    border-color: #6e5a2a;
+    background: #c9b27a url(${goldSkin}) 0 0 / 256px 256px;
+    font-weight: 700;
+  }
+  && ${BigButton}:disabled, && ${SmallButton}:disabled {
+    border: 1px solid #cfc6a8;
+    background: #ece7d6;
+    box-shadow: none;
+    color: #6f6d5c;
+  }
+  && input[type='text'],
+  && input[type='number'],
+  && input[type='url'],
+  && input[type='datetime-local'],
+  && input:not([type]),
+  && input[type='file'],
+  && textarea,
+  && select {
+    border-radius: 3px;
+    box-shadow: inset 0 1px 2px rgba(2, 20, 15, 0.15);
+  }
+  && ${StatusBox} {
+    background: #fbf8ee;
+  }
+  && ${DropZone} {
+    border: 1px dashed #8d7338;
+    border-radius: 4px;
+    outline: none;
+    background: #f7f1dd;
+    box-shadow: none;
+  }
   ${PreviewCard}, ${TypeCard}, ${VaultCard}, ${PhaseBox} {
-    border: 1px solid #06302c;
-    border-radius: 14px;
-    background: linear-gradient(180deg, #fff 0%, #e4fff4 100%);
-    box-shadow: 0 2px 0 rgba(6, 48, 44, 0.3);
-    color: #06302c;
+    border: 1px solid #b39a5e;
+    border-radius: 4px;
+    background: #fdfbf3;
+    box-shadow: 0 1px 2px rgba(2, 20, 15, 0.2);
+    color: #12261e;
   }
   ${TypeCard}:hover:not(:disabled), ${VaultCard}:hover:not(:disabled) {
-    background: linear-gradient(180deg, #fff 0%, #c8ffe6 100%);
+    background: #f7f1dd;
   }
   ${TypeCard}[aria-pressed='true'], ${VaultCard}[aria-pressed='true'], ${TypeCard}[aria-checked='true'],
   ${VaultCard}[aria-checked='true'] {
-    border-width: 2px;
-    background: linear-gradient(180deg, #fffbe0 0%, #ffe680 100%);
+    border-color: #8d7338;
+    background: #f5ebcb;
+    box-shadow: inset 0 0 0 1px #8d7338;
+  }
+  && ${TypeCard}[aria-pressed='true'], && ${VaultCard}[aria-pressed='true'], && ${TypeCard}[aria-checked='true'],
+  && ${VaultCard}[aria-checked='true'] {
+    outline: none;
+  }
+  && ${TypeCard}:focus-visible, && ${VaultCard}:focus-visible {
+    outline: 2px solid #8d7338;
+    outline-offset: 1px;
   }
   ${PreviewCard} ${Eyebrow}, ${PreviewCard} ${DisplayTitle} {
-    color: #14574c !important;
+    color: #4a5f53 !important;
     text-shadow: none !important;
+  }
+  /* The page's title, stamped in gold foil. */
+  header ${DisplayTitle} {
+    background: linear-gradient(180deg, #fff6d8 0%, #e6cf95 45%, #b4985a 55%, #f0e0b2 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    text-shadow: none;
+    filter: drop-shadow(0 1px 0 #02140f);
   }
 `
 
@@ -123,12 +206,10 @@ const Rail = styled.ol`
   li button {
     width: 100%;
     min-height: 36px;
-    border: 1px solid #06302c;
-    border-radius: 999px;
-    background: linear-gradient(180deg, rgba(255, 255, 255, 0.85) 0%, rgba(255, 255, 255, 0.3) 48%, transparent 50%),
-      rgba(216, 255, 240, 0.72);
-    box-shadow: 0 2px 0 rgba(6, 48, 44, 0.35);
-    color: #06302c;
+    border: 1px solid #b39a5e;
+    border-radius: 3px;
+    background: rgba(3, 28, 22, 0.86);
+    color: #f4ecd2;
     font: inherit;
     font-size: ${text.xs};
     display: flex;
@@ -140,11 +221,13 @@ const Rail = styled.ol`
     overflow: hidden;
   }
   li button:disabled {
-    color: #3b6d63;
+    color: #93a79b;
     cursor: default;
   }
   li button[aria-current='step'] {
-    ${gel('#fff2a8', '#f2b91f', '#3a2600')}
+    border-color: #6e5a2a;
+    background: #c9b27a url(${goldSkin}) 0 0 / 256px 256px;
+    color: #1c2a1e;
     font-weight: 700;
   }
   .n {
@@ -154,13 +237,13 @@ const Rail = styled.ol`
     height: 20px;
     flex: 0 0 20px;
     border-radius: 50%;
-    background: #06302c;
-    color: #d8fff0;
+    background: #c9b27a;
+    color: #12261e;
     font-variant-numeric: tabular-nums;
   }
   [aria-current='step'] .n {
-    background: #3a2600;
-    color: #fff2a8;
+    background: #12261e;
+    color: #f4ecd2;
   }
   .narrow & .label {
     display: none;
@@ -186,10 +269,8 @@ const Foot = styled.div`
   z-index: 1;
   margin: 0 -${space[3]} -${space[3]};
   padding: ${space[2]} ${space[3]} ${space[3]};
-  border-top: 1px solid #06302c;
-  border-radius: 16px 16px 0 0;
-  background: rgba(242, 255, 250, 0.88);
-  box-shadow: inset 0 2px 0 #fff;
+  border-top: 1px solid #b39a5e;
+  background: #031c16;
   display: flex;
   gap: ${space[2]};
   align-items: center;
@@ -201,6 +282,8 @@ const Foot = styled.div`
   }
   .primary {
     flex: 0 1 320px;
+    /* Stays on the right when the first step has no Back. */
+    margin-left: auto;
   }
   .narrow & .primary {
     flex: 1 1 auto;
@@ -260,7 +343,10 @@ export default function LaunchPage() {
   const set = <K extends keyof LaunchForm>(k: K, v: LaunchForm[K]) => {
     setForm((f) => ({ ...f, [k]: v }))
     if (k === 'imageUri' || k === 'imageMode') launch.invalidate('image')
-    if (k === 'audioUri' || k === 'audioMode') launch.invalidate('audio')
+    if (k === 'audioUri' || k === 'audioMode') {
+      launch.invalidate('audio')
+      setForm((f) => ({ ...f, audioMime: '' }))
+    }
   }
 
   // Default the alignment share to the registry minimum once it is known.
@@ -377,7 +463,7 @@ export default function LaunchPage() {
       audio:
         form.type === 'editions' && form.editionKind === 'music'
           ? form.audioMode === 'link'
-            ? { uri: form.audioUri.trim() }
+            ? { uri: form.audioUri.trim(), mime: form.audioMime || undefined }
             : { file: audio?.check.ok ? audio.file : undefined, mime: audio?.check.ok ? audio.check.mime : undefined }
           : undefined,
       addresses: net.addresses,
@@ -741,15 +827,17 @@ export default function LaunchPage() {
               </Body>
 
               <Foot>
-                <BigButton
-                  type="button"
-                  className="secondary back"
-                  style={{ width: 'auto' }}
-                  disabled={stepIdx === 0 || launch.running}
-                  onClick={() => setStepIdx((i) => Math.max(0, i - 1))}
-                >
-                  Back
-                </BigButton>
+                {stepIdx > 0 && (
+                  <BigButton
+                    type="button"
+                    className="secondary back"
+                    style={{ width: 'auto' }}
+                    disabled={launch.running}
+                    onClick={() => setStepIdx((i) => i - 1)}
+                  >
+                    Back
+                  </BigButton>
+                )}
                 <BigButton type="button" className="primary" disabled={!!primary.disabled} onClick={primary.onClick}>
                   {primary.label}
                 </BigButton>

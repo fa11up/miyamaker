@@ -1,6 +1,5 @@
 import ChevronLeftIcon from 'assets/chevron-left-icon.svg'
 import ChevronRightIcon from 'assets/chevron-right-icon.svg'
-import { useEffect, useRef, useState } from 'react'
 import styled from 'styled-components/macro'
 
 import { NormalButton } from '@/components/Button/NormalButton'
@@ -71,69 +70,41 @@ const Counter = styled.div`
   font-size: 0.65rem;
 `
 
-export default function ImagesList({ images, onView }: { images: string[]; onView?: (index: number) => void }) {
-  const totalImages = images.length
-  const previousButtonRef = useRef<HTMLButtonElement>(null)
-  const nextButtonRef = useRef<HTMLButtonElement>(null)
-  const [currentCounter, setCurrentCounter] = useState<number>(1)
-
-  const handleClickButton = (type: string) => {
-    let current = currentCounter
-    if (type === 'next') {
-      if (current === 1 && previousButtonRef.current) {
-        previousButtonRef.current.disabled = false
-      }
-
-      if (current < totalImages) {
-        current += 1
-        setCurrentCounter(current)
-      }
-
-      if (current === totalImages && nextButtonRef.current) {
-        nextButtonRef.current.disabled = true
-      }
-
-      return
-    }
-
-    if (current === totalImages && nextButtonRef.current) {
-      nextButtonRef.current.disabled = false
-    }
-
-    if (current > 1) {
-      current -= 1
-      setCurrentCounter(current)
-    }
-
-    if (current === 1 && previousButtonRef.current) {
-      previousButtonRef.current.disabled = true
-    }
-  }
-
-  useEffect(() => {
-    if (previousButtonRef.current) {
-      previousButtonRef.current.disabled = true
-    }
-  }, [])
-
+export default function ImagesList({
+  image,
+  position,
+  total,
+  onPrevious,
+  onNext,
+  onView,
+}: {
+  image: string
+  position: number
+  total: number
+  onPrevious: () => void
+  onNext: () => void
+  onView?: () => void
+}) {
   return (
     <ImagesListWrapper>
       <ImageWrapper>
-        <Images type="button" title="View artwork" onClick={() => onView?.(currentCounter - 1)}>
-          <NftImage variant="full" src={images[currentCounter - 1] || undefined} alt="Artwork" fit="contain" eager />
+        <Images type="button" title="View artwork" onClick={onView}>
+          <NftImage variant="full" src={image || undefined} alt="Artwork" fit="contain" eager />
         </Images>
         <Counter>
-          {currentCounter} of {totalImages}
+          Lot {position + 1} of {total}
         </Counter>
       </ImageWrapper>
-      <ButtonContainer>
-        <NormalButton ref={previousButtonRef} onClick={() => handleClickButton('previous')}>
-          <Icon src={ChevronLeftIcon} alt="Chevron Left Icon" />
-        </NormalButton>
-        <NormalButton ref={nextButtonRef} onClick={() => handleClickButton('next')}>
-          <Icon src={ChevronRightIcon} alt="Chevron Right Icon" />
-        </NormalButton>
-      </ButtonContainer>
+      {total > 1 && (
+        <ButtonContainer>
+          <NormalButton aria-label="Previous lot" onClick={onPrevious}>
+            <Icon src={ChevronLeftIcon} alt="" />
+          </NormalButton>
+          <NormalButton aria-label="Next lot" onClick={onNext}>
+            <Icon src={ChevronRightIcon} alt="" />
+          </NormalButton>
+        </ButtonContainer>
+      )}
     </ImagesListWrapper>
   )
 }

@@ -54,9 +54,13 @@ export type LaunchForm = {
   description: string
   website: string
   imageMode: MediaMode
+  /** Files come from the wallet's earlier uploads: link mode, with the links picked from a menu. */
+  fromUploads: boolean
   imageUri: string
   audioMode: MediaMode
   audioUri: string
+  /** Known only when the track was picked from the wallet's uploads. */
+  audioMime: string
   artist: string
   // drop
   supply: string
@@ -92,9 +96,11 @@ export const EMPTY_FORM: LaunchForm = {
   description: '',
   website: '',
   imageMode: 'upload',
+  fromUploads: false,
   imageUri: '',
   audioMode: 'upload',
   audioUri: '',
+  audioMime: '',
   artist: '',
   supply: '',
   ownerReserve: '',

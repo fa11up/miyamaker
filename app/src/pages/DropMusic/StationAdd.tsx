@@ -1,11 +1,10 @@
-import { useConnectModal } from '@rainbow-me/rainbowkit'
 import { useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import styled from 'styled-components/macro'
 import { useAccount, useSignMessage } from 'wagmi'
 
 import { Err, SmallButton } from '@/components/LaunchKit'
-import { StatusBox, Well } from '@/components/Retro'
+import { BigButton, StatusBox, Well } from '@/components/Retro'
 import { useRadio } from '@/context/RadioProvider'
 import { addTrack, toTrack } from '@/music/community'
 import { space, text } from '@/theme/tokens'
@@ -15,7 +14,8 @@ import { cleanLine } from '../../../api/_lib/station'
 const Box = styled(Well)`
   display: flex;
   flex-direction: column;
-  gap: ${space[1]};
+  gap: ${space[2]};
+  padding: ${space[3]};
   font-size: ${text.xs};
   h3 {
     margin: 0;
@@ -26,12 +26,12 @@ const Box = styled(Well)`
   }
   label {
     display: flex;
-    align-items: flex-start;
+    align-items: center;
     gap: ${space[1]};
     cursor: pointer;
   }
   input {
-    margin: 2px 0 0;
+    margin: 0;
     flex: none;
   }
 `
@@ -44,6 +44,7 @@ const arId = (uri?: string) => uri?.trim().match(AR_FILE)?.[1]
  * store, so releasing later does not pay for the same files again.
  */
 export default function StationAdd({
+  primary,
   title,
   artist,
   duration,
@@ -53,6 +54,8 @@ export default function StationAdd({
   coverUri,
   store,
 }: {
+  /** The step's main action, while editions are not open: the big button, and a word on what it still needs. */
+  primary: boolean
   title: string
   artist: string
   duration?: number
@@ -63,7 +66,6 @@ export default function StationAdd({
   store: (id: 'audio' | 'cover', file: File) => Promise<string>
 }) {
   const { address } = useAccount()
-  const { openConnectModal } = useConnectModal()
   const { signMessageAsync } = useSignMessage()
   const client = useQueryClient()
   const radio = useRadio()
@@ -74,16 +76,7 @@ export default function StationAdd({
 
   const name = cleanLine(title, 120)
   const by = cleanLine(artist, 80)
-  const linkOnly = !audioFile && !!audioUri
   const linked = arId(audioUri)
-  const hint =
-    !audioFile && !audioUri
-      ? 'Add your track first.'
-      : linkOnly && !linked
-      ? 'The station only plays files stored on Arweave. Upload the file instead of linking it.'
-      : !name || !by
-      ? 'Add a title and artist first.'
-      : ''
 
   const add = async () => {
     if (!address) return
@@ -117,33 +110,48 @@ export default function StationAdd({
       </StatusBox>
     )
 
-  return (
-    <Box>
-      <h3>Community station</h3>
-      <p>The upload pays a small Arweave storage fee. Listing it is a free signature.</p>
-      <label>
-        <input type="checkbox" checked={rights} disabled={!!note} onChange={(e) => setRights(e.target.checked)} />
+  // It stays out of the way until the track is ready and there is a wallet to sign with.
+  if (!address) return null
+  if ((!audioFile && !linked) || !name || !by) {
+    if (!primary) return null
+    return (
+      <StatusBox tone="info">
         <span>
-          I made this or have the right to share it. The file stays on Arweave for good; a track can be taken off the
-          station, but the file cannot be deleted.
+          {audioUri && !linked
+            ? 'The community station only plays files stored on Arweave. Upload the file instead of linking it.'
+            : 'Add your track, title and artist to put it on the community station.'}
         </span>
-      </label>
-      {hint && <p>{hint}</p>}
-      {error && (
-        <div role="alert">
-          <Err>{error}</Err>
-        </div>
-      )}
-      {note && <p role="status">{note}</p>}
-      {address ? (
-        <SmallButton type="button" disabled={!!hint || !rights || !!note} onClick={add}>
-          {note ? 'Working…' : 'Add to community station'}
-        </SmallButton>
-      ) : (
-        <SmallButton type="button" disabled={!openConnectModal} onClick={() => openConnectModal?.()}>
-          Connect wallet to add it
-        </SmallButton>
-      )}
-    </Box>
+      </StatusBox>
+    )
+  }
+
+  const button = primary ? (
+    <BigButton type="button" disabled={!rights || !!note} onClick={add}>
+      {note ? 'Working…' : 'Add to community station'}
+    </BigButton>
+  ) : (
+    <SmallButton type="button" disabled={!rights || !!note} onClick={add}>
+      {note ? 'Working…' : 'Add to community station'}
+    </SmallButton>
+  )
+
+  return (
+    <>
+      <Box>
+        {!primary && <h3>Put it on the community station</h3>}
+        <label>
+          <input type="checkbox" checked={rights} disabled={!!note} onChange={(e) => setRights(e.target.checked)} />
+          <span>I made this or have the right to share it.</span>
+        </label>
+        <p>{note || 'Small storage fee, free to list. The file stays on Arweave for good.'}</p>
+        {error && (
+          <div role="alert">
+            <Err>{error}</Err>
+          </div>
+        )}
+        {!primary && button}
+      </Box>
+      {primary && button}
+    </>
   )
 }

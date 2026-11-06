@@ -37,8 +37,8 @@ const TextInput = styled.input.attrs({ type: 'text' })`
   padding-left: 0.5rem;
   padding-right: 0.5rem;
   border: none;
-  box-shadow: inset -1px -1px #fff, inset 1px 1px grey, inset -2px -2px #dfdfdf, inset 2px 2px #0a0a0a;
-  background-color: #ffffff;
+  box-shadow: inset 0 0 0 1px #a8843a, inset 0 1px 3px rgba(42, 20, 16, 0.25);
+  background-color: #fffdf6;
   box-sizing: border-box;
   -webkit-appearance: none;
   -moz-appearance: none;
@@ -48,7 +48,7 @@ const TextInput = styled.input.attrs({ type: 'text' })`
 
   &:disabled,
   &:read-only {
-    background-color: #c0c0c0;
+    background-color: #efe4c8;
   }
 
   &:focus {
@@ -59,8 +59,8 @@ const TextInput = styled.input.attrs({ type: 'text' })`
 const Text = styled.div`
   width: 100%;
   border: none;
-  box-shadow: inset -1px -1px #fff, inset 1px 1px grey, inset -2px -2px #dfdfdf, inset 2px 2px #0a0a0a;
-  background-color: #c0c0c0;
+  box-shadow: inset 0 0 0 1px #a8843a, inset 0 1px 3px rgba(42, 20, 16, 0.25);
+  background-color: #efe4c8;
   box-sizing: border-box;
   display: flex;
   justify-content: center;
@@ -74,7 +74,7 @@ const Timer = styled.div`
   padding: 0.7rem;
   font-size: 0.7rem;
   white-space: nowrap;
-  box-shadow: inset -1px -1px #fff, inset 1px 1px grey, inset -2px -2px #dfdfdf, inset 2px 2px #0a0a0a;
+  box-shadow: inset 0 0 0 1px #a8843a, inset 0 1px 3px rgba(42, 20, 16, 0.25);
 `
 
 const SettleWrapper = styled.div`

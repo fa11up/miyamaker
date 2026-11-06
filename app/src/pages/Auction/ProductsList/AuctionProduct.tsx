@@ -60,8 +60,7 @@ const Wrapper = styled.button`
 
 const Description = styled.div`
   max-width: 100%;
-  font-size: 0.5rem;
-  font-weight: bolder;
+  font-size: 0.65rem;
   text-align: center;
   white-space: nowrap;
   overflow: hidden;
