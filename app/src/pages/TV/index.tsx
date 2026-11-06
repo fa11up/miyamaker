@@ -14,7 +14,7 @@ import { bevel, color, font, space, text } from '@/theme/tokens'
 
 import { gel } from '../DropMusic/y2k'
 import type { Channel } from './channels'
-import { CHANNELS, hasSoundSwitch, indexOfNumber, nativeChatFor, stepChannel, watchUrl } from './channels'
+import { CHANNELS, indexOfNumber, nativeChatFor, stepChannel, watchUrl } from './channels'
 import ChatPanel from './chat/ChatPanel'
 import Screen from './Screen'
 import Static, { useReducedMotion } from './Static'
@@ -29,7 +29,8 @@ const Root = styled.div`
   height: 100%;
   min-width: 0;
   display: grid;
-  grid-template-columns: 196px minmax(0, 1fr) 340px;
+  grid-template-columns: 196px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   gap: ${space[2]};
   padding: ${space[2]};
   overflow: hidden;
@@ -57,10 +58,13 @@ const Root = styled.div`
     outline: none;
   }
 
-  &.mid {
-    grid-template-columns: minmax(0, 1fr) 300px;
+  /* No chat: the channels fold into the strip's dropdown and the picture takes the whole window. */
+  &.mid,
+  &.no-chat {
+    grid-template-columns: minmax(0, 1fr);
   }
-  &.mid .channel-list {
+  &.mid .channel-list,
+  &.no-chat .channel-list {
     display: none;
   }
 
@@ -126,8 +130,7 @@ const ChannelList = styled.nav`
 const TvColumn = styled.div`
   min-height: 0;
   min-width: 0;
-  overflow-y: auto;
-  overflow-x: hidden;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   gap: ${space[2]};
@@ -138,8 +141,12 @@ const TvColumn = styled.div`
   }
 `
 
-/** The TV set: dark plastic body, rounded glass, and a control strip. */
+/** The TV set: see-through plastic, rounded glass, and a control strip. It takes all the height chat leaves. */
 const Bezel = styled.div`
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
   padding: 14px 14px 10px;
   border: 1px solid #1a0838;
   border-radius: 22px;
@@ -148,24 +155,36 @@ const Bezel = styled.div`
   box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.28), inset 0 -6px 10px rgba(0, 0, 0, 0.3),
     0 4px 0 rgba(26, 8, 56, 0.45);
   .narrow & {
+    flex: 0 0 auto;
     padding: 6px 6px 4px;
     border-radius: 12px;
   }
 `
 
+/** Whatever room the bezel has for the picture; the glass is the biggest 16:9 that fits in it. */
+const Stage = styled.div`
+  flex: 1 1 auto;
+  min-height: 0;
+  container-type: size;
+  display: grid;
+  place-items: center;
+  .narrow & {
+    flex: 0 0 auto;
+    container-type: normal;
+  }
+`
+
 const Glass = styled.div`
   position: relative;
-  width: 100%;
+  width: min(100cqw, calc(100cqh * 16 / 9));
   aspect-ratio: 16 / 9;
-  max-height: calc(100svh - 260px);
-  margin: 0 auto;
   overflow: hidden;
   border-radius: 18px / 14px;
   background: #000;
   box-shadow: 0 0 0 2px #1a0838, 0 0 0 4px #d7dcec, 0 0 0 5px #1a0838, inset 0 0 40px rgba(0, 0, 0, 0.7);
   .narrow & {
+    width: 100%;
     border-radius: 8px;
-    max-height: none;
   }
 `
 
@@ -203,7 +222,7 @@ const Controls = styled.div`
     gap: 2px;
   }
   .dial button,
-  .sound {
+  .toggle {
     flex: 0 0 auto;
     ${gel('#f2e6ff', '#b98cff', '#1a0838')}
     min-width: 46px;
@@ -215,15 +234,11 @@ const Controls = styled.div`
     cursor: pointer;
   }
   .dial button:active,
-  .sound:active:not(:disabled) {
+  .toggle:active:not(:disabled) {
     transform: translateY(1px);
   }
-  .sound[aria-pressed='true'] {
+  .toggle[aria-pressed='true'] {
     ${gel('#efffb8', '#c6ff3d', '#1a0838')}
-  }
-  .sound:disabled {
-    ${gel('#efedf4', '#c8c3d4', '#5d5870')}
-    cursor: not-allowed;
   }
   .lcd {
     min-width: 46px;
@@ -275,50 +290,19 @@ const Controls = styled.div`
   }
 `
 
-const About = styled.div`
-  padding: ${space[2]} ${space[3]};
-  border: 1px solid #1a0838;
-  border-radius: 14px;
-  background: rgba(247, 241, 255, 0.92);
-  box-shadow: inset 0 2px 0 #fff, 0 3px 0 rgba(26, 8, 56, 0.35);
-  font-size: 14px;
-  font-family: ${font.body};
-  line-height: 1.45;
-  color: ${color.ink};
-  h3 {
-    margin: 0 0 2px;
-    font-family: ${font.ui};
-    font-size: ${text.sm};
-  }
-  p {
-    margin: 0 0 ${space[1]};
-  }
-  .links {
-    display: flex;
-    flex-wrap: wrap;
-    gap: ${space[3]};
-    font-family: ${font.ui};
-    font-size: ${text.xs};
-  }
-  a {
-    color: ${color.link};
-  }
-  .placeholder {
-    color: ${color.warning};
-  }
-`
-
-const Side = styled.div`
+/** Chat, under the picture. */
+const ChatDock = styled.div`
+  /* Leaves the picture 769px wide: any narrower and Kick's player drops its mute and volume controls. */
+  flex: 0 0 136px;
   min-height: 0;
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: ${space[2]};
+  gap: 4px;
   .narrow & {
     flex: 0 0 auto;
     height: 520px;
     max-height: 80svh;
-    gap: ${space[1]};
   }
   > section:last-child {
     flex: 1 1 auto;
@@ -326,25 +310,6 @@ const Side = styled.div`
     border-radius: 14px;
     overflow: hidden;
     box-shadow: 0 3px 0 rgba(26, 8, 56, 0.35);
-  }
-`
-
-/** Reserved slot for imdUSD markets (separate workstream). Never overlays the player. */
-const MarketsSlot = styled.aside`
-  flex: 0 0 auto;
-  padding: ${space[2]} ${space[3]};
-  background: repeating-linear-gradient(45deg, ${color.faceLight} 0 8px, ${color.light} 8px 16px);
-  box-shadow: ${bevel.sunken};
-  outline: 1px dashed ${color.shadow};
-  outline-offset: -5px;
-  strong {
-    display: block;
-    font-size: ${text.sm};
-    color: ${color.ink};
-  }
-  span {
-    font-size: ${text.xs};
-    color: ${color.inkMuted};
   }
 `
 
@@ -359,6 +324,16 @@ function initialIndex(): number {
     return i >= 0 ? i : 0
   } catch {
     return 0
+  }
+}
+
+const CHAT_KEY = 'miyatv.chat'
+
+function initialChat(): boolean {
+  try {
+    return window.localStorage.getItem(CHAT_KEY) !== 'off'
+  } catch {
+    return true
   }
 }
 
@@ -382,8 +357,7 @@ export default function TV() {
   const [sourceIndex, setSourceIndex] = useState(0)
   const [staticOn, setStaticOn] = useState(false)
   const [osd, setOsd] = useState(true)
-  // Streams start silent, the only way browsers let them autoplay. Sound stays on across channels once chosen.
-  const [muted, setMuted] = useState(true)
+  const [chatOn, setChatOn] = useState(initialChat)
   const staticTimer = useRef<ReturnType<typeof setTimeout>>()
   const osdTimer = useRef<ReturnType<typeof setTimeout>>()
 
@@ -430,9 +404,14 @@ export default function TV() {
 
   const step = (d: number) => tune(stepChannel(CHANNELS.length, index, d))
 
-  const toggleSound = () => {
-    setMuted((m) => !m)
-    flash()
+  const toggleChat = () => {
+    const next = !chatOn
+    setChatOn(next)
+    try {
+      window.localStorage.setItem(CHAT_KEY, next ? 'on' : 'off')
+    } catch {
+      // ignore
+    }
   }
 
   const onKeyDown = (e: React.KeyboardEvent) => {
@@ -443,9 +422,9 @@ export default function TV() {
         e.preventDefault()
         tune(i)
       }
-    } else if ((e.key === 'm' || e.key === 'M') && hasSoundSwitch(source)) {
+    } else if (e.key === 'c' || e.key === 'C') {
       e.preventDefault()
-      toggleSound()
+      toggleChat()
     } else if (e.key === 'ArrowUp' || e.key === 'PageUp' || e.key === '+') {
       e.preventDefault()
       step(1)
@@ -476,11 +455,11 @@ export default function TV() {
       </TitleBar>
       <Root
         ref={rootRef}
-        className={layout}
+        className={chatOn ? layout : `${layout} no-chat`}
         tabIndex={-1}
         onKeyDown={onKeyDown}
         data-testid="miyatv"
-        aria-label="miyatv. Number keys change channel, arrow up and down step through channels, M turns the sound on or off."
+        aria-label="miyatv. Number keys change channel, arrow up and down step through channels, C shows or hides chat."
       >
         <ChannelList className="channel-list" aria-label="Channels">
           <Eyebrow style={{ padding: '2px 4px 4px' }}>channels</Eyebrow>
@@ -497,16 +476,18 @@ export default function TV() {
 
         <TvColumn>
           <Bezel>
-            <Glass>
-              <Screen channel={channel} source={source} muted={muted} />
-              <Static playing={staticOn} reducedMotion={reducedMotion} />
-              {(osd || staticOn) && (
-                <Osd aria-hidden>
-                  CH {pad(channel.number)}
-                  {layout !== 'narrow' && <div style={{ fontSize: 13 }}>{channel.name}</div>}
-                </Osd>
-              )}
-            </Glass>
+            <Stage>
+              <Glass>
+                <Screen channel={channel} source={source} />
+                <Static playing={staticOn} reducedMotion={reducedMotion} />
+                {(osd || staticOn) && (
+                  <Osd aria-hidden>
+                    CH {pad(channel.number)}
+                    {layout !== 'narrow' && <div style={{ fontSize: 13 }}>{channel.name}</div>}
+                  </Osd>
+                )}
+              </Glass>
+            </Stage>
             <Controls>
               <span className="led" aria-hidden />
               <div className="dial" role="group" aria-label="Channel">
@@ -517,26 +498,10 @@ export default function TV() {
                   CH ▲
                 </button>
               </div>
-              {source && (
-                <button
-                  type="button"
-                  className="sound"
-                  aria-pressed={!muted}
-                  disabled={!hasSoundSwitch(source)}
-                  title={
-                    hasSoundSwitch(source)
-                      ? `Sound ${muted ? 'off' : 'on'} (M). Set the level with the player's own volume slider.`
-                      : 'This player has its own sound button. Use the one on the picture.'
-                  }
-                  onClick={toggleSound}
-                >
-                  {!hasSoundSwitch(source) ? '♪ In player' : muted ? '♪ Sound off' : '♪ Sound on'}
-                </button>
-              )}
               <span className="lcd" aria-live="polite" aria-label={`Channel ${channel.number}`}>
                 {pad(channel.number)}
               </span>
-              {layout === 'wide' ? (
+              {layout === 'wide' && chatOn ? (
                 <span className="name">{channel.name}</span>
               ) : (
                 <select
@@ -568,6 +533,15 @@ export default function TV() {
                   ))}
                 </select>
               )}
+              <button
+                type="button"
+                className="toggle"
+                aria-pressed={chatOn}
+                title={`${chatOn ? 'Hide' : 'Show'} chat (C). Hidden, the picture takes the whole window.`}
+                onClick={toggleChat}
+              >
+                {chatOn ? 'Chat on' : 'Chat off'}
+              </button>
               {source && (
                 <a href={watchUrl(source)} target="_blank" rel="noopener noreferrer">
                   open ↗
@@ -575,35 +549,12 @@ export default function TV() {
               )}
             </Controls>
           </Bezel>
-          {layout !== 'narrow' && (
-            <About>
-              <h3>{channel.name}</h3>
-              <p>{channel.description}</p>
-              {source?.provider === 'kick' && source.placeholder && (
-                <p className="placeholder">
-                  Placeholder Kick channel “{source.slug}”: the real creator list is not set yet.
-                </p>
-              )}
-              <div className="links">
-                {channel.links.map((l) => (
-                  <a key={l.href} href={l.href} target="_blank" rel="noopener noreferrer">
-                    {l.label} ↗
-                  </a>
-                ))}
-              </div>
-            </About>
+          {chatOn && (
+            <ChatDock>
+              <ChatPanel room={channel.id} roomLabel={channel.id} native={native} />
+            </ChatDock>
           )}
         </TvColumn>
-
-        <Side>
-          {channel.markets && (
-            <MarketsSlot data-slot="markets" aria-label="imdUSD markets">
-              <strong>imdUSD markets — coming soon</strong>
-              <span>Markets for this channel are being designed. Nothing to trade here yet.</span>
-            </MarketsSlot>
-          )}
-          <ChatPanel room={channel.id} roomLabel={channel.id} native={native} />
-        </Side>
       </Root>
     </WindowWrapper>
   )

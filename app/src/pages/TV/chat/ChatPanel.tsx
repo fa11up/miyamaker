@@ -69,7 +69,7 @@ const Header = styled.div`
 
 const Log = styled.ol`
   flex: 1 1 auto;
-  min-height: 120px;
+  min-height: 0;
   margin: 0;
   padding: ${space[2]};
   list-style: none;
@@ -192,7 +192,7 @@ const Composer = styled.form`
 
 const Frame = styled.iframe`
   flex: 1 1 auto;
-  min-height: 240px;
+  min-height: 0;
   width: 100%;
   border: none;
   background: #0b0e0f;
@@ -201,7 +201,7 @@ const Frame = styled.iframe`
 
 const Offline = styled.div`
   flex: 1 1 auto;
-  min-height: 120px;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
