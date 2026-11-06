@@ -9,6 +9,7 @@ import { serveRange } from './_lib/ranges'
 import type { D1Like } from './_lib/station'
 import { d1Store, gatewayContentType, handleStationRequest, STATION_PATH } from './_lib/station'
 import { handleTvLiveRequest, TV_LIVE_PATH } from './_lib/tvlive'
+import { CONTRACT_CHECK_PATH, etherscanReader, handleContractCheck } from './_lib/contractcheck'
 import { clientKey, createRateLimiter, handleZeroExRequest, PROXY_PREFIX, sameOrigin } from './_lib/zeroex'
 
 type Env = {
@@ -17,6 +18,8 @@ type Env = {
   OPENSEA_API_KEY?: string
   /** Finds miyatv's current YouTube streams (api/_lib/tvlive.ts). */
   YOUTUBE_API_KEY?: string
+  /** Whether contracts are verified, for My Files' Scam folder (api/_lib/contractcheck.ts). */
+  ETHERSCAN_API_KEY?: string
   /** The radio's community station (migrations/). */
   DB?: D1Like
   /** Wallets that can remove any station track, comma-separated. */
@@ -32,6 +35,7 @@ const guards = {
   fillLimiter: createRateLimiter({ capacity: 10, perSecond: 0.2 }),
 }
 const marketLimiter = createRateLimiter({ capacity: 120, perSecond: 2 })
+const contractCheckLimiter = createRateLimiter({ capacity: 30, perSecond: 0.5 })
 const stationLimiter = createRateLimiter({ capacity: 20, perSecond: 0.2 })
 const publicAccessLimiter = createRateLimiter({ capacity: 20, perSecond: 0.2 })
 
@@ -88,6 +92,17 @@ export default {
           limiter: stationLimiter,
         }
       )
+    }
+
+    if (url.pathname === CONTRACT_CHECK_PATH) {
+      return handleContractCheck(request, {
+        key: env.ETHERSCAN_API_KEY,
+        etherscan: env.ETHERSCAN_API_KEY ? etherscanReader(env.ETHERSCAN_API_KEY) : undefined,
+        cache: edgeCache((caches as unknown as { default?: Cache }).default),
+        sameOrigin,
+        clientKey,
+        limiter: contractCheckLimiter,
+      })
     }
 
     if (url.pathname === TV_LIVE_PATH) {

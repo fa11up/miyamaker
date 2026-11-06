@@ -4,6 +4,7 @@ import { erc20Abi, formatUnits } from 'viem'
 import { mainnet } from 'viem/chains'
 import { useBalance, usePublicClient, useReadContracts } from 'wagmi'
 
+import { CONTRACT_CHECK_PATH } from '../../../api/_lib/contractcheck'
 import { DESKTOP_COLLECTIONS } from '../collections'
 import { getNftIndexer } from './indexer'
 
@@ -77,6 +78,31 @@ export function useTokenDocs(owner: Address | undefined): TokenDoc[] {
     })
   })
   return docs
+}
+
+const CHECK_BATCH = 20
+
+/** Etherscan's word on each contract. Anything it has not answered is simply missing. */
+export function useContractChecks(contracts: string[]) {
+  const list = [...new Set(contracts.map((c) => c.toLowerCase()))].sort()
+  return useQuery({
+    queryKey: ['contract-checks', list.join()],
+    enabled: list.length > 0,
+    staleTime: 10 * 60_000,
+    retry: 1,
+    queryFn: async () => {
+      const batches = Array.from({ length: Math.ceil(list.length / CHECK_BATCH) }, (_, i) =>
+        list.slice(i * CHECK_BATCH, (i + 1) * CHECK_BATCH),
+      )
+      const answers = await Promise.all(
+        batches.map(async (batch) => {
+          const res = await fetch(`${CONTRACT_CHECK_PATH}?a=${batch.join(',')}`)
+          return res.ok ? ((await res.json()) as { verified: Record<string, boolean> }).verified : {}
+        }),
+      )
+      return Object.assign({}, ...answers) as Record<string, boolean>
+    },
+  })
 }
 
 export function useWalletNfts(owner: Address | undefined) {

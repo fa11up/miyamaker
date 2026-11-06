@@ -9,6 +9,15 @@ export interface OwnedNft {
   /** safe http(s)/data:image URL or '' */
   image: string
   externalUrl: string
+  /** The largest copy, for the popup and viewer. `image` may be a thumbnail. */
+  fullImage?: string
+  /** The indexer flagged the contract as spam. */
+  spam?: boolean
+  /** The indexer's own copies of the image, which never touch the server the metadata points at. */
+  hostedThumb?: string
+  hostedFull?: string
+  /** Why it is in the Scam folder. */
+  scamReason?: string
 }
 
 export interface IndexerResult {
