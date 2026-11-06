@@ -8,10 +8,11 @@ import { font } from '@/theme/tokens'
 import {
   CELL_H,
   CELL_W,
+  cjkFamily,
   clockDigits,
   DIGIT_H,
   digitPath,
-  hasJapanese,
+  hasCjk,
   pixelsToPath,
   textPath,
   textWidth,
@@ -68,49 +69,49 @@ const MarqueeBox = styled.div`
   }
 `
 
-const KANJI_H = 8
-const KANJI_BASELINE = 6
-const KANJI_STEP = 4
-const KANJI_FONT = `${KANJI_H}px 'Misaki Gothic'`
+const CJK_H = 8
+const CJK_BASELINE = 7
+const CJK_STEP = 4
 
-/** Japanese needs 8x8 dots: drawn through Misaki on a canvas, then back into the same kind of whole-pixel path. */
-function drawKanji(text: string) {
+/** CJK needs 8x8 dots: drawn through Fusion Pixel on a canvas, then back into the same kind of whole-pixel path. */
+function drawCjk(text: string, font: string) {
   const ctx = document.createElement('canvas').getContext('2d', { willReadFrequently: true })
   if (!ctx) return undefined
-  ctx.font = KANJI_FONT
+  ctx.font = font
   const w = Math.ceil(ctx.measureText(text).width)
   // Resizing a canvas clears its font too.
   ctx.canvas.width = Math.max(1, w)
-  ctx.canvas.height = KANJI_H
-  ctx.font = KANJI_FONT
-  ctx.fillText(text, 0, KANJI_BASELINE)
-  return { text, w, d: pixelsToPath(ctx.getImageData(0, 0, ctx.canvas.width, KANJI_H).data, ctx.canvas.width, KANJI_H) }
+  ctx.canvas.height = CJK_H
+  ctx.font = font
+  ctx.fillText(text, 0, CJK_BASELINE)
+  return { text, w, d: pixelsToPath(ctx.getImageData(0, 0, ctx.canvas.width, CJK_H).data, ctx.canvas.width, CJK_H) }
 }
 
-function KanjiMarquee({ value, width, style }: { value: string; width: number; style?: CSSProperties }) {
+function CjkMarquee({ value, width, style }: { value: string; width: number; style?: CSSProperties }) {
   const [drawn, setDrawn] = useState<{ value: string; fits: boolean; step: number; w: number; d: string }>()
 
   useEffect(() => {
     let live = true
     const upper = value.toUpperCase()
+    const font = `${CJK_H}px '${cjkFamily(value)}'`
     const draw = () => {
       if (!live) return
-      const single = drawKanji(upper)
+      const single = drawCjk(upper, font)
       if (!single) return
       const fits = single.w <= width
-      const line = fits ? single : drawKanji(`${upper}  ***  `)
-      const both = fits || !line ? line : drawKanji(line.text + line.text)
+      const line = fits ? single : drawCjk(`${upper}  ***  `, font)
+      const both = fits || !line ? line : drawCjk(line.text + line.text, font)
       if (line && both) setDrawn({ value, fits, step: line.w, w: both.w, d: both.d })
     }
 
-    document.fonts.load(KANJI_FONT, value).then(draw, draw)
+    document.fonts.load(font, value).then(draw, draw)
     return () => {
       live = false
     }
   }, [value, width])
 
   const ready = drawn?.value === value ? drawn : undefined
-  const steps = ready ? Math.ceil(ready.step / KANJI_STEP) : 0
+  const steps = ready ? Math.ceil(ready.step / CJK_STEP) : 0
   return (
     <MarqueeBox
       className="marquee"
@@ -118,9 +119,9 @@ function KanjiMarquee({ value, width, style }: { value: string; width: number; s
       style={{
         ...style,
         width,
-        height: KANJI_H,
+        height: CJK_H,
         marginTop: -1,
-        ['--marquee-x' as string]: `${-steps * KANJI_STEP}px`,
+        ['--marquee-x' as string]: `${-steps * CJK_STEP}px`,
         ['--marquee-n' as string]: steps,
         ['--marquee-s' as string]: `${steps * 0.16}s`,
       }}
@@ -130,8 +131,8 @@ function KanjiMarquee({ value, width, style }: { value: string; width: number; s
           className={ready.fits ? undefined : 'run'}
           style={{ display: 'block' }}
           width={ready.w}
-          height={KANJI_H}
-          viewBox={`0 0 ${ready.w} ${KANJI_H}`}
+          height={CJK_H}
+          viewBox={`0 0 ${ready.w} ${CJK_H}`}
           fill="currentColor"
           shapeRendering="crispEdges"
           aria-hidden="true"
@@ -145,7 +146,7 @@ function KanjiMarquee({ value, width, style }: { value: string; width: number; s
 
 /** One line of pixel text that scrolls a cell at a time when it doesn't fit. */
 export function Marquee({ value, width, style }: { value: string; width: number; style?: CSSProperties }) {
-  if (hasJapanese(value)) return <KanjiMarquee value={value} width={width} style={style} />
+  if (hasCjk(value)) return <CjkMarquee value={value} width={width} style={style} />
   const fits = textWidth(value) <= width
   const shown = fits ? value : `${value}  ***  `
   const chars = textWidth(shown) / CELL_W

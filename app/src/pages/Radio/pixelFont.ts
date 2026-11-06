@@ -100,8 +100,13 @@ export function textPath(text: string) {
   return d
 }
 
-/** Hiragana, katakana, kanji and full-width forms: more than the 4x5 font can draw. */
-export const hasJapanese = (text: string) => /[\u3000-\u30ff\u3400-\u9fff\uf900-\ufaff\uff00-\uffef]/.test(text)
+/** Japanese, Chinese and Korean: more than the 4x5 font can draw. */
+export const hasCjk = (text: string) =>
+  /[\u1100-\u11ff\u3000-\u318f\u3400-\u9fff\uac00-\ud7af\uf900-\ufaff\uff00-\uffef]/.test(text)
+
+/** Kana means Japanese, which draws some kanji differently. The other face covers Chinese and Korean. */
+export const cjkFamily = (text: string) =>
+  /[\u3040-\u30ff\uff66-\uff9f]/.test(text) ? 'Fusion Pixel JA' : 'Fusion Pixel SC'
 
 /** Canvas RGBA data as one path of whole pixels, each solid run a single rectangle. */
 export function pixelsToPath(rgba: ArrayLike<number>, width: number, height: number) {

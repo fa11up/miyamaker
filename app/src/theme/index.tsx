@@ -165,10 +165,16 @@ export const ThemedGlobalStyle = createGlobalStyle`
   font-display: swap;
 }
 
-/* The radio screen's Japanese, 8x8 dots by Num Kadoma. Only fetched when a Japanese title comes on. */
+/* The radio screen's CJK titles, 8px dots by TakWolf. Each file is only fetched when a title needs it. */
 @font-face {
-  font-family: 'Misaki Gothic';
-  src: url("/fonts/misaki/misaki_gothic.woff2") format("woff2");
+  font-family: 'Fusion Pixel JA';
+  src: url("/fonts/fusion-pixel/fusion-pixel-8px-monospaced-ja.otf.woff2") format("woff2");
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Fusion Pixel SC';
+  src: url("/fonts/fusion-pixel/fusion-pixel-8px-monospaced-zh_hans.otf.woff2") format("woff2");
   font-display: swap;
 }
 

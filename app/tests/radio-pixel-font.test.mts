@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { clockDigits, digitPath, foldText, hasJapanese, pixelsToPath, textPath, textWidth } from '../src/pages/Radio/pixelFont.ts'
+import { cjkFamily, clockDigits, digitPath, foldText, hasCjk, pixelsToPath, textPath, textWidth } from '../src/pages/Radio/pixelFont.ts'
 
 test('text folds to capitals, drops accents, and marks what the font lacks', () => {
   assert.equal(foldText('Café milady'), 'CAFE MILADY')
@@ -19,11 +19,19 @@ test('the second character is drawn one cell along', () => {
   assert.match(textPath(' I'), /^M5 0/)
 })
 
-test('Japanese is told apart from what the 4x5 font can draw', () => {
-  assert.ok(hasJapanese('IMDガールズ'))
-  assert.ok(hasJapanese('金庫のドル'))
-  assert.ok(hasJapanese('ひらがな'))
-  assert.ok(!hasJapanese('Café milady - 3:03'))
+test('CJK is told apart from what the 4x5 font can draw', () => {
+  assert.ok(hasCjk('IMDガールズ'))
+  assert.ok(hasCjk('金庫のドル'))
+  assert.ok(hasCjk('夜晚的电台'))
+  assert.ok(hasCjk('밤의 라디오'))
+  assert.ok(!hasCjk('Café milady - 3:03'))
+})
+
+test('kana picks the Japanese face, everything else the other one', () => {
+  assert.equal(cjkFamily('金庫のドル'), 'Fusion Pixel JA')
+  assert.equal(cjkFamily('ｶﾀｶﾅ'), 'Fusion Pixel JA')
+  assert.equal(cjkFamily('夜晚的电台'), 'Fusion Pixel SC')
+  assert.equal(cjkFamily('밤의 라디오'), 'Fusion Pixel SC')
 })
 
 test('canvas pixels become rectangles, one per solid run', () => {
