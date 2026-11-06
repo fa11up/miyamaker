@@ -80,8 +80,14 @@ export async function handleContractCheck(request: Request, deps: ContractCheckD
       // eslint-disable-next-line no-await-in-loop
       await Promise.all(
         toAsk.slice(i, i + AT_ONCE).map(async (address) => {
-          const verdict = readVerdict(await ask(address).catch(() => undefined))
-          if (verdict === undefined) return
+          const answer = await ask(address).catch((e: Error) => ({ result: e.message }))
+          const verdict = readVerdict(answer)
+          if (verdict === undefined) {
+            // Unknown is safe but silent, so the logs say why. Etherscan's words and the status, never the URL or key.
+            console.warn(`contract check: ${String((answer as { result?: unknown })?.result).slice(0, 120)}`)
+            return
+          }
+
           verified[address] = verdict
           await deps.cache.put(`contract-verified:v1:${address}`, { at: now, body: verdict }).catch(() => undefined)
         }),
