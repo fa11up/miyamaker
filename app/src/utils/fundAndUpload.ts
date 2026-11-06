@@ -16,9 +16,9 @@ const GATEWAY_BASE = (import.meta.env.VITE_IRYS_GATEWAY || 'https://gateway.irys
 export type UploadStatus = (words: string) => void
 
 /** Pay a little over the price, so a small price move between paying and uploading does not fail the upload. */
-const PRICE_MARGIN = 1.1
+export const PRICE_MARGIN = 1.1
 /** Irys stores files up to 100 KiB free; leave room for the signature and tags. */
-const FREE_BYTES = 90 * 1024
+export const FREE_BYTES = 90 * 1024
 const CREDIT_POLL_MS = 10_000
 const CREDIT_WAIT_MS = 15 * 60_000
 
