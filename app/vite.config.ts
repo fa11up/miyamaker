@@ -12,6 +12,8 @@ import svgr from 'vite-plugin-svgr'
 
 import { handleMarketRequest, MARKET_PREFIX, memoryCache, openSeaReader } from './api/_lib/market'
 import { handleOpenSeaRequest, OPENSEA_PROXY_PATH, quoteBigInts } from './api/_lib/opensea'
+import { handlePublicAccessRequest, memoryTapeStore, PUBLIC_ACCESS_PATH, youtubeLookup } from './api/_lib/publicaccess'
+import { handleTvLiveRequest, TV_LIVE_PATH } from './api/_lib/tvlive'
 import { gatewayContentType, handleStationRequest, memoryStore, STATION_PATH } from './api/_lib/station'
 import { clientKey, createRateLimiter, handleZeroExRequest, PROXY_PREFIX, sameOrigin } from './api/_lib/zeroex'
 
@@ -140,12 +142,68 @@ function stationDevProxy(): Plugin {
   }
 }
 
+/** Dev-only stand-in for the Worker's stream lookup. YOUTUBE_API_KEY from the shell or app/.env.local. */
+function tvLiveDevProxy(env: Record<string, string>): Plugin {
+  const cache = memoryCache()
+  return {
+    name: 'miya-tv-live-dev-proxy',
+    configureServer(server) {
+      server.middlewares.use(TV_LIVE_PATH, async (req, res) => {
+        const response = await handleTvLiveRequest(
+          { method: req.method || 'GET' },
+          { key: process.env.YOUTUBE_API_KEY || env.YOUTUBE_API_KEY, cache }
+        )
+        res.statusCode = response.status
+        response.headers.forEach((value, key) => res.setHeader(key, value))
+        res.end(await response.text())
+      })
+    },
+  }
+}
+
+/** Dev-only stand-in for the Worker's public access route, kept in memory. STATION_ADMINS from the shell. */
+function publicAccessDevProxy(): Plugin {
+  const store = memoryTapeStore()
+  const limiter = createRateLimiter({ capacity: 200, perSecond: 5 })
+  return {
+    name: 'miya-public-access-dev-proxy',
+    configureServer(server) {
+      server.middlewares.use(PUBLIC_ACCESS_PATH, async (req, res) => {
+        const headers = new Headers()
+        for (const [k, v] of Object.entries(req.headers)) if (typeof v === 'string') headers.set(k, v)
+        let body = ''
+        if (req.method === 'POST') for await (const chunk of req) body += chunk
+        const host = req.headers.host || 'localhost'
+        const rest = req.url && req.url !== '/' ? req.url : ''
+        const response = await handlePublicAccessRequest(
+          { method: req.method || 'GET', url: `http://${host}${PUBLIC_ACCESS_PATH}${rest}`, headers, body },
+          {
+            store,
+            admins: (process.env.STATION_ADMINS ?? '').split(',').filter(Boolean),
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            verify: (address, message, signature) => verifyMessage({ address: address as any, message, signature: signature as any }),
+            lookup: youtubeLookup,
+            sameOrigin,
+            clientKey,
+            limiter,
+          }
+        )
+        res.statusCode = response.status
+        response.headers.forEach((value, key) => res.setHeader(key, value))
+        res.end(await response.text())
+      })
+    },
+  }
+}
+
 export default defineConfig(({ mode }) => ({
   base: '/',
   plugins: [
     zeroExDevProxy(loadEnv(mode, __dirname, ['ZEROX_'])),
     openSeaDevProxy(loadEnv(mode, __dirname, ['OPENSEA_'])),
     stationDevProxy(),
+    publicAccessDevProxy(),
+    tvLiveDevProxy(loadEnv(mode, __dirname, ['YOUTUBE_'])),
     marketDevProxy(loadEnv(mode, __dirname, ['OPENSEA_'])),
     react(),
     dynamicImport(),

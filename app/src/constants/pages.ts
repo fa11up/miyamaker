@@ -23,7 +23,7 @@ export type Page = {
   }
   /** Draws its own shape with no window behind it: only what it paints takes clicks. */
   shaped?: boolean
-  /** Always opens at minSize and keeps it: no resizing, no remembered size. */
+  /** Always opens at minSize and can't be dragged to another size (maximize still works). */
   fixedSize?: boolean
   /** Rounds the whole window to this radius, in px. */
   corner?: number

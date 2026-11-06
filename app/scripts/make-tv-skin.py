@@ -106,7 +106,20 @@ def moulding(w=512, h=76):
     save("moulding.webp", colour_map(np.clip(value, 0, 1), GOLD), 88)
 
 
+def paper(size=512):
+    """Cheap newsprint for the printed guide: warm cream, soft mottling, tiny fibres."""
+    mottle = noise(size, size, 5, 5, 1.6)
+    fibres = noise(size, size, 90, 90, 0.5)
+    value = 0.55 + 0.05 * mottle + 0.07 * fibres
+    save(
+        "paper.webp",
+        colour_map(np.clip(value, 0, 1), [(0.0, (214, 198, 160)), (0.5, (240, 228, 198)), (1.0, (250, 242, 220))]),
+        80,
+    )
+
+
 if __name__ == "__main__":
     wood()
     gold()
     moulding()
+    paper()

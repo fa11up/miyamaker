@@ -6,6 +6,7 @@ import type { Channel } from '../src/pages/TV/channels.ts'
 import {
   CHANNELS,
   CHAT_MIN,
+  GUIDE_SECTIONS,
   clampChat,
   embedSrc,
   indexOfNumber,
@@ -39,6 +40,7 @@ test('registry validation catches bad entries', () => {
       id: 'k',
       number: 5,
       kind: 'iframe',
+      section: 'Creators',
       name: 'k',
       tagline: '',
       description: '',
@@ -54,12 +56,13 @@ test('registry validation catches bad entries', () => {
   assert.match(problems, /bad kick slug/)
 })
 
-test('fish tank is external (it cannot be framed), squeekchain and kick are iframes', () => {
+test('the line-up: each kind where it should be, and every channel listed in the guide', () => {
   const byId = Object.fromEntries(CHANNELS.map((c) => [c.id, c]))
-  assert.equal(byId.fishtank?.kind, 'external')
-  assert.equal(byId.squeekchain?.kind, 'iframe')
+  assert.equal(byId.squeekchain?.kind, 'show')
+  assert.equal(byId['public-access']?.kind, 'show')
   assert.equal(byId['kick-imdusd']?.kind, 'iframe')
-  assert.equal(byId['kick-imdusd']?.markets, true)
+  assert.equal(byId.lofi?.kind, 'iframe')
+  assert.ok(CHANNELS.every((c) => GUIDE_SECTIONS.includes(c.section)))
 })
 
 test('embed and watch URLs', () => {
@@ -67,6 +70,7 @@ test('embed and watch URLs', () => {
     embedSrc({ provider: 'kick', slug: 'someone', label: 's' }),
     'https://player.kick.com/someone?autoplay=true&muted=false'
   )
+  assert.equal(watchUrl({ provider: 'youtube', videoId: 'rFZHOHl-L8A', label: 'y' }), 'https://www.youtube.com/watch?v=rFZHOHl-L8A')
   assert.equal(
     embedSrc({ provider: 'x-broadcast', broadcastId: '1qGoNYoyoRlKv', label: 'x' }),
     'https://studio.x.com/embed/broadcast/1qGoNYoyoRlKv?dnt=true&lang=en'
@@ -78,7 +82,7 @@ test('embed and watch URLs', () => {
   )
 })
 
-test('native chat: kick frames, X and external sites link out', () => {
+test('native chat: kick frames, YouTube links out, shows have none', () => {
   const kick = CHANNELS.find((c) => c.id === 'kick-imdusd')!
   const kickSource = kick.kind === 'iframe' ? kick.sources[0] : undefined
   assert.deepEqual(nativeChatFor(kick, kickSource), {
@@ -86,10 +90,13 @@ test('native chat: kick frames, X and external sites link out', () => {
     src: 'https://kick.com/popout/xqc/chat',
     label: 'kick chat',
   })
-  const sq = CHANNELS.find((c) => c.id === 'squeekchain')!
-  assert.equal(nativeChatFor(sq, sq.kind === 'iframe' ? sq.sources[0] : undefined)?.kind, 'link')
-  const fish = CHANNELS.find((c) => c.id === 'fishtank')!
-  assert.deepEqual(nativeChatFor(fish), { kind: 'link', href: 'https://www.fishtank.live/', label: 'fishtank.live chat' })
+  assert.equal(nativeChatFor(CHANNELS.find((c) => c.id === 'squeekchain')!), undefined)
+  const lofi = CHANNELS.find((c) => c.id === 'lofi')!
+  assert.deepEqual(nativeChatFor(lofi, lofi.kind === 'iframe' ? lofi.sources[0] : undefined), {
+    kind: 'link',
+    href: 'https://www.youtube.com/watch?v=rFZHOHl-L8A',
+    label: 'YouTube chat',
+  })
 })
 
 test('channel dial wraps both ways; number lookup', () => {

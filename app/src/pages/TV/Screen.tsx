@@ -3,7 +3,9 @@ import styled from 'styled-components/macro'
 import { color, font, space, text } from '@/theme/tokens'
 
 import type { Channel, Source } from './channels'
-import { embedSrc, hostOf } from './channels'
+import { embedSrc } from './channels'
+import { PublicShow, RadioShow, SqueekShow } from './shows'
+import YouTubePlayer from './YouTubePlayer'
 
 const Player = styled.iframe`
   position: absolute;
@@ -80,42 +82,43 @@ const Card = styled.div`
   }
 `
 
-const Watch = styled.a`
-  position: relative;
-  z-index: 1;
-  display: inline-flex;
-  align-items: center;
-  gap: ${space[2]};
-  min-height: 48px;
-  padding: 0 ${space[5]};
-  border-radius: 5px;
-  background: linear-gradient(180deg, #f2a23c 0%, #cf6a1c 100%);
-  color: #fff7e6;
-  font-family: ${font.display};
-  font-size: ${text.lg};
-  letter-spacing: 0.04em;
-  text-decoration: none;
-  text-shadow: 1px 1px 0 #6e3208;
-  box-shadow: 0 3px 0 #6e3208, inset 0 1px 0 rgba(255, 255, 255, 0.45);
-  &:hover {
-    filter: brightness(1.07);
+export default function Screen({
+  channel,
+  source,
+  volume,
+  muted,
+  onAutoMuted,
+  tapeId,
+  onTape,
+  reducedMotion,
+}: {
+  channel: Channel
+  source: Source | undefined
+  volume: number
+  muted: boolean
+  onAutoMuted: () => void
+  tapeId?: string
+  onTape: (videoId: string) => void
+  reducedMotion: boolean
+}) {
+  if (channel.kind === 'show') {
+    if (channel.show === 'radio') return <RadioShow reducedMotion={reducedMotion} />
+    if (channel.show === 'squeek') return <SqueekShow />
+    return <PublicShow tapeId={tapeId} onNext={onTape} volume={volume} muted={muted} onAutoMuted={onAutoMuted} />
   }
-  &:active {
-    transform: translateY(2px);
-    box-shadow: 0 1px 0 #6e3208;
-  }
-  &:focus-visible {
-    outline: 2px dotted ${color.highlight};
-    outline-offset: 3px;
-  }
-  .narrow & {
-    font-size: ${text.sm};
-    padding: 0 ${space[3]};
-    min-height: 44px;
-  }
-`
 
-export default function Screen({ channel, source }: { channel: Channel; source: Source | undefined }) {
+  if (channel.kind === 'iframe' && source?.provider === 'youtube') {
+    return (
+      <YouTubePlayer
+        key={source.videoId}
+        videoId={source.videoId}
+        volume={volume}
+        muted={muted}
+        onAutoMuted={onAutoMuted}
+      />
+    )
+  }
+
   if (channel.kind === 'iframe' && source) {
     const src = embedSrc(source)
     return (
@@ -130,22 +133,6 @@ export default function Screen({ channel, source }: { channel: Channel; source: 
         allowFullScreen
         referrerPolicy="strict-origin-when-cross-origin"
       />
-    )
-  }
-
-  if (channel.kind === 'external') {
-    return (
-      <Card data-testid="tv-external-card">
-        <span className="tag">CH {String(channel.number).padStart(2, '0')} · external</span>
-        <h2>{channel.name}</h2>
-        <p className="tagline">{channel.tagline}</p>
-        <Watch href={channel.href} target="_blank" rel="noopener noreferrer">
-          {channel.cta} ↗
-        </Watch>
-        <p style={{ fontSize: 12 }}>
-          {hostOf(channel.href)} can’t be embedded, so it opens in a new tab. Chat stays here.
-        </p>
-      </Card>
     )
   }
 
