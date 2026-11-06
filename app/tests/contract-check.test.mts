@@ -21,6 +21,7 @@ const deps = (over = {}) => ({
   sameOrigin: () => true,
   clientKey: () => 'me',
   limiter: () => true,
+  wait: async () => undefined,
   ...over,
 })
 const ask = (query: string) => new Request(`https://www.miyamaker.com/api/contracts/verified?a=${query}`)
@@ -46,6 +47,25 @@ test('answers per address, and a failure is left unknown', async () => {
     }),
   )
   assert.deepEqual(await res.json(), { verified: { [A]: false } })
+})
+
+test('a rate limit is tried again once, and stays unknown if it persists', async () => {
+  let calls = 0
+  const once = await handleContractCheck(
+    ask(A),
+    deps({
+      etherscan: async () => {
+        calls += 1
+        return calls === 1 ? { status: '0', result: 'Max calls per sec rate limit reached (3/sec)' } : VERIFIED
+      },
+    }),
+  )
+  assert.deepEqual(await once.json(), { verified: { [A]: true } })
+  const never = await handleContractCheck(
+    ask(A),
+    deps({ etherscan: async () => ({ status: '0', result: 'Max calls per sec rate limit reached (3/sec)' }) }),
+  )
+  assert.deepEqual(await never.json(), { verified: {} })
 })
 
 test('with no key nothing is called unverified', async () => {

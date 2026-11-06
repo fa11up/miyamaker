@@ -90,17 +90,18 @@ export function useContractChecks(contracts: string[]) {
     enabled: list.length > 0,
     staleTime: 10 * 60_000,
     retry: 1,
+    // Anything Etherscan could not answer yet (it is rate limited) gets asked again.
+    refetchInterval: (query) => (list.some((c) => query.state.data?.[c] === undefined) ? 60_000 : false),
     queryFn: async () => {
-      const batches = Array.from({ length: Math.ceil(list.length / CHECK_BATCH) }, (_, i) =>
-        list.slice(i * CHECK_BATCH, (i + 1) * CHECK_BATCH),
-      )
-      const answers = await Promise.all(
-        batches.map(async (batch) => {
-          const res = await fetch(`${CONTRACT_CHECK_PATH}?a=${batch.join(',')}`)
-          return res.ok ? ((await res.json()) as { verified: Record<string, boolean> }).verified : {}
-        }),
-      )
-      return Object.assign({}, ...answers) as Record<string, boolean>
+      const verified: Record<string, boolean> = {}
+      // One batch at a time: the server is pacing itself to Etherscan's limit.
+      for (let i = 0; i < list.length; i += CHECK_BATCH) {
+        // eslint-disable-next-line no-await-in-loop
+        const res = await fetch(`${CONTRACT_CHECK_PATH}?a=${list.slice(i, i + CHECK_BATCH).join(',')}`)
+        // eslint-disable-next-line no-await-in-loop
+        if (res.ok) Object.assign(verified, ((await res.json()) as { verified: Record<string, boolean> }).verified)
+      }
+      return verified
     },
   })
 }
