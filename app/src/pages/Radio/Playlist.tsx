@@ -4,6 +4,7 @@ import styled from 'styled-components/macro'
 import type { RadioApi } from '@/context/RadioProvider'
 import { formatDuration } from '@/music/audio'
 import type { PlaylistSource } from '@/music/types'
+import { useStationRemove } from '@/music/useStationRemove'
 import { font } from '@/theme/tokens'
 
 import { Key, Menu, PixelText } from './parts'
@@ -130,6 +131,9 @@ export default function Playlist({
   const { queue } = radio
   const [selected, setSelected] = useState<number[]>([])
   const [menu, setMenu] = useState<MenuId>()
+  const station = useStationRemove()
+  const [takingOff, setTakingOff] = useState(false)
+  const [takeOffFailed, setTakeOffFailed] = useState(false)
   const listRef = useRef<HTMLOListElement>(null)
 
   useEffect(() => {
@@ -149,6 +153,22 @@ export default function Playlist({
     // Highest first, so the earlier positions stay put.
     ;[...selected].sort((a, b) => b - a).forEach((i) => radio.remove(i))
     setMenu(undefined)
+  }
+
+  const offStation = selected.filter((i) => station.canRemove(queue.tracks[i])).sort((a, b) => b - a)
+  const takeOff = async () => {
+    setTakingOff(true)
+    setTakeOffFailed(false)
+    try {
+      const tracks = offStation.map((i) => queue.tracks[i]!)
+      for (const t of tracks) await station.remove(t)
+      offStation.forEach((i) => radio.remove(i))
+      setMenu(undefined)
+    } catch {
+      setTakeOffFailed(true)
+    } finally {
+      setTakingOff(false)
+    }
   }
 
   const footKey = (id: MenuId, label: string, width: number, title: string) => (
@@ -282,6 +302,11 @@ export default function Playlist({
             <button type="button" disabled={!selected.length} onClick={removeSelected}>
               Remove selected
             </button>
+            {offStation.length > 0 && (
+              <button type="button" disabled={takingOff} onClick={takeOff}>
+                {takeOffFailed ? 'Failed. Try again?' : takingOff ? 'Check your wallet…' : 'Take off the station'}
+              </button>
+            )}
             <button
               type="button"
               disabled={!queue.tracks.length}

@@ -287,6 +287,15 @@ export function useDropMusic() {
     [address, chain, uploaded, launched]
   )
 
+  /** Store one file outside a release (the community station). The release reuses it, so nothing is paid twice. */
+  const store = async (id: 'audio' | 'cover', file: File) => {
+    const known = uploaded[id]
+    if (known) return known
+    const uri = await upload(id, file)
+    setUploaded((u) => ({ ...u, [id]: uri }))
+    return uri
+  }
+
   const reset = () => {
     setSteps({ audio: 'idle', cover: 'idle', metadata: 'idle', deploy: 'idle', edition: 'idle' })
     setUploaded({})
@@ -310,5 +319,5 @@ export function useDropMusic() {
     }))
   }
 
-  return { steps, uploaded, launched, error, running, run, reset, invalidate }
+  return { steps, uploaded, launched, error, running, run, store, reset, invalidate }
 }
