@@ -1,5 +1,6 @@
 import { STATION_PATH, type StationRow } from '../../api/_lib/station'
 import { addMessage, removeMessage } from '../../api/_lib/station'
+import { stationFailWords } from './creatorWords'
 import type { PlaylistSource, Track } from './types'
 
 /** The radio's community station on the Worker (api/_lib/station.ts). */
@@ -10,7 +11,7 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
     throw new Error('Could not reach the station. Check your connection and try again.')
   })
   const json = (await res.json().catch(() => ({}))) as T & { error?: string }
-  if (!res.ok) throw new Error(json.error || `The station answered ${res.status}.`)
+  if (!res.ok) throw new Error(stationFailWords(res.status, json.error))
   return json
 }
 

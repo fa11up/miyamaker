@@ -1,12 +1,13 @@
 import { useConnectModal } from '@rainbow-me/rainbowkit'
-import { useEffect, useState } from 'react'
+import { Fragment, useEffect, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import styled from 'styled-components/macro'
 import { useElementSize } from 'usehooks-ts'
+import { formatEther } from 'viem'
 import { useAccount, useSwitchChain } from 'wagmi'
 
 import LoadingHourglass from '@/assets/loading_hourglass.gif'
-import { DropZone, SmallButton, SplitMeter, TxSteps } from '@/components/LaunchKit'
+import { CloseGuardBox, DropZone, SmallButton, SplitMeter, TxSteps, useCloseGuard } from '@/components/LaunchKit'
 import { BigButton, Chip, DisplayTitle, Eyebrow, Panel, StatusBox, Well } from '@/components/Retro'
 import { y2kSkin } from '@/components/Retro/y2k'
 import TitleBar from '@/components/TitleBar'
@@ -16,25 +17,32 @@ import Pages from '@/constants/pages'
 import type { LaunchForm, LaunchType, StepKey } from '@/miyamints/launch'
 import {
   AUCTION_TIME_BUFFER_SECONDS,
+  draftHasData,
   EMPTY_FORM,
   parseAlignmentPct,
+  parseEth,
   parseRoyaltyPct,
   parseVault,
+  phaseLine,
   STEP_ORDER,
   txPlan,
   validateStep,
+  whenWords,
 } from '@/miyamints/launch'
 import { pctLabel } from '@/miyamints/split'
 import { useLaunchChain, useRegistryRules, useVaultInfo } from '@/miyamints/useMiyamints'
 import { useOpenManage } from '@/miyamints/useOpenManage'
 import { validateAudioFile, validateImageFile } from '@/music/audio'
+import { nextStepsWords, storageWords, storedBytes } from '@/music/creatorWords'
 import { readAudioDuration } from '@/music/readDuration'
 import { useOpenApp } from '@/music/useOpenApp'
 import { useAppDispatch } from '@/store/hooks'
 import { closeWindow, minimizeWindow } from '@/store/windows/actions'
 import { useFullscreen } from '@/store/windows/hooks'
 import { color, font, space, text } from '@/theme/tokens'
+import { FREE_BYTES } from '@/utils/fundAndUpload'
 import { resolveUri } from '@/utils/resolveUri'
+import { useStorageQuote } from '@/utils/useStorageQuote'
 
 import goldSkin from './skin/gold.webp'
 import malachiteSkin from './skin/malachite.webp'
@@ -49,7 +57,7 @@ const STEP_LABEL: Record<StepKey, string> = {
   type: 'Type',
   art: 'Artwork',
   sale: 'Price & supply',
-  align: 'Community',
+  align: 'Vault share',
   review: 'Review',
 }
 
@@ -59,6 +67,8 @@ const Layout = styled.div`
   /* Always there: a scrollbar coming and going with the step's height would nudge the page sideways. */
   overflow-y: scroll;
   overflow-x: hidden;
+  /* Long steps: a field scrolled to must not end up under the sticky footer. */
+  scroll-padding-bottom: 96px;
   ${y2kSkin({
     ink: '#12261e',
     inkSoft: '#4a5f53',
@@ -130,6 +140,10 @@ const Layout = styled.div`
     border-radius: 3px;
     box-shadow: inset 0 1px 2px rgba(2, 20, 15, 0.15);
   }
+  && input[aria-invalid='true'],
+  && textarea[aria-invalid='true'] {
+    box-shadow: inset 0 0 0 2px ${color.danger};
+  }
   && ${StatusBox} {
     background: #fbf8ee;
   }
@@ -164,6 +178,17 @@ const Layout = styled.div`
     outline: 2px solid #8d7338;
     outline-offset: 1px;
   }
+  && ${CloseGuardBox} {
+    border: 1px solid #b39a5e;
+    border-radius: 4px;
+    background: #fbf8ee;
+    color: #12261e;
+  }
+  && ${CloseGuardBox} .keep:not(:disabled) {
+    border-color: #6e5a2a;
+    background: #c9b27a url(${goldSkin}) 0 0 / 256px 256px;
+    font-weight: 700;
+  }
   ${PreviewCard} ${Eyebrow}, ${PreviewCard} ${DisplayTitle} {
     color: #4a5f53 !important;
     text-shadow: none !important;
@@ -186,6 +211,9 @@ const Inner = styled.div`
   padding: ${space[3]};
   max-width: 1100px;
   margin: 0 auto;
+  /* Fills the window, so the footer meets its bottom edge on a short step. */
+  box-sizing: border-box;
+  min-height: 100%;
 `
 
 const Head = styled.header`
@@ -223,6 +251,10 @@ const Rail = styled.ol`
   li button:disabled {
     color: #93a79b;
     cursor: default;
+  }
+  li button:disabled .n {
+    background: #3f5a4d;
+    color: #93a79b;
   }
   li button[aria-current='step'] {
     border-color: #6e5a2a;
@@ -267,7 +299,7 @@ const Foot = styled.div`
   position: sticky;
   bottom: 0;
   z-index: 1;
-  margin: 0 -${space[3]} -${space[3]};
+  margin: auto -${space[3]} -${space[3]};
   padding: ${space[2]} ${space[3]} ${space[3]};
   border-top: 1px solid #b39a5e;
   background: #031c16;
@@ -339,6 +371,9 @@ export default function LaunchPage() {
   const [shown, setShown] = useState<Partial<Record<StepKey, boolean>>>({})
   const [image, setImage] = useState<Pick>()
   const [audio, setAudio] = useState<Pick>()
+  const scrollBox = useRef<HTMLDivElement | null>(null)
+  // Counts refused presses of Next, so the same error scrolls back into view each time.
+  const [refused, setRefused] = useState(0)
 
   const set = <K extends keyof LaunchForm>(k: K, v: LaunchForm[K]) => {
     setForm((f) => ({ ...f, [k]: v }))
@@ -444,9 +479,22 @@ export default function LaunchPage() {
 
   const goNext = () => {
     setShown((s) => ({ ...s, [step]: true }))
-    if (!stepOk) return
+    if (!stepOk) {
+      setRefused((n) => n + 1)
+      return
+    }
+
     setStepIdx((i) => Math.min(i + 1, STEP_ORDER.length - 1))
   }
+
+  // Every step starts at its top.
+  useEffect(() => {
+    scrollBox.current?.scrollTo({ top: 0 })
+  }, [stepIdx])
+
+  useEffect(() => {
+    if (refused) scrollBox.current?.querySelector('.err')?.scrollIntoView({ block: 'center' })
+  }, [refused])
 
   const goTo = (i: number) => {
     if (launch.running) return
@@ -483,6 +531,31 @@ export default function LaunchPage() {
   const explorer = explorerUrl(net.chainId)
   const [layoutRef, { width }] = useElementSize()
   const narrow = width > 0 && width <= 640
+  const setLayout = (el: HTMLDivElement | null) => {
+    scrollBox.current = el
+    layoutRef(el)
+  }
+
+  // What the wallet will be asked for: only files not stored yet cost anything.
+  const needsAudio = form.type === 'editions' && form.editionKind === 'music'
+  const toStore = [
+    ...(form.imageMode === 'upload' && image?.check.ok && !launch.uploaded.image ? [image.file] : []),
+    ...(needsAudio && form.audioMode === 'upload' && audio?.check.ok && !launch.uploaded.audio ? [audio.file] : []),
+  ]
+  const storage = useStorageQuote(
+    storedBytes(
+      toStore.map((f) => f.size),
+      FREE_BYTES
+    )
+  )
+  const reserve = form.type === 'auction' ? parseEth(form.reserve) : undefined
+  const deposit = reserve?.ok ? `${formatEther(reserve.wei)} ETH` : ''
+  const hasDraft = !launch.result && draftHasData(form, !!image || !!audio)
+  const guard = useCloseGuard({
+    draft: hasDraft,
+    running: launch.running,
+    close: () => dispatch(closeWindow({ value: 'launch' })),
+  })
 
   const primary = (() => {
     if (step !== 'review') return { label: `Next: ${STEP_LABEL[STEP_ORDER[stepIdx + 1] as StepKey]}`, onClick: goNext }
@@ -495,16 +568,18 @@ export default function LaunchPage() {
     if (firstBlocked !== -1)
       return { label: `Fix: ${STEP_LABEL[STEP_ORDER[firstBlocked] as StepKey]}`, onClick: () => goTo(firstBlocked) }
     if (launch.running) return { label: 'Working… check your wallet', disabled: true }
-    if (launch.instance && !launch.result) return { label: 'Retry the last step', onClick: create }
+    if (launch.instance && !launch.result) {
+      return { label: deposit ? `Finish: pay ${deposit} and start` : 'Retry the last step', onClick: create }
+    }
+
     if (form.type === 'auction')
-      return { label: 'Create auction', onClick: create, disabled: launch.check.state === 'error' }
+      return { label: `Create auction and pay ${deposit}`, onClick: create, disabled: launch.check.state === 'error' }
     if (form.type === 'editions')
       return { label: 'Create edition', onClick: create, disabled: launch.check.state === 'error' }
     return { label: 'Create collection', onClick: create, disabled: launch.check.state === 'error' }
   })()
 
   const plan = form.type ? txPlan(form.type) : []
-  const needsAudio = form.type === 'editions' && form.editionKind === 'music'
   const pipeline = [
     {
       id: 'image',
@@ -550,7 +625,7 @@ export default function LaunchPage() {
         closeBtn
         onClose={(e) => {
           if (e.cancelable) e.stopPropagation()
-          dispatch(closeWindow({ value: 'launch' }))
+          guard.ask()
         }}
         fullscreen={fullscreen}
         fullscreenBtn
@@ -563,7 +638,8 @@ export default function LaunchPage() {
       >
         {Pages.launch?.label}
       </TitleBar>
-      <Layout ref={layoutRef} className={narrow ? 'narrow' : undefined} data-launch>
+      <Layout ref={setLayout} className={narrow ? 'narrow' : undefined} data-launch>
+        {guard.dialog}
         <Inner>
           <Head>
             <div>
@@ -575,15 +651,15 @@ export default function LaunchPage() {
 
           {!net.deployed && !success && (
             <StatusBox tone="info" role="status">
-              <span>
-                Launching opens soon. You can try every step now and see how collectors will see your work, but you
-                cannot publish yet. The Create button turns on when launch opens.
-              </span>
+              <span>Launching opens soon. Try every step; you cannot publish yet.</span>
             </StatusBox>
           )}
           {net.wrongChain && (
             <StatusBox tone="error" role="alert">
-              <span>Your wallet is on a network miya does not support. Switch to Ethereum.</span>
+              <span style={{ flex: 1 }}>Your wallet is on a network miya does not support.</span>
+              <SmallButton type="button" onClick={() => switchChain({ chainId: net.chainId })}>
+                Switch to {net.chain.name}
+              </SmallButton>
             </StatusBox>
           )}
 
@@ -611,7 +687,7 @@ export default function LaunchPage() {
                     openManage({ chainId: success.chainId, address: success.instance, kind: success.type })
                   }
                 >
-                  Open in Manage
+                  Open in Manager
                 </BigButton>
                 <div style={{ display: 'flex', gap: space[2], flexWrap: 'wrap' }}>
                   <SmallButton type="button" onClick={() => openApp('mint')}>
@@ -689,6 +765,13 @@ export default function LaunchPage() {
                       audio={audio}
                       onImage={pickImage}
                       onAudio={pickAudio}
+                      requiredDone={
+                        !stepErrors.name &&
+                        !stepErrors.symbol &&
+                        !stepErrors.image &&
+                        !stepErrors.audio &&
+                        !stepErrors.artist
+                      }
                     />
                   )}
                   {step === 'sale' && <SaleStep form={form} set={set} errors={shownErrors} />}
@@ -739,11 +822,13 @@ export default function LaunchPage() {
                         <dd>{supplyLine(form)}</dd>
                         {form.type === 'drop' && (
                           <>
-                            <dt>Sale</dt>
-                            <dd>
-                              {form.phases.length} phase{form.phases.length > 1 ? 's' : ''}, first starts{' '}
-                              {form.phases[0]?.start ? new Date(form.phases[0].start).toLocaleString() : 'right away'}
-                            </dd>
+                            {form.phases.map((p, i) => (
+                              // eslint-disable-next-line react/no-array-index-key
+                              <Fragment key={i}>
+                                <dt>{form.phases.length > 1 ? `Phase ${i + 1}` : 'Sale'}</dt>
+                                <dd>{phaseLine(p)}</dd>
+                              </Fragment>
+                            ))}
                             <dt>Kept back</dt>
                             <dd>{form.ownerReserve.trim() || 'None'}</dd>
                             <dt>Resale royalty</dt>
@@ -752,17 +837,30 @@ export default function LaunchPage() {
                         )}
                         {form.type === 'auction' && (
                           <>
+                            <dt>Bid step</dt>
+                            <dd>{form.bidStep.trim()} ETH</dd>
                             <dt>Length</dt>
                             <dd>
                               {form.durationHours} hours, late bids add {AUCTION_TIME_BUFFER_SECONDS / 60} minutes
                             </dd>
+                            <dt>You pay now</dt>
+                            <dd>
+                              <b>{deposit} deposit.</b> You get it back when the piece sells. If nobody bids, miya keeps
+                              it and the piece is not minted.
+                            </dd>
+                          </>
+                        )}
+                        {form.type === 'editions' && (
+                          <>
+                            <dt>Sale opens</dt>
+                            <dd>{form.editionStart ? whenWords(form.editionStart) : 'Right away'}</dd>
                           </>
                         )}
                         <dt>Network</dt>
                         <dd>{net.chain.name}</dd>
                         <dt>Vault</dt>
                         <dd>
-                          {vaultName ? `Buys ${vaultName}` : 'Alignment vault'}{' '}
+                          {vaultName ? `Buys ${vaultName}` : 'Community vault'}{' '}
                           <span className="mono">{short(vaultAddr)}</span>
                         </dd>
                       </Summary>
@@ -775,12 +873,20 @@ export default function LaunchPage() {
                       </Well>
                       <div>
                         <Eyebrow style={{ marginBottom: space[2] }}>
-                          What happens next: {plan.length} wallet {plan.length > 1 ? 'prompts' : 'prompt'}
-                          {form.imageMode === 'upload' ? ' + 1 upload' : ''}
+                          {nextStepsWords({
+                            uploads: toStore.length,
+                            paying: toStore.some((f) => f.size > FREE_BYTES),
+                            txs: plan.length,
+                          })}
                         </Eyebrow>
                         <Well style={{ padding: space[2] }}>
                           <TxSteps steps={pipeline} label="Launch progress" />
                         </Well>
+                        {storage.state !== 'none' && (
+                          <small style={{ display: 'block', marginTop: space[1], fontSize: text.xs }}>
+                            {storageWords(storage)}
+                          </small>
+                        )}
                       </div>
                       {ready && launch.check.state === 'checking' && (
                         <StatusBox tone="info" role="status">
@@ -801,7 +907,9 @@ export default function LaunchPage() {
                       {launch.running && (
                         <StatusBox tone="info" role="status">
                           <img src={LoadingHourglass} alt="" />
-                          <span>Confirm in your wallet, then wait for the network. Keep this window open.</span>
+                          <span>
+                            {launch.note || 'Confirm in your wallet, then wait for the network.'} Keep this window open.
+                          </span>
                         </StatusBox>
                       )}
                       {launch.error && !launch.running && (

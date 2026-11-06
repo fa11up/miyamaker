@@ -4,10 +4,12 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import styled, { css, keyframes } from 'styled-components/macro'
 import { useElementSize } from 'usehooks-ts'
 import { formatEther } from 'viem'
-import { useAccount } from 'wagmi'
+import { useAccount, useSwitchChain } from 'wagmi'
 
 import LoadingHourglass from '@/assets/loading_hourglass.gif'
 import {
+  CloseGuardBox,
+  DropWords,
   DropZone as Drop,
   Err,
   Field,
@@ -16,8 +18,9 @@ import {
   SmallButton,
   SplitMeter,
   STEP_DOT as DOT,
-  StepList as Steps,
   Thumb as Cover,
+  TxSteps,
+  useCloseGuard,
 } from '@/components/LaunchKit'
 import { BigButton, Chip, Eyebrow, StatusBox, Well } from '@/components/Retro'
 import TitleBar from '@/components/TitleBar'
@@ -41,6 +44,7 @@ import {
   validateAudioFile,
   validateImageFile,
 } from '@/music/audio'
+import { refusedWords, storageWords, storedBytes } from '@/music/creatorWords'
 import { parseAlignmentPct, parsePriceEth, parseSupply } from '@/music/drop'
 import { readAudioDuration } from '@/music/readDuration'
 import { useOpenApp } from '@/music/useOpenApp'
@@ -50,13 +54,16 @@ import { useFullscreen } from '@/store/windows/hooks'
 import type { PageKey } from '@/store/windows/reducer'
 import { bevel, color, font, space, text } from '@/theme/tokens'
 import { formatBytes } from '@/utils/formatBytes'
+import { FREE_BYTES } from '@/utils/fundAndUpload'
 import { resolveUri } from '@/utils/resolveUri'
+import { useStorageQuote } from '@/utils/useStorageQuote'
 
 import ReleasePreview from './ReleasePreview'
 import waterSkin from './skin/water.webp'
 import type { StageStatus } from './Stage'
 import Stage from './Stage'
 import StationAdd from './StationAdd'
+import type { ChainId } from './useDropMusic'
 import { STEPS, useDropMusic, useMusicChain } from './useDropMusic'
 import { useStudioPlayer, useWaveformPeaks } from './useStudioPlayer'
 import { brushedSilver, gel, y2k } from './y2k'
@@ -67,6 +74,8 @@ const Layout = styled.div`
   height: 100%;
   overflow-y: auto;
   overflow-x: hidden;
+  /* Fields come out as a step fills in: the scrollbar arriving must not nudge the page sideways. */
+  scrollbar-gutter: stable;
   color: ${y2k.ink};
   background: #125cc4 url(${waterSkin}) 0 0 / 512px 512px;
 
@@ -85,6 +94,34 @@ const Layout = styled.div`
     border: 1px solid ${y2k.silverLine};
     border-radius: 8px;
     box-shadow: inset 0 1px 3px rgba(11, 31, 92, 0.35);
+  }
+  section input[aria-invalid='true'],
+  section textarea[aria-invalid='true'] {
+    border-color: ${color.danger};
+    box-shadow: inset 0 0 0 1px ${color.danger};
+  }
+  /* The chosen source looks chosen: the Y2K gel above would otherwise paint both the same. */
+  section ${Toggle} button[aria-pressed='true'], section ${Toggle} button[aria-pressed='true']:hover:not(:disabled) {
+    background: linear-gradient(#2f7fe0, #1450b0);
+    color: #fff;
+    box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.45);
+  }
+  && ${CloseGuardBox} {
+    ${brushedSilver}
+    border: 1px solid ${y2k.silverLine};
+    border-radius: 14px;
+    color: ${y2k.ink};
+  }
+  && ${CloseGuardBox} button {
+    ${gel('#f4f7fd', '#b7c4dc', y2k.ink)}
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+  && ${CloseGuardBox} button.keep {
+    ${gel('#7ecbff', y2k.blue, '#ffffff')}
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.35) 0%, transparent 45%),
+      linear-gradient(180deg, #2f73ee 0%, #1548c8 100%);
+    text-shadow: 0 1px 1px rgba(11, 31, 92, 0.7);
   }
 `
 
@@ -413,6 +450,7 @@ export default function DropMusicWindow() {
   const { isConnected, chain } = useAccount()
   const { openConnectModal } = useConnectModal()
   const music = useMusicChain()
+  const { switchChain } = useSwitchChain()
   const drop = useDropMusic()
   const reduced = useReducedMotion()
 
@@ -439,6 +477,8 @@ export default function DropMusicWindow() {
     const to = SECTIONS.findIndex((s) => s.id === next)
     setDir(to >= from ? 1 : -1)
     setSection(next)
+    // Release greys out until the form is right, so arriving there is what brings up the list of what is missing.
+    if (next === 'release' && music.ready) setTouched(true)
     // Coming from a long panel: bring the tabs back into view so the new step starts at its top.
     const el = sessionRef.current
     const box = el?.closest('[data-scroll]')
@@ -468,6 +508,8 @@ export default function DropMusicWindow() {
     const url = URL.createObjectURL(file)
     const pick: AudioPick = { file, check, url, reading: check.ok }
     setAudio(pick)
+    // Its error lives on the Track tab, wherever the file was dropped from.
+    if (!check.ok) go('track')
     if (!form.title) setForm((f) => ({ ...f, title: file.name.replace(/\.[a-z0-9]+$/i, '').slice(0, 120) }))
     if (!check.ok) return
     try {
@@ -481,7 +523,9 @@ export default function DropMusicWindow() {
   const pickCover = (file: File | undefined) => {
     if (!file) return
     drop.invalidate('cover')
-    setCover({ file, check: validateImageFile(file), url: URL.createObjectURL(file) })
+    const check = validateImageFile(file)
+    setCover({ file, check, url: URL.createObjectURL(file) })
+    if (!check.ok) go('credits')
   }
 
   /** Files dropped on the stage: pictures dress the jewel case, anything else is treated as the track. */
@@ -618,11 +662,8 @@ export default function DropMusicWindow() {
 
   const submit = () => {
     setTouched(true)
-    if (!valid || !price.ok || !supply.ok || !align.ok) {
-      const first = SECTIONS.find((s) => needs[s.id])
-      if (first && first.id !== section) go(first.id)
-      return
-    }
+    // The checklist on this tab says what is missing, with a button to each.
+    if (!valid || !price.ok || !supply.ok || !align.ok) return
 
     drop.run({
       audioFile: mode === 'upload' ? audio?.file : undefined,
@@ -706,13 +747,52 @@ export default function DropMusicWindow() {
     }
   }, [done])
 
+  // The vault is refused or the dry run failed: nothing is uploaded or paid for.
+  const blocked = music.vaultRegistered === false || drop.check.state === 'error'
+
+  const dryRun = () => {
+    if (align.ok) drop.simulate(collectionName, align.bps)
+  }
+
+  // On arriving at Release, and when the settings change there. Launch does the same at Review.
+  useEffect(() => {
+    if (section === 'release' && music.ready && valid && !drop.launched.instance) dryRun()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [section, music.ready, valid, collectionName, form.alignment, drop.launched.instance])
+
+  // Only files not stored yet cost anything.
+  const toStore = [
+    ...(mode === 'upload' && audio?.check.ok && !drop.uploaded.audio ? [audio.file] : []),
+    ...(mode === 'upload' && cover?.check.ok && !drop.uploaded.cover ? [cover.file] : []),
+  ]
+  const storage = useStorageQuote(
+    storedBytes(
+      toStore.map((f) => f.size),
+      FREE_BYTES
+    )
+  )
+
+  const hasDraft =
+    !done &&
+    (!!audio ||
+      !!cover ||
+      (Object.keys(EMPTY) as (keyof Form)[]).some(
+        (k) => k !== 'alignment' && k !== 'linkFormat' && form[k] !== EMPTY[k]
+      ))
+  const guard = useCloseGuard({
+    draft: hasDraft,
+    running: drop.running,
+    close: () => dispatch(closeWindow({ value: pageId })),
+  })
+
   const action = (() => {
     if (!isConnected)
       return { label: 'Connect wallet', disabled: !openConnectModal, onClick: () => openConnectModal?.() }
-    if (drop.running) return { label: 'Working…', disabled: true, onClick: () => {} }
+    if (drop.running) return { label: 'Working… check your wallet', disabled: true, onClick: () => {} }
     if (done) return { label: 'Released', disabled: true, onClick: () => {} }
-    if (drop.launched.instance) return { label: 'Retry: add edition', disabled: !valid, onClick: submit }
-    return { label: 'Release music', disabled: !valid, onClick: submit }
+    if (drop.launched.instance) return { label: 'Finish: add the track', disabled: !valid, onClick: submit }
+    // A failed try keeps its uploads, so going again costs nothing more for storage.
+    return { label: drop.error ? 'Retry release' : 'Release music', disabled: !valid || blocked, onClick: submit }
   })()
 
   const [layoutRef, { width }] = useElementSize()
@@ -723,6 +803,13 @@ export default function DropMusicWindow() {
 
   /* ── what the stage says ── */
   const hasTrack = mode === 'upload' ? !!audio?.check.ok : linkOk
+  // A refused file also shows on the stage it may have been dropped on.
+  const stageNotice =
+    cover && !cover.check.ok
+      ? refusedWords('cover', cover.check.error, 10)
+      : audio && !audio.check.ok
+      ? refusedWords('track', audio.check.error, MAX_AUDIO_BYTES / 1024 / 1024)
+      : undefined
   const status: StageStatus = drop.running ? 'rec' : done ? 'onair' : music.ready ? 'ready' : 'soundcheck'
   const statusLabel =
     status === 'rec'
@@ -744,7 +831,7 @@ export default function DropMusicWindow() {
         chain?.name || music.cfg.name
       } · tune in on miya radio`
     : !hasTrack
-    ? `drop a track on the stage · mp3 wav flac ogg m4a · up to ${MAX_AUDIO_BYTES / 1024 / 1024} MB`
+    ? `choose a track · mp3 wav flac ogg m4a · up to ${MAX_AUDIO_BYTES / 1024 / 1024} MB`
     : [
         `${form.artist.trim() || 'unknown artist'} — ${form.title.trim() || 'untitled'}`,
         [form.genre.trim(), form.bpm.trim() && `${form.bpm.trim()} bpm`].filter(Boolean).join(' · '),
@@ -815,7 +902,7 @@ export default function DropMusicWindow() {
         closeBtn
         onClose={(e) => {
           if (e.cancelable) e.stopPropagation()
-          dispatch(closeWindow({ value: pageId }))
+          guard.ask()
         }}
         fullscreen={fullscreen}
         fullscreenBtn
@@ -829,17 +916,23 @@ export default function DropMusicWindow() {
         {Pages.dropmusic?.label}
       </TitleBar>
       <Layout ref={layoutRef} data-scroll className={narrow ? 'narrow' : wide ? 'wide' : undefined}>
+        {guard.dialog}
         <Wrap>
           <Head>
             <div>
               <ChromeTitle>Drop Music</ChromeTitle>
               <Burst aria-hidden="true">new!</Burst>
-              <p>Put your track on stage, dress it up, and release it as a collectible that plays in miya radio.</p>
+              <p>Release a track as a collectible. It plays in miya radio.</p>
             </div>
             {music.ready ? (
               <Chip tone="ok">Live on {music.cfg.name}</Chip>
             ) : (
               <Chip tone="warn">{music.wrongChain ? 'Unsupported network' : 'Opens soon'}</Chip>
+            )}
+            {!music.deployed && !music.wrongChain && (
+              <StatusBox tone="info" role="status" style={{ flexBasis: '100%' }}>
+                <span>Releasing opens soon. You can put your track on the community station now.</span>
+              </StatusBox>
             )}
           </Head>
 
@@ -866,6 +959,7 @@ export default function DropMusicWindow() {
               }}
               onDropFile={dropOnStage}
               onSendToRadio={mode === 'upload' && audio?.check.ok ? previewInRadio : undefined}
+              notice={stageNotice}
             />
           </div>
 
@@ -960,7 +1054,7 @@ export default function DropMusicWindow() {
                           </>
                         ) : (
                           <>
-                            Drop audio here
+                            <DropWords mouse="Drop audio here" touch="Choose an audio file" />
                             <small>mp3, ogg, wav, m4a or flac · up to {MAX_AUDIO_BYTES / 1024 / 1024} MB</small>
                           </>
                         )}
@@ -1030,7 +1124,7 @@ export default function DropMusicWindow() {
                     >
                       <Cover>{cover?.check.ok && <img src={cover.url} alt="Cover preview" />}</Cover>
                       <div className="grow">
-                        {cover ? cover.file.name : 'Drop cover art here'}
+                        {cover ? cover.file.name : <DropWords mouse="Drop cover art here" touch="Choose cover art" />}
                         <small>
                           {cover ? formatBytes(cover.file.size) : 'Square png, jpg, gif or webp · up to 10 MB'}
                         </small>
@@ -1069,28 +1163,38 @@ export default function DropMusicWindow() {
                       <Err>{show(metaErrors.artist)}</Err>
                     </Field>
                   </Row2>
-                  <Row2>
-                    <Field>
-                      Genre
-                      <input value={form.genre} maxLength={40} onChange={set('genre')} placeholder="optional" />
-                    </Field>
-                    <Field>
-                      BPM
-                      <input
-                        value={form.bpm}
-                        inputMode="numeric"
-                        maxLength={3}
-                        onChange={set('bpm')}
-                        placeholder="optional"
-                        aria-invalid={!!metaErrors.bpm}
-                      />
-                      <Err>{metaErrors.bpm}</Err>
-                    </Field>
-                  </Row2>
-                  <Field>
-                    Description
-                    <textarea value={form.description} maxLength={2000} onChange={set('description')} />
-                  </Field>
+                  {/* Once what is required is in; anything already typed stays, so its error can't hide. */}
+                  {((form.title.trim() && form.artist.trim()) || form.genre || form.bpm || form.description) && (
+                    <>
+                      <Row2>
+                        <Field>
+                          Genre
+                          <input value={form.genre} maxLength={40} onChange={set('genre')} placeholder="optional" />
+                        </Field>
+                        <Field>
+                          BPM
+                          <input
+                            value={form.bpm}
+                            inputMode="numeric"
+                            maxLength={3}
+                            onChange={set('bpm')}
+                            placeholder="optional"
+                            aria-invalid={!!metaErrors.bpm}
+                          />
+                          <Err>{metaErrors.bpm}</Err>
+                        </Field>
+                      </Row2>
+                      <Field>
+                        Description
+                        <textarea
+                          value={form.description}
+                          maxLength={2000}
+                          placeholder="optional"
+                          onChange={set('description')}
+                        />
+                      </Field>
+                    </>
+                  )}
                   {footer}
                 </>
               )}
@@ -1120,14 +1224,14 @@ export default function DropMusicWindow() {
                       {price.ok && <small>{formatEther(price.wei)} ETH per copy</small>}
                     </Field>
                     <Field>
-                      Supply
-                      <input value={form.supply} inputMode="numeric" placeholder="open" onChange={set('supply')} />
+                      Number of copies
+                      <input value={form.supply} inputMode="numeric" placeholder="No limit" onChange={set('supply')} />
                       <Err>{!supply.ok ? supply.error : undefined}</Err>
                       {supply.ok && <small>{supply.supply ? `${supply.supply} copies` : 'Open edition'}</small>}
                     </Field>
                   </Row2>
                   <Field>
-                    Alignment share (%)
+                    Share for the vault (%)
                     <input
                       value={form.alignment}
                       inputMode="decimal"
@@ -1136,12 +1240,12 @@ export default function DropMusicWindow() {
                     />
                     <Err>{!align.ok ? align.error : undefined}</Err>
                     <small>
-                      Share of each mint sent to the alignment vault (min {music.minAlignmentBps / 100}%). Protocol fee{' '}
-                      {music.protocolFeeBps / 100}%. You keep the rest.
+                      Part of each sale goes to the community vault (at least {music.minAlignmentBps / 100}%). miya
+                      keeps {music.protocolFeeBps / 100}%. You keep the rest.
                     </small>
                   </Field>
                   <SplitMeter
-                    protocolBps={music.protocolFeeBps || 100}
+                    protocolBps={music.protocolFeeBps}
                     alignmentBps={align.ok ? align.bps : music.minAlignmentBps}
                     compact
                   />
@@ -1159,11 +1263,14 @@ export default function DropMusicWindow() {
                     mintLabel={priceWords ? `Mint · ${priceWords}` : 'Mint · set a price'}
                     facts={[
                       { label: 'Price', value: priceWords || 'not set' },
-                      { label: 'Copies', value: supply.ok ? (supply.supply ? String(supply.supply) : 'open') : '—' },
+                      {
+                        label: 'Copies',
+                        value: supply.ok ? (supply.supply ? String(supply.supply) : 'No limit') : '—',
+                      },
                       {
                         label: 'You keep',
                         value: align.ok
-                          ? `${pctLabel(10_000 - align.bps - (music.protocolFeeBps || 100))} of each mint`
+                          ? `${pctLabel(10_000 - align.bps - music.protocolFeeBps)} of each mint`
                           : '—',
                       },
                       { label: 'Network', value: music.cfg.name },
@@ -1191,17 +1298,20 @@ export default function DropMusicWindow() {
                   )}
 
                   <Well>
-                    <Steps aria-label="Release steps">
-                      {STEPS.map((s) => (
-                        <li key={s.id}>
-                          <span className="dot" style={{ background: DOT[drop.steps[s.id]] }} />
-                          <span>
-                            {s.label}
-                            {drop.steps[s.id] === 'skipped' ? ' (using link)' : ''}
-                          </span>
-                        </li>
-                      ))}
-                    </Steps>
+                    <TxSteps
+                      label="Release steps"
+                      steps={STEPS.map((s) => ({
+                        id: s.id,
+                        label: `${s.label}${drop.steps[s.id] === 'skipped' ? ' (using link)' : ''}`,
+                        state: drop.steps[s.id],
+                        link:
+                          s.id === 'deploy' && drop.launched.deployHash
+                            ? `${explorer}/tx/${drop.launched.deployHash}`
+                            : s.id === 'edition' && drop.launched.editionHash
+                            ? `${explorer}/tx/${drop.launched.editionHash}`
+                            : undefined,
+                      }))}
+                    />
                   </Well>
 
                   <details>
@@ -1212,52 +1322,56 @@ export default function DropMusicWindow() {
                           ? JSON.stringify(preview.metadata, null, 2)
                           : 'Fill in the track to preview metadata.'}
                       </Json>
+                      {(drop.uploaded.audio || drop.uploaded.cover || drop.uploaded.metadata) && (
+                        <Json style={{ marginTop: space[2] }}>
+                          {[
+                            drop.uploaded.audio && `audio ${drop.uploaded.audio}`,
+                            drop.uploaded.cover && `cover ${drop.uploaded.cover}`,
+                            drop.uploaded.metadata && `metadata ${drop.uploaded.metadata}`,
+                          ]
+                            .filter(Boolean)
+                            .join('\n')}
+                        </Json>
+                      )}
                     </Well>
                   </details>
 
-                  {/* Until editions open, a connected wallet's main button is the station's, below. */}
-                  {(music.ready || !isConnected) && (
-                    <BigButton type="button" disabled={action.disabled} onClick={action.onClick}>
-                      {action.label}
-                    </BigButton>
+                  {storage.state !== 'none' && !done && (
+                    <small style={{ fontSize: text.xs }}>{storageWords(storage)}</small>
                   )}
-
-                  {!music.ready && (
-                    <StatusBox tone="info">
-                      <span>
-                        {music.wrongChain
-                          ? 'Switch your wallet to Ethereum or Robinhood Chain.'
-                          : music.deployed
-                          ? `Connect a wallet on ${music.cfg.name} to release.`
-                          : 'Releasing editions opens soon.'}
-                      </span>
-                    </StatusBox>
-                  )}
-
-                  <StationAdd
-                    key={mode === 'upload' ? audio?.url : form.audioUri}
-                    primary={!music.ready}
-                    title={form.title}
-                    artist={form.artist}
-                    duration={duration}
-                    audioFile={mode === 'upload' && !audioError ? audio?.file : undefined}
-                    coverFile={mode === 'upload' && cover?.check.ok ? cover.file : undefined}
-                    audioUri={mode === 'links' ? safeUri(form.audioUri) : undefined}
-                    coverUri={mode === 'links' ? safeUri(form.coverUri) : undefined}
-                    store={drop.store}
-                  />
 
                   {music.ready && music.vaultRegistered === false && (
                     <StatusBox tone="error">
-                      <span>
-                        The configured alignment vault is not registered in MiyaRegistry, so deploys will revert.
-                      </span>
+                      <span>Releasing is paused on this network. Nothing was charged.</span>
                     </StatusBox>
+                  )}
+                  {music.ready && music.vaultRegistered !== false && valid && !drop.running && !done && (
+                    <>
+                      {drop.check.state === 'checking' && (
+                        <StatusBox tone="info" role="status">
+                          <img src={LoadingHourglass} alt="" />
+                          <span>Checking everything with the contract first…</span>
+                        </StatusBox>
+                      )}
+                      {drop.check.state === 'ok' && !drop.error && !drop.launched.instance && (
+                        <StatusBox tone="ok" role="status">
+                          <span>Checked: the contract accepts these settings.</span>
+                        </StatusBox>
+                      )}
+                      {drop.check.state === 'error' && !drop.launched.instance && (
+                        <StatusBox tone="error" role="alert">
+                          <span style={{ flex: 1 }}>{drop.check.message}</span>
+                          <SmallButton type="button" onClick={dryRun}>
+                            Check again
+                          </SmallButton>
+                        </StatusBox>
+                      )}
+                    </>
                   )}
                   {drop.running && (
                     <StatusBox tone="info" role="status">
                       <img src={LoadingHourglass} alt="" />
-                      <span>Follow the prompts in your wallet. Uploads are paid through Irys.</span>
+                      <span>{drop.note || 'Follow the prompts in your wallet.'} Keep this window open.</span>
                     </StatusBox>
                   )}
                   {drop.error && !drop.running && (
@@ -1267,21 +1381,7 @@ export default function DropMusicWindow() {
                   )}
                   {(drop.uploaded.audio || drop.uploaded.metadata) && !done && (
                     <StatusBox tone="info">
-                      <span style={{ fontFamily: font.mono, fontSize: 11 }}>
-                        {drop.uploaded.audio && (
-                          <>
-                            audio {drop.uploaded.audio}
-                            <br />
-                          </>
-                        )}
-                        {drop.uploaded.cover && (
-                          <>
-                            cover {drop.uploaded.cover}
-                            <br />
-                          </>
-                        )}
-                        {drop.uploaded.metadata && <>metadata {drop.uploaded.metadata}</>}
-                      </span>
+                      <span>Your uploads are saved. You will not pay for them again.</span>
                     </StatusBox>
                   )}
                   {done && drop.launched.instance && (
@@ -1306,7 +1406,7 @@ export default function DropMusicWindow() {
                             openManage({ chainId: chain.id, address: drop.launched.instance, kind: 'editions' })
                           }
                         >
-                          Open in Manage
+                          Open in Manager
                         </SmallButton>{' '}
                         <SmallButton
                           type="button"
@@ -1324,6 +1424,45 @@ export default function DropMusicWindow() {
                       </span>
                     </StatusBox>
                   )}
+                  {/* Until editions open, a connected wallet's main button is the station's, below. */}
+                  {(music.ready || !isConnected) && (
+                    <BigButton type="button" disabled={action.disabled} onClick={action.onClick}>
+                      {action.label}
+                    </BigButton>
+                  )}
+
+                  {!music.ready && (
+                    <StatusBox tone="info">
+                      <span>
+                        {music.wrongChain
+                          ? 'Your wallet is on a network miya does not support.'
+                          : music.deployed
+                          ? `Connect a wallet on ${music.cfg.name} to release.`
+                          : 'Releasing editions opens soon.'}
+                      </span>
+                    </StatusBox>
+                  )}
+                  {music.wrongChain && (
+                    <BigButton type="button" onClick={() => switchChain({ chainId: music.cfg.chainId as ChainId })}>
+                      Switch to {music.cfg.name}
+                    </BigButton>
+                  )}
+
+                  <StationAdd
+                    key={mode === 'upload' ? audio?.url : form.audioUri}
+                    primary={!music.ready && !music.wrongChain}
+                    title={form.title}
+                    artist={form.artist}
+                    duration={duration}
+                    audioFile={mode === 'upload' && !audioError ? audio?.file : undefined}
+                    coverFile={mode === 'upload' && cover?.check.ok ? cover.file : undefined}
+                    audioUri={mode === 'links' ? safeUri(form.audioUri) : undefined}
+                    coverUri={mode === 'links' ? safeUri(form.coverUri) : undefined}
+                    store={drop.store}
+                    stored={drop.uploaded}
+                    storing={drop.note}
+                  />
+
                   {footer}
                 </>
               )}

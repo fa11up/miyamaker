@@ -54,7 +54,7 @@ export function describeSplit(p: { protocolBps: number; alignmentBps: number; va
   const valid = p.alignmentBps >= 0 && p.protocolBps >= 0 && p.protocolBps + p.alignmentBps <= BPS
   const a = splitAmount(example, p.protocolBps, valid ? p.alignmentBps : 0)
   const artistBps = BPS - p.protocolBps - (valid ? p.alignmentBps : 0)
-  const vault = p.vaultName ? `the ${p.vaultName} vault` : 'the alignment vault'
+  const vault = p.vaultName ? `the ${p.vaultName} vault` : 'the community vault'
   const parts: SplitPart[] = [
     { key: 'artist', bps: artistBps, pct: pctLabel(artistBps), amount: a.artist, words: 'goes to you' },
     {

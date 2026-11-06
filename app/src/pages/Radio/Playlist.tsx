@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import styled from 'styled-components/macro'
 
 import type { RadioApi } from '@/context/RadioProvider'
@@ -77,6 +78,14 @@ const Empty = styled.div`
     cursor: pointer;
     text-decoration: underline;
   }
+  button.tune {
+    margin-top: 2px;
+    padding: 2px 6px;
+    text-decoration: none;
+    color: var(--rk-btn-ink);
+    background: linear-gradient(180deg, var(--rk-btn) 0%, var(--rk-btn-2) 100%);
+    box-shadow: inset 1px 1px 0 var(--rk-key-hi), inset -1px -1px 0 var(--rk-key-lo), 0 0 0 1px var(--rk-seam);
+  }
   button:focus-visible {
     outline: 1px dotted currentColor;
   }
@@ -109,8 +118,12 @@ export default function Playlist({
   sources,
   busy,
   checked,
+  failed,
+  sheet,
+  askAdd,
+  onAskedAdd,
   onLoad,
-  onDropMusic,
+  onTuneIn,
   onUpload,
   onTestTone,
   onInfo,
@@ -120,10 +133,18 @@ export default function Playlist({
   nowDuration: number
   sources: PlaylistSource[]
   busy: boolean
-  /** ADD was pressed and found nothing: say there are no drops yet instead of asking again. */
+  /** The community station answered and has nothing: say so instead of asking again. */
   checked?: boolean
+  /** The source that could not be reached, kept up until the retry. */
+  failed?: { id: string; label: string }
+  /** Where menus open on a phone. */
+  sheet?: HTMLElement | null
+  /** Eject or the phone's Add music: open the ADD menu. */
+  askAdd?: boolean
+  onAskedAdd?: () => void
   onLoad: (id: string) => void
-  onDropMusic: () => void
+  /** Load the community station and start it. */
+  onTuneIn: () => void
   onUpload: () => void
   onTestTone?: () => void
   onInfo: () => void
@@ -135,6 +156,14 @@ export default function Playlist({
   const [takingOff, setTakingOff] = useState(false)
   const [takeOffFailed, setTakeOffFailed] = useState(false)
   const listRef = useRef<HTMLOListElement>(null)
+  // Read at press time: a click event's own pointerType is not there on every browser.
+  const lastPointer = useRef<string>()
+
+  useEffect(() => {
+    if (!askAdd) return
+    setMenu('add')
+    onAskedAdd?.()
+  }, [askAdd, onAskedAdd])
 
   useEffect(() => {
     listRef.current?.querySelector('[data-active="true"]')?.scrollIntoView?.({ block: 'nearest' })
@@ -188,16 +217,35 @@ export default function Playlist({
       <Well aria-label="Playlist">
         {queue.tracks.length === 0 ? (
           <Empty>
-            <p>No tracks yet</p>
-            {checked ? (
-              <span>
-                Nothing out yet.{' '}
-                <button type="button" onClick={onUpload}>
-                  Upload a track
+            {failed ? (
+              <>
+                <p>Could not reach {failed.label}.</p>
+                <button
+                  type="button"
+                  className="tune"
+                  disabled={busy}
+                  onClick={() => (failed.id === 'community' ? onTuneIn() : onLoad(failed.id))}
+                >
+                  Try again
                 </button>
-              </span>
+              </>
+            ) : checked ? (
+              <>
+                <p>No tracks yet</p>
+                <span>
+                  Nothing on the station yet.{' '}
+                  <button type="button" onClick={onUpload}>
+                    Add your own track
+                  </button>
+                </span>
+              </>
             ) : (
-              <span>Press ADD to load music drops.</span>
+              <>
+                <p>No tracks yet</p>
+                <button type="button" className="tune" disabled={busy} onClick={onTuneIn}>
+                  Tune in to the community station
+                </button>
+              </>
             )}
           </Empty>
         ) : (
@@ -217,9 +265,13 @@ export default function Playlist({
                     if (e.key === 'Enter') radio.jumpTo(i)
                     if (e.key === 'Delete' || e.key === 'Backspace') radio.remove(i)
                   }}
+                  onPointerDown={(e) => {
+                    lastPointer.current = e.pointerType
+                  }}
                   onClick={(e) => {
-                    // Single tap plays on touch screens (no double-click there).
-                    if ((e.nativeEvent as PointerEvent).pointerType === 'touch') {
+                    // Single tap plays on touch screens (no double-click there), and picks it for removing too.
+                    if (lastPointer.current === 'touch') {
+                      setSelected([i])
                       radio.jumpTo(i)
                       return
                     }
@@ -261,7 +313,7 @@ export default function Playlist({
           <PixelText text={`${formatDuration(picked)}/${formatDuration(total)}`} />
         </span>
         {menu === 'add' && (
-          <Menu label="Add tracks" style={{ left: 4, bottom: 17 }} onClose={() => setMenu(undefined)}>
+          <Menu label="Add tracks" sheet={sheet} style={{ left: 4, bottom: 17 }} onClose={() => setMenu(undefined)}>
             {sources.map((src) => (
               <button
                 type="button"
@@ -282,7 +334,7 @@ export default function Playlist({
                 setMenu(undefined)
               }}
             >
-              Upload a track
+              Add your own track
             </button>
             {onTestTone && (
               <button
@@ -298,7 +350,7 @@ export default function Playlist({
           </Menu>
         )}
         {menu === 'rem' && (
-          <Menu label="Remove tracks" style={{ left: 31, bottom: 17 }} onClose={() => setMenu(undefined)}>
+          <Menu label="Remove tracks" sheet={sheet} style={{ left: 31, bottom: 17 }} onClose={() => setMenu(undefined)}>
             <button type="button" disabled={!selected.length} onClick={removeSelected}>
               Remove selected
             </button>
@@ -320,7 +372,7 @@ export default function Playlist({
           </Menu>
         )}
         {menu === 'misc' && (
-          <Menu label="More" style={{ left: 85, bottom: 17 }} onClose={() => setMenu(undefined)}>
+          <Menu label="More" sheet={sheet} style={{ left: 85, bottom: 17 }} onClose={() => setMenu(undefined)}>
             <button
               type="button"
               disabled={!radio.current}
@@ -331,18 +383,26 @@ export default function Playlist({
             >
               Track info
             </button>
-            <button
-              type="button"
-              onClick={() => {
-                onDropMusic()
-                setMenu(undefined)
-              }}
-            >
-              Release an edition
-            </button>
           </Menu>
         )}
       </Foot>
+      {/* Phones: the tapped track's own buttons, under the heart, since REM and its menu are too small for a thumb. */}
+      {sheet &&
+        selected.length > 0 &&
+        !menu &&
+        createPortal(
+          <div className="sheet-row">
+            <button type="button" onClick={removeSelected}>
+              Remove from list
+            </button>
+            {offStation.length > 0 && (
+              <button type="button" disabled={takingOff} onClick={takeOff}>
+                {takeOffFailed ? 'Failed. Try again?' : takingOff ? 'Check your wallet…' : 'Take off the station'}
+              </button>
+            )}
+          </div>,
+          sheet
+        )}
     </>
   )
 }
