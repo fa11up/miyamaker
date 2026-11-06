@@ -7,7 +7,7 @@ import { fetchStation, toTrack } from '@/music/community'
 import { Glyph } from '@/pages/Radio/Glyph'
 import { font, text } from '@/theme/tokens'
 
-import { airList } from '../../../api/_lib/publicaccess'
+import { airList, nextTapeId } from '../../../api/_lib/publicaccess'
 import type { BreakLog, Commercial } from './commercials'
 import { COMMERCIALS, DRAWN_SECONDS, isBreakDue, nextSpotIndex, SKIP_AFTER_SECONDS } from './commercials'
 import { fetchTapes } from './publicAccess'
@@ -69,6 +69,9 @@ const Centre = styled.div`
   p {
     margin: 0;
     max-width: 44ch;
+    padding: 4px 10px;
+    border-radius: 6px;
+    background: rgba(16, 9, 4, 0.72);
     font-size: ${text.sm};
     line-height: 1.4;
   }
@@ -244,8 +247,8 @@ export function RadioShow({ reducedMotion }: { reducedMotion: boolean }) {
 
       radio.enqueue(tracks)
       radio.playNow(tracks[0])
-    } catch (e) {
-      setNote((e as Error).message)
+    } catch {
+      setNote('Could not reach the station. Try again in a minute.')
     }
   }
 
@@ -297,7 +300,7 @@ export function RadioShow({ reducedMotion }: { reducedMotion: boolean }) {
       ) : (
         <Centre>
           <h2>miya radio</h2>
-          <p>The community station. The picture is drawn live from whatever is playing.</p>
+          <p>The community station.</p>
           <button type="button" onClick={tuneIn}>
             Tune in
           </button>
@@ -328,6 +331,10 @@ const WheelStage = styled(Stage)`
     width: min(70%, 90cqh);
     height: 86%;
     transform: translate(-50%, -50%);
+  }
+  /* On a phone's short picture the caption would sit on the stand. */
+  .narrow & svg {
+    left: 60%;
   }
   .wheel {
     transform-origin: 200px 200px;
@@ -534,6 +541,9 @@ const Spot = styled(Stage)`
     font-size: ${text.xs};
     cursor: pointer;
   }
+  .narrow & button {
+    min-height: 36px;
+  }
   @media (prefers-reduced-motion: reduce) {
     &::after {
       animation: none;
@@ -573,6 +583,9 @@ const FilmSpot = styled(Stage)`
     color: #2a1a0e;
     font-size: ${text.xs};
     cursor: pointer;
+  }
+  .narrow & button {
+    min-height: 36px;
   }
 `
 
@@ -672,13 +685,18 @@ function DrawnSpot({ spot, onDone }: { spot: Extract<Commercial, { kind: 'drawn'
 
 export function PublicShow({
   tapeId,
+  paused,
   onNext,
+  onBreak,
   volume,
   muted,
   onAutoMuted,
 }: {
   tapeId?: string
+  paused: boolean
   onNext: (videoId: string) => void
+  /** A commercial is on: the set's pause and next wait for it. */
+  onBreak: (on: boolean) => void
   volume: number
   muted: boolean
   onAutoMuted: () => void
@@ -688,9 +706,15 @@ export function PublicShow({
   const current = tapes.find((t) => t.videoId === tapeId) ?? tapes[0]!
   const [spot, setSpot] = useState<Commercial>()
 
+  const onSpot = !!spot
+  useEffect(() => {
+    onBreak(onSpot)
+    return () => onBreak(false)
+  }, [onSpot, onBreak])
+
   const nextTape = () => {
-    const next = tapes[(tapes.indexOf(current) + 1) % tapes.length]
-    if (next) onNext(next.videoId)
+    const next = nextTapeId(tapes, current.videoId)
+    if (next) onNext(next)
   }
 
   // Only the natural end of a tape can lead to a break, so nothing ever cuts into one.
@@ -727,8 +751,10 @@ export function PublicShow({
       videoId={current.videoId}
       volume={volume}
       muted={muted}
+      paused={paused}
       onAutoMuted={onAutoMuted}
       onEnded={tapeEnded}
+      onDead={nextTape}
     />
   )
 }

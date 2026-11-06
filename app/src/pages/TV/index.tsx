@@ -10,10 +10,11 @@ import Pages from '@/constants/pages'
 import { useRadio } from '@/context/RadioProvider'
 import { useAppDispatch } from '@/store/hooks'
 import { closeWindow, minimizeWindow } from '@/store/windows/actions'
-import { useFullscreen } from '@/store/windows/hooks'
+import { useFullscreen, useWindows } from '@/store/windows/hooks'
 import { font, space, text } from '@/theme/tokens'
 
 import type { KickStream } from '../../../api/_lib/tvkick'
+import { airList, nextTapeId } from '../../../api/_lib/publicaccess'
 import { TV_LIVE_PATH } from '../../../api/_lib/tvlive'
 import {
   CHANNELS,
@@ -22,13 +23,16 @@ import {
   clampChat,
   indexOfNumber,
   nativeChatFor,
+  pinnedSource,
+  plateLink,
   stepChannel,
-  watchUrl,
 } from './channels'
 import type { Source } from './channels'
 import ChatPanel from './chat/ChatPanel'
+import { focusLabel, newFocusTimer, resetFocus, tickFocus, toggleFocus } from './focusTimer'
 import Guide from './Guide'
 import { FocusPanel, IssPanel, PublicPanel, RadioPanel, SpottingPanel, SqueekPanel } from './panels'
+import { fetchTapes } from './publicAccess'
 import Screen from './Screen'
 import goldSkin from './skin/gold.webp'
 import woodSkin from './skin/wood.webp'
@@ -40,6 +44,12 @@ const page = Pages.tv
 
 const CREAM = 'linear-gradient(180deg, #f8efd9 0%, #dccfae 100%)'
 const INK = '#2a1a0e'
+/** Walnut slats over dark cloth: the speaker, and whatever room the picture leaves. */
+const SLATS = `repeating-linear-gradient(90deg, #0a0502 0 4px, transparent 4px 11px, rgba(255, 220, 170, 0.14) 11px 12px),
+    url(${woodSkin}) 40px 120px / 512px 512px`
+const SLATS_EDGE = `inset 0 3px 8px rgba(0, 0, 0, 0.9),
+    inset 0 0 0 1px #1a0d04,
+    0 1px 0 rgba(255, 220, 170, 0.25)`
 
 /** miyatv's skin: tiled walnut and gold bitmaps (scripts/make-tv-skin.py), the screen in the middle, chat beside it. */
 const Root = styled.div`
@@ -72,19 +82,14 @@ const Root = styled.div`
     grid-template-columns: minmax(0, 1fr);
   }
 
-  /* Phones / narrow windows: one column, player first, then chat. */
+  /* Phones / narrow windows: one column that fits the screen, player first, then chat in what is left. */
   &.narrow {
     display: flex;
     flex-direction: column;
-    overflow-y: auto;
-    overflow-x: hidden;
+    overflow: hidden;
     padding: ${space[1]};
     gap: ${space[1]};
     border-radius: 0;
-  }
-  /* The guide scrolls itself; the cabinet behind it holds still. */
-  &.narrow.guide-open {
-    overflow: hidden;
   }
 `
 
@@ -98,6 +103,9 @@ const TvColumn = styled.div`
   .narrow & {
     overflow: visible;
     flex: 0 0 auto;
+  }
+  .narrow.no-chat & {
+    flex: 1 1 auto;
   }
 `
 
@@ -113,6 +121,9 @@ const Bezel = styled.div`
     flex: 0 0 auto;
     gap: 6px;
   }
+  .narrow.no-chat & {
+    flex: 1 1 auto;
+  }
 `
 /** With chat hidden: whatever room the set has, and the glass is the biggest 16:9 that fits in it. */
 const Stage = styled.div`
@@ -122,6 +133,9 @@ const Stage = styled.div`
     container-type: size;
     display: grid;
     place-items: center;
+    border-radius: 9px;
+    background: ${SLATS};
+    box-shadow: ${SLATS_EDGE};
   }
 `
 
@@ -180,6 +194,9 @@ const Osd = styled.div`
   }
 `
 
+const BUTTON_NARROW = 40
+const PLATE_NARROW = 2 * BUTTON_NARROW + 12
+
 /** Gold plate with cream buttons and a little amber dial window. */
 const Controls = styled.div`
   flex: 0 0 auto;
@@ -203,10 +220,20 @@ const Controls = styled.div`
   --menu-sheet: url(${goldSkin}) 0 0 / 256px 256px;
   --menu-pick: #2a1a0e;
   --menu-pick-ink: #ffb347;
+  .mid & {
+    flex-wrap: wrap;
+  }
+  /* Two rows of room on every channel, so the picture and the chat don't move as the channels change. */
   .narrow & {
     padding: 4px 6px;
     gap: ${space[1]};
     flex-wrap: wrap;
+    align-content: flex-start;
+    min-height: ${PLATE_NARROW}px;
+  }
+  /* Typing on a phone: the keyboard has taken half the screen. */
+  .narrow:has(section input:focus) & {
+    display: none;
   }
 
   .dial {
@@ -230,6 +257,15 @@ const Controls = styled.div`
     line-height: 1;
     white-space: nowrap;
     cursor: pointer;
+  }
+  .narrow & .dial button,
+  .narrow & .toggle,
+  .narrow & button[aria-haspopup] {
+    height: ${BUTTON_NARROW}px;
+  }
+  .toggle:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
   }
   .dial button:active {
     transform: translateY(1px);
@@ -280,6 +316,9 @@ const Controls = styled.div`
   .open {
     margin-left: auto;
   }
+  .narrow & .open {
+    padding: 8px 0;
+  }
   .sound {
     display: flex;
     flex: 0 0 auto;
@@ -311,16 +350,15 @@ const Grille = styled.div`
   flex: 1 1 auto;
   min-height: 0;
   border-radius: 9px;
-  background:
-    repeating-linear-gradient(90deg, #0a0502 0 4px, transparent 4px 11px, rgba(255, 220, 170, 0.14) 11px 12px),
-    url(${woodSkin}) 40px 120px / 512px 512px;
-  box-shadow:
-    inset 0 3px 8px rgba(0, 0, 0, 0.9),
-    inset 0 0 0 1px #1a0d04,
-    0 1px 0 rgba(255, 220, 170, 0.25);
+  background: ${SLATS};
+  box-shadow: ${SLATS_EDGE};
   .fit &,
   .narrow & {
     display: none;
+  }
+  /* A phone with chat hidden: the speaker takes the room. */
+  .narrow.no-chat & {
+    display: block;
   }
 `
 /** Where the open tab sits on the sidebar's border, which its texture has to line up with. */
@@ -440,12 +478,12 @@ const SideTab = styled.button`
     left: 0;
     background-position: -${EAR_PHONE_LEFT}px 2px;
   }
-  /* Enough to press with a thumb, without reaching over the buttons or the chat next to it. */
+  /* Enough to press with a thumb, 32px tall, and only just touching the plate above it or the chat below. */
   .narrow &::after {
-    inset: -3px -8px -8px;
+    inset: -12px -8px -11px;
   }
   .narrow &.closed::after {
-    inset: -14px -8px -4px;
+    inset: -18px -8px -5px;
   }
 `
 
@@ -464,10 +502,8 @@ const Side = styled.div`
     inset 0 1px 0 rgba(255, 250, 220, 0.8),
     0 4px 9px rgba(0, 0, 0, 0.65);
   .narrow & {
-    flex: 0 0 auto;
-    margin-top: 6px;
-    height: 520px;
-    max-height: 80svh;
+    flex: 1 1 0;
+    margin-top: 12px;
   }
   > section:last-child {
     flex: 1 1 auto;
@@ -519,7 +555,16 @@ const isTyping = (el: EventTarget | null) =>
 export default function TV() {
   const dispatch = useAppDispatch()
   const [fullscreen, toggleFullscreen] = useFullscreen('tv')
-  const [rootRef, { width }] = useElementSize()
+  const [sizeRef, { width }] = useElementSize()
+  const rootEl = useRef<HTMLDivElement | null>(null)
+  const rootRef = useCallback(
+    (node: HTMLDivElement | null) => {
+      rootEl.current = node
+      sizeRef(node)
+    },
+    [sizeRef],
+  )
+  const [, zIndex, , minimized] = useWindows()
   const layout = width === 0 ? 'wide' : width < 640 ? 'narrow' : width < 980 ? 'mid' : 'wide'
   const reducedMotion = useReducedMotion()
 
@@ -530,6 +575,10 @@ export default function TV() {
   const [chatOn, setChatOn] = useState(initialChat)
   const [guideOpen, setGuideOpen] = useState(false)
   const [tapeId, setTapeId] = useState<string>()
+  const [tapePaused, setTapePaused] = useState(false)
+  const [tapeBreak, setTapeBreak] = useState(false)
+  const [focusTimer, setFocusTimer] = useState(newFocusTimer)
+  const [osdNote, setOsdNote] = useState<string>()
   const [tvVolume, setTvVolume] = useState(initialVolume)
   const [tvMuted, setTvMuted] = useState(false)
   // Muted by the browser's autoplay rule rather than by choice: the next channel tries for sound again.
@@ -537,24 +586,27 @@ export default function TV() {
   const radio = useRadio()
   const staticTimer = useRef<ReturnType<typeof setTimeout>>()
   const osdTimer = useRef<ReturnType<typeof setTimeout>>()
+  const noteTimer = useRef<ReturnType<typeof setTimeout>>()
 
   const channel = CHANNELS[index] ?? CHANNELS[0]!
-  const live = useQuery({
+  const liveQuery = useQuery({
     queryKey: ['tv-live'],
     queryFn: async () =>
       (await (await fetch(TV_LIVE_PATH)).json()) as { ids: Record<string, string>; kick?: KickStream[] },
     refetchInterval: 3 * 60_000,
     retry: 1,
-  }).data
+  })
+  const live = liveQuery.data
   const liveIds = live?.ids
   const onKick = channel.kind === 'iframe' && channel.sources[0].provider === 'kick'
+  // Kick plays only who the server says is on. No list means nothing to play, never a guess at who might be.
   const sources: Source[] =
     channel.kind !== 'iframe'
       ? []
-      : onKick && live?.kick?.length
-        ? live.kick.map((k) => ({ provider: 'kick', slug: k.slug, label: k.label }))
+      : onKick
+        ? (live?.kick ?? []).map((k) => ({ provider: 'kick', slug: k.slug, label: k.label }))
         : channel.sources
-  // By name, not place: the list reorders as viewers come and go. A stream that has ended falls through to the biggest.
+  // By name, not place: the list reorders as viewers come and go.
   const picked = sources.find((s) => s.label === sourceLabel) ?? sources[0]
   const moved = picked?.provider === 'youtube' ? liveIds?.[channel.id] : undefined
   const source = picked?.provider === 'youtube' && moved ? { ...picked, videoId: moved } : picked
@@ -573,9 +625,40 @@ export default function TV() {
     return () => {
       clearTimeout(staticTimer.current)
       clearTimeout(osdTimer.current)
+      clearTimeout(noteTimer.current)
     }
   }, [])
 
+  // The stream on Kick is held by name, so it stays when the list reorders. It only changes when that stream has ended.
+  const kickLabels = onKick ? sources.map((s) => s.label).join('\n') : ''
+  useEffect(() => {
+    if (!kickLabels) return
+    const { label, ended } = pinnedSource(kickLabels.split('\n'), sourceLabel)
+    if (label !== sourceLabel) setSourceLabel(label)
+    if (ended) flash()
+  }, [kickLabels, sourceLabel, flash])
+
+  // The focus timer lives here, not in its panel: hiding the sidebar or changing channel leaves it running.
+  useEffect(() => {
+    if (!focusTimer.running) return undefined
+    const tick = setInterval(() => setFocusTimer((t) => tickFocus(t, Date.now())), 500)
+    return () => clearInterval(tick)
+  }, [focusTimer.running])
+
+  const focusTurns = focusTimer.turns
+  const focusResting = focusTimer.resting
+  useEffect(() => {
+    if (!focusTurns) return
+    setOsdNote(focusLabel({ resting: focusResting }))
+    clearTimeout(noteTimer.current)
+    noteTimer.current = setTimeout(() => setOsdNote(undefined), 5000)
+    // Only when it turns over by itself; a reset leaves the count alone.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusTurns])
+
+  // Stepping off the radio turns it off, as nothing on the next channel could.
+  const leavingRadio = channel.kind === 'show' && channel.show === 'radio' && radio.playing
+  const pauseRadio = radio.pause
   const tune = useCallback(
     (next: number) => {
       if (next === index || !CHANNELS[next]) return
@@ -584,8 +667,9 @@ export default function TV() {
         setTvMuted(false)
       }
 
+      if (leavingRadio) pauseRadio()
       setIndex(next)
-      setSourceLabel(undefined)
+      setTapePaused(false)
       flash()
       try {
         window.localStorage.setItem(CHANNEL_KEY, CHANNELS[next]!.id)
@@ -593,8 +677,13 @@ export default function TV() {
         // ignore
       }
     },
-    [index, flash],
+    [index, flash, leavingRadio, pauseRadio],
   )
+
+  const pickTape = useCallback((videoId: string) => {
+    setTapeId(videoId)
+    setTapePaused(false)
+  }, [])
 
   const step = (d: number) => tune(stepChannel(CHANNELS.length, index, d))
 
@@ -602,7 +691,19 @@ export default function TV() {
 
   // YouTube and our own shows take our buttons; Kick and X only listen to the controls inside their players.
   const isRadio = channel.kind === 'show' && channel.show === 'radio'
-  const hasSound = isRadio || (channel.kind === 'show' && channel.show === 'public') || source?.provider === 'youtube'
+  const isPublic = channel.kind === 'show' && channel.show === 'public'
+  // The radio's sound control comes with something to hear.
+  const hasSound = (isRadio && !!radio.current) || isPublic || source?.provider === 'youtube'
+  const tapes = airList(
+    useQuery({
+      queryKey: ['public-access'],
+      queryFn: fetchTapes,
+      refetchInterval: 60_000,
+      retry: 1,
+      enabled: isPublic,
+    }).data?.tapes,
+  )
+  const link = plateLink(channel, source)
   const shownVolume = isRadio ? radio.volume : tvMuted ? 0 : tvVolume
   const setVolume = (v: number) => {
     if (isRadio) {
@@ -628,12 +729,21 @@ export default function TV() {
   }
 
   const panel = (() => {
-    if (channel.id === 'lofi') return <FocusPanel />
+    if (channel.id === 'lofi') {
+      return (
+        <FocusPanel
+          timer={focusTimer}
+          onToggle={() => setFocusTimer((t) => toggleFocus(t, Date.now()))}
+          onReset={() => setFocusTimer(resetFocus)}
+        />
+      )
+    }
+
     if (channel.id === 'monterey') return <SpottingPanel />
     if (channel.id === 'iss') return <IssPanel />
     if (channel.id === 'squeekchain') return <SqueekPanel />
     if (channel.id === 'miya-radio') return <RadioPanel />
-    if (channel.id === 'public-access') return <PublicPanel tapeId={tapeId} onPick={setTapeId} />
+    if (channel.id === 'public-access') return <PublicPanel tapeId={tapeId} onPick={pickTape} />
     return undefined
   })()
 
@@ -658,8 +768,14 @@ export default function TV() {
     }
   }
 
-  const onKeyDown = (e: React.KeyboardEvent) => {
+  const onKeyDown = (e: KeyboardEvent | React.KeyboardEvent) => {
     if (isTyping(e.target) || e.metaKey || e.ctrlKey || e.altKey) return
+    // The guide has its own keys. Focus only lands out here, behind it, if the window has been raised again.
+    if (guideOpen) {
+      if (e.key === 'Escape') setGuideOpen(false)
+      return
+    }
+
     if (/^[0-9]$/.test(e.key)) {
       const i = indexOfNumber(CHANNELS, Number(e.key))
       if (i >= 0) {
@@ -685,6 +801,32 @@ export default function TV() {
   }
 
   const native = nativeChatFor(channel, source)
+
+  // The window takes focus when it comes to the front, and the set's keys only listen from here in. So focus moves on to the
+  // set, after the window has noted where it came from, and after the boot screen, which takes its keys for itself.
+  const onTop = zIndex[zIndex.length - 1] === 'tv' && !minimized.includes('tv')
+  useEffect(() => {
+    if (!onTop) return undefined
+    const moveIn = setInterval(() => {
+      if (document.querySelector('[data-boot]')) return
+      clearInterval(moveIn)
+      if (document.activeElement?.contains(rootEl.current)) rootEl.current?.focus({ preventScroll: true })
+    }, 100)
+    return () => clearInterval(moveIn)
+  }, [onTop])
+
+  // A button that goes away when pressed (Tune in, Start with the sidebar closing) takes focus with it, off to the page.
+  const keys = useRef(onKeyDown)
+  keys.current = onKeyDown
+  useEffect(() => {
+    if (!onTop) return undefined
+    const stray = (e: KeyboardEvent) => {
+      if (e.target === document.body) keys.current(e)
+    }
+
+    window.addEventListener('keydown', stray)
+    return () => window.removeEventListener('keydown', stray)
+  }, [onTop])
 
   return (
     <WindowWrapper skin="tv">
@@ -713,7 +855,6 @@ export default function TV() {
           chatOn ? '' : 'no-chat',
           fullscreen ? 'maximized' : '',
           layout !== 'narrow' && (fullscreen || !chatOn) ? 'fit' : '',
-          guideOpen ? 'guide-open' : '',
         ]
           .filter(Boolean)
           .join(' ')}
@@ -721,7 +862,7 @@ export default function TV() {
         tabIndex={-1}
         onKeyDown={onKeyDown}
         data-testid="miyatv"
-        aria-label="miyatv. Number keys change channel, arrow up and down step through channels, C shows or hides the sidebar, G opens the guide, M mutes."
+        aria-label="miyaTV. Number keys change channel, arrow up and down step through channels, C shows or hides the sidebar, G opens the guide, M mutes."
       >
         <TvColumn>
           <Bezel>
@@ -733,16 +874,20 @@ export default function TV() {
                     source={source}
                     volume={tvVolume}
                     muted={tvMuted}
+                    checkingLive={liveQuery.isPending}
                     onAutoMuted={() => {
                       autoMuted.current = true
                       setTvMuted(true)
                     }}
                     tapeId={tapeId}
-                    onTape={setTapeId}
+                    tapePaused={tapePaused}
+                    onTape={pickTape}
+                    onBreak={setTapeBreak}
                     reducedMotion={reducedMotion}
                   />
                   <Static playing={staticOn} reducedMotion={reducedMotion} />
-                  {(osd || staticOn) && (
+                  {osdNote && <Osd role="status">{osdNote}</Osd>}
+                  {!osdNote && (osd || staticOn) && (
                     <Osd aria-hidden>
                       CH {pad(channel.number)}
                       {layout !== 'narrow' && <div style={{ fontSize: 13 }}>{channel.name}</div>}
@@ -793,6 +938,29 @@ export default function TV() {
                   }}
                 />
               )}
+              {isPublic && (
+                <>
+                  <button
+                    type="button"
+                    className="toggle"
+                    disabled={tapeBreak}
+                    onClick={() => setTapePaused((p) => !p)}
+                  >
+                    {tapePaused ? '▶ Play' : '❚❚ Pause'}
+                  </button>
+                  <button
+                    type="button"
+                    className="toggle"
+                    disabled={tapeBreak || tapes.length < 2}
+                    onClick={() => {
+                      const next = nextTapeId(tapes, tapeId ?? tapes[0]?.videoId)
+                      if (next) pickTape(next)
+                    }}
+                  >
+                    Next ▶
+                  </button>
+                </>
+              )}
               {hasSound && (
                 <span className="sound">
                   <button
@@ -815,9 +983,9 @@ export default function TV() {
                   />
                 </span>
               )}
-              {source && (
-                <a className="open" href={watchUrl(source)} target="_blank" rel="noopener noreferrer">
-                  open ↗
+              {link && (
+                <a className="open" href={link.href} target="_blank" rel="noopener noreferrer">
+                  {link.label}
                 </a>
               )}
             </Controls>

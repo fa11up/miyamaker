@@ -4,7 +4,7 @@ import { createSiweMessage } from 'viem/siwe'
 import { useAccount, useSignMessage } from 'wagmi'
 
 import type { ClientFrame, Me, RoomState } from './protocol'
-import { initialRoomState, parseFrame, reduceRoom, roomSocketUrl } from './protocol'
+import { initialRoomState, parseFrame, reduceRoom, roomSocketUrl, signInProblem } from './protocol'
 
 /** Base URL of the chat worker (chat/ in the monorepo). Unset = chat offline. */
 export const CHAT_URL: string | undefined = import.meta.env.VITE_CHAT_URL?.trim() || undefined
@@ -65,7 +65,7 @@ export function useChatSession(base: string | undefined) {
       const message = createSiweMessage({
         domain: window.location.host,
         address: getAddress(address),
-        statement: 'Sign in to miyatv chat. This is free and does not grant any permissions.',
+        statement: 'Sign in to miyaTV chat. This is free and does not grant any permissions.',
         uri: window.location.origin,
         version: '1',
         chainId: 1,
@@ -90,8 +90,7 @@ export function useChatSession(base: string | undefined) {
       storeSession(s, address)
       setSession(s)
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e)
-      setError(/reject|denied|cancel/i.test(msg) ? 'Signature cancelled.' : msg.split('\n')[0])
+      setError(signInProblem(e))
     } finally {
       setSigningIn(false)
     }
