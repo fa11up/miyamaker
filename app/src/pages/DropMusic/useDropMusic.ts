@@ -1,4 +1,4 @@
-import { simulateContract, waitForTransactionReceipt, writeContract } from '@wagmi/core'
+import { readContract, simulateContract, waitForTransactionReceipt, writeContract } from '@wagmi/core'
 import { useCallback, useState } from 'react'
 import type { Address, Hash } from 'viem'
 import { BaseError, parseEventLogs, zeroAddress } from 'viem'
@@ -10,6 +10,8 @@ import type { MusicMetadata } from '@/music/audio'
 import { musicConfig } from '@/music/config'
 import { editionArgs, GATING_SCOPE_BOTH, makeSalt } from '@/music/drop'
 import { addKnownCollection } from '@/music/known'
+import { tryBatch } from '@/utils/batch'
+import { instanceAddressAbi } from '@/utils/batchCalls'
 import { fundAndUpload } from '@/utils/fundAndUpload'
 import getIrysToken from '@/utils/getIrysToken'
 
@@ -173,15 +175,25 @@ export function useDropMusic() {
         const chainId = cfg.chainId as ChainId
 
         let { instance } = launched
+        const editionCall = {
+          abi: erc1155InstanceAbi,
+          functionName: 'addEdition' as const,
+          args: editionArgs({
+            title: input.title,
+            priceWei: input.priceWei,
+            supply: input.supply,
+            model: input.model,
+            metadataURI: metadata,
+          }),
+        }
+
         if (!instance) {
           mark('deploy', 'active')
           const salt = makeSalt(cfg.factory, crypto.getRandomValues(new Uint8Array(11)))
-          const { request } = await simulateContract(wagmiConfig, {
-            account: address,
-            chainId,
+          const create = {
             address: cfg.factory,
             abi: erc1155FactoryAbi,
-            functionName: 'createInstance',
+            functionName: 'createInstance' as const,
             args: [
               salt,
               {
@@ -195,17 +207,53 @@ export function useDropMusic() {
                 freeMint: { allocation: 0n, scope: GATING_SCOPE_BOTH },
               },
             ],
-          })
-          const hash = await writeContract(wagmiConfig, request)
-          setLaunched((l) => ({ ...l, deployHash: hash }))
-          const receipt = await waitForTransactionReceipt(wagmiConfig, { hash, chainId })
-          if (receipt.status !== 'success') throw new Error('The deploy transaction reverted.')
-          const [created] = parseEventLogs({ abi: erc1155FactoryAbi, eventName: 'InstanceCreated', logs: receipt.logs })
-          instance = created?.args.instance
-          if (!instance) throw new Error('Deployed, but could not find the new collection address in the receipt.')
-          addKnownCollection(chainId, instance)
-          setLaunched((l) => ({ ...l, instance }))
-          mark('deploy', 'done')
+          }
+          // Create the collection and add the edition as one signature: its address is fixed by the salt, so the
+          // second call can name it in advance. If anything is off, the whole batch reverts.
+          const predicted = await readContract(wagmiConfig, {
+            address: cfg.factory,
+            abi: instanceAddressAbi,
+            functionName: 'computeInstanceAddress',
+            args: [salt, address],
+            chainId,
+          }).catch(() => undefined)
+          const sent =
+            predicted &&
+            (await tryBatch([create, { address: predicted, ...editionCall }], {
+              account: address,
+              chainId,
+              onSent: () => mark('edition', 'active'),
+            }))
+          if (sent) {
+            const logs = sent.receipts.flatMap((r) => r.logs ?? []) as never
+            instance = parseEventLogs({ abi: erc1155FactoryAbi, eventName: 'InstanceCreated', logs })[0]?.args.instance
+            if (!instance) throw new Error('Deployed, but could not find the new collection address in the receipt.')
+            const [added] = parseEventLogs({ abi: erc1155InstanceAbi, eventName: 'EditionAdded', logs })
+            addKnownCollection(chainId, instance)
+            setLaunched((l) => ({ ...l, instance, deployHash: sent.hash }))
+            mark('deploy', 'done')
+            if (added) {
+              setLaunched((l) => ({ ...l, editionHash: sent.hash, editionId: added.args.editionId }))
+              mark('edition', 'done')
+              return
+            }
+          } else {
+            const { request } = await simulateContract(wagmiConfig, { account: address, chainId, ...create } as never)
+            const hash = await writeContract(wagmiConfig, request as never)
+            setLaunched((l) => ({ ...l, deployHash: hash }))
+            const receipt = await waitForTransactionReceipt(wagmiConfig, { hash, chainId })
+            if (receipt.status !== 'success') throw new Error('The deploy transaction reverted.')
+            const [created] = parseEventLogs({
+              abi: erc1155FactoryAbi,
+              eventName: 'InstanceCreated',
+              logs: receipt.logs,
+            })
+            instance = created?.args.instance
+            if (!instance) throw new Error('Deployed, but could not find the new collection address in the receipt.')
+            addKnownCollection(chainId, instance)
+            setLaunched((l) => ({ ...l, instance }))
+            mark('deploy', 'done')
+          }
         }
 
         mark('edition', 'active')
@@ -213,15 +261,7 @@ export function useDropMusic() {
           account: address,
           chainId,
           address: instance,
-          abi: erc1155InstanceAbi,
-          functionName: 'addEdition',
-          args: editionArgs({
-            title: input.title,
-            priceWei: input.priceWei,
-            supply: input.supply,
-            model: input.model,
-            metadataURI: metadata,
-          }),
+          ...editionCall,
         })
         const hash = await writeContract(wagmiConfig, request)
         setLaunched((l) => ({ ...l, editionHash: hash }))

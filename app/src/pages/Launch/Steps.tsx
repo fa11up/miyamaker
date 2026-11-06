@@ -39,7 +39,7 @@ const Stack = styled.div`
 
 // ── 1. type ──────────────────────────────────────────────────────────────────
 
-const TypeCard = styled.button`
+export const TypeCard = styled.button`
   display: grid;
   grid-template-columns: 40px minmax(0, 1fr);
   gap: ${space[3]};
@@ -362,7 +362,7 @@ export function ArtStep({
 
 // ── 3. price, supply, schedule ───────────────────────────────────────────────
 
-const PhaseBox = styled.fieldset`
+export const PhaseBox = styled.fieldset`
   border: none;
   margin: 0;
   padding: ${space[3]};
@@ -582,7 +582,7 @@ export function SaleStep({ form, set, errors }: StepProps) {
 
 // ── 4. alignment ─────────────────────────────────────────────────────────────
 
-const VaultCard = styled.button`
+export const VaultCard = styled.button`
   display: flex;
   flex-direction: column;
   gap: 2px;

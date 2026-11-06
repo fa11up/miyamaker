@@ -7,6 +7,7 @@ import { useAccount, useConfig, useSignMessage } from 'wagmi'
 import { getBytecode, readContract, waitForTransactionReceipt, writeContract } from 'wagmi/actions'
 
 import { LINKS } from '@/constants/miyanet'
+import { tryBatch } from '@/utils/batch'
 
 /**
  * INFER BOX from inside miyamaker. The Box serves partner sites at /api/partner/*: sign in with the wallet (the message
@@ -228,7 +229,25 @@ export function usePayQuote() {
         args: [address, q.box],
         ...opts,
       })
+      const p = q.pay
+      const payCall = {
+        address: q.box,
+        abi: boxAbi,
+        functionName: 'pay',
+        args: [p.orderId, p.commitment, BigInt(p.toFloat), BigInt(p.toTreasury), BigInt(p.escrow), p.ref],
+      }
       if (allowance < total) {
+        const sent = await tryBatch(
+          [{ address: q.imdUsd, abi: erc20Abi, functionName: 'approve', args: [q.box, total] }, payCall],
+          {
+            account: address,
+            chainId: mainnet.id,
+            onAsk: () =>
+              say(`One signature: approve exactly ${toImdUsd(total)} imdUSD to the Box and pay, all or nothing.`),
+            onSent: () => say('Waiting for the payment to land…'),
+          }
+        )
+        if (sent?.hash) return sent.hash
         say(`Step 1 of 2: approve exactly ${toImdUsd(total)} imdUSD to the Box.`)
         const a = await writeContract(config, {
           address: q.imdUsd,
@@ -242,14 +261,7 @@ export function usePayQuote() {
           throw new BoxError('The approval failed. Nothing was paid.', 0)
         say('Step 2 of 2: pay.')
       } else say('Confirm the payment in your wallet.')
-      const p = q.pay
-      const hash = await writeContract(config, {
-        address: q.box,
-        abi: boxAbi,
-        functionName: 'pay',
-        args: [p.orderId, p.commitment, BigInt(p.toFloat), BigInt(p.toTreasury), BigInt(p.escrow), p.ref],
-        ...opts,
-      })
+      const hash = await writeContract(config, { ...payCall, ...opts } as never)
       say('Waiting for the payment to land…')
       if ((await waitForTransactionReceipt(config, { hash, ...opts })).status !== 'success')
         throw new BoxError('The payment reverted. Nothing was paid.', 0)

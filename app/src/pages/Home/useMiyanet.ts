@@ -21,6 +21,8 @@ import {
   MXXN,
   mxxnAbi,
 } from '@/constants/miyanet'
+import { useTx } from '@/miyamints/useTx'
+import { useCanBatch } from '@/utils/batch'
 
 const redeemer = { address: LEGACY_REDEEMER, abi: legacyRedeemerAbi, chainId: MIYANET_CHAIN_ID } as const
 const miya = { address: MIYA, abi: erc20Abi, chainId: MIYANET_CHAIN_ID } as const
@@ -129,14 +131,17 @@ export function useMiyanetTx(which: Legacy, onConfirmed: () => void) {
   const { chainId, isConnected } = useAccount()
   const { switchChain, isPending: isSwitching } = useSwitchChain()
   const write = useWriteContract()
+  const canBatch = useCanBatch(MIYANET_CHAIN_ID)
+  const batch = useTx(() => onConfirmed())
+  const batchPicked = batch.tx.phase !== 'idle'
   const receipt = useWaitForTransactionReceipt({
     hash: write.data as Hash | undefined,
     chainId: MIYANET_CHAIN_ID,
     query: { enabled: !!write.data },
   })
-  const lastAction = (write.variables?.functionName === 'approve' ? 'approve' : write.variables?.functionName) as
-    | MiyanetAction
-    | undefined
+  const lastAction = (
+    batchPicked ? batch.tx.id : write.variables?.functionName === 'approve' ? 'approve' : write.variables?.functionName
+  ) as MiyanetAction | undefined
 
   useEffect(() => {
     if (receipt.isSuccess) onConfirmed()
@@ -151,15 +156,29 @@ export function useMiyanetTx(which: Legacy, onConfirmed: () => void) {
       write.writeContract({ ...legacy, functionName: 'approve', args: [LEGACY_REDEEMER, amount] }),
     redeem: (amount: bigint) =>
       write.writeContract({ ...redeemer, functionName: 'redeem', args: [legacy.address, amount] }),
+    canBatch,
+    /** Approve and burn as one signature. */
+    approveAndRedeem: (amount: bigint) =>
+      batch.runBatch(
+        'redeem',
+        [
+          { ...legacy, functionName: 'approve', args: [LEGACY_REDEEMER, amount], chainId: MIYANET_CHAIN_ID },
+          { ...redeemer, functionName: 'redeem', args: [legacy.address, amount], chainId: MIYANET_CHAIN_ID },
+        ],
+        'approve'
+      ),
     claim: () => write.writeContract({ ...redeemer, functionName: 'claim' }),
     advanceClock: () => write.writeContract({ ...redeemer, functionName: 'advanceClock', args: [MXXN, 1n] }),
-    reset: write.reset,
+    reset: () => {
+      write.reset()
+      batch.reset()
+    },
     lastAction,
-    hash: write.data,
-    isAwaitingWallet: write.isPending,
-    isConfirming: !!write.data && receipt.isLoading,
-    isConfirmed: receipt.isSuccess && receipt.data?.status === 'success',
+    hash: write.data ?? batch.tx.hash,
+    isAwaitingWallet: write.isPending || batch.tx.phase === 'wallet',
+    isConfirming: (!!write.data && receipt.isLoading) || batch.tx.phase === 'pending',
+    isConfirmed: (receipt.isSuccess && receipt.data?.status === 'success') || batch.tx.phase === 'done',
     reverted: receipt.isSuccess && receipt.data?.status === 'reverted',
-    error: write.error || receipt.error,
+    error: write.error || receipt.error || (batch.tx.phase === 'error' ? new Error(batch.tx.message) : null),
   }
 }

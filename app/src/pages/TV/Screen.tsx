@@ -115,9 +115,17 @@ const Watch = styled.a`
   }
 `
 
-export default function Screen({ channel, source }: { channel: Channel; source: Source | undefined }) {
+export default function Screen({
+  channel,
+  source,
+  muted = true,
+}: {
+  channel: Channel
+  source: Source | undefined
+  muted?: boolean
+}) {
   if (channel.kind === 'iframe' && source) {
-    const src = embedSrc(source)
+    const src = embedSrc(source, muted)
     return (
       <Player
         key={src}

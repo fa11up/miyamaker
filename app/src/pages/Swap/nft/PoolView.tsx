@@ -8,6 +8,7 @@ import LoadingHourglass from '@/assets/loading_hourglass.gif'
 import type { SupportedChainId } from '@/config/wagmi'
 import { chains, explorerUrl, mainnet } from '@/config/wagmi'
 import { txWords, useTx } from '@/miyamints/useTx'
+import { useCanBatch } from '@/utils/batch'
 
 import type { SwapChainId, SwapToken } from '../constants'
 import { isSwapChain } from '../constants'
@@ -179,6 +180,7 @@ export default function PoolView({
     owned.refetch()
   }
 
+  const batches = useCanBatch(chainId)
   const tx = useTx((id) => {
     refresh()
     if (id === 'redeem') setPicked([])
@@ -337,22 +339,19 @@ export default function PoolView({
         args: [me, poolAddress, ids, selling.map(amountFor), '0x'],
         chainId,
       })
-    else if (plan === 'approve')
-      tx.run('approve', {
+    else {
+      const allow = {
         address: pool.collection,
         abi: erc721Abi,
         functionName: 'setApprovalForAll',
         args: [poolAddress, true],
         chainId,
-      })
-    else
-      tx.run('deposit', {
-        address: poolAddress,
-        abi: poolAbi,
-        functionName: 'deposit',
-        args: [ids, [], me],
-        chainId,
-      })
+      }
+      const sell = { address: poolAddress, abi: poolAbi, functionName: 'deposit', args: [ids, [], me], chainId }
+      if (plan !== 'approve') tx.run('deposit', sell)
+      else if (batches) tx.runBatch('deposit', [allow, sell], 'approve')
+      else tx.run('approve', allow)
+    }
   }
 
   /* ---------- the one primary action ---------- */
@@ -405,6 +404,12 @@ export default function PoolView({
     if (!selling.length) return { label: 'Choose NFTs to sell', disabled: true }
     if (checking) return { label: 'Checking your NFTs…', disabled: true }
     if (notOwned.length) return { label: `You do not hold #${notOwned[0]}`, disabled: true }
+    if (plan === 'approve' && batches)
+      return {
+        label: `Sell ${nfts(sellUnits)} for ${sellUnits.toString()} ${symbol}`,
+        step: `One signature: lets this pool move your ${title} NFTs and sells, all or nothing.`,
+        onClick: deposit,
+      }
     if (plan === 'approve')
       return {
         label: `Allow the pool to take ${title}`,

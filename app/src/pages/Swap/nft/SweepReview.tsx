@@ -12,6 +12,7 @@ import LoadingHourglass from '@/assets/loading_hourglass.gif'
 import type { SupportedChainId } from '@/config/wagmi'
 import { chains, explorerUrl, mainnet, wagmiConfig } from '@/config/wagmi'
 import { describeError } from '@/miyamints/errors'
+import { tryBatch, useCanBatch } from '@/utils/batch'
 
 import { ethInUsd } from '../board'
 import { Eyebrow, Skeleton, StatusBox } from '../floor/retro'
@@ -178,13 +179,68 @@ export default function SweepReview({
   const good = planned.filter((p): p is Planned & { plan: FillPlan } => !!p.plan)
   const totals = sweepTotals(good.map((p) => p.plan))
   const short = balance.data !== undefined && good.length > 0 && balance.data.value < totals.total
+  const batches = useCanBatch(chainId)
   const set = (hash: string, run: Run) => setRuns((r) => ({ ...r, [hash]: run }))
+
+  /** All the buys as one signature. True when the batch settled the matter, false to go on one by one. */
+  const sweepAsOne = async () => {
+    const buys = good.map(({ listing, plan }) => ({
+      listing,
+      call: {
+        address: plan.to as Address,
+        abi: seaportAbi,
+        functionName: plan.functionName,
+        args: plan.args,
+        value: plan.value,
+      },
+    }))
+    const live: typeof buys = []
+    for (const buy of buys) {
+      try {
+        // eslint-disable-next-line no-await-in-loop, @typescript-eslint/no-explicit-any
+        await simulateContract(wagmiConfig, { account: me, chainId, ...buy.call } as any)
+        live.push(buy)
+      } catch (e) {
+        // A listing that has sold would sink the whole batch, so it is left out before anyone signs.
+        markGone(sessionStore(), buy.listing.hash)
+        set(buy.listing.hash, { state: 'gone', note: describeError(e) })
+      }
+    }
+
+    if (!live.length) return true
+    const setAll = (run: Run) => live.forEach((b) => set(b.listing.hash, run))
+    setAll({ state: 'wallet' })
+    try {
+      const sent = await tryBatch(
+        live.map((b) => b.call),
+        { account: me as Address, chainId, onSent: () => setAll({ state: 'pending' }) }
+      )
+      if (!sent) return false
+      setAll({ state: 'bought', hash: sent.hash })
+    } catch (e) {
+      const words = (e as { shortMessage?: string; message?: string })?.shortMessage || (e as Error)?.message || ''
+      if (isWalletRefusal(words) || isWalletRefusal((e as Error)?.message || '')) {
+        setStopWords('You stopped the sweep in your wallet. Nothing was bought.')
+        setAll({ state: 'stopped' })
+      } else setAll({ state: 'failed', note: describeError(e) })
+    }
+
+    return true
+  }
 
   const sweep = async () => {
     if (!me) return
     setRunning(true)
     setStopWords(undefined)
     let stopped = false
+    if (batches && good.length > 1 && (await sweepAsOne())) {
+      setRunning(false)
+      setFinished(true)
+      balance.refetch()
+      onDone()
+      return
+    }
+
     for (const { listing, plan } of good) {
       if (stopped) set(listing.hash, { state: 'stopped' })
       else {
@@ -318,9 +374,9 @@ export default function SweepReview({
                 </div>
               </Lines>
               <Hint>
-                Each NFT is its own transaction, so your wallet asks once per NFT and gas is paid each time. If one
-                sells first it is skipped and you do not pay for it. Stop in your wallet at any point and nothing else
-                is bought.
+                {batches
+                  ? 'One signature for all of them, all or nothing. Listings already sold are left out before you sign. If one sells in the last moments, nothing is bought and you only lose the gas.'
+                  : 'Each NFT is its own transaction, so your wallet asks once per NFT and gas is paid each time. If one sells first it is skipped and you do not pay for it. Stop in your wallet at any point and nothing else is bought.'}
               </Hint>
               {short && (
                 <Hint style={{ color: color.warning }}>

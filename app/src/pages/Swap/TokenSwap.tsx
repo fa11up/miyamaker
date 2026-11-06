@@ -581,7 +581,7 @@ export default function TokenSwap({
       }
     }
 
-    if (exec.needsApproval)
+    if (exec.needsApproval && !exec.canBatch)
       return {
         label: exec.approving
           ? `Approving ${sell.symbol}…`
@@ -601,7 +601,13 @@ export default function TokenSwap({
     if (exec.reverted) return { label: 'Try again', className: 'secondary', onClick: newSwap }
     return {
       label: exec.quoting ? 'Refreshing quote…' : 'Swap',
-      step: isNative(sell.address) ? undefined : 'Step 2 of 2: swap.',
+      step: exec.needsApproval
+        ? `One signature: approves exactly ${fmt(firm.sellAmount, sell.decimals)} ${
+            sell.symbol
+          } for 0x and swaps, all or nothing.`
+        : isNative(sell.address)
+        ? undefined
+        : 'Step 2 of 2: swap.',
       disabled: exec.quoting,
       onClick: exec.swap,
     }

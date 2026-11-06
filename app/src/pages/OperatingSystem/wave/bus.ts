@@ -7,7 +7,7 @@ import type { CrestParams } from './surface'
  *  - `status`: 'off' (wave button off), 'webgl' (animated shader), 'still' (shader, one frame:
  *    reduced motion), 'fallback' (no WebGL: static CSS wave drawn from the same crest params)
  *  - `frameTime`: the `t` of the frame on screen. Readers pass it to crestHeight() so they match
- *    the drawn foam line exactly, even when the shader runs below the display rate.
+ *    the drawn crest exactly, even when the shader runs below the display rate.
  *  - `bottom`: viewport y (CSS px) of the canvas bottom; crest heights are measured up from it.
  */
 export type WaveStatus = 'off' | 'webgl' | 'still' | 'fallback'

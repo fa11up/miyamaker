@@ -45,8 +45,8 @@ const WindowFrame = styled.div`
     box-shadow: inset 0 0 0 1px #7f92b8, 4px 6px 0 rgba(11, 31, 92, 0.3);
   }
   &[data-skin='tv'] {
-    background: #14111c;
-    box-shadow: inset 0 0 0 1px #4a4658, 4px 6px 0 rgba(20, 16, 31, 0.45);
+    background: linear-gradient(180deg, #5b2bc4, #2c0f66);
+    box-shadow: inset 0 0 0 1px #1a0838, 4px 6px 0 rgba(26, 8, 56, 0.4);
   }
 
   &[data-skin='mint'] {
@@ -54,24 +54,24 @@ const WindowFrame = styled.div`
     box-shadow: inset 0 0 0 1px #5a1466, 4px 6px 0 rgba(20, 16, 31, 0.3);
   }
   &[data-skin='launch'] {
-    background: linear-gradient(180deg, #17694f, #0d3b2e);
-    box-shadow: inset 0 0 0 1px #e8c766, 4px 6px 0 rgba(20, 16, 31, 0.3);
+    background: linear-gradient(180deg, #17d99a, #06504a);
+    box-shadow: inset 0 0 0 1px #06302c, 4px 6px 0 rgba(6, 48, 44, 0.35);
   }
   &[data-skin='auction'] {
     background: linear-gradient(180deg, #6b2a1c, #3b130c);
     box-shadow: inset 0 0 0 1px #d9b45b, 4px 6px 0 rgba(20, 16, 31, 0.35);
   }
   &[data-skin='manager'] {
-    background: linear-gradient(180deg, #5c6470, #2c323b);
-    box-shadow: inset 0 0 0 1px #101318, 4px 6px 0 rgba(20, 16, 31, 0.35);
+    background: linear-gradient(180deg, #c3cad5, #6f7886);
+    box-shadow: inset 0 0 0 1px #14181f, 4px 6px 0 rgba(20, 24, 31, 0.35);
   }
   &[data-skin='files'] {
-    background: linear-gradient(180deg, #f7e27a, #d9b93f);
-    box-shadow: inset 0 0 0 1px #8a6f12, 4px 6px 0 rgba(20, 16, 31, 0.25);
+    background: linear-gradient(180deg, #2a1230, #120a1c);
+    box-shadow: inset 0 0 0 1px #5f7a68, 4px 6px 0 rgba(0, 0, 0, 0.45);
   }
   &[data-skin='upload'] {
-    background: linear-gradient(180deg, #0a3a78, #04102e);
-    box-shadow: inset 0 0 0 1px #27d3ff, 4px 6px 0 rgba(20, 16, 31, 0.35);
+    background: linear-gradient(180deg, #1b3fb0, #040c34);
+    box-shadow: inset 0 0 0 1px #27b8ff, 4px 6px 0 rgba(4, 12, 52, 0.35);
   }
   &[data-skin='station'] {
     background: linear-gradient(180deg, #ffa928, #ff7a18);

@@ -4,6 +4,9 @@ import type { Address, Hash } from 'viem'
 import { BaseError, erc20Abi } from 'viem'
 import { useReadContract, useSendTransaction, useWaitForTransactionReceipt, useWriteContract } from 'wagmi'
 
+import { useTx } from '@/miyamints/useTx'
+import { useCanBatch } from '@/utils/batch'
+
 import { fetchPrice, fetchQuote, SwapApiError } from './api'
 import type { SwapChainId } from './constants'
 import { isNative, QUOTE_MAX_AGE_MS } from './constants'
@@ -122,7 +125,13 @@ export function useSwapExecution({ chainId, taker }: { chainId: SwapChainId; tak
   })
 
   const send = useSendTransaction()
-  const swapReceipt = useWaitForTransactionReceipt({ hash: send.data, chainId, query: { enabled: !!send.data } })
+  const canBatchSwap = useCanBatch(chainId)
+  const batch = useTx((id) => {
+    if (id === 'approve') allowance.refetch()
+  })
+  const batchHash = batch.tx.id === 'swap' ? batch.tx.hash : undefined
+  const swapHash = send.data ?? batchHash
+  const swapReceipt = useWaitForTransactionReceipt({ hash: swapHash, chainId, query: { enabled: !!swapHash } })
 
   const getQuote = useCallback(async (req: SwapRequest) => {
     setQuoting(true)
@@ -176,6 +185,27 @@ export function useSwapExecution({ chainId, taker }: { chainId: SwapChainId; tak
     if (!current.liquidityAvailable || quoteProblem(current, state.request)) return
     setRequoted(false)
     const tx = current.transaction
+    if (needsApproval && canBatchSwap && request && spender) {
+      const allow = (amount: bigint) => ({
+        address: request.sellToken,
+        abi: erc20Abi,
+        functionName: 'approve',
+        args: [spender, amount],
+        chainId,
+      })
+      batch.runBatch(
+        'swap',
+        [
+          ...(needsAllowanceReset ? [allow(0n)] : []),
+          allow(request.sellAmount),
+          // No gas limit from the quote: it was priced for the swap alone, and the wallet estimates the whole batch.
+          { to: tx.to, data: tx.data, value: BigInt(tx.value || '0'), chainId },
+        ],
+        'approve'
+      )
+      return
+    }
+
     send.sendTransaction({
       to: tx.to,
       data: tx.data,
@@ -191,6 +221,7 @@ export function useSwapExecution({ chainId, taker }: { chainId: SwapChainId; tak
     setRequoted(false)
     approve.reset()
     send.reset()
+    batch.reset()
   }
 
   return {
@@ -202,18 +233,23 @@ export function useSwapExecution({ chainId, taker }: { chainId: SwapChainId; tak
     reset,
     needsApproval,
     needsAllowanceReset,
+    canBatch: canBatchSwap,
     requoted,
     approve: doApprove,
     approveHash: approve.data as Hash | undefined,
     approving: approve.isPending || (!!approve.data && approveReceipt.isLoading),
     approveError: approve.error || approveReceipt.error,
     swap: doSwap,
-    swapHash: send.data as Hash | undefined,
-    awaitingWallet: send.isPending,
-    confirming: !!send.data && swapReceipt.isLoading,
-    confirmed: swapReceipt.isSuccess && swapReceipt.data?.status === 'success',
+    swapHash: swapHash as Hash | undefined,
+    awaitingWallet: send.isPending || batch.tx.phase === 'wallet',
+    confirming: batch.tx.phase === 'pending' || (!!swapHash && swapReceipt.isLoading),
+    // A wallet may report a finished batch without a receipt to look up.
+    confirmed:
+      (swapReceipt.isSuccess && swapReceipt.data?.status === 'success') ||
+      (batch.tx.id === 'swap' && batch.tx.phase === 'done' && !batchHash),
     reverted: swapReceipt.isSuccess && swapReceipt.data?.status === 'reverted',
-    swapError: send.error || swapReceipt.error,
+    swapError:
+      send.error || swapReceipt.error || (batch.tx.phase === 'error' ? new Error(batch.tx.message) : undefined),
     swapReceipt: swapReceipt.data,
   }
 }

@@ -125,13 +125,11 @@ void main() {
   }
   color *= uGain;
 
-  // the crest the pet surfs on: a foam line, a soft glow under it, faint y2k scanlines in the swell
+  // the crest the pet surfs on: a soft glow under it, faint y2k scanlines in the swell
   vec2 css = gl_FragCoord.xy / uScale;
   float d = css.y - crest(css.x);
-  float foam = 1.0 - smoothstep(1.2, 3.2, abs(d));
   float under = (1.0 - step(0.0, d)) * (1.0 - smoothstep(0.0, 110.0, -d));
   float lines = step(0.5, fract(css.y / 5.0));
-  color += vec3(1.0, 0.9, 0.98) * foam * 0.42;
   color += vec3(0.62, 0.86, 0.96) * under * (0.035 + 0.035 * lines);
 
   gl_FragColor = vec4(color, 1.0);

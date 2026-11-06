@@ -8,6 +8,7 @@ import { useAccount, useSwitchChain } from 'wagmi'
 import LoadingHourglass from '@/assets/loading_hourglass.gif'
 import { SmallButton, SplitMeter, TxSteps } from '@/components/LaunchKit'
 import { BigButton, Chip, DisplayTitle, Eyebrow, Panel, StatusBox, Well } from '@/components/Retro'
+import { pinstripe, y2kSkin } from '@/components/Retro/y2k'
 import TitleBar from '@/components/TitleBar'
 import WindowWrapper from '@/components/WindowWrapper'
 import { explorerUrl } from '@/config/wagmi'
@@ -32,12 +33,13 @@ import { useOpenApp } from '@/music/useOpenApp'
 import { useAppDispatch } from '@/store/hooks'
 import { closeWindow, minimizeWindow } from '@/store/windows/actions'
 import { useFullscreen } from '@/store/windows/hooks'
-import { bevel, color, font, space, text } from '@/theme/tokens'
+import { color, font, space, text } from '@/theme/tokens'
 import { resolveUri } from '@/utils/resolveUri'
 
-import Preview, { priceLine, supplyLine, TYPE_LABEL } from './Preview'
+import { gel } from '../DropMusic/y2k'
+import Preview, { PreviewCard, priceLine, supplyLine, TYPE_LABEL } from './Preview'
 import type { Pick } from './Steps'
-import { AlignStep, ArtStep, SaleStep, TypeStep } from './Steps'
+import { AlignStep, ArtStep, PhaseBox, SaleStep, TypeCard, TypeStep, VaultCard } from './Steps'
 import { useLaunch } from './useLaunch'
 
 const LAUNCH_TYPES: LaunchType[] = ['drop', 'auction', 'editions']
@@ -50,10 +52,48 @@ const STEP_LABEL: Record<StepKey, string> = {
   review: 'Review',
 }
 
+/** Launch's own material: a glossy emerald launchpad with a chrome-gold gleam. */
 const Layout = styled.div`
   height: 100%;
   overflow-y: auto;
   overflow-x: hidden;
+  ${y2kSkin({
+    ink: '#06302c',
+    inkSoft: '#14574c',
+    material: `${pinstripe(0.1)}, radial-gradient(520px 300px at 90% -60px, rgba(255, 244, 190, 0.85), transparent 70%),
+      radial-gradient(420px 420px at -60px 110%, rgba(198, 255, 61, 0.45), transparent 70%),
+      linear-gradient(170deg, #17d99a 0%, #0a9a7c 42%, #06504a 100%)`,
+    head: '#ffffff',
+    headShadow: '#06302c',
+    frost: 'rgba(242, 255, 250, 0.9)',
+    edge: '#06302c',
+    glow: 'rgba(23, 217, 154, 0.28)',
+    gelTop: '#fff2a8',
+    gelBottom: '#f2b91f',
+    gelInk: '#3a2600',
+    smallTop: '#d8fff0',
+    smallBottom: '#4fe3b0',
+    link: '#075e8a',
+  })}
+  ${PreviewCard}, ${TypeCard}, ${VaultCard}, ${PhaseBox} {
+    border: 1px solid #06302c;
+    border-radius: 14px;
+    background: linear-gradient(180deg, #fff 0%, #e4fff4 100%);
+    box-shadow: 0 2px 0 rgba(6, 48, 44, 0.3);
+    color: #06302c;
+  }
+  ${TypeCard}:hover:not(:disabled), ${VaultCard}:hover:not(:disabled) {
+    background: linear-gradient(180deg, #fff 0%, #c8ffe6 100%);
+  }
+  ${TypeCard}[aria-pressed='true'], ${VaultCard}[aria-pressed='true'], ${TypeCard}[aria-checked='true'],
+  ${VaultCard}[aria-checked='true'] {
+    border-width: 2px;
+    background: linear-gradient(180deg, #fffbe0 0%, #ffe680 100%);
+  }
+  ${PreviewCard} ${Eyebrow}, ${PreviewCard} ${DisplayTitle} {
+    color: #14574c !important;
+    text-shadow: none !important;
+  }
 `
 
 const Inner = styled.div`
@@ -79,15 +119,16 @@ const Rail = styled.ol`
   padding: 0;
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 2px;
+  gap: 4px;
   li button {
     width: 100%;
     min-height: 36px;
-    border: none;
-    border-radius: 0;
-    background: ${color.face};
-    box-shadow: ${bevel.raised};
-    color: ${color.ink};
+    border: 1px solid #06302c;
+    border-radius: 999px;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.85) 0%, rgba(255, 255, 255, 0.3) 48%, transparent 50%),
+      rgba(216, 255, 240, 0.72);
+    box-shadow: 0 2px 0 rgba(6, 48, 44, 0.35);
+    color: #06302c;
     font: inherit;
     font-size: ${text.xs};
     display: flex;
@@ -99,12 +140,11 @@ const Rail = styled.ol`
     overflow: hidden;
   }
   li button:disabled {
-    color: ${color.shadow};
+    color: #3b6d63;
     cursor: default;
   }
   li button[aria-current='step'] {
-    background: ${color.well};
-    box-shadow: ${bevel.sunken};
+    ${gel('#fff2a8', '#f2b91f', '#3a2600')}
     font-weight: 700;
   }
   .n {
@@ -113,14 +153,14 @@ const Rail = styled.ol`
     width: 20px;
     height: 20px;
     flex: 0 0 20px;
-    background: ${color.well};
-    box-shadow: ${bevel.sunken};
+    border-radius: 50%;
+    background: #06302c;
+    color: #d8fff0;
     font-variant-numeric: tabular-nums;
   }
   [aria-current='step'] .n {
-    background: ${color.accent};
-    color: ${color.ink};
-    box-shadow: none;
+    background: #3a2600;
+    color: #fff2a8;
   }
   .narrow & .label {
     display: none;
@@ -146,8 +186,10 @@ const Foot = styled.div`
   z-index: 1;
   margin: 0 -${space[3]} -${space[3]};
   padding: ${space[2]} ${space[3]} ${space[3]};
-  background: ${color.face};
-  box-shadow: inset 0 1px ${color.shadow}, inset 0 2px ${color.highlight};
+  border-top: 1px solid #06302c;
+  border-radius: 16px 16px 0 0;
+  background: rgba(242, 255, 250, 0.88);
+  box-shadow: inset 0 2px 0 #fff;
   display: flex;
   gap: ${space[2]};
   align-items: center;

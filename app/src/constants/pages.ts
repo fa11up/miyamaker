@@ -23,6 +23,8 @@ export type Page = {
   }
   /** Draws its own shape with no window behind it: only what it paints takes clicks. */
   shaped?: boolean
+  /** Always opens at minSize and keeps it: no resizing, no remembered size. */
+  fixedSize?: boolean
 }
 
 const Pages: Record<string, Page> = {
@@ -133,6 +135,7 @@ const Pages: Record<string, Page> = {
     path: '/tv',
     label: 'miyatv',
     icon: TvIcon[0],
+    fixedSize: true,
     minSize: {
       width: 1100,
       height: 700,

@@ -19,8 +19,11 @@ import type { OwnedNft } from './indexer/types'
 import Properties from './Properties'
 import type { TokenDoc } from './useWalletFiles'
 import { useTokenDocs, useWalletNfts } from './useWalletFiles'
+import { WIRED_BACKDROP } from './wired'
 
 const ID = 'files'
+
+const PHOSPHOR = '#cfe8d3'
 
 const Root = styled.div`
   position: relative;
@@ -29,7 +32,8 @@ const Root = styled.div`
   gap: ${space[1]};
   min-height: 0;
   padding: ${space[1]};
-  color: ${color.ink};
+  color: ${PHOSPHOR};
+  background: #120a1c;
 `
 
 const Toolbar = styled.div`
@@ -40,16 +44,19 @@ const Toolbar = styled.div`
   button {
     min-height: 28px;
     padding: 0 ${space[2]};
-    border: none;
-    background: ${color.face};
-    box-shadow: ${bevel.raised};
+    border: 1px solid #5f7a68;
+    background: #1c1226;
+    color: ${PHOSPHOR};
     font-size: ${text.sm};
     cursor: pointer;
+    &:hover:not(:disabled) {
+      background: #33203f;
+    }
     &:active:not(:disabled) {
-      box-shadow: ${bevel.pressed};
+      background: #0a0610;
     }
     &:disabled {
-      color: ${color.shadow};
+      color: #6f7f76;
       cursor: default;
     }
   }
@@ -68,8 +75,9 @@ const AddressBar = styled.div`
   display: flex;
   align-items: center;
   padding: 0 ${space[2]};
-  background: ${color.well};
-  box-shadow: ${bevel.field};
+  border: 1px solid #5f7a68;
+  background: #07040c;
+  color: ${PHOSPHOR};
   font-size: ${text.sm};
   white-space: nowrap;
   overflow: hidden;
@@ -80,8 +88,8 @@ const Pane = styled.div`
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
-  background: ${color.well};
-  box-shadow: ${bevel.sunken};
+  border: 1px solid #5f7a68;
+  background: #160b26 ${WIRED_BACKDROP} right bottom / cover no-repeat;
   padding: ${space[3]};
 `
 
@@ -103,7 +111,7 @@ const Item = styled.button`
   padding: ${space[1]};
   border: 1px dotted transparent;
   background: transparent;
-  color: ${color.ink};
+  color: #fff;
   cursor: pointer;
   min-width: 0;
 
@@ -147,20 +155,23 @@ const Item = styled.button`
     line-height: 1.25;
     text-align: center;
     overflow-wrap: anywhere;
+    background: rgba(7, 4, 12, 0.72);
     display: -webkit-box;
     -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
     overflow: hidden;
   }
   .meta {
+    padding: 0 2px;
     font-size: ${text.xs};
-    color: ${color.inkMuted};
+    color: ${PHOSPHOR};
+    background: rgba(7, 4, 12, 0.72);
   }
 
   &.selected .label,
   &:focus-visible .label {
-    background: ${color.accent};
-    color: ${color.ink};
+    background: #c8102e;
+    color: #fff;
   }
   &.selected .thumb,
   &.selected img.folder {
@@ -168,7 +179,7 @@ const Item = styled.button`
   }
   &:focus-visible {
     outline: none;
-    border-color: ${color.dark};
+    border-color: ${PHOSPHOR};
   }
 `
 
@@ -216,7 +227,8 @@ const StatusBar = styled.div`
   font-size: ${text.xs};
   > div {
     padding: 2px ${space[2]};
-    box-shadow: ${bevel.sunken};
+    border: 1px solid #5f7a68;
+    background: #07040c;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -255,6 +267,25 @@ const Empty = styled.div`
   }
   ${BigButton} {
     max-width: 280px;
+  }
+  p,
+  p * {
+    color: #fff !important;
+    text-shadow: 0 1px 3px #000, 0 0 2px #000;
+  }
+  ${BigButton} {
+    outline: 1px solid ${PHOSPHOR};
+    background: rgba(7, 4, 12, 0.85);
+    color: ${PHOSPHOR};
+    text-shadow: 0 0 6px rgba(160, 255, 190, 0.6);
+    box-shadow: none;
+    &:hover:not(:disabled) {
+      background: #c8102e;
+      color: #fff;
+    }
+    &:active:not(:disabled) {
+      box-shadow: none;
+    }
   }
 `
 
