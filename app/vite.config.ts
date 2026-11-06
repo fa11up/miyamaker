@@ -13,6 +13,7 @@ import svgr from 'vite-plugin-svgr'
 import { handleMarketRequest, MARKET_PREFIX, memoryCache, openSeaReader } from './api/_lib/market'
 import { handleOpenSeaRequest, OPENSEA_PROXY_PATH, quoteBigInts } from './api/_lib/opensea'
 import { handlePublicAccessRequest, memoryTapeStore, PUBLIC_ACCESS_PATH, youtubeLookup } from './api/_lib/publicaccess'
+import { handleSampleMediaRequest, SAMPLE_MEDIA_PATH } from './api/_lib/samplemedia'
 import { handleTvLiveRequest, TV_LIVE_PATH } from './api/_lib/tvlive'
 import { gatewayContentType, handleStationRequest, memoryStore, STATION_PATH } from './api/_lib/station'
 import { clientKey, createRateLimiter, handleZeroExRequest, PROXY_PREFIX, sameOrigin } from './api/_lib/zeroex'
@@ -161,6 +162,30 @@ function tvLiveDevProxy(env: Record<string, string>): Plugin {
   }
 }
 
+/** Dev-only stand-in for the Worker's sample-media route. Hosts are allowlisted in api/_lib/samplemedia.ts. */
+function sampleMediaDevProxy(): Plugin {
+  const limiter = createRateLimiter({ capacity: 8, perSecond: 0.2 })
+  return {
+    name: 'miya-sample-media-dev-proxy',
+    configureServer(server) {
+      server.middlewares.use(SAMPLE_MEDIA_PATH, async (req, res) => {
+        const headers = new Headers()
+        for (const [k, v] of Object.entries(req.headers)) if (typeof v === 'string') headers.set(k, v)
+        const host = req.headers.host || 'localhost'
+        const rest = req.url || ''
+        const response = await handleSampleMediaRequest(
+          { method: req.method || 'GET', url: `http://${host}${SAMPLE_MEDIA_PATH}${rest}`, headers },
+          { sameOrigin, clientKey, limiter }
+        )
+        res.statusCode = response.status
+        const type = response.headers.get('content-type')
+        if (type) res.setHeader('content-type', type)
+        res.end(Buffer.from(await response.arrayBuffer()))
+      })
+    },
+  }
+}
+
 /** Dev-only stand-in for the Worker's public access route, kept in memory. STATION_ADMINS from the shell. */
 function publicAccessDevProxy(): Plugin {
   const store = memoryTapeStore()
@@ -203,6 +228,7 @@ export default defineConfig(({ mode }) => ({
     openSeaDevProxy(loadEnv(mode, __dirname, ['OPENSEA_'])),
     stationDevProxy(),
     publicAccessDevProxy(),
+    sampleMediaDevProxy(),
     tvLiveDevProxy(loadEnv(mode, __dirname, ['YOUTUBE_'])),
     marketDevProxy(loadEnv(mode, __dirname, ['OPENSEA_'])),
     react(),

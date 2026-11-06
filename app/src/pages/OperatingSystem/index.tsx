@@ -97,6 +97,7 @@ const DESKTOP_ICONS: DesktopApp[] = [
   { id: 'tv', label: Pages.tv?.label || 'miyatv', src: Pages.tv?.icon?.src },
   { id: 'radio', label: Pages.radio?.label || 'miya radio', src: Pages.radio?.icon?.src },
   { id: 'dropmusic', label: Pages.dropmusic?.label || 'Drop Music', src: Pages.dropmusic?.icon?.src },
+  { id: 'music', label: Pages.music?.label || 'MiyaMusicMaker', src: Pages.music?.icon?.src },
 ]
 
 export default function OperatingSystem() {

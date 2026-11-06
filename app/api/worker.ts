@@ -5,6 +5,7 @@ import { verifyMessage } from 'viem'
 import { edgeCache, handleMarketRequest, MARKET_PREFIX, openSeaReader } from './_lib/market'
 import { handleOpenSeaRequest, OPENSEA_PROXY_PATH, quoteBigInts } from './_lib/opensea'
 import { d1TapeStore, handlePublicAccessRequest, PUBLIC_ACCESS_PATH, youtubeLookup } from './_lib/publicaccess'
+import { handleSampleMediaRequest, SAMPLE_MEDIA_PATH } from './_lib/samplemedia'
 import { serveRange } from './_lib/ranges'
 import type { D1Like } from './_lib/station'
 import { d1Store, gatewayContentType, handleStationRequest, STATION_PATH } from './_lib/station'
@@ -34,6 +35,7 @@ const guards = {
 const marketLimiter = createRateLimiter({ capacity: 120, perSecond: 2 })
 const stationLimiter = createRateLimiter({ capacity: 20, perSecond: 0.2 })
 const publicAccessLimiter = createRateLimiter({ capacity: 20, perSecond: 0.2 })
+const sampleMediaLimiter = createRateLimiter({ capacity: 8, perSecond: 0.2 })
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -115,6 +117,13 @@ export default {
           clientKey,
           limiter: publicAccessLimiter,
         }
+      )
+    }
+
+    if (url.pathname === SAMPLE_MEDIA_PATH) {
+      return handleSampleMediaRequest(
+        { method: request.method, url: request.url, headers: request.headers },
+        { sameOrigin, clientKey, limiter: sampleMediaLimiter }
       )
     }
 

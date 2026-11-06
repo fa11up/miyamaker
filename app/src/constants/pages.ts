@@ -5,6 +5,7 @@ import GearIcon from 'assets/executable_gear.png?preset=icon&resize=true'
 import FilesIcon from 'assets/folder.png?preset=icon&resize=true'
 import AuctionIcon from 'assets/icon/auction.png?preset=icon&resize=true'
 import DropMusicIcon from 'assets/icon/drop_music.png?preset=icon&resize=true'
+import MusicIcon from 'assets/icon/music_maker.png?preset=icon&resize=true'
 import RadioIcon from 'assets/icon/radio.png?preset=icon&resize=true'
 import MintIcon from 'assets/launchpad_logo.png?preset=icon&resize=true'
 import ManageIcon from 'assets/miya_website_logo_2-removebg-preview.png?preset=icon&resize=true'
@@ -163,6 +164,16 @@ const Pages: Record<string, Page> = {
     minSize: {
       width: 640,
       height: 700,
+    },
+  },
+  music: {
+    id: 'music',
+    path: '/music',
+    label: 'MiyaMusicMaker',
+    icon: MusicIcon[0],
+    minSize: {
+      width: 1180,
+      height: 760,
     },
   },
 }
