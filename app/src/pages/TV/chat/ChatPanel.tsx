@@ -1,4 +1,5 @@
 import { useConnectModal } from '@rainbow-me/rainbowkit'
+import type { ReactNode } from 'react'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import styled from 'styled-components/macro'
 
@@ -12,7 +13,7 @@ import { cleanText, codePoints, MAX_MESSAGE_LENGTH } from './protocol'
 import { CHAT_URL, useChatRoom, useChatSession } from './useChat'
 
 /** miyatv's chat, in the cabinet's dark walnut and cream. */
-const glow = {
+export const glow = {
   screen: '#1c130c',
   panel: '#2a1c11',
   line: '#5a3f25',
@@ -221,6 +222,8 @@ const Frame = styled.iframe`
   width: 100%;
   border: none;
   background: #0b0e0f;
+  /* Kick's chat is its own page and cannot be restyled, but its colours can be tinted from out here. */
+  filter: sepia(0.85) saturate(1.25) hue-rotate(-14deg) brightness(1.05);
 `
 
 const Offline = styled.div`
@@ -448,18 +451,32 @@ export default function ChatPanel({
   room,
   roomLabel,
   native,
+  panel,
 }: {
   room: string
   roomLabel: string
   native: NativeChat | undefined
+  /** The channel's own sidebar, shown first when it has one. */
+  panel?: { label: string; node: ReactNode }
 }) {
-  const [tab, setTab] = useState<'ours' | 'native'>('ours')
+  const [tab, setTab] = useState<'panel' | 'ours' | 'native'>(panel ? 'panel' : 'ours')
   const nativeTab = tab === 'native' && native
+  const panelTab = tab === 'panel' && panel
 
   return (
     <Root aria-label="Chat">
       <Tabs role="tablist">
-        <button type="button" role="tab" aria-selected={!nativeTab} onClick={() => setTab('ours')}>
+        {panel && (
+          <button type="button" role="tab" aria-selected={!!panelTab} onClick={() => setTab('panel')}>
+            {panel.label}
+          </button>
+        )}
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === 'ours' || (!nativeTab && !panelTab)}
+          onClick={() => setTab('ours')}
+        >
           miyatv chat
         </button>
         {native && (
@@ -468,7 +485,9 @@ export default function ChatPanel({
           </button>
         )}
       </Tabs>
-      {nativeTab ? (
+      {panelTab ? (
+        panel.node
+      ) : nativeTab ? (
         native.kind === 'iframe' ? (
           <Frame
             key={native.src}
