@@ -229,8 +229,8 @@ export default defineConfig(({ mode }) => ({
       workbox: {
         // Minimal app-shell cache: code, styles, fonts and icons. Chain data (RPC) stays network-only.
         globPatterns: ['index.html', 'assets/*.css', 'fonts/**/*.{woff,woff2}', 'icons/*.png', 'favicon1.png'],
-        // The radio's Japanese font loads when a Japanese title comes on, not with the app.
-        globIgnores: ['fonts/misaki/**'],
+        // The radio's CJK fonts load when such a title comes on, not with the app.
+        globIgnores: ['fonts/fusion-pixel/**'],
         runtimeCaching: [
           // JS chunks are hashed; cache them as they are fetched instead of precaching every wallet SDK chunk.
           {
