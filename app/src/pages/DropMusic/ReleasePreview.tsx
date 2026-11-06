@@ -1,9 +1,11 @@
 import { Fragment } from 'react'
-import styled, { keyframes } from 'styled-components/macro'
+import styled from 'styled-components/macro'
 
 import DropMusicIcon from '@/assets/icon/drop_music.png'
 import { Eyebrow, Panel, Well } from '@/components/Retro'
-import { bevel, color, font, space, text } from '@/theme/tokens'
+import { Marquee } from '@/pages/Radio/parts'
+import { skinById } from '@/pages/Radio/skins'
+import { bevel, color, space, text } from '@/theme/tokens'
 
 const Row = styled.div`
   display: grid;
@@ -92,78 +94,14 @@ const FakeMint = styled.div`
   box-shadow: ${bevel.raised};
 `
 
-const marquee = keyframes`to { transform: translateX(-50%); }`
-const bounce = keyframes`
-  0%, 100% { transform: scaleY(0.25); }
-  50% { transform: scaleY(1); }
-`
-
-const Deck = styled.div`
-  display: grid;
-  grid-template-columns: 56px minmax(0, 1fr);
-  gap: ${space[2]};
+/* The radio's real screen: its own colours and pixel font, and the line it scrolls. It shows no pictures. */
+const Lcd = styled.div`
   padding: ${space[2]};
-  background: ${color.dark};
-  box-shadow: ${bevel.sunken};
-  color: ${color.light};
-  font-family: ${font.mono};
-  font-size: 12px;
-  .thumb {
-    width: 56px;
-    height: 56px;
-    background: #251d3a;
-    box-shadow: ${bevel.sunken};
-    padding: 2px;
-    img {
-      width: 100%;
-      height: 100%;
-      object-fit: cover;
-      display: block;
-      border: none;
-      margin: 0;
-      max-width: none;
-    }
-  }
-  .lcd {
-    overflow: hidden;
-    white-space: nowrap;
-    color: ${color.accent};
-    text-shadow: 0 0 6px rgba(217, 122, 218, 0.55);
-    text-transform: uppercase;
-  }
-  .lcd span {
-    display: inline-block;
-    animation: ${marquee} 12s linear infinite;
-  }
-  .meta {
-    display: flex;
-    align-items: flex-end;
-    justify-content: space-between;
-    gap: ${space[2]};
-    margin-top: 6px;
-  }
-  .bars {
-    display: flex;
-    align-items: flex-end;
-    gap: 2px;
-    height: 18px;
-  }
-  .bars i {
-    width: 4px;
-    height: 100%;
-    background: linear-gradient(to top, ${color.accentDark}, ${color.accent}, #f5c6f6);
-    transform-origin: bottom;
-    animation: ${bounce} 0.9s ease-in-out infinite;
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .lcd span,
-    .bars i {
-      animation: none;
-    }
-    .bars i {
-      transform: scaleY(0.6);
-    }
-  }
+  border-radius: 8px;
+  color: var(--rk-lcd-ink);
+  background: var(--rk-lcd);
+  box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.45);
+  overflow: hidden;
 `
 
 const Ticket = styled.dl`
@@ -195,7 +133,7 @@ const Glyph = () => (
 )
 
 /**
- * How the release will look once it is out: its card under Mint → Music and its "now playing" line in miya radio.
+ * How the release will look once it is out: its card under Mint → Music and the title line miya radio scrolls.
  * Everything updates as the form is filled in.
  */
 export default function ReleasePreview({
@@ -215,7 +153,6 @@ export default function ReleasePreview({
 }) {
   const t = title || 'Untitled'
   const a = artist || 'Unknown artist'
-  const lcd = `${a} — ${t}   ★   `
   return (
     <Row>
       <Col aria-label="Preview of the Mint card">
@@ -243,25 +180,9 @@ export default function ReleasePreview({
       </Col>
       <Col aria-label="Preview of miya radio">
         <Eyebrow as="figcaption">On miya radio</Eyebrow>
-        <Deck aria-hidden>
-          <div className="thumb">{coverUrl ? <img src={coverUrl} alt="" /> : null}</div>
-          <div style={{ minWidth: 0 }}>
-            <div className="lcd">
-              <span>
-                {lcd}
-                {lcd}
-              </span>
-            </div>
-            <div className="meta">
-              <span style={{ color: color.light }}>now playing</span>
-              <span className="bars">
-                {[0, 0.2, 0.45, 0.1, 0.6, 0.3, 0.75, 0.15].map((d) => (
-                  <i key={d} style={{ animationDelay: `-${d}s` }} />
-                ))}
-              </span>
-            </div>
-          </div>
-        </Deck>
+        <Lcd aria-hidden style={skinById('classic').vars}>
+          <Marquee value={`1. ${a} - ${t}`} width={150} />
+        </Lcd>
         <Ticket aria-label="Release summary">
           {facts.map((f) => (
             <Fragment key={f.label}>

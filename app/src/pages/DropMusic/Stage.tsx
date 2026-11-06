@@ -555,6 +555,21 @@ const Transport = styled.div`
   .narrow & .time .total {
     display: none;
   }
+  @media (hover: none) {
+    .drop-hint {
+      display: none;
+    }
+  }
+`
+
+const StageNotice = styled.div`
+  margin-top: ${space[1]};
+  padding: ${space[1]} ${space[3]};
+  border: 1px solid #a01818;
+  border-radius: 10px;
+  background: #fff1f0;
+  color: #8a1010;
+  font-size: ${text.xs};
 `
 
 const PlayButton = styled.button`
@@ -670,6 +685,8 @@ export type StageProps = {
   onChooseCover: () => void
   onDropFile: (file: File) => void
   onSendToRadio?: () => void
+  /** Why the last file was refused: it may have been dropped here, far from the tab that holds the error. */
+  notice?: string
 }
 
 /**
@@ -818,10 +835,11 @@ export default function Stage(p: StageProps) {
             <DeckButton type="button" className="hot" onClick={p.onChooseTrack}>
               ♪ Choose a track
             </DeckButton>
-            <span className="hint">or drop an audio file on the stage. Cover art too.</span>
+            <span className="hint drop-hint">or drop an audio file on the stage. Cover art too.</span>
           </>
         )}
       </Transport>
+      {p.notice && <StageNotice role="alert">{p.notice}</StageNotice>}
     </div>
   )
 }

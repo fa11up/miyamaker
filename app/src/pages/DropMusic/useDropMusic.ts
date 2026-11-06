@@ -1,10 +1,11 @@
 import { readContract, simulateContract, waitForTransactionReceipt, writeContract } from '@wagmi/core'
 import { useCallback, useState } from 'react'
 import type { Address, Hash } from 'viem'
-import { BaseError, parseEventLogs, zeroAddress } from 'viem'
+import { parseEventLogs, zeroAddress } from 'viem'
 import { useAccount, useReadContract, useReadContracts } from 'wagmi'
 
 import { wagmiConfig } from '@/config/wagmi'
+import { plainTxError, TX_CHECK_WORDS } from '@/miyamints/errors'
 import { erc1155FactoryAbi, erc1155InstanceAbi, miyaRegistryAbi } from '@/music/abi'
 import type { MusicMetadata } from '@/music/audio'
 import { musicConfig } from '@/music/config'
@@ -15,15 +16,15 @@ import { instanceAddressAbi } from '@/utils/batchCalls'
 import { fundAndUpload } from '@/utils/fundAndUpload'
 import getIrysToken from '@/utils/getIrysToken'
 
-type ChainId = (typeof wagmiConfig.chains)[number]['id']
+export type ChainId = (typeof wagmiConfig.chains)[number]['id']
 
 export type StepId = 'audio' | 'cover' | 'metadata' | 'deploy' | 'edition'
 export type StepState = 'idle' | 'active' | 'done' | 'error' | 'skipped'
 export const STEPS: { id: StepId; label: string }[] = [
-  { id: 'audio', label: 'Upload audio to Arweave (Irys)' },
-  { id: 'cover', label: 'Upload cover art' },
-  { id: 'metadata', label: 'Upload token metadata' },
-  { id: 'deploy', label: 'Deploy ERC-1155 edition collection' },
+  { id: 'audio', label: 'Store your track' },
+  { id: 'cover', label: 'Store your cover' },
+  { id: 'metadata', label: 'Store the track details' },
+  { id: 'deploy', label: 'Create your collection' },
   { id: 'edition', label: 'Add the track as edition #1' },
 ]
 
@@ -63,18 +64,10 @@ export function useMusicChain() {
     wrongChain: !!chainId && !onChain,
     ready: !!cfg.factory && !!cfg.vault && onChain,
     minAlignmentBps: (minBps?.result as number | undefined) ?? 1000,
-    protocolFeeBps: (feeBps?.result as number | undefined) ?? 0,
+    protocolFeeBps: (feeBps?.result as number | undefined) ?? 100,
     vaultRegistered: vaultOk?.result as boolean | undefined,
     loading: registry.isLoading || rules.isLoading,
   }
-}
-
-export function describeTxError(error: unknown): string {
-  if (!error) return ''
-  const base = error instanceof BaseError ? error : undefined
-  const msg = base?.shortMessage || (error as Error).message || 'Something went wrong.'
-  if (/reject|denied|cancel/i.test(base?.details || msg)) return 'Cancelled in wallet.'
-  return msg
 }
 
 export type Uploaded = { audio?: string; cover?: string; metadata?: string }
@@ -97,6 +90,11 @@ export function useDropMusic() {
   const [launched, setLaunched] = useState<Launched>({})
   const [error, setError] = useState('')
   const [running, setRunning] = useState(false)
+  /** What the current upload is waiting for, in the storage service's own steps. */
+  const [note, setNote] = useState('')
+  const [check, setCheck] = useState<{ state: 'idle' | 'checking' | 'ok' | 'error'; message?: string }>({
+    state: 'idle',
+  })
 
   const mark = (id: StepId, state: StepState) => setSteps((s) => ({ ...s, [id]: state }))
 
@@ -111,15 +109,71 @@ export function useDropMusic() {
       ],
       undefined,
       getIrysToken(chain?.id || 1),
-      chain
-    ).catch((e) => {
-      mark(id, 'error')
-      throw e
-    })
+      chain,
+      setNote
+    )
+      .catch((e) => {
+        mark(id, 'error')
+        throw e
+      })
+      .finally(() => setNote(''))
 
     mark(id, 'done')
     return `ar://${tx}`
   }
+
+  /** The create call. Its address depends on the salt, so the dry run and the real thing each take their own. */
+  const createCall = (
+    factory: Address,
+    vault: Address,
+    creator: Address,
+    c: { name: string; bps: number; uri: string }
+  ) => {
+    const salt = makeSalt(factory, crypto.getRandomValues(new Uint8Array(11)))
+    return {
+      salt,
+      call: {
+        address: factory,
+        abi: erc1155FactoryAbi,
+        functionName: 'createInstance' as const,
+        args: [
+          salt,
+          {
+            name: c.name,
+            metadataURI: c.uri,
+            creator,
+            vault,
+            alignmentBps: c.bps,
+            styleUri: '',
+            gatingModule: zeroAddress,
+            freeMint: { allocation: 0n, scope: GATING_SCOPE_BOTH },
+          },
+        ],
+      },
+    }
+  }
+
+  /** Dry-run the create call, so a problem shows before any money goes to storage. Throws when it would fail. */
+  const dryRun = async (name: string, bps: number) => {
+    const cfg = musicConfig(chain?.id)
+    if (!address || !cfg.factory || !cfg.vault) return
+    const { call } = createCall(cfg.factory, cfg.vault, address, { name, bps, uri: 'ar://placeholder-metadata' })
+    await simulateContract(wagmiConfig, { account: address, chainId: cfg.chainId as ChainId, ...call } as never)
+  }
+
+  const simulate = useCallback(
+    async (name: string, bps: number) => {
+      setCheck({ state: 'checking' })
+      try {
+        await dryRun(name, bps)
+        setCheck({ state: 'ok' })
+      } catch (e) {
+        setCheck({ state: 'error', message: plainTxError(e, TX_CHECK_WORDS) })
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [address, chain]
+  )
 
   const run = useCallback(
     async (input: {
@@ -140,6 +194,17 @@ export function useDropMusic() {
       setRunning(true)
       try {
         if (!address) throw new Error('Connect a wallet first.')
+        // Before any upload: storage is paid for good, whatever happens to the release after it.
+        if (!cfg.factory || !cfg.vault || chain?.id !== cfg.chainId) {
+          throw new Error('Releasing opens soon. Nothing was charged.')
+        }
+
+        if (!launched.instance) {
+          await dryRun(input.collectionName, input.alignmentBps).catch((e) => {
+            throw new Error(plainTxError(e, TX_CHECK_WORDS))
+          })
+        }
+
         let { audio, cover, metadata } = uploaded
 
         if (!audio) {
@@ -168,10 +233,6 @@ export function useDropMusic() {
           setUploaded((u) => ({ ...u, metadata }))
         }
 
-        if (!cfg.factory || !cfg.vault || chain?.id !== cfg.chainId) {
-          throw new Error('Releasing opens soon. Your uploads are saved.')
-        }
-
         const chainId = cfg.chainId as ChainId
 
         let { instance } = launched
@@ -189,25 +250,11 @@ export function useDropMusic() {
 
         if (!instance) {
           mark('deploy', 'active')
-          const salt = makeSalt(cfg.factory, crypto.getRandomValues(new Uint8Array(11)))
-          const create = {
-            address: cfg.factory,
-            abi: erc1155FactoryAbi,
-            functionName: 'createInstance' as const,
-            args: [
-              salt,
-              {
-                name: input.collectionName,
-                metadataURI: metadata,
-                creator: address,
-                vault: cfg.vault,
-                alignmentBps: input.alignmentBps,
-                styleUri: '',
-                gatingModule: zeroAddress,
-                freeMint: { allocation: 0n, scope: GATING_SCOPE_BOTH },
-              },
-            ],
-          }
+          const { salt, call: create } = createCall(cfg.factory, cfg.vault, address, {
+            name: input.collectionName,
+            bps: input.alignmentBps,
+            uri: metadata,
+          })
           // Create the collection and add the edition as one signature: its address is fixed by the salt, so the
           // second call can name it in advance. If anything is off, the whole batch reverts.
           const predicted = await readContract(wagmiConfig, {
@@ -227,7 +274,7 @@ export function useDropMusic() {
           if (sent) {
             const logs = sent.receipts.flatMap((r) => r.logs ?? []) as never
             instance = parseEventLogs({ abi: erc1155FactoryAbi, eventName: 'InstanceCreated', logs })[0]?.args.instance
-            if (!instance) throw new Error('Deployed, but could not find the new collection address in the receipt.')
+            if (!instance) throw new Error('Created, but the new address was not in the receipt. Check the explorer.')
             const [added] = parseEventLogs({ abi: erc1155InstanceAbi, eventName: 'EditionAdded', logs })
             addKnownCollection(chainId, instance)
             setLaunched((l) => ({ ...l, instance, deployHash: sent.hash }))
@@ -242,14 +289,17 @@ export function useDropMusic() {
             const hash = await writeContract(wagmiConfig, request as never)
             setLaunched((l) => ({ ...l, deployHash: hash }))
             const receipt = await waitForTransactionReceipt(wagmiConfig, { hash, chainId })
-            if (receipt.status !== 'success') throw new Error('The deploy transaction reverted.')
+            if (receipt.status !== 'success') {
+              throw new Error('Creating the collection failed. Your uploads are saved, so press Retry release.')
+            }
+
             const [created] = parseEventLogs({
               abi: erc1155FactoryAbi,
               eventName: 'InstanceCreated',
               logs: receipt.logs,
             })
             instance = created?.args.instance
-            if (!instance) throw new Error('Deployed, but could not find the new collection address in the receipt.')
+            if (!instance) throw new Error('Created, but the new address was not in the receipt. Check the explorer.')
             addKnownCollection(chainId, instance)
             setLaunched((l) => ({ ...l, instance }))
             mark('deploy', 'done')
@@ -266,7 +316,10 @@ export function useDropMusic() {
         const hash = await writeContract(wagmiConfig, request)
         setLaunched((l) => ({ ...l, editionHash: hash }))
         const receipt = await waitForTransactionReceipt(wagmiConfig, { hash, chainId })
-        if (receipt.status !== 'success') throw new Error('The edition transaction reverted.')
+        if (receipt.status !== 'success') {
+          throw new Error('Adding the track failed. Your collection is made, so press Finish to try again.')
+        }
+
         const [added] = parseEventLogs({ abi: erc1155InstanceAbi, eventName: 'EditionAdded', logs: receipt.logs })
         setLaunched((l) => ({ ...l, editionId: added?.args.editionId ?? 1n }))
         mark('edition', 'done')
@@ -278,7 +331,7 @@ export function useDropMusic() {
           })
           return next
         })
-        setError(describeTxError(e))
+        setError(plainTxError(e))
       } finally {
         setRunning(false)
       }
@@ -301,6 +354,7 @@ export function useDropMusic() {
     setUploaded({})
     setLaunched({})
     setError('')
+    setCheck({ state: 'idle' })
   }
 
   /** Inputs changed after an upload: drop the derived uploads so they are redone. */
@@ -319,5 +373,5 @@ export function useDropMusic() {
     }))
   }
 
-  return { steps, uploaded, launched, error, running, run, store, reset, invalidate }
+  return { steps, uploaded, launched, error, running, note, check, simulate, run, store, reset, invalidate }
 }
