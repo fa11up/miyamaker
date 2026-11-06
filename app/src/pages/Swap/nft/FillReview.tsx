@@ -1,6 +1,6 @@
 import { useConnectModal } from '@rainbow-me/rainbowkit'
 import { useQuery } from '@tanstack/react-query'
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import styled from 'styled-components/macro'
 import type { Address } from 'viem'
 import { erc20Abi, zeroAddress } from 'viem'
@@ -12,14 +12,26 @@ import { chains, explorerUrl, mainnet } from '@/config/wagmi'
 import { txWords, useTx } from '@/miyamints/useTx'
 import { useCanBatch } from '@/utils/batch'
 
+import { ethInUsd } from '../board'
 import { Eyebrow, Skeleton, StatusBox } from '../floor/retro'
 import { bevel, color, space, text } from '../floor/tokens'
+import { useEthUsd } from '../MarketBoard'
 import { erc721Abi } from './abi'
+import { fillFailureKind, fillFailureWords, isShort, nftApprovalCall, nftApprovalState } from './fillLogic'
 import type { FillPlan, OsOrder } from './markets'
-import { formatAmount, OPENSEA_CHAIN, planFill, usesSeaportItself } from './markets'
-import { CONDUIT_CONTROLLER, conduitControllerAbi, INPUT_ALIASES, SEAPORT_ADDRESSES, seaportAbi } from './seaport'
-import { Action, Card, Head, Hint, LinkButton, Prose, Stat } from './ui'
-import { fetchFulfillment, MarketError } from './useMarkets'
+import { formatAmount, itemUrl, OPENSEA_CHAIN, planFill, usesSeaportItself } from './markets'
+import {
+  CONDUIT_CONTROLLER,
+  conduitControllerAbi,
+  INPUT_ALIASES,
+  SEAPORT_ADDRESSES,
+  seaportAbi,
+  seaportCallAbi,
+} from './seaport'
+import { markGone, sessionStore } from './sweep'
+import { Action, Card, ConfirmCheck, Head, Hint, LinkButton, Mono, Prose, Stat, SwitchNote } from './ui'
+import { useFillFee } from './useFillFee'
+import { fetchFulfillment } from './useMarkets'
 
 const Lines = styled.dl`
   margin: 0;
@@ -66,8 +78,8 @@ const Buttons = styled.div`
  * The page asks our proxy for OpenSea's fulfillment data, checks it with `planFill` (Seaport only, this chain, this
  * NFT, goods to you, fixed price, nothing beyond the signed order), shows exactly what moves and who gets what. Only
  * fees the order requires are paid (OpenSea's fee, creator fees the collection enforces); no optional ones. Then: an approval if needed
- * (ERC-20 for token-priced listings, the NFT for offers), then the Seaport call. Every call is simulated before the
- * wallet opens (useTx).
+ * (ERC-20 for token-priced listings; for offers, the fee and the one NFT), then the Seaport call. Every call is simulated
+ * before the wallet opens (useTx).
  */
 export default function FillReview({
   side,
@@ -76,8 +88,12 @@ export default function FillReview({
   contract,
   tokenId,
   title,
+  flagged,
+  unverified,
   onClose,
   onDone,
+  onGone,
+  onBusy,
 }: {
   side: 'buy' | 'sell'
   order: OsOrder
@@ -85,11 +101,19 @@ export default function FillReview({
   contract: Address
   tokenId: string
   title: string
+  /** OpenSea flagged this NFT: buying takes an extra yes. */
+  flagged?: boolean
+  /** The collection has no OpenSea badge and isn't hand-checked: buying takes an extra yes. */
+  unverified?: boolean
   onClose: () => void
   onDone: () => void
+  /** The order turned out to be sold, cancelled or expired. */
+  onGone?: () => void
+  /** Told while a transaction is in flight, when the page must not change. */
+  onBusy?: (busy: boolean) => void
 }) {
   const { address: me, isConnected, chainId: walletChain } = useAccount()
-  const { switchChain, isPending: switching } = useSwitchChain()
+  const { switchChain, isPending: switching, error: switchError } = useSwitchChain()
   const { openConnectModal } = useConnectModal()
   const chain = chains.find((c) => c.id === chainId) || mainnet
   const wrongChain = isConnected && walletChain !== chainId
@@ -102,6 +126,7 @@ export default function FillReview({
     gcTime: 0,
     retry: false,
     refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
     queryFn: ({ signal }) =>
       side === 'buy'
         ? fetchFulfillment(
@@ -177,14 +202,23 @@ export default function FillReview({
     query: { enabled: !!erc20 && !!me },
   })
   const [symR, decR, balR, allowR] = tokenReads.data || []
-  const nativeBalance = useBalance({ address: me, chainId, query: { enabled: !!me && !!ok?.currency.native } })
-  const nftApproved = useReadContract({
+  const nativeBalance = useBalance({ address: me, chainId, query: { enabled: !!me && !!ok } })
+  const nftApprovedAll = useReadContract({
     address: contract,
     abi: erc721Abi,
     functionName: 'isApprovedForAll',
     args: [me || zeroAddress, operator || zeroAddress],
     chainId,
     query: { enabled: side === 'sell' && !!me && !!operator },
+  })
+  // ERC-721 only: ERC-1155 has no approval for one token.
+  const nftApprovedOne = useReadContract({
+    address: contract,
+    abi: erc721Abi,
+    functionName: 'getApproved',
+    args: [BigInt(tokenId)],
+    chainId,
+    query: { enabled: side === 'sell' && !!operator && ok?.nftKind === 'erc721', retry: false },
   })
 
   const symbol = ok?.currency.native
@@ -195,13 +229,20 @@ export default function FillReview({
   const decimals = ok?.currency.native ? 18 : decR?.status === 'success' ? Number(decR.result) : order.price.decimals
   const fmt = (n: bigint) => `${n < 0n ? '−' : ''}${formatAmount(n < 0n ? -n : n, decimals, 6)} ${symbol}`
 
+  const [stepsDone, setStepsDone] = useState(0)
+  const [agreedFlagged, setAgreedFlagged] = useState(false)
+  const [agreedUnverified, setAgreedUnverified] = useState(false)
   const tx = useTx((id) => {
     tokenReads.refetch()
-    nftApproved.refetch()
+    nftApprovedAll.refetch()
+    nftApprovedOne.refetch()
     nativeBalance.refetch()
+    if (id === 'approve') setStepsDone((n) => n + 1)
     if (id === 'fill') onDone()
   })
   useEffect(() => tx.reset(), [order.hash])
+  useEffect(() => onBusy?.(tx.busy), [tx.busy])
+  useEffect(() => () => onBusy?.(false), [])
 
   const balance = ok?.currency.native
     ? nativeBalance.data?.value
@@ -209,20 +250,72 @@ export default function FillReview({
     ? (balR.result as bigint)
     : undefined
   const allowance = allowR?.status === 'success' ? (allowR.result as bigint) : undefined
-  const needs20 = side === 'buy' && !!erc20 && allowance !== undefined && ok !== undefined && allowance < ok.total
-  const needsNft = side === 'sell' && nftApproved.data === false
-  const short = side === 'buy' && ok && balance !== undefined && balance < ok.total
+  const needs20 = !!erc20 && allowance !== undefined && ok !== undefined && allowance < ok.fromYou
+  const tokenChecking = !!erc20 && !!ok && ok.fromYou > 0n && allowance === undefined && tokenReads.isLoading
+  const nftState =
+    side === 'sell' && ok
+      ? nftApprovalState({
+          kind: ok.nftKind,
+          operator,
+          approvedForAll: nftApprovedAll.data,
+          approvedAddress: nftApprovedOne.data,
+          approvedKnown: nftApprovedOne.isFetched,
+        })
+      : 'ready'
   const batches = useCanBatch(chainId)
 
   const fillCall = ok && {
     address: ok.to as Address,
-    abi: seaportAbi,
+    abi: seaportCallAbi,
     functionName: ok.functionName,
     args: ok.args,
     value: ok.value,
     chainId,
   }
   const fill = () => fillCall && tx.run('fill', fillCall)
+
+  // What is wrong, in plain words: the order could not be had, or the transaction did not go through.
+  const planRefusal = plan && !plan.ok ? (plan as { error: string; openSea?: boolean }) : undefined
+  const failure =
+    tx.tx.phase === 'error'
+      ? fillFailureKind(tx.tx.error, side)
+      : data.error
+      ? fillFailureKind(data.error, side)
+      : undefined
+  const failed = failure
+    ? fillFailureWords(failure, side)
+    : planRefusal?.openSea
+    ? fillFailureWords('opensea-only', side)
+    : planRefusal
+    ? { words: planRefusal.error }
+    : undefined
+  const unconfirmed = tx.tx.phase === 'error' && failure === 'unconfirmed'
+  const openSeaHref = itemUrl('opensea', chainId, contract, tokenId)
+
+  // A sold listing leaves this visitor's list at once: the shared list can lag it by a minute.
+  useEffect(() => {
+    if (failure !== 'gone') return
+    if (side === 'buy') markGone(sessionStore(), order.hash)
+    onGone?.()
+  }, [failure])
+  // Anything else may just be fill data gone stale: OpenSea's signature on it lasts minutes. Ask again for a retry.
+  useEffect(() => {
+    if (tx.tx.phase === 'error' && failure === 'generic') data.refetch()
+  }, [tx.tx.phase, failure])
+
+  const ethUsd = useEthUsd()
+  const fee = useFillFee({
+    chainId,
+    account: me,
+    // Only the final call: while an approval is still owed the estimate reverts, and the wallet shows the fee instead.
+    calls: ok && fillCall && !needs20 && nftState === 'ready' ? [fillCall] : [],
+    key: `${order.hash}-${needs20}-${nftState}`,
+  })
+  const native = chain.nativeCurrency.symbol
+  const short = side === 'buy' && !!ok && isShort(balance, ok.total, fee, ok.currency.native)
+  const gasShort = !!ok && !short && !ok.currency.native && isShort(nativeBalance.data?.value, 0n, fee, true)
+  const totalUsd = ok && (symbol === 'ETH' || symbol === 'WETH') ? ethInUsd(ok.total, ethUsd) : ''
+  const mustAgree = side === 'buy' && ((flagged && !agreedFlagged) || (unverified && !agreedUnverified))
 
   const action = (() => {
     if (!isConnected) return { label: 'Connect wallet', onClick: () => openConnectModal?.() }
@@ -232,63 +325,73 @@ export default function FillReview({
     if (tx.tx.phase === 'pending') return { label: 'Waiting for the network…', disabled: true }
     if (tx.tx.phase === 'done' && tx.tx.id === 'fill')
       return { label: side === 'buy' ? 'Bought' : 'Sold', disabled: true }
+    if (failure === 'gone') return { label: 'Close', onClick: onClose }
+    // It may yet land, so it is not offered again until the person has looked.
+    if (unconfirmed) return { label: 'Could not confirm yet', disabled: true }
     if (!ok) return { label: data.isLoading ? 'Getting the order…' : 'Cannot fill here', disabled: true }
-    if (!operator) return { label: 'Checking…', disabled: true }
+    if (!operator || tokenChecking || nftState === 'checking') return { label: 'Checking…', disabled: true }
     if (short) return { label: `Not enough ${symbol}`, disabled: true }
-    if (needs20) {
-      const allow = { address: erc20, abi: erc20Abi, functionName: 'approve', args: [operator, ok.total], chainId }
-      if (batches)
-        return {
-          label: `Buy for ${fmt(ok.total)}`,
-          step: `One signature: lets Seaport (OpenSea's contract) take exactly ${fmt(
-            ok.total
-          )} and buys, all or nothing.`,
-          onClick: () => tx.runBatch('fill', [allow, fillCall], 'approve'),
-        }
+    if (gasShort) return { label: `Not enough ${native} for the network fee`, disabled: true }
+
+    const tokenAllow = needs20 && {
+      address: erc20,
+      abi: erc20Abi,
+      functionName: 'approve',
+      args: [operator, ok.fromYou],
+      chainId,
+    }
+    const nftCall = nftApprovalCall(nftState, operator, tokenId)
+    const nftAllow = nftCall && { address: contract, abi: erc721Abi, ...nftCall, chainId }
+    const owed = [tokenAllow, nftAllow].filter(Boolean)
+    const steps = stepsDone + owed.length + 1
+    const numbered = `Step ${stepsDone + 1} of ${steps}: `
+    const moveWords =
+      nftState === 'needs-all' ? `move all your ${title}, until you revoke it` : `move this one NFT, #${tokenId}`
+    const finish = side === 'buy' ? `Buy for ${fmt(ok.total)}` : `Sell for ${fmt(ok.total)}`
+    const finishVerb = side === 'buy' ? 'buy' : 'sell'
+
+    if (owed.length && batches) {
+      const lets = [tokenAllow && `take exactly ${fmt(ok.fromYou)}`, nftAllow && moveWords]
+        .filter(Boolean)
+        .join(' and ')
       return {
-        label: `Allow ${symbol} for this buy`,
-        step: `Step 1 of 2: let Seaport (OpenSea's contract) take exactly ${fmt(ok.total)}. Then buy.`,
-        onClick: () => tx.run('approve', allow),
+        label: finish,
+        step: `One signature: lets OpenSea's contract ${lets}, then ${finishVerb}s, all or nothing.`,
+        disabled: mustAgree,
+        onClick: () => tx.runBatch('fill', [...owed, fillCall], 'approve'),
       }
     }
 
-    if (needsNft) {
-      const allow = {
-        address: contract,
-        abi: erc721Abi,
-        functionName: 'setApprovalForAll',
-        args: [operator, true],
-        chainId,
-      }
-      if (batches)
-        return {
-          label: `Sell for ${fmt(ok.total)}`,
-          step: `One signature: lets Seaport hand this NFT to the bidder and sells, all or nothing.`,
-          onClick: () => tx.runBatch('fill', [allow, fillCall], 'approve'),
-        }
+    if (tokenAllow)
       return {
-        label: `Allow OpenSea to move ${title}`,
-        step: `Step 1 of 2: a one-time approval so Seaport can hand this NFT to the bidder. Then sell.`,
-        onClick: () => tx.run('approve', allow),
+        label: side === 'buy' ? `Allow ${symbol} for this buy` : `Allow ${fmt(ok.fromYou)} for the fees`,
+        step:
+          side === 'buy'
+            ? `${numbered}let OpenSea's contract take exactly ${fmt(ok.fromYou)}. Then buy.`
+            : `${numbered}let OpenSea's contract take exactly ${fmt(
+                ok.fromYou
+              )} for the fees, out of what you receive. Then sell.`,
+        disabled: mustAgree,
+        onClick: () => tx.run('approve', tokenAllow),
       }
-    }
 
-    return side === 'buy'
-      ? { label: `Buy for ${fmt(ok.total)}`, onClick: fill }
-      : { label: `Sell for ${fmt(ok.total)}`, onClick: fill }
+    if (nftAllow)
+      return {
+        label: nftState === 'needs-all' ? `Allow OpenSea to move your ${title}` : `Allow OpenSea to move #${tokenId}`,
+        step:
+          nftState === 'needs-all'
+            ? `${numbered}this lets OpenSea's contract ${moveWords}. Then sell.`
+            : `${numbered}let OpenSea's contract ${moveWords}. Then sell.`,
+        onClick: () => tx.run('approve', nftAllow),
+      }
+
+    return {
+      label: finish,
+      step: stepsDone > 0 ? `${numbered}${finishVerb}.` : undefined,
+      disabled: mustAgree,
+      onClick: fill,
+    }
   })()
-
-  const err = data.error as Error | null
-  const failWords =
-    err instanceof MarketError && err.needsKey
-      ? 'In-app buying needs the OpenSea API key. Use the OpenSea link instead.'
-      : err
-      ? /can not perform trading/i.test(err.message)
-        ? 'OpenSea has restricted this wallet from trading, so it cannot buy this here. Try another wallet.'
-        : err.message
-      : plan && !plan.ok
-      ? (plan as { error: string }).error
-      : undefined
 
   return (
     <Card aria-label={side === 'buy' ? 'Review your buy' : 'Review your sale'} data-fill-review>
@@ -300,7 +403,7 @@ export default function FillReview({
       </Head>
       <Stat>
         <span>Where</span>
-        <strong>OpenSea (Seaport)</strong>
+        <strong>OpenSea, on {chain.name}</strong>
       </Stat>
       <Stat>
         <span>{side === 'buy' ? 'You get' : 'You give'}</span>
@@ -325,33 +428,77 @@ export default function FillReview({
             ))}
             <div className="total">
               <dt>{side === 'buy' ? 'You pay' : 'You get'}</dt>
-              <dd>{fmt(ok.total)}</dd>
+              <dd>
+                {fmt(ok.total)} {totalUsd}
+              </dd>
             </div>
           </Lines>
+          <Stat data-fill-network-fee>
+            <span>Network fee</span>
+            <strong>
+              {fee !== undefined
+                ? `about ${formatAmount(fee, 18, 5)} ${native} ${ethInUsd(fee, ethUsd)}`
+                : 'shown in your wallet'}
+            </strong>
+          </Stat>
           <Hint>
             {side === 'buy'
-              ? 'The seller set the price; the fees above come out of it. miyaOS never adds optional creator fees, only what the order requires. Network gas is extra.'
-              : 'The fees above come off the offer. miyaOS never adds optional creator fees, only what the order requires. Network gas is extra.'}
+              ? 'The seller set the price; the fees above come out of it. miyaOS never adds optional creator fees, only what the order requires.'
+              : 'The fees above come off the offer. miyaOS never adds optional creator fees, only what the order requires.'}
           </Hint>
           {short && (
             <Hint style={{ color: color.warning }}>
-              You have {fmt(balance!)}. {ok.currency.native ? '' : `Get ${symbol} on the Tokens tab.`}
+              You have {fmt(balance!)}
+              {ok.currency.native && fee !== undefined ? ', and this also needs the network fee.' : '.'}{' '}
+              {ok.currency.native ? '' : `Get ${symbol} on the Tokens tab.`}
             </Hint>
           )}
         </>
       ) : null}
 
-      {failWords && (
-        <StatusBox tone="error" role="alert">
-          <span>{failWords}</span>
+      {side === 'buy' && flagged && (
+        <>
+          <StatusBox tone="error" role="alert" data-fill-flagged>
+            <span>
+              OpenSea flagged this NFT, often because it was reported stolen. You may not be able to resell it.
+            </span>
+          </StatusBox>
+          <ConfirmCheck checked={agreedFlagged} onChange={setAgreedFlagged} disabled={tx.busy}>
+            I understand
+          </ConfirmCheck>
+        </>
+      )}
+      {side === 'buy' && unverified && (
+        <>
+          <Hint style={{ color: color.warning }} data-fill-unverified>
+            Not verified: check the address. <Mono>{contract}</Mono>
+          </Hint>
+          <ConfirmCheck checked={agreedUnverified} onChange={setAgreedUnverified} disabled={tx.busy}>
+            I checked this is the right collection
+          </ConfirmCheck>
+        </>
+      )}
+
+      {failed && (
+        <StatusBox tone={'quiet' in failed && failed.quiet ? 'info' : 'error'} role="alert" data-fill-failed>
+          <span>
+            {failed.words}{' '}
+            {'link' in failed && failed.link && openSeaHref && (
+              <a href={openSeaHref} target="_blank" rel="noreferrer">
+                Open on OpenSea ↗
+              </a>
+            )}{' '}
+            {tx.tx.phase === 'error' && tx.tx.hash && (
+              <a href={`${explorerUrl(chainId)}/tx/${tx.tx.hash}`} target="_blank" rel="noreferrer">
+                View transaction ↗
+              </a>
+            )}
+          </span>
         </StatusBox>
       )}
 
-      {tx.tx.phase !== 'idle' && (
-        <StatusBox
-          tone={tx.tx.phase === 'error' ? 'error' : tx.tx.phase === 'done' ? 'ok' : 'info'}
-          role={tx.tx.phase === 'error' ? 'alert' : 'status'}
-        >
+      {tx.tx.phase !== 'idle' && tx.tx.phase !== 'error' && (
+        <StatusBox tone={tx.tx.phase === 'done' ? 'ok' : 'info'} role="status">
           {tx.busy && <img src={LoadingHourglass} alt="" />}
           <span>
             {tx.tx.phase === 'done'
@@ -371,6 +518,7 @@ export default function FillReview({
       )}
 
       <Buttons>
+        {wrongChain && <SwitchNote chainName={chain.name} failed={!!switchError} />}
         <Action type="button" disabled={!!action.disabled} onClick={action.onClick} data-fill-action>
           {action.label}
         </Action>

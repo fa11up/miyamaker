@@ -180,6 +180,30 @@ export const seaportAbi = [
 
 export type SeaportFunction = (typeof seaportAbi)[number]['name']
 
+const seaportError = (name: string, ...types: string[]) =>
+  ({ type: 'error', name, inputs: types.map((type, i) => ({ name: `arg${i}`, type })) } as const)
+
+/**
+ * The errors a fill can hit, so a refusal has a name instead of a bare selector. Kept apart from seaportAbi, which
+ * planFill matches OpenSea's function name against: an error must never pass for a fill function. OrderAlreadyFilled was
+ * decoded this way from a real second fill on a fork.
+ */
+export const seaportCallAbi = [
+  ...seaportAbi,
+  seaportError('OrderAlreadyFilled', 'bytes32'),
+  seaportError('OrderIsCancelled', 'bytes32'),
+  seaportError('OrderPartiallyFilled', 'bytes32'),
+  seaportError('InvalidTime', 'uint256', 'uint256'),
+  seaportError('NoSpecifiedOrdersAvailable'),
+  seaportError('TokenTransferGenericFailure', 'address', 'address', 'address', 'uint256', 'uint256'),
+  seaportError('InvalidSigner'),
+  seaportError('InvalidSignature'),
+  seaportError('BadSignatureV', 'uint8'),
+  seaportError('BadContractSignature'),
+  seaportError('InsufficientNativeTokensSupplied'),
+  seaportError('InsufficientEtherSupplied'),
+] as const
+
 /** OpenSea's input_data keys that differ from Seaport's parameter names. */
 export const INPUT_ALIASES: Record<string, string> = { advancedOrders: 'orders' }
 

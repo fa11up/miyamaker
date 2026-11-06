@@ -46,7 +46,8 @@ export function describeError(error: unknown): string {
       return 'Not enough ETH in this wallet to pay for the network fee.'
     }
 
-    return name ? `The contract said no (${name}).` : error.shortMessage
+    // Anything else viem says is for developers: it can name functions and quote calldata.
+    return 'That did not go through. Nothing moved. Try again.'
   }
 
   return (error as Error)?.message || 'Something went wrong.'

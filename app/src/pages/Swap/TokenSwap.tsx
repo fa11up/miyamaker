@@ -10,6 +10,7 @@ import LoadingHourglass from '@/assets/loading_hourglass.gif'
 import { explorerUrl } from '@/config/wagmi'
 
 import { SwapApiError } from './api'
+import { ethInUsd, formatUsd } from './board'
 import type { SwapChainId, SwapToken } from './constants'
 import {
   DEFAULT_PAIR,
@@ -19,17 +20,29 @@ import {
   isSwapChain,
   sameAddress,
   SWAP_CHAINS,
-  withLogo,
 } from './constants'
 import { FEE_BPS, FEE_CHAIN_IDS, feeApplies, feeFree } from './fee'
 import { BigButton, Eyebrow, Panel, Skeleton, StatusBox, Well } from './floor/retro'
 import { bevel, color, font, space, text } from './floor/tokens'
 import { Body, Toolbar } from './layout'
+import { useEthUsd, useTokenUsd } from './MarketBoard'
+import { SwitchNote } from './nft/ui'
+import {
+  APPROVE_FAILED_WORDS,
+  compactAmount,
+  describeTxError,
+  impactLevel,
+  impactPercent,
+  OFFLINE_SWAP_WORDS,
+  quoteIsCurrent,
+  SWAP_FAILED_WORDS,
+  swapStep,
+  UNCONFIRMED_WORDS,
+} from './swapLogic'
 import SwapSettings from './SwapSettings'
-import { quickPicks } from './tokenList'
 import TokenPicker, { TokenLogo } from './TokenPicker'
 import type { SwapRequest, ZeroExFee, ZeroExRoute } from './types'
-import { describeTxError, priceImpact, usePrice, useReferencePrice, useSwapExecution } from './useSwap'
+import { priceImpact, usePrice, useReferencePrice, useSwapExecution } from './useSwap'
 import { useTokenBalance, useTokenList } from './useTokens'
 
 /* ---------- layout ---------- */
@@ -148,37 +161,6 @@ const TokenButton = styled.button`
   }
 `
 
-const Picks = styled.div`
-  display: flex;
-  flex-wrap: wrap;
-  gap: ${space[1]};
-  button {
-    display: inline-flex;
-    align-items: center;
-    gap: ${space[1]};
-    height: 30px;
-    padding: 0 6px 0 ${space[1]};
-    border: none;
-    background: ${color.face};
-    box-shadow: ${bevel.raised};
-    color: ${color.ink};
-    font-size: ${text.xs};
-    cursor: pointer;
-    &:hover {
-      background: ${color.faceLight};
-    }
-    .narrow & {
-      height: 40px;
-      font-size: ${text.sm};
-    }
-  }
-  button[aria-pressed='true'] {
-    box-shadow: ${bevel.pressed};
-    background: ${color.light};
-    font-weight: 700;
-  }
-`
-
 const FlipRow = styled.div`
   display: flex;
   justify-content: center;
@@ -276,6 +258,15 @@ const Hint = styled.div`
   font-size: ${text.xs};
   line-height: 1.4;
   color: ${color.inkMuted};
+`
+
+/* Always there, so a dollar figure arriving does not move the page. */
+const Usd = styled.div`
+  min-height: 1.4em;
+  font-size: ${text.xs};
+  line-height: 1.4;
+  color: ${color.inkMuted};
+  font-variant-numeric: tabular-nums;
 `
 
 /* The primary action stays reachable while the details scroll (the window is short on desktop too). */
@@ -397,6 +388,12 @@ function receivedFromLogs(receipt: TransactionReceipt | undefined, token: SwapTo
 
 const shortHash = (h: string) => `${h.slice(0, 10)}…${h.slice(-8)}`
 
+/** "≈ $1,120", or nothing when the token has no price. */
+function usdWords(amount: bigint | string | undefined, decimals: number, usd: number | undefined) {
+  if (amount === undefined || !usd) return ''
+  return `≈ ${formatUsd(Number(formatUnits(BigInt(amount), decimals)) * usd)}`
+}
+
 /* ---------- component ---------- */
 
 /** A pair to load into the swap, e.g. a pool token from the NFTs tab. `key` changes each time it is requested. */
@@ -423,7 +420,7 @@ export default function TokenSwap({
   onOffline?: (offline: boolean) => void
 }) {
   const { address, chainId: walletChainId, isConnected } = useAccount()
-  const { switchChain, isPending: switching } = useSwitchChain()
+  const { switchChain, isPending: switching, error: switchError } = useSwitchChain()
   const { openConnectModal } = useConnectModal()
 
   const [sell, setSell] = useState<SwapToken>(DEFAULT_PAIR[chainId][0])
@@ -489,14 +486,14 @@ export default function TokenSwap({
   // Any change to the trade invalidates a reviewed quote.
   useEffect(() => {
     if (!exec.swapHash) exec.reset()
-  }, [request?.sellAmount, request?.sellToken, request?.buyToken, slippageBps, chainId])
+  }, [request?.sellAmount, request?.sellToken, request?.buyToken, request?.taker, slippageBps, chainId])
 
   useEffect(() => {
-    if (exec.confirmed) {
+    if (exec.confirmed || exec.reverted) {
       sellBalance.refetch()
       buyBalance.refetch()
     }
-  }, [exec.confirmed])
+  }, [exec.confirmed, exec.reverted])
 
   const priceData = price.data?.liquidityAvailable ? price.data : undefined
   const refData = reference.data?.liquidityAvailable ? reference.data : undefined
@@ -542,21 +539,35 @@ export default function TokenSwap({
 
   const knownTokens = useMemo(() => [...list.tokens, sell, buy], [list.tokens, sell, buy])
   const { firm } = exec
+  const amountIsCurrent = quoteIsCurrent(exec.quoteState?.request, {
+    chainId,
+    sellToken: sell.address,
+    buyToken: buy.address,
+    sellAmount,
+    slippageBps,
+    taker: address,
+  })
+  const sellUsd = useTokenUsd(sell)
+  const buyUsd = useTokenUsd(buy)
+  const ethUsd = useEthUsd()
   const busy = exec.quoting || exec.approving || exec.awaitingWallet || exec.confirming
   const locked = busy || !!exec.swapHash
   useEffect(() => onBusy?.(locked), [locked])
   const done = exec.confirmed
 
-  // A pair asked for by the NFTs tab. Ignored while a swap is in flight; clears a finished one.
+  // A pair asked for by the page. It waits while a swap is in flight, so the panel can't be left on the old token, and
+  // clears a finished one.
+  const appliedPreset = useRef<number>()
   useEffect(() => {
-    if (!preset || busy) return
+    if (!preset || busy || appliedPreset.current === preset.key) return
+    appliedPreset.current = preset.key
     if (exec.swapHash) exec.reset()
     if (preset.chainId === chainId) applyPreset(preset)
     else {
       pendingPreset.current = preset
       onChain(preset.chainId)
     }
-  }, [preset?.key])
+  }, [preset?.key, busy])
 
   // Bring the review and the receipt into view: the window is short and the action dock covers the bottom.
   const detailsRef = useRef<HTMLDivElement>(null)
@@ -573,81 +584,97 @@ export default function TokenSwap({
     setInput('')
   }
 
+  const shown = firm || priceData
+  const buyDisplay = shown?.buyAmount
+  const impact = priceImpact(shown, refData)
+  const impactIs = impactLevel(impact)
+
   const action = (() => {
     if (notConfigured) return { label: 'Swap unavailable', disabled: true }
     if (!isConnected) return { label: 'Connect wallet', onClick: () => openConnectModal?.() }
     if (wrongChain)
       return { label: switching ? 'Switching…' : `Switch to ${chainName}`, onClick: () => switchChain({ chainId }) }
     if (done) return { label: 'New swap', className: 'secondary', onClick: newSwap }
+    if (exec.reverted) return { label: 'Try again', className: 'secondary', onClick: newSwap }
+    // It may yet land, so the same swap is not offered again: only a clean start, after the warning above the button.
+    if (exec.unconfirmed) return { label: 'Start over', className: 'secondary', onClick: newSwap }
     if (!sellAmount) return { label: 'Enter an amount', disabled: true }
     if (insufficient) return { label: `Not enough ${sell.symbol}`, disabled: true }
     if ((typing || price.isFetching) && !priceData) return { label: 'Finding best price…', disabled: true }
     if (noLiquidity) return { label: 'No route for this pair', disabled: true }
     if (!firm) {
       return {
-        label: exec.quoting ? 'Getting firm quote…' : 'Review swap',
-        disabled: exec.quoting || !request || !priceData,
+        label: exec.quoting ? 'Getting firm quote…' : typing ? 'Updating price…' : 'Review swap',
+        disabled: exec.quoting || typing || !request || !priceData,
         onClick: () => request && exec.getQuote(request),
       }
     }
 
-    if (exec.needsApproval && !exec.canBatch)
+    // The field no longer says what this quote is for. Compared before the debounce, so no key press leaves it armed.
+    if (!amountIsCurrent) return { label: 'Updating price…', disabled: true }
+
+    const paying = `${fmt(firm.sellAmount, sell.decimals)} ${sell.symbol}`
+    const step = swapStep({
+      needsApproval: exec.needsApproval,
+      needsReset: exec.needsAllowanceReset,
+      didReset: exec.didReset,
+      didApprove: exec.didApprove,
+      batches: exec.canBatch,
+    })
+    const numbered = step.at ? `Step ${step.at} of ${step.of}: ` : ''
+    if (step.stage === 'reset')
       return {
-        label: exec.approving
-          ? `Approving ${sell.symbol}…`
-          : exec.needsAllowanceReset
-            ? `Reset ${sell.symbol} allowance`
-            : `Approve ${sell.symbol}`,
-        step: exec.needsAllowanceReset
-          ? `Step 1 of 3: set the old ${sell.symbol} allowance to 0 (this token needs it).`
-          : `Step 1 of 2: approve exactly ${fmt(firm.sellAmount, sell.decimals)} ${
-              sell.symbol
-            } for 0x (AllowanceHolder). Then swap.`,
+        label: exec.approving ? `Resetting ${sell.symbol}…` : `Reset ${sell.symbol} allowance`,
+        step: `${numbered}set your old ${sell.symbol} allowance for 0x to 0. This token needs that first.`,
+        disabled: exec.approving,
+        onClick: exec.approve,
+      }
+    if (step.stage === 'approve')
+      return {
+        label: exec.approving ? `Approving ${sell.symbol}…` : `Approve ${paying}`,
+        step: `${numbered}let 0x, the swap router, spend exactly ${paying}. Then swap.`,
         disabled: exec.approving,
         onClick: exec.approve,
       }
     if (exec.awaitingWallet) return { label: 'Confirm in wallet…', disabled: true }
     if (exec.confirming) return { label: 'Swapping…', disabled: true }
-    if (exec.reverted) return { label: 'Try again', className: 'secondary', onClick: newSwap }
+    const getting = compactAmount(Number(formatUnits(BigInt(firm.buyAmount), buy.decimals)))
     return {
-      label: exec.quoting ? 'Refreshing quote…' : 'Swap',
-      step: exec.needsApproval
-        ? `One signature: approves exactly ${fmt(firm.sellAmount, sell.decimals)} ${
-            sell.symbol
-          } for 0x and swaps, all or nothing.`
-        : isNative(sell.address)
-          ? undefined
-          : 'Step 2 of 2: swap.',
+      label: exec.quoting
+        ? 'Refreshing quote…'
+        : impactIs === 'high'
+          ? `Swap anyway at -${impactPercent(impact!)}%`
+          : `Swap ${paying} for about ${getting} ${buy.symbol}`,
+      step:
+        step.stage === 'batch'
+          ? `One signature: lets 0x, the swap router, spend exactly ${paying} and swaps, all or nothing.`
+          : step.at
+            ? `${numbered}swap.`
+            : undefined,
       disabled: exec.quoting,
       onClick: exec.swap,
     }
   })()
 
-  const shown = firm || priceData
-  const buyDisplay = shown?.buyAmount
-  const impact = priceImpact(shown, refData)
   const route = routeText(shown?.route, knownTokens)
   const noFee = feeFree(sell.address, buy.address)
   const feeChain = FEE_CHAIN_IDS.includes(chainId)
   const txError = describeTxError(exec.swapError || exec.approveError)
-  const picks = quickPicks(chainId)
-    .map(withLogo)
-    .filter((t) => !sameAddress(t.address, sell.address))
   const received = receivedFromLogs(exec.swapReceipt, buy, address)
 
   return (
     <>
       <Body>
         <Toolbar>
-          <span style={{ flex: 1, fontSize: text.sm, color: color.inkMuted }}>Swap on {chainName}</span>
+          <span style={{ flex: 1, fontSize: text.sm, color: color.inkMuted }} data-swap-title>
+            Swap on {chainName}: buying {buy.symbol}
+          </span>
           <SwapSettings slippageBps={slippageBps} onChange={setSlippageBps} disabled={locked} />
         </Toolbar>
 
         {notConfigured && (
           <StatusBox tone="error" role="alert">
-            <span>
-              Swaps are offline. The site owner needs to set <code>ZEROX_API_KEY</code> on the server.
-            </span>
+            <span>{OFFLINE_SWAP_WORDS}</span>
           </StatusBox>
         )}
 
@@ -677,7 +704,7 @@ export default function TokenSwap({
                 const v = e.target.value.replace(',', '.')
                 if (/^\d*\.?\d*$/.test(v)) setInput(v)
               }}
-              disabled={locked && !!firm}
+              disabled={locked}
               data-swap-input
             />
             <TokenButton
@@ -691,7 +718,8 @@ export default function TokenSwap({
               <span className="caret">▼</span>
             </TokenButton>
           </AmountRow>
-          {sell.unverified && <Hint style={{ color: color.warning }}>Unverified token: check the address.</Hint>}
+          <Usd data-swap-sell-usd>{usdWords(sellAmount, sell.decimals, sellUsd)}</Usd>
+          {sell.unverified && <Hint style={{ color: color.warning }}>Not verified: check the address.</Hint>}
         </Side>
 
         <FlipRow>
@@ -730,24 +758,8 @@ export default function TokenSwap({
               <span className="caret">▼</span>
             </TokenButton>
           </AmountRow>
-          {buy.unverified && <Hint style={{ color: color.warning }}>Unverified token: check the address.</Hint>}
-          {picks.length > 1 && !firm && !done && (
-            <Picks role="group" aria-label="Quick pick a token to get">
-              {picks.map((t) => (
-                <button
-                  key={t.address}
-                  type="button"
-                  aria-pressed={sameAddress(t.address, buy.address)}
-                  onClick={() => choose('buy', t)}
-                  disabled={locked}
-                  data-pick={t.symbol}
-                >
-                  <TokenLogo token={t} size={18} />
-                  {t.symbol}
-                </button>
-              ))}
-            </Picks>
-          )}
+          <Usd data-swap-buy-usd>{usdWords(buyDisplay, buy.decimals, buyUsd)}</Usd>
+          {buy.unverified && <Hint style={{ color: color.warning }}>Not verified: check the address.</Hint>}
         </Side>
 
         {shown && !done && (
@@ -761,6 +773,14 @@ export default function TokenSwap({
                   </button>
                 )}
               </DetailsHead>
+            )}
+            {firm && (
+              <Line data-swap-pay-line>
+                <span>You pay</span>
+                <strong>
+                  {fmt(firm.sellAmount, sell.decimals)} {sell.symbol}
+                </strong>
+              </Line>
             )}
             <Line>
               <span>Rate</span>
@@ -780,15 +800,15 @@ export default function TokenSwap({
               <span>Price impact</span>
               <strong
                 style={
-                  impact !== undefined && impact >= 0.05
+                  impactIs === 'high'
                     ? { color: color.danger }
-                    : impact !== undefined && impact >= 0.02
+                    : impactIs === 'notable'
                       ? { color: color.warning }
                       : undefined
                 }
               >
-                {impact === undefined ? '–' : impact < 0.0001 ? 'under 0.01%' : `${(impact * 100).toFixed(2)}%`}
-                {impact !== undefined && impact >= 0.05 ? ' (high)' : ''}
+                {impact === undefined ? 'Unknown' : impact < 0.0001 ? 'under 0.01%' : `${(impact * 100).toFixed(2)}%`}
+                {impactIs === 'high' ? ' (high)' : ''}
               </strong>
             </Line>
             <Line>
@@ -821,7 +841,11 @@ export default function TokenSwap({
             )}
             <Line>
               <span>Network fee</span>
-              <strong>{shown.totalNetworkFee ? `about ${fmt(shown.totalNetworkFee, 18, 5)} ETH` : '–'}</strong>
+              <strong>
+                {shown.totalNetworkFee
+                  ? `about ${fmt(shown.totalNetworkFee, 18, 5)} ETH ${ethInUsd(BigInt(shown.totalNetworkFee), ethUsd)}`
+                  : '–'}
+              </strong>
             </Line>
             {route && (
               <Line>
@@ -839,7 +863,7 @@ export default function TokenSwap({
 
         {apiError && !notConfigured && (
           <StatusBox tone="error" role="alert">
-            <span>{apiError.message}</span>
+            <span>{describeTxError(apiError).message}</span>
           </StatusBox>
         )}
         {noLiquidity && (
@@ -856,7 +880,7 @@ export default function TokenSwap({
           </StatusBox>
         )}
 
-        {done && exec.swapHash && (
+        {done && (
           <Receipt ref={receiptRef} aria-label="Swap receipt" role="status" data-swap-receipt>
             <h2>Swap complete</h2>
             <Line>
@@ -871,13 +895,18 @@ export default function TokenSwap({
                 {fmt(received ?? firm?.buyAmount, buy.decimals)} {buy.symbol}
               </strong>
             </Line>
-            <Line>
-              <span>Transaction</span>
-              <strong className="hash">{shortHash(exec.swapHash)}</strong>
-            </Line>
-            <a href={`${explorer}/tx/${exec.swapHash}`} target="_blank" rel="noreferrer">
-              View on {explorerName} ↗
-            </a>
+            {/* A batch wallet may finish without naming a transaction. */}
+            {exec.swapHash && (
+              <>
+                <Line>
+                  <span>Transaction</span>
+                  <strong className="hash">{shortHash(exec.swapHash)}</strong>
+                </Line>
+                <a href={`${explorer}/tx/${exec.swapHash}`} target="_blank" rel="noreferrer">
+                  View on {explorerName} ↗
+                </a>
+              </>
+            )}
           </Receipt>
         )}
 
@@ -916,20 +945,48 @@ export default function TokenSwap({
             </span>
           </StatusBox>
         )}
-        {(exec.reverted || ((exec.swapError || exec.approveError) && !busy)) && (
-          <StatusBox tone={txError.cancelled ? 'info' : 'error'} role="alert">
+        {(exec.approveReverted || exec.approveUnconfirmed) && !busy && (
+          <StatusBox tone="error" role="alert">
             <span>
-              {exec.reverted ? 'The swap reverted. Your tokens were not traded.' : txError.message}{' '}
-              {exec.swapHash && (
-                <a href={`${explorer}/tx/${exec.swapHash}`} target="_blank" rel="noreferrer">
-                  View on {explorerName}
-                </a>
-              )}
+              {exec.approveReverted ? APPROVE_FAILED_WORDS : UNCONFIRMED_WORDS}{' '}
+              <a href={`${explorer}/tx/${exec.approveHash}`} target="_blank" rel="noreferrer">
+                View on {explorerName}
+              </a>
             </span>
           </StatusBox>
         )}
+        {(exec.swapError || exec.approveError) && !busy && (
+          <StatusBox tone={txError.cancelled ? 'info' : 'error'} role="alert">
+            <span>{txError.message}</span>
+          </StatusBox>
+        )}
 
+        {/* In the dock, not the page: the window is short, and these must not hide behind the button they are about. */}
         <ActionDock>
+          {shown && !done && impactIs === 'high' && (
+            <StatusBox tone="error" role="alert" data-swap-impact>
+              <span>
+                This trade moves the price {impactPercent(impact!)}%, so you get much less than the market price. Try a
+                smaller amount.
+              </span>
+            </StatusBox>
+          )}
+          {shown && !done && impactIs === 'unknown' && !reference.isFetching && (
+            <StatusBox tone="info" role="status" data-swap-impact>
+              <span>Price impact unknown. Check the amounts.</span>
+            </StatusBox>
+          )}
+          {(exec.reverted || exec.unconfirmed) && (
+            <StatusBox tone="error" role="alert" data-swap-failed>
+              <span>
+                {exec.reverted ? SWAP_FAILED_WORDS : UNCONFIRMED_WORDS}{' '}
+                <a href={`${explorer}/tx/${exec.swapHash}`} target="_blank" rel="noreferrer">
+                  View on {explorerName}
+                </a>
+              </span>
+            </StatusBox>
+          )}
+          {wrongChain && <SwitchNote chainName={chainName} failed={!!switchError} />}
           <Action
             type="button"
             className={'className' in action ? action.className : undefined}
@@ -942,7 +999,7 @@ export default function TokenSwap({
           {'step' in action && action.step && <Hint>{action.step}</Hint>}
         </ActionDock>
 
-        <Footer>Best price from Matcha. You approve only the amount you swap.</Footer>
+        <Footer>Best price from Matcha.{isNative(sell.address) ? '' : ' You approve only the amount you swap.'}</Footer>
       </Body>
 
       {picker && (

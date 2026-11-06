@@ -7,12 +7,15 @@ import NftImage from '@/components/NftImage'
 import type { DexPair, Sort, TokenQuote } from './board'
 import {
   changeTone,
+  emptyLast,
   ethInUsd,
   featuredOn,
   formatChange,
   formatCompactUsd,
   formatUsd,
   nextSort,
+  priceStatus,
+  quoteForChain,
   quoteFrom,
   sortRows,
 } from './board'
@@ -58,6 +61,12 @@ export function usePairs(token: SwapToken | undefined) {
   })
 }
 
+/** One token's dollar price, for "≈ $1,120" beside an amount. Undefined when DexScreener has none. */
+export function useTokenUsd(token: SwapToken | undefined) {
+  const pairs = usePairs(token)
+  return token ? quoteFrom(pairs.data, priceAddress(token))?.priceUsd : undefined
+}
+
 export type BoardRow = { token: SwapToken; quote?: TokenQuote }
 
 /** Live quotes for the board. One request per token, shared by the tape and the table, refreshed each minute. */
@@ -80,9 +89,11 @@ export function useBoard(chainId: SwapChainId = 1) {
   })
   const rows: BoardRow[] = tokens.map((token, i) => ({
     token,
-    quote: quoteFrom(results[i]?.data, priceAddress(token)),
+    quote: quoteForChain(quoteFrom(results[i]?.data, priceAddress(token)), isNative(token), chainId),
   }))
-  return { rows, loading: results.some((r) => r.isLoading), failed: results.every((r) => r.isError) }
+  const loading = results.some((r) => r.isLoading)
+  const failed = results.every((r) => r.isError)
+  return { rows, loading, failed, status: priceStatus(rows, loading, failed) }
 }
 
 /** ETH in dollars, shared with the board's own query. */
@@ -151,6 +162,15 @@ const TapeBar = styled.div`
     outline: 1px dotted ${color.accent};
     outline-offset: -3px;
   }
+  button:disabled {
+    cursor: not-allowed;
+  }
+  .none {
+    display: block;
+    padding: ${space[2]} ${space[3]};
+    font-size: ${text.xs};
+    color: ${color.inkMuted};
+  }
   b {
     color: ${color.accent};
   }
@@ -165,9 +185,28 @@ const TapeBar = styled.div`
   }
 `
 
-export function Tape({ rows, onTrade }: { rows: BoardRow[]; onTrade: (t: SwapToken) => void }) {
+export function Tape({
+  rows,
+  loading,
+  disabled,
+  onTrade,
+}: {
+  rows: BoardRow[]
+  loading?: boolean
+  /** A trade is in flight: pressing this would move the page out from under it. */
+  disabled?: boolean
+  onTrade: (t: SwapToken) => void
+}) {
+  // A token with no price has nothing to say on the tape.
+  const priced = loading ? rows : rows.filter((r) => r.quote)
+  if (!priced.length)
+    return (
+      <TapeBar role="group" aria-label="Token prices">
+        <span className="none">No prices right now.</span>
+      </TapeBar>
+    )
   const cells = (copy: boolean) =>
-    rows.map(({ token, quote }) => (
+    priced.map(({ token, quote }) => (
       <button
         key={`${token.symbol}-${copy}`}
         type="button"
@@ -175,6 +214,7 @@ export function Tape({ rows, onTrade }: { rows: BoardRow[]; onTrade: (t: SwapTok
         tabIndex={copy ? -1 : undefined}
         aria-hidden={copy || undefined}
         title={`Swap for ${token.symbol}`}
+        disabled={disabled}
         onClick={() => onTrade(token)}
       >
         <b>{token.symbol}</b>
@@ -293,6 +333,19 @@ const Table = styled.table`
     opacity: 0.45;
     font-size: 9px;
   }
+  .narrow & .sort {
+    min-height: 36px;
+    padding: 8px 0;
+  }
+  .narrow & .sort span {
+    opacity: 0.7;
+    font-size: 11px;
+  }
+  /* The whole row is pressable, so a phone keeps the room for the name. */
+  .narrow & td.go,
+  .narrow & th:last-child {
+    display: none;
+  }
   .sort[data-on] span {
     opacity: 1;
   }
@@ -381,10 +434,12 @@ const tokenFigure = ({ quote }: BoardRow, column: TokenColumn) =>
 export function TokenTable({
   rows,
   failed,
+  loading,
   onTrade,
 }: {
   rows: BoardRow[]
   failed: boolean
+  loading?: boolean
   onTrade: (t: SwapToken) => void
 }) {
   const [sort, setSort] = useState<Sort<TokenColumn>>()
@@ -422,12 +477,12 @@ export function TokenTable({
                   </span>
                 </button>
               </td>
-              <td>{formatUsd(quote?.priceUsd)}</td>
+              <td>{quote ? formatUsd(quote.priceUsd) : loading ? '…' : 'No price yet'}</td>
               <td>
-                <Change $tone={changeTone(quote?.change24h)}>{formatChange(quote?.change24h)}</Change>
+                {quote && <Change $tone={changeTone(quote.change24h)}>{formatChange(quote.change24h)}</Change>}
               </td>
-              <td className="opt">{formatCompactUsd(quote?.volume24h)}</td>
-              <td className="opt">{formatCompactUsd(quote?.liquidityUsd)}</td>
+              <td className="opt">{quote && formatCompactUsd(quote.volume24h)}</td>
+              <td className="opt">{quote && formatCompactUsd(quote.liquidityUsd)}</td>
               <td className="go" aria-hidden>
                 Open →
               </td>
@@ -441,7 +496,7 @@ export function TokenTable({
 }
 
 type CollectionColumn = 'floor' | 'sales' | 'volume'
-type CollectionFigures = Partial<Record<CollectionColumn, number>>
+type CollectionFigures = Partial<Record<CollectionColumn, number>> & { nothingForSale?: boolean }
 
 function CollectionRow({
   slug,
@@ -461,9 +516,10 @@ function CollectionRow({
   const market = useMarketListings(slug)
   const floor = lowerPrice(stats?.floor, market.floor)
   const floorEth = floor ? Number(floor.amount) / 10 ** floor.decimals : undefined
+  const nothingForSale = !loading && !market.loading && !floor
   useEffect(() => {
-    onFigures(slug, { floor: floorEth, sales: stats?.sales7d, volume: stats?.volume7d })
-  }, [slug, floorEth, stats?.sales7d, stats?.volume7d, onFigures])
+    onFigures(slug, { floor: floorEth, sales: stats?.sales7d, volume: stats?.volume7d, nothingForSale })
+  }, [slug, floorEth, stats?.sales7d, stats?.volume7d, nothingForSale, onFigures])
   const ethUsd = useEthUsd()
   const dash = loading ? '…' : '–'
   return (
@@ -496,8 +552,20 @@ function CollectionRow({
   )
 }
 
-export function CollectionTable({ chainId, onOpen }: { chainId: number; onOpen: (address: string) => void }) {
-  const [sort, setSort] = useState<Sort<CollectionColumn>>()
+export type { CollectionColumn }
+
+export function CollectionTable({
+  chainId,
+  onOpen,
+  sort,
+  onSort,
+}: {
+  chainId: number
+  onOpen: (address: string) => void
+  /** Held by the caller, so a chosen order survives opening a collection and coming back. */
+  sort: Sort<CollectionColumn>
+  onSort: (next: Sort<CollectionColumn>) => void
+}) {
   const [figures, setFigures] = useState<Record<string, CollectionFigures>>({})
   const onFigures = useCallback(
     (slug: string, next: CollectionFigures) => setFigures((all) => ({ ...all, [slug]: next })),
@@ -510,14 +578,18 @@ export function CollectionTable({ chainId, onOpen }: { chainId: number; onOpen: 
         <thead>
           <tr>
             <th scope="col">Collection</th>
-            <SortHead label="Floor" column="floor" sort={sort} onSort={setSort} />
-            <SortHead label="Sales 7d" column="sales" sort={sort} onSort={setSort} className="opt" />
-            <SortHead label="Volume 7d" column="volume" sort={sort} onSort={setSort} className="opt" />
+            <SortHead label="Floor" column="floor" sort={sort} onSort={onSort} />
+            <SortHead label="Sales 7d" column="sales" sort={sort} onSort={onSort} className="opt" />
+            <SortHead label="Volume 7d" column="volume" sort={sort} onSort={onSort} className="opt" />
             <th scope="col" aria-label="Action" />
           </tr>
         </thead>
         <tbody>
-          {sortRows(featuredOn(chainId), sort, (c, column) => figures[c.slug]?.[column]).map((c) => (
+          {sortRows(
+            emptyLast(featuredOn(chainId), (c) => !!figures[c.slug]?.nothingForSale),
+            sort,
+            (c, column) => figures[c.slug]?.[column],
+          ).map((c) => (
             <CollectionRow
               key={c.slug}
               slug={c.slug}

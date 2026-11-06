@@ -5,10 +5,10 @@
 export type Candle = { at: number; open: number; high: number; low: number; close: number; volume: number }
 
 export const TIMEFRAMES = [
-  { id: '15m', span: 'minute', aggregate: 15 },
-  { id: '1H', span: 'hour', aggregate: 1 },
-  { id: '4H', span: 'hour', aggregate: 4 },
-  { id: '1D', span: 'day', aggregate: 1 },
+  { id: '15m', span: 'minute', aggregate: 15, seconds: 900 },
+  { id: '1h', span: 'hour', aggregate: 1, seconds: 3600 },
+  { id: '4h', span: 'hour', aggregate: 4, seconds: 14_400 },
+  { id: '1d', span: 'day', aggregate: 1, seconds: 86_400 },
 ] as const
 export type Timeframe = (typeof TIMEFRAMES)[number]
 
@@ -38,13 +38,23 @@ export function parseCandles(json: unknown): Candle[] {
   return [...byTime.values()].sort((a, b) => a.at - b.at)
 }
 
-/** The price range to draw, with a little air so the wicks don't touch the edges. */
-export function priceRange(candles: readonly Candle[]): { low: number; high: number } {
+/** The price range to draw, with a little air so the wicks don't touch the edges. A live price is kept in view. */
+export function priceRange(candles: readonly Candle[], live?: number): { low: number; high: number } {
   if (!candles.length) return { low: 0, high: 1 }
-  const low = Math.min(...candles.map((c) => c.low))
-  const high = Math.max(...candles.map((c) => c.high))
+  const extra = live !== undefined && Number.isFinite(live) && live > 0 ? [live] : []
+  const low = Math.min(...candles.map((c) => c.low), ...extra)
+  const high = Math.max(...candles.map((c) => c.high), ...extra)
   const air = (high - low || high * 0.02) * 0.06
   return { low: Math.max(0, low - air), high: high + air }
+}
+
+/**
+ * The price to tag on the chart: the live one when it is in the same world as the candles, which a thin pool's old last
+ * trade is. Twice or half away it is some other market's price, and drawing it would flatten the candles to a line.
+ */
+export function chartPrice(live: number | undefined, lastClose: number): number {
+  if (live === undefined || !Number.isFinite(live) || live <= 0) return lastClose
+  return live > lastClose * 2 || live < lastClose / 2 ? lastClose : live
 }
 
 /** Round price lines inside a range: 1, 2 or 5 times a power of ten. */

@@ -15,6 +15,7 @@ import { useFullscreen } from '@/store/windows/hooks'
 import type { SwapChainId, SwapToken } from './constants'
 import { isSwapChain, PINNED_TOKENS, sameAddress, SWAP_CHAINS } from './constants'
 import { Chip } from './floor/retro'
+import { PRICE_STATUS_WORDS } from './board'
 import { color, font, space, text } from './floor/tokens'
 import { ChainTabs } from './layout'
 import { Tape, TokenTable, useBoard } from './MarketBoard'
@@ -44,6 +45,31 @@ const Root = styled.div`
   }
   a {
     color: ${color.link};
+  }
+  /* Trade's own scrollbars: no grey Win95 buttons in the middle of a dark window. */
+  *::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  *::-webkit-scrollbar-track {
+    background: ${color.well};
+    box-shadow: none;
+  }
+  *::-webkit-scrollbar-thumb {
+    background: ${color.light};
+    border: none;
+    box-shadow: none;
+  }
+  *::-webkit-scrollbar-thumb:hover {
+    background: ${color.dark};
+  }
+  *::-webkit-scrollbar-button {
+    display: none;
+    width: 0;
+    height: 0;
+  }
+  *::-webkit-scrollbar-corner {
+    background: ${color.well};
   }
 `
 
@@ -113,8 +139,23 @@ const Bar = styled.header`
     color: ${color.danger};
     text-shadow: none;
   }
+  .lcd.some,
+  .lcd.loading {
+    color: ${color.warning};
+    text-shadow: none;
+  }
+  /* The title bar already says Trade, and a phone needs the rows. */
   .narrow & h1 {
-    font-size: 20px;
+    display: none;
+  }
+  .narrow & .chains {
+    flex: 1 1 100%;
+  }
+  .narrow & .chains button {
+    height: 44px;
+  }
+  .narrow & .readout {
+    margin-left: 0;
   }
 `
 
@@ -145,6 +186,7 @@ const Floor = styled.div`
   &.home.stack {
     display: block;
     overflow-y: auto;
+    scrollbar-gutter: stable;
   }
 `
 
@@ -154,6 +196,7 @@ const Pane = styled.div`
   min-width: 0;
   overflow-y: auto;
   overflow-x: hidden;
+  scrollbar-gutter: stable;
   &[hidden] {
     display: none;
   }
@@ -189,6 +232,11 @@ const tightCells = css`
   && .name {
     width: 100%;
   }
+  /* One figure beside the name on a slim window: the name takes the room, instead of breaking mid-word. */
+  .slim && th:first-child,
+  .slim && td:first-child {
+    width: 100%;
+  }
 `
 
 const NftsPane = styled(Pane)`
@@ -205,6 +253,9 @@ const TokensPane = styled(Pane)`
   padding: ${space[3]} ${space[4]} ${space[3]} 0;
   .stack > & {
     padding: ${space[3]} ${space[4]};
+  }
+  .narrow .stack > & {
+    padding: ${space[2]} ${space[3]};
   }
   /* The NFTs' header mirrored: dark at the middle of the page, its colour and title at the outer edge. */
   section > h2 {
@@ -240,6 +291,8 @@ export default function TradePage() {
   const [preset, setPreset] = useState<SwapPreset>()
   const [mode, setMode] = useState<TradeMode>(initial.current.mode)
   const [tokenRef, setTokenRef] = useState<TokenRef | undefined>(initial.current.token)
+  // Where a token page was opened from inside Trade, so its back button returns there. Empty for a link from outside.
+  const [tokenFrom, setTokenFrom] = useState<string>()
 
   // One network for the whole floor: the market and the swap can't disagree about where you are trading.
   const { chainId: walletChainId } = useAccount()
@@ -249,6 +302,7 @@ export default function TradePage() {
   )
   const [marketBusy, setMarketBusy] = useState(false)
   const [swapBusy, setSwapBusy] = useState(false)
+  const tradeBusy = marketBusy || swapBusy
   const board = useBoard(chainId)
   // One search for the whole home page. A pasted token's address isn't a collection, so the NFT side leaves it alone.
   const [query, setQuery] = useState('')
@@ -295,7 +349,16 @@ export default function TradePage() {
 
   const openToken = (t: SwapToken) => {
     setPreset(undefined)
+    setTokenFrom(location.pathname)
     go('tokens', undefined, undefined, { chainId: t.chainId, address: t.address })
+  }
+
+  const leaveToken = () => {
+    const from = tokenFrom ? parseTradePath(tokenFrom) : undefined
+    setTokenFrom(undefined)
+    if (from?.token) go('tokens', undefined, undefined, from.token)
+    else if (from?.mode === 'nfts') go('nfts', from.pool, from.collection)
+    else go('tokens')
   }
 
   // Back/forward and links into a sub-path drive the view. A plain push to /trade is the OS re-focusing the window,
@@ -347,7 +410,7 @@ export default function TradePage() {
                   key={c.id}
                   type="button"
                   aria-pressed={c.id === chainId}
-                  disabled={marketBusy || swapBusy}
+                  disabled={tradeBusy}
                   onClick={() => {
                     setChainId(c.id)
                     go('tokens')
@@ -360,11 +423,16 @@ export default function TradePage() {
           </span>
           <span className="readout">
             {offline && <Chip tone="warn">Swap offline</Chip>}
-            <span className={board.failed ? 'lcd off' : 'lcd'}>{board.failed ? 'PRICES OFF' : '● PRICES LIVE'}</span>
+            <span
+              className={board.status === 'live' ? 'lcd' : `lcd ${board.status}`}
+              data-price-status={board.status}
+            >
+              {PRICE_STATUS_WORDS[board.status]}
+            </span>
             {!narrow && <Clock />}
           </span>
         </Bar>
-        <Tape rows={board.rows} onTrade={openToken} />
+        <Tape rows={board.rows} loading={board.loading} disabled={tradeBusy} onTrade={openToken} />
         <Floor className={view === 'home' ? (slim ? 'home stack' : 'home') : undefined}>
           {view === 'home' && (
             <Search>
@@ -372,7 +440,7 @@ export default function TradePage() {
                 type="search"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search NFTs and tokens, or paste an address"
+                placeholder="Search or paste an address"
                 aria-label="Search NFTs and tokens by name, or paste an address"
                 spellCheck={false}
               />
@@ -385,6 +453,7 @@ export default function TradePage() {
               onBusy={setMarketBusy}
               pool={pool}
               collection={collection}
+              visible={view !== 'token'}
               onOpenPool={(p) => go('nfts', p)}
               onOpenCollection={(c) => go('nfts', undefined, c)}
               onSwapToken={(p) => {
@@ -393,6 +462,7 @@ export default function TradePage() {
                   PINNED_TOKENS[p.chainId].some((x) => sameAddress(x.address, t?.address))
                 const subject = pinned(p.buy) ? p.sell : p.buy
                 setPreset({ ...p, key: Date.now() })
+                setTokenFrom(location.pathname)
                 if (subject) go('tokens', undefined, undefined, { chainId: p.chainId, address: subject.address })
               }}
             />
@@ -407,7 +477,7 @@ export default function TradePage() {
                 onOpen={openToken}
               />
             ) : (
-              <TokenTable rows={board.rows} failed={board.failed} onTrade={openToken} />
+              <TokenTable rows={board.rows} failed={board.failed} loading={board.loading} onTrade={openToken} />
             )}
           </TokensPane>
           {lastToken.current && (
@@ -418,7 +488,8 @@ export default function TradePage() {
                 onBusy={setSwapBusy}
                 address={lastToken.current.chainId === chainId ? lastToken.current.address : undefined}
                 preset={preset}
-                onBack={() => go('tokens')}
+                onBack={leaveToken}
+                backLabel={tokenFrom ? 'Back' : 'All tokens'}
                 onOffline={setOffline}
               />
             </Pane>

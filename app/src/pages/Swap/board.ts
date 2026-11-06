@@ -34,7 +34,9 @@ export function formatUsd(n: number | undefined): string {
   if (n >= 1000) return `$${Math.round(n).toLocaleString('en-US')}`
   if (n >= 1) return `$${n.toFixed(2)}`
   if (n <= 0) return '$0'
-  return `$${n.toPrecision(3)}`
+  const short = n.toPrecision(3)
+  // Dollars and cents read as such ($0.99, $0.50); three digits only where the third says something ($0.123).
+  return `$${n >= 0.1 && short.endsWith('0') ? n.toFixed(2) : short}`
 }
 
 /** $64.1K · $1.2M, for liquidity and volume. */
@@ -49,6 +51,37 @@ export function formatCompactUsd(n: number | undefined): string {
 export function ethInUsd(wei: bigint | undefined, ethUsd: number | undefined): string {
   if (wei === undefined || !ethUsd) return ''
   return `≈ ${formatUsd((Number(wei / 10n ** 12n) / 1e6) * ethUsd)}`
+}
+
+/**
+ * ETH is priced from Ethereum everywhere, but its volume and liquidity there say nothing about another chain, so those
+ * are dropped off Ethereum.
+ */
+export function quoteForChain<T extends { volume24h?: number; liquidityUsd?: number }>(
+  quote: T | undefined,
+  native: boolean,
+  chainId: number,
+): T | undefined {
+  if (!quote || !native || chainId === 1) return quote
+  return { ...quote, volume24h: undefined, liquidityUsd: undefined }
+}
+
+export type PriceStatus = 'live' | 'some' | 'off' | 'loading'
+
+/** The header's lamp. "Live" only when every row has a price. */
+export function priceStatus(rows: readonly { quote?: unknown }[], loading: boolean, failed: boolean): PriceStatus {
+  const priced = rows.filter((r) => r.quote).length
+  if (priced === rows.length && priced > 0) return 'live'
+  if (loading) return 'loading'
+  if (priced > 0) return 'some'
+  return failed || rows.length > 0 ? 'off' : 'loading'
+}
+
+export const PRICE_STATUS_WORDS: Record<PriceStatus, string> = {
+  live: '● PRICES LIVE',
+  some: '● SOME PRICES',
+  off: 'PRICES OFF',
+  loading: '○ PRICES…',
 }
 
 export function formatChange(n: number | undefined): string {
@@ -93,6 +126,44 @@ export const FEATURED_COLLECTIONS = [
 ] as const
 
 export const featuredOn = (chainId: number) => FEATURED_COLLECTIONS.filter((c) => c.chainId === chainId)
+
+/** Hand-checked collections carry no "not verified" warning, whatever OpenSea's badge says. */
+export const isFeatured = (chainId: number, address: string | undefined) =>
+  featuredOn(chainId).some((c) => c.address.toLowerCase() === address?.toLowerCase())
+
+export const isFeaturedSlug = (chainId: number, slug: string | undefined) =>
+  featuredOn(chainId).some((c) => c.slug === slug)
+
+/** Rows known to have nothing for sale go last, otherwise in their own order. */
+export const emptyLast = <T>(rows: readonly T[], isEmpty: (row: T) => boolean): T[] => [
+  ...rows.filter((r) => !isEmpty(r)),
+  ...rows.filter(isEmpty),
+]
+
+/** Verified and hand-checked first, then not yet known, then not verified; otherwise as found. */
+export function verifiedFirst<T>(rows: readonly T[], verified: (row: T) => boolean | undefined): T[] {
+  const rank = (r: T) => {
+    const v = verified(r)
+    return v === true ? 0 : v === undefined ? 1 : 2
+  }
+  return rows
+    .map((row, i) => ({ row, i }))
+    .sort((a, b) => rank(a.row) - rank(b.row) || a.i - b.i)
+    .map((x) => x.row)
+}
+
+/** "0x53d0…7921". */
+export const shortAddress = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`
+
+/** "Last trade 5h ago" when the newest candle is older than two candles' length, else nothing. */
+export function lastTradeWords(lastAt: number | undefined, candleSeconds: number, nowSeconds: number): string {
+  if (!lastAt) return ''
+  const age = nowSeconds - lastAt
+  if (age < candleSeconds * 2) return ''
+  if (age < 3600) return `Last trade ${Math.round(age / 60)}m ago`
+  if (age < 2 * 86400) return `Last trade ${Math.round(age / 3600)}h ago`
+  return `Last trade ${Math.round(age / 86400)}d ago`
+}
 
 export type DexMarket = {
   url?: string

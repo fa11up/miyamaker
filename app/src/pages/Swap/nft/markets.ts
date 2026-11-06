@@ -301,6 +301,9 @@ export function parseOfferAggregate(j: unknown): { price: Price; count: number }
   return { price: p, count: typeof first?.total_offers === 'number' ? (first.total_offers as number) : 1 }
 }
 
+/** Plain words for a fill planFill could not read: its own messages name fields, for developers. */
+const UNREADABLE = 'OpenSea sent an order we could not read. Nothing has moved. Try again.'
+
 export type OsNft = { name?: string; image?: string; owners: string[]; standard?: string; suspicious: boolean }
 
 export function parseNft(j: unknown): OsNft | undefined {
@@ -317,7 +320,13 @@ export function parseNft(j: unknown): OsNft | undefined {
   }
 }
 
-export type OsSearchHit = { slug: string; name: string; image?: string }
+export type OsSearchHit = {
+  slug: string
+  name: string
+  image?: string
+  /** OpenSea's badge, when the search result carries it. Undefined means look it up (useCollectionsVerified). */
+  verified?: boolean
+}
 
 export const parseSearch = (j: unknown): OsSearchHit[] =>
   arr(obj(j)?.results)
@@ -329,9 +338,18 @@ export const parseSearch = (j: unknown): OsSearchHit[] =>
       slug: str(c!.collection)!,
       name: str(c!.name) || str(c!.collection)!,
       image: str(c!.image_url) || undefined,
+      verified: str(c!.safelist_status) ? c!.safelist_status === 'verified' : undefined,
     }))
 
-export type OwnedGroup = { contract: string; slug?: string; name: string; image?: string; ids: string[] }
+export type OwnedGroup = {
+  contract: string
+  slug?: string
+  name: string
+  image?: string
+  ids: string[]
+  /** Every NFT held here is flagged by OpenSea: likely spam, kept out of the main list. */
+  flagged?: boolean
+}
 
 /** The wallet's NFTs (OpenSea account_nfts) grouped per contract, biggest holding first. */
 export function groupAccountNfts(j: unknown): OwnedGroup[] {
@@ -346,9 +364,11 @@ export function groupAccountNfts(j: unknown): OwnedGroup[] {
       name: str(n.collection) || contract,
       image: undefined,
       ids: [],
+      flagged: true,
     }
     g.ids.push(String(n.identifier))
     g.image = g.image || str(n.display_image_url) || str(n.image_url) || undefined
+    g.flagged = g.flagged && n.is_suspicious === true
     map.set(contract, g)
   }
 
@@ -459,6 +479,13 @@ export type FillPlan = {
   total: bigint
   /** Who must be approved to move the buyer's ERC-20 (buy) or the seller's NFT (sell): a conduit key. */
   conduitKey: string
+  /**
+   * The ERC-20 the fulfiller's allowance must cover. Buy: the price. Sell: the fees, which Seaport pulls from the seller
+   * out of the offer they have just received. Without it the fill reverts (seen on a fork).
+   */
+  fromYou: bigint
+  /** The NFT's standard, from the signed order itself. Decides whether one token can be approved (ERC-721) or not. */
+  nftKind: 'erc721' | 'erc1155'
 }
 
 export type FillContext = {
@@ -484,7 +511,10 @@ const LABEL = { seller: 'To the seller', opensea: 'OpenSea fee', creator: 'Creat
  * function, not for this NFT, sends the goods elsewhere, the price moves (auction), or it carries anything beyond
  * the signed order (an optional creator fee or extra ETH).
  */
-export function planFill(resp: unknown, ctx: FillContext): FillPlan | { ok: false; error: string } {
+export function planFill(
+  resp: unknown,
+  ctx: FillContext
+): FillPlan | { ok: false; error: string; openSea?: boolean } {
   try {
     const data = obj(obj(resp)?.fulfillment_data)
     const tx = obj(data?.transaction)
@@ -492,10 +522,10 @@ export function planFill(resp: unknown, ctx: FillContext): FillPlan | { ok: fals
     const signature = str(tx.function) || ''
     const functionName = signature.split('(')[0]!
     const fn = ctx.abi.find((f) => f.name === functionName)
-    if (!fn) return { ok: false, error: 'This order needs a kind of fill miyaOS does not do. Use the OpenSea link.' }
+    if (!fn) return { ok: false, error: 'This order needs a kind of fill miyaOS does not do.', openSea: true }
     const to = str(tx.to) || ''
     if (!ctx.seaports.some((s) => s.toLowerCase() === to.toLowerCase()))
-      return { ok: false, error: 'The order is not on the Seaport contract we know. Use the OpenSea link.' }
+      return { ok: false, error: 'The order is not on the Seaport contract we know.', openSea: true }
     if (Number(tx.chain) !== ctx.chainId) return { ok: false, error: 'The order is for another network.' }
     const value = toBig(tx.value) ?? toBig(tx.value_hex) ?? 0n
     const input = obj(tx.input_data)
@@ -523,7 +553,7 @@ export function planFill(resp: unknown, ctx: FillContext): FillPlan | { ok: fals
 
     const money = (side: Item[]) => side.filter(isCurrency)
     if ([...money(offer), ...money(consideration)].some((i) => i.start !== i.end))
-      return { ok: false, error: 'This price changes over time (an auction). Use the OpenSea link.' }
+      return { ok: false, error: 'This price changes over time (an auction).', openSea: true }
 
     const parameters = obj(input.parameters)
     // Never pay optional extras (creator "tips"): Seaport lets the fulfiller append recipients past the signed
@@ -550,7 +580,7 @@ export function planFill(resp: unknown, ctx: FillContext): FillPlan | { ok: fals
       if (!pay.length) return { ok: false, error: 'The order has no price.' }
       const { token } = pay[0]!
       if (pay.some((i) => i.token !== token || i.itemType !== pay[0]!.itemType))
-        return { ok: false, error: 'The order is priced in more than one token. Use the OpenSea link.' }
+        return { ok: false, error: 'The order is priced in more than one token.', openSea: true }
       const native = pay[0]!.itemType === 0
       const sums = { seller: 0n, opensea: 0n, creator: 0n }
       for (const i of pay) sums[who(i.recipient, offerer)] += part(i.start)
@@ -570,7 +600,19 @@ export function planFill(resp: unknown, ctx: FillContext): FillPlan | { ok: fals
         return { ok: false, error: 'This token-priced order should not send ETH.' }
       }
 
-      return { ok: true, functionName, to, value, args, currency: { native, token }, lines, total, conduitKey }
+      return {
+        ok: true,
+        functionName,
+        to,
+        value,
+        args,
+        currency: { native, token },
+        lines,
+        total,
+        conduitKey,
+        fromYou: total,
+        nftKind: nft.itemType === 3 ? 'erc1155' : 'erc721',
+      }
     }
 
     // Sell: accept an offer. The bidder gives an ERC-20 and wants this NFT (or any NFT of the collection).
@@ -584,13 +626,13 @@ export function planFill(resp: unknown, ctx: FillContext): FillPlan | { ok: fals
     if (!wants) return { ok: false, error: 'This offer is not for this NFT.' }
     const gives = money(offer)
     if (!gives.length || gives.some((i) => i.itemType !== 1 || i.token !== gives[0]!.token))
-      return { ok: false, error: 'This offer is not a plain token offer. Use the OpenSea link.' }
+      return { ok: false, error: 'This offer is not a plain token offer.', openSea: true }
     const { token } = gives[0]!
     const gross = gives.reduce((s, i) => s + part(i.start), 0n)
     const lines: FillLine[] = [{ label: 'Offer', amount: gross }]
     const cuts = { opensea: 0n, creator: 0n, seller: 0n }
     for (const i of money(consideration)) {
-      if (i.token !== token) return { ok: false, error: 'The offer fees are in another token. Use the OpenSea link.' }
+      if (i.token !== token) return { ok: false, error: 'The offer fees are in another token.', openSea: true }
       cuts[who(i.recipient, offerer)] += part(i.start)
     }
 
@@ -609,9 +651,11 @@ export function planFill(resp: unknown, ctx: FillContext): FillPlan | { ok: fals
       lines,
       total: gross - fees,
       conduitKey,
+      fromYou: fees,
+      nftKind: wants.itemType === 3 || wants.itemType === 5 ? 'erc1155' : 'erc721',
     }
-  } catch (e) {
-    return { ok: false, error: (e as Error).message || 'The fill data could not be read.' }
+  } catch {
+    return { ok: false, error: UNREADABLE }
   }
 }
 

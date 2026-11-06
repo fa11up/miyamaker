@@ -89,7 +89,7 @@ test('sales: newest first, and the last day counted in ETH', () => {
     now
   )
   assert.deepEqual(s.sales.map((x) => x.tx), ['new', 'usdc', 'old'])
-  assert.deepEqual(s.day, { count: 2, volume: '20' })
+  assert.deepEqual(s.day, { count: 2, volume: '20', other: 1 })
 })
 
 function setup() {
@@ -170,4 +170,11 @@ test('a refused large page falls back to the smaller one', async () => {
   assert.equal(r.status, 200)
   assert.deepEqual(limits, ['100', '20'])
   assert.equal(((await r.json()) as any).count, 1)
+})
+
+test('sales in other tokens are counted apart, not added to the ETH figure', () => {
+  const now = 1_000_000
+  const sale = (currency: string, price: string) => ({ tokenId: '1', price, currency, at: now - 60, buyer: '', seller: '', tx: '0x' })
+  const s = summarizeSales([sale('ETH', '10'), sale('WETH', '5'), sale('BETH', '700')], now)
+  assert.deepEqual(s.day, { count: 3, volume: '15', other: 1 })
 })

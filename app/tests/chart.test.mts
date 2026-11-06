@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { candleAt, candlesUrl, parseCandles, priceRange, priceTicks, TIMEFRAMES } from '../src/pages/Swap/chart.ts'
+import { candleAt, candlesUrl, chartPrice, parseCandles, priceRange, priceTicks, TIMEFRAMES } from '../src/pages/Swap/chart.ts'
 import { formatAmount, mergeMoves, transferQuery } from '../src/pages/Swap/history.ts'
 
 const WBTC = '0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599'
@@ -121,4 +121,21 @@ test('amounts read well at any size', () => {
   assert.equal(formatAmount(1234567.8), '1,234,568')
   assert.equal(formatAmount(1.23456), '1.235')
   assert.equal(formatAmount(0.000123456), '0.000123')
+})
+
+test('a live price outside the candles stays in view', () => {
+  const c = [{ at: 1, open: 10, high: 12, low: 9, close: 11, volume: 1 }]
+  const plain = priceRange(c)
+  const live = priceRange(c, 20)
+  assert.ok(live.high > 20)
+  assert.equal(live.low < plain.low, true, 'more air on the wider range')
+  assert.deepEqual(priceRange(c, Number.NaN), plain, 'a bad price is ignored')
+})
+
+test('the chart tags the live price, unless it cannot be this market', () => {
+  assert.equal(chartPrice(0.00078, 0.000853), 0.00078, 'a thin pool whose last trade is old')
+  assert.equal(chartPrice(3000, 0.00085), 0.00085, 'some other market altogether')
+  assert.equal(chartPrice(0.0001, 0.00085), 0.00085)
+  assert.equal(chartPrice(undefined, 5), 5)
+  assert.equal(chartPrice(Number.NaN, 5), 5)
 })

@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import styled from 'styled-components/macro'
 import { useElementSize } from 'usehooks-ts'
 import { useAccount } from 'wagmi'
@@ -17,13 +17,14 @@ import {
   formatUsd,
   marketLinks,
   marketsFor,
+  shortAddress,
 } from './board'
 import type { SwapChainId, SwapToken } from './constants'
 import { DEFAULT_PAIR, isNative, sameAddress } from './constants'
 import { Chip } from './floor/retro'
 import { color, space, text } from './floor/tokens'
 import { Change, Section, usePairs } from './MarketBoard'
-import { LinkButton } from './nft/ui'
+import { Action, LinkButton } from './nft/ui'
 import TokenChart from './TokenChart'
 import { TokenLogo } from './TokenPicker'
 import type { SwapPreset } from './TokenSwap'
@@ -79,6 +80,27 @@ const Head = styled.div`
     font-size: ${text.xs};
     color: ${color.inkMuted};
   }
+  .addr {
+    display: flex;
+    align-items: center;
+    gap: ${space[2]};
+    font-size: ${text.xs};
+    font-variant-numeric: tabular-nums;
+    color: ${color.inkMuted};
+  }
+  .addr button {
+    padding: 0;
+    border: none;
+    background: none;
+    color: ${color.link};
+    font-size: ${text.xs};
+    text-decoration: underline;
+    cursor: pointer;
+  }
+  .narrow & .addr button {
+    min-height: 44px;
+    min-width: 44px;
+  }
   .price {
     margin-left: auto;
     text-align: right;
@@ -108,6 +130,10 @@ const Figures = styled.dl`
     font-weight: 700;
     font-variant-numeric: tabular-nums;
   }
+  /* Three across on a phone: the odd last one takes the empty cell, so no slate block shows. */
+  .narrow & div:last-child:nth-child(3n + 2) {
+    grid-column: span 2;
+  }
 `
 
 const Pressure = styled.div`
@@ -117,10 +143,15 @@ const Pressure = styled.div`
   font-size: ${text.xs};
   .row {
     display: grid;
-    grid-template-columns: 32px minmax(0, 1fr) 96px;
+    grid-template-columns: 32px minmax(0, 1fr) 112px;
     align-items: center;
     gap: ${space[2]};
     font-variant-numeric: tabular-nums;
+  }
+  .row.head {
+    display: block;
+    text-align: right;
+    color: ${color.inkMuted};
   }
   .bar {
     height: 8px;
@@ -174,6 +205,11 @@ const Links = styled.div`
   a {
     color: ${color.link};
     text-transform: capitalize;
+  }
+  .narrow & a {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
   }
 `
 
@@ -270,6 +306,11 @@ const History = styled.section`
     color: ${color.link};
     white-space: nowrap;
   }
+  .narrow & a {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+  }
 `
 
 /** What this wallet has done with the token, under the swap. */
@@ -360,7 +401,7 @@ export function TokenResults({
                   <b>{t.symbol}</b>
                   <small>{t.blocked || t.name}</small>
                 </span>
-                {t.unverified && <Chip tone="warn">Not on our list</Chip>}
+                {t.unverified && <Chip tone="warn">Not verified: check the address</Chip>}
                 <span className="go">Open →</span>
               </button>
             </li>
@@ -380,6 +421,30 @@ const WINDOWS = [
   ['h24', '24h'],
 ] as const
 
+/** The short address, and a way to take the whole of it. */
+function CopyAddress({ address }: { address: string }) {
+  const [copied, setCopied] = useState(false)
+  useEffect(() => {
+    if (!copied) return undefined
+    const t = setTimeout(() => setCopied(false), 1500)
+    return () => clearTimeout(t)
+  }, [copied])
+  return (
+    <span className="addr" data-token-address>
+      <span title={address}>{shortAddress(address)}</span>
+      <button
+        type="button"
+        aria-label={`Copy address ${address}`}
+        onClick={() => {
+          navigator.clipboard?.writeText(address).then(() => setCopied(true), () => undefined)
+        }}
+      >
+        {copied ? 'Copied' : 'Copy'}
+      </button>
+    </span>
+  )
+}
+
 const venueName = (m: DexMarket) =>
   `${m.dexId ?? 'pool'}${m.labels?.[0] ? ` ${m.labels[0]}` : ''} · ${m.baseToken?.symbol ?? ''}/${m.quoteToken?.symbol ?? ''}`
 
@@ -391,6 +456,7 @@ export default function TokenPage({
   address,
   preset,
   onBack,
+  backLabel,
   onOffline,
 }: {
   chainId: SwapChainId
@@ -400,6 +466,7 @@ export default function TokenPage({
   address?: `0x${string}`
   preset?: SwapPreset
   onBack: () => void
+  backLabel: string
   onOffline: (offline: boolean) => void
 }) {
   const [rootRef, { width }] = useElementSize()
@@ -435,12 +502,15 @@ export default function TokenPage({
 
   const now = Date.now()
   const links = marketLinks(market)
+  // ETH's market is read from Ethereum: its price holds on any chain, its pools and volume do not.
+  const borrowedMarket = !!token && isNative(token.address) && chainId !== 1
+  const dockRef = useRef<HTMLDivElement>(null)
 
   return (
     <Layout ref={rootRef} className={oneColumn ? 'one' : undefined}>
       <Market data-token-market>
-        <LinkButton type="button" onClick={onBack}>
-          ← All tokens
+        <LinkButton type="button" onClick={onBack} data-token-back>
+          ← {backLabel}
         </LinkButton>
 
         {!token ? (
@@ -453,23 +523,43 @@ export default function TokenPage({
                 <span>
                   <h2>{token.symbol}</h2>
                   <small>{token.name}</small>
+                  {!isNative(token.address) && <CopyAddress address={token.address} />}
                 </span>
               </span>
-              {token.unverified && <Chip tone="warn">Not on our list: check the address</Chip>}
+              {token.unverified && <Chip tone="warn">Not verified: check the address</Chip>}
               <span className="price" data-token-price>
                 {market ? formatUsd(Number(market.priceUsd)) : '–'}
                 <small>
                   {market && (
                     <Change $tone={changeTone(market.priceChange?.h24)}>
-                      {formatChange(market.priceChange?.h24)} today
+                      {formatChange(market.priceChange?.h24)} 24h
                     </Change>
                   )}
                 </small>
               </span>
             </Head>
 
+            {oneColumn && (
+              <Action
+                type="button"
+                data-token-swap-jump
+                onClick={() => {
+                  const still = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+                  dockRef.current?.scrollIntoView({ behavior: still ? 'auto' : 'smooth', block: 'start' })
+                }}
+              >
+                Swap {token.symbol} ↓
+              </Action>
+            )}
+
             {market ? (
-              <TokenChart chain={market.chainId} pool={market.pairAddress} token={priceAt} symbol={token.symbol} />
+              <TokenChart
+                chain={market.chainId}
+                pool={market.pairAddress}
+                token={priceAt}
+                symbol={token.symbol}
+                livePrice={Number(market.priceUsd)}
+              />
             ) : (
               <Quiet>
                 {pairs.isLoading
@@ -478,7 +568,11 @@ export default function TokenPage({
               </Quiet>
             )}
 
-            {market && (
+            {borrowedMarket && (
+              <Quiet>This is ETH&apos;s price on Ethereum. Its pools and volume there are not shown here.</Quiet>
+            )}
+
+            {market && !borrowedMarket && (
               <>
                 <Figures aria-label="Market figures">
                   <div>
@@ -506,6 +600,7 @@ export default function TokenPage({
                 <Section aria-label="Trading">
                   <h2>Buys and sells</h2>
                   <Pressure>
+                    <div className="row head">Buys / Sells / Change</div>
                     {WINDOWS.map(([k, label]) => {
                       const t = market.txns?.[k]
                       const share = buyShare(t)
@@ -582,7 +677,7 @@ export default function TokenPage({
         )}
       </Market>
 
-      <Dock>
+      <Dock ref={dockRef}>
         <TokenSwap chainId={chainId} onChain={onChain} onBusy={onBusy} preset={swapPreset} onOffline={onOffline} />
         {token && <TokenHistory chainId={chainId} token={token} />}
       </Dock>

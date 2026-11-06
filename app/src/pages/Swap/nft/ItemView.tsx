@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import styled from 'styled-components/macro'
 import type { Address } from 'viem'
 import { useAccount, useReadContract } from 'wagmi'
@@ -8,14 +8,16 @@ import type { SupportedChainId } from '@/config/wagmi'
 import { chains, explorerUrl, mainnet } from '@/config/wagmi'
 import { cleanText } from '@/desktop/files/sanitize'
 
-import { Chip, Eyebrow, Skeleton } from '../floor/retro'
+import { isFeatured } from '../board'
+import { Chip, Eyebrow, Skeleton, StatusBox } from '../floor/retro'
 import { color, space } from '../floor/tokens'
 import { erc721Abi } from './abi'
 import FillReview from './FillReview'
 import type { OsOrder } from './markets'
 import { formatPrice, itemUrl, venuesFor } from './markets'
 import { KIND, MODE_LABEL } from './pool'
-import { Card, Chips, Head, Hint, LinkButton, Mono, PushButton } from './ui'
+import { goneHashes, sessionStore } from './sweep'
+import { Action, Card, Chips, Head, Hint, LinkButton, Mono, PushButton } from './ui'
 import { useOpenSeaCollection, useOpenSeaItem } from './useMarkets'
 import { poolFactoryFor, useNftMeta, usePoolsForCollection } from './usePools'
 import { OutLink, VenueList, VenueRow } from './venueUi'
@@ -53,12 +55,15 @@ export default function ItemView({
   tokenId,
   onBack,
   onOpenPool,
+  onBusy,
 }: {
   chainId: SupportedChainId
   contract: Address
   tokenId: string
   onBack: () => void
   onOpenPool: (pool: Address) => void
+  /** Told while a trade is in flight, when the page must not change. */
+  onBusy?: (busy: boolean) => void
 }) {
   const chain = chains.find((c) => c.id === chainId) || mainnet
   const { address: me } = useAccount()
@@ -75,6 +80,9 @@ export default function ItemView({
     chainId,
   })
   const [review, setReview] = useState<{ side: 'buy' | 'sell'; order: OsOrder }>()
+  const [busy, setBusy] = useState(false)
+  useEffect(() => onBusy?.(busy), [busy])
+  useEffect(() => () => onBusy?.(false), [])
 
   const is1155 = item.nft?.standard === 'erc1155'
   const ownerAddress = owner.data as Address | undefined
@@ -82,11 +90,15 @@ export default function ItemView({
   const inPool = pools.pools.find((p) => same(p.address, ownerAddress))
   const collectionName = os.info?.name || 'NFT'
   const title = cleanText(item.nft?.name || meta.name, 80) || `${collectionName} #${tokenId}`
-  const listingIsMine = !!item.listing && mine
+  // One that just failed as sold stays off this screen: the shared answer can lag it by a minute.
+  const listing = item.listing && !goneHashes(sessionStore()).has(item.listing.hash) ? item.listing : undefined
+  const listingIsMine = !!listing && mine
+  const unverified = !isFeatured(chainId, contract) && os.info?.verified !== true
+  const openSeaHref = itemUrl('opensea', chainId, contract, tokenId)
 
   return (
     <>
-      <LinkButton type="button" onClick={onBack}>
+      <LinkButton type="button" onClick={onBack} disabled={busy}>
         ← {collectionName}
       </LinkButton>
 
@@ -119,15 +131,21 @@ export default function ItemView({
                 '–'
               )}
             </Hint>
-            {item.listing && !listingIsMine && (
-              <PushButton type="button" onClick={() => setReview({ side: 'buy', order: item.listing! })}>
-                Buy for {formatPrice(item.listing.price)}
-              </PushButton>
+            {/* Hidden while its review is open: that review has the one button to press. */}
+            {listing && !listingIsMine && !review && (
+              <Action
+                type="button"
+                disabled={busy}
+                onClick={() => setReview({ side: 'buy', order: listing })}
+                data-item-buy
+              >
+                Buy for {formatPrice(listing.price)}
+              </Action>
             )}
-            {mine && item.offer && (
-              <PushButton type="button" onClick={() => setReview({ side: 'sell', order: item.offer! })}>
+            {mine && item.offer && !review && (
+              <Action type="button" disabled={busy} onClick={() => setReview({ side: 'sell', order: item.offer! })}>
                 Accept {formatPrice(item.offer.price)} offer
-              </PushButton>
+              </Action>
             )}
           </div>
         </Layout>
@@ -142,11 +160,15 @@ export default function ItemView({
           contract={contract}
           tokenId={tokenId}
           title={collectionName}
+          flagged={!!item.nft?.suspicious}
+          unverified={unverified}
           onClose={() => setReview(undefined)}
           onDone={() => {
             item.refetch()
             owner.refetch()
           }}
+          onGone={() => item.refetch()}
+          onBusy={setBusy}
         />
       )}
 
@@ -163,7 +185,7 @@ export default function ItemView({
                     venue={v}
                     note={`It is in the ${MODE_LABEL[inPool.mode]} pool. Take it out for 1 ${inPool.symbol}.`}
                   >
-                    <PushButton type="button" onClick={() => onOpenPool(inPool.address)}>
+                    <PushButton type="button" disabled={busy} onClick={() => onOpenPool(inPool.address)}>
                       Open the pool
                     </PushButton>
                   </VenueRow>
@@ -172,7 +194,7 @@ export default function ItemView({
                 return (
                   <VenueRow key={v.id} venue={v} note={`Sell it into a pool for 1 ${pools.pools[0]!.symbol}, no fees.`}>
                     {pools.pools.map((p) => (
-                      <PushButton key={p.address} type="button" onClick={() => onOpenPool(p.address)}>
+                      <PushButton key={p.address} type="button" disabled={busy} onClick={() => onOpenPool(p.address)}>
                         Open {MODE_LABEL[p.mode]} pool
                       </PushButton>
                     ))}
@@ -190,7 +212,7 @@ export default function ItemView({
             const href = itemUrl(v.id, chainId, contract, tokenId)
             if (v.id === 'opensea') {
               const facts: { label: string; value: string }[] = []
-              if (item.listing) facts.push({ label: 'Listed', value: formatPrice(item.listing.price) })
+              if (listing) facts.push({ label: 'Listed', value: formatPrice(listing.price) })
               if (item.offer) facts.push({ label: 'Best offer', value: formatPrice(item.offer.price) })
               return (
                 <VenueRow
@@ -201,26 +223,21 @@ export default function ItemView({
                     item.loading && !item.needsKey && os.slug ? (
                       <Skeleton h="16px" w="50%" />
                     ) : item.needsKey || os.needsKey ? (
-                      'Prices need an API key. The link works.'
-                    ) : !item.listing && !item.offer ? (
+                      'Buying here is offline right now. Try again later, or buy it on OpenSea.'
+                    ) : !listing && !item.offer ? (
                       'Not listed and no offers right now.'
                     ) : undefined
                   }
                 >
-                  {item.listing && !listingIsMine && (
-                    <PushButton type="button" onClick={() => setReview({ side: 'buy', order: item.listing! })}>
-                      Review and buy
-                    </PushButton>
-                  )}
-                  {mine && item.offer && (
-                    <PushButton type="button" onClick={() => setReview({ side: 'sell', order: item.offer! })}>
-                      Review and sell
-                    </PushButton>
-                  )}
-                  {/* Only listing your own takes a trip to OpenSea: buying and accepting an offer happen here. */}
+                  {/* Only listing your own, or a market offline here, takes a trip to OpenSea. */}
                   {href && mine && (
                     <OutLink href={href} target="_blank" rel="noreferrer">
                       List on OpenSea ↗
+                    </OutLink>
+                  )}
+                  {href && !mine && (item.needsKey || os.needsKey) && (
+                    <OutLink href={href} target="_blank" rel="noreferrer">
+                      Open on OpenSea ↗
                     </OutLink>
                   )}
                 </VenueRow>
@@ -230,7 +247,7 @@ export default function ItemView({
             return null
           })}
         </VenueList>
-        {listingIsMine && <Hint>You listed this one on OpenSea for {formatPrice(item.listing!.price)}.</Hint>}
+        {listingIsMine && <Hint>You listed this one on OpenSea for {formatPrice(listing!.price)}.</Hint>}
         <Hint style={{ color: color.inkMuted }}>
           Buying here uses OpenSea&apos;s order and Seaport contract, the same as buying on OpenSea.
         </Hint>

@@ -1,8 +1,8 @@
 import { useQuery } from '@tanstack/react-query'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Address, Hash } from 'viem'
-import { BaseError, erc20Abi } from 'viem'
-import { useReadContract, useSendTransaction, useWaitForTransactionReceipt, useWriteContract } from 'wagmi'
+import { erc20Abi } from 'viem'
+import { usePublicClient, useReadContract, useSendTransaction, useWriteContract } from 'wagmi'
 
 import { useTx } from '@/miyamints/useTx'
 import { useCanBatch } from '@/utils/batch'
@@ -11,6 +11,7 @@ import { fetchPrice, fetchQuote, SwapApiError } from './api'
 import type { SwapChainId } from './constants'
 import { isNative, QUOTE_MAX_AGE_MS } from './constants'
 import { ALLOWANCE_HOLDER, quoteProblem } from './quoteGuard'
+import { latestOnly, receiptOutcome } from './swapLogic'
 import type { SwapRequest, ZeroExQuote } from './types'
 
 /** Indicative price, refreshed while the user is looking at it. Call sites debounce the amount. */
@@ -64,17 +65,22 @@ export function priceImpact(
 export type FirmQuote = Extract<ZeroExQuote, { liquidityAvailable: true }>
 export type QuoteState = { quote: ZeroExQuote; fetchedAt: number; request: SwapRequest } | undefined
 
-/** Turns wallet/RPC errors into a sentence; wallet rejection is a cancel, not a failure. */
-export function describeTxError(error: unknown): { message: string; cancelled: boolean } {
-  if (!error) return { message: '', cancelled: false }
-  if (error instanceof SwapApiError) return { message: error.message, cancelled: false }
-  const base = error instanceof BaseError ? error : undefined
-  const text = base?.shortMessage || (error as Error).message || 'Something went wrong.'
-  const details = `${base?.details || ''} ${text}`
-  if (/reject|denied|cancel/i.test(details)) return { message: 'Cancelled in wallet.', cancelled: true }
-  if (/insufficient funds/i.test(details))
-    return { message: 'Not enough ETH for this trade plus gas.', cancelled: false }
-  return { message: text, cancelled: false }
+/**
+ * A transaction's receipt, with its status. Not wagmi's useWaitForTransactionReceipt: that throws on a revert, which made
+ * a reverted swap look the same as a failed look-up, and a failed look-up says nothing about the swap.
+ */
+function useReceipt(chainId: SwapChainId, hash: Hash | undefined) {
+  const client = usePublicClient({ chainId })
+  const q = useQuery({
+    queryKey: ['tx-receipt', chainId, hash],
+    enabled: !!hash && !!client,
+    staleTime: Infinity,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    retry: 3,
+    queryFn: () => client!.waitForTransactionReceipt({ hash: hash!, timeout: 0 }),
+  })
+  return { receipt: q.data, outcome: receiptOutcome(hash, q.data, q.isError) }
 }
 
 /**
@@ -92,6 +98,12 @@ export function useSwapExecution({ chainId, taker }: { chainId: SwapChainId; tak
   const [quoteError, setQuoteError] = useState<unknown>()
   /** The quote was re-fetched because it went stale: shown to the user, not sent. */
   const [requoted, setRequoted] = useState(false)
+  /** Which approval steps really happened in this review, so the step count stays true. */
+  const [didReset, setDidReset] = useState(false)
+  const [didApprove, setDidApprove] = useState(false)
+  const lastApproveWasReset = useRef(false)
+  // An older quote that lands late must not arm Swap for an amount no longer on the screen.
+  const quotes = useRef(latestOnly()).current
 
   const firm = state && state.quote.liquidityAvailable ? (state.quote as FirmQuote) : undefined
   const request = state?.request
@@ -118,11 +130,7 @@ export function useSwapExecution({ chainId, taker }: { chainId: SwapChainId; tak
   const needsAllowanceReset = needsApproval && allowance.data !== undefined && allowance.data > 0n
 
   const approve = useWriteContract()
-  const approveReceipt = useWaitForTransactionReceipt({
-    hash: approve.data,
-    chainId,
-    query: { enabled: !!approve.data },
-  })
+  const approveReceipt = useReceipt(chainId, approve.data)
 
   const send = useSendTransaction()
   const canBatchSwap = useCanBatch(chainId)
@@ -131,38 +139,43 @@ export function useSwapExecution({ chainId, taker }: { chainId: SwapChainId; tak
   })
   const batchHash = batch.tx.id === 'swap' ? batch.tx.hash : undefined
   const swapHash = send.data ?? batchHash
-  const swapReceipt = useWaitForTransactionReceipt({ hash: swapHash, chainId, query: { enabled: !!swapHash } })
+  const swapReceipt = useReceipt(chainId, swapHash)
 
   const getQuote = useCallback(async (req: SwapRequest) => {
+    const ticket = quotes.begin()
     setQuoting(true)
     setQuoteError(undefined)
     try {
       const quote = await fetchQuote(req)
+      if (!quotes.isCurrent(ticket)) return undefined
       const problem = quote.liquidityAvailable ? quoteProblem(quote, req) : undefined
       if (problem) {
         setState(undefined)
-        throw new SwapApiError(`${problem} Swap refused for your safety.`, 'QUOTE_MISMATCH', 0)
+        throw new SwapApiError(`${problem} Swap refused for your safety. Nothing has moved.`, 'QUOTE_MISMATCH', 0)
       }
 
       setState({ quote, fetchedAt: Date.now(), request: req })
       return quote
     } catch (e) {
-      setQuoteError(e)
+      if (quotes.isCurrent(ticket)) setQuoteError(e)
       return undefined
     } finally {
-      setQuoting(false)
+      if (quotes.isCurrent(ticket)) setQuoting(false)
     }
   }, [])
 
   useEffect(() => {
-    if (approveReceipt.isSuccess && state) {
+    if (approveReceipt.outcome === 'success' && state) {
+      if (lastApproveWasReset.current) setDidReset(true)
+      else setDidApprove(true)
       allowance.refetch()
       getQuote(state.request)
     }
-  }, [approveReceipt.isSuccess])
+  }, [approveReceipt.outcome, approve.data])
 
   const doApprove = () => {
     if (!request || !spender) return
+    lastApproveWasReset.current = needsAllowanceReset
     approve.writeContract({
       address: request.sellToken,
       abi: erc20Abi,
@@ -216,9 +229,13 @@ export function useSwapExecution({ chainId, taker }: { chainId: SwapChainId; tak
   }
 
   const reset = () => {
+    quotes.cancel()
+    setQuoting(false)
     setState(undefined)
     setQuoteError(undefined)
     setRequoted(false)
+    setDidReset(false)
+    setDidApprove(false)
     approve.reset()
     send.reset()
     batch.reset()
@@ -237,19 +254,23 @@ export function useSwapExecution({ chainId, taker }: { chainId: SwapChainId; tak
     requoted,
     approve: doApprove,
     approveHash: approve.data as Hash | undefined,
-    approving: approve.isPending || (!!approve.data && approveReceipt.isLoading),
-    approveError: approve.error || approveReceipt.error,
+    approving: approve.isPending || approveReceipt.outcome === 'waiting',
+    approveError: approve.error,
+    approveReverted: approveReceipt.outcome === 'reverted',
+    approveUnconfirmed: approveReceipt.outcome === 'unknown',
+    didReset,
+    didApprove,
     swap: doSwap,
     swapHash: swapHash as Hash | undefined,
     awaitingWallet: send.isPending || batch.tx.phase === 'wallet',
-    confirming: batch.tx.phase === 'pending' || (!!swapHash && swapReceipt.isLoading),
+    confirming: batch.tx.phase === 'pending' || swapReceipt.outcome === 'waiting',
     // A wallet may report a finished batch without a receipt to look up.
     confirmed:
-      (swapReceipt.isSuccess && swapReceipt.data?.status === 'success') ||
-      (batch.tx.id === 'swap' && batch.tx.phase === 'done' && !batchHash),
-    reverted: swapReceipt.isSuccess && swapReceipt.data?.status === 'reverted',
-    swapError:
-      send.error || swapReceipt.error || (batch.tx.phase === 'error' ? new Error(batch.tx.message) : undefined),
-    swapReceipt: swapReceipt.data,
+      swapReceipt.outcome === 'success' || (batch.tx.id === 'swap' && batch.tx.phase === 'done' && !batchHash),
+    reverted: swapReceipt.outcome === 'reverted',
+    /** The swap was sent, but its receipt could not be read: it may still land, so it must not be offered again. */
+    unconfirmed: swapReceipt.outcome === 'unknown',
+    swapError: send.error || (batch.tx.phase === 'error' ? batch.tx.error : undefined),
+    swapReceipt: swapReceipt.receipt,
   }
 }

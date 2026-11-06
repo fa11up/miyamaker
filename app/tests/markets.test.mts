@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { decodeFunctionData, encodeFunctionData } from 'viem'
+import { decodeErrorResult, decodeFunctionData, encodeErrorResult, encodeFunctionData, parseAbi } from 'viem'
 
 import { handleOpenSeaRequest, openSeaGet, openSeaPost, quoteBigInts } from '../api/_lib/opensea.ts'
 import { clientKey, createRateLimiter, sameOrigin } from '../api/_lib/zeroex.ts'
@@ -27,7 +27,13 @@ import {
   seaportArgs,
   venuesFor,
 } from '../src/pages/Swap/nft/markets.ts'
-import { INPUT_ALIASES, OPENSEA_FEE_RECIPIENT, seaportAbi, SEAPORT_ADDRESSES } from '../src/pages/Swap/nft/seaport.ts'
+import {
+  INPUT_ALIASES,
+  OPENSEA_FEE_RECIPIENT,
+  seaportAbi,
+  SEAPORT_ADDRESSES,
+  seaportCallAbi,
+} from '../src/pages/Swap/nft/seaport.ts'
 import { parseTradePath, tradePath } from '../src/pages/Swap/tradePath.ts'
 
 const MILADY = '0x5af0d9827e0c53e4799bb226655a1de152a425a5'
@@ -665,4 +671,66 @@ test('lowerPrice compares only the same token', () => {
   assert.equal(lowerPrice(undefined, eth(5n))?.amount, 5n)
   assert.equal(lowerPrice(eth(5n), { amount: 1n, decimals: 18, symbol: 'WETH' })?.amount, 5n)
   assert.equal(lowerPrice(undefined, undefined), undefined)
+})
+
+test('the plan says what the seller allows: the fees, and which kind of NFT', () => {
+  const plan = planFill(offerAccept(), ctx({ side: 'sell' }))
+  assert.ok(plan.ok)
+  assert.equal((plan as any).nftKind, 'erc721', 'an ERC-721 collection offer')
+  // Half of a 2-unit offer, so half of its 1.3% fee: exactly what Seaport pulls out of what the seller receives.
+  assert.equal((plan as any).fromYou, 6500000000000000n)
+  const buy = planFill(basicBuy(), ctx())
+  assert.ok(buy.ok)
+  assert.equal((buy as any).fromYou, (buy as any).total)
+  assert.equal((buy as any).nftKind, 'erc721')
+})
+
+test('an ERC-1155 offer is told apart, so the screen can say the approval is blanket', () => {
+  const offer = offerAccept()
+  offer.fulfillment_data.orders[0].parameters.consideration[0].itemType = 5
+  offer.fulfillment_data.transaction.input_data.advancedOrder.parameters = offer.fulfillment_data.orders[0].parameters
+  const plan = planFill(offer, ctx({ side: 'sell' }))
+  assert.equal(plan.ok && plan.nftKind, 'erc1155')
+})
+
+test('fills only OpenSea can do say so; unreadable ones stay plain', () => {
+  const auction = basicBuy()
+  auction.fulfillment_data.orders[0].parameters.consideration[0].endAmount = '1'
+  const refused = planFill(auction, ctx())
+  assert.equal(!refused.ok && refused.openSea, true)
+  const garbled = basicBuy()
+  garbled.fulfillment_data.transaction.input_data.parameters.salt = 'not a number'
+  const bad = planFill(garbled, ctx())
+  assert.equal(bad.ok, false)
+  assert.doesNotMatch((bad as any).error, /salt|whole number/)
+})
+
+test('Seaport refusals decode by name, and an error can never pass for a fill function', () => {
+  // OrderAlreadyFilled(bytes32): the selector a real second fill reverted with on a fork.
+  const data = encodeErrorResult({
+    abi: parseAbi(['error OrderAlreadyFilled(bytes32 orderHash)']),
+    errorName: 'OrderAlreadyFilled',
+    args: [ZERO32 as `0x${string}`],
+  })
+  assert.equal(decodeErrorResult({ abi: seaportCallAbi, data }).errorName, 'OrderAlreadyFilled')
+  assert.equal(data.slice(0, 10), '0x10fda3e1')
+  assert.match(
+    (planFill(basicBuy({ fn: 'OrderAlreadyFilled(bytes32)' }), ctx()) as any).error,
+    /does not do/,
+  )
+})
+
+test('search keeps the badge when it is there, and leaves it unknown when not', () => {
+  const hit = (extra: object) => ({ type: 'collection', collection: { collection: 'x', name: 'X', ...extra } })
+  const parse = (extra: object) => parseSearch({ results: [hit(extra)] })[0]!.verified
+  assert.equal(parse({ safelist_status: 'verified' }), true)
+  assert.equal(parse({ safelist_status: 'not_requested' }), false)
+  assert.equal(parse({}), undefined)
+})
+
+test('a collection is hidden as flagged only when everything held in it is', () => {
+  const nft = (contract: string, id: string, is_suspicious: boolean) => ({ contract, identifier: id, collection: contract, is_suspicious })
+  const groups = groupAccountNfts({ nfts: [nft('0xaa', '1', true), nft('0xaa', '2', true), nft('0xbb', '3', true), nft('0xbb', '4', false)] })
+  assert.equal(groups.find((g) => g.contract === '0xaa')!.flagged, true)
+  assert.equal(groups.find((g) => g.contract === '0xbb')!.flagged, false)
 })

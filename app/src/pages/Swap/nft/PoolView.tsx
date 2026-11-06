@@ -56,6 +56,7 @@ import {
   PushButton,
   Segmented,
   Stat,
+  SwitchNote,
 } from './ui'
 import { pairsFor, poolSide, usePoolPrices } from './usePoolPrices'
 import type { Pool } from './usePools'
@@ -79,6 +80,7 @@ type Wallet = {
   wrongChain: boolean
   switching: boolean
   switchChain: (args: { chainId: SupportedChainId }) => void
+  switchFailed: boolean
   openConnectModal?: () => void
 }
 
@@ -174,6 +176,7 @@ export default function PoolView({
   onOpenPool,
   onSwapToken,
   wallet,
+  onBusy,
 }: {
   chainId: SupportedChainId
   address: Address
@@ -181,6 +184,8 @@ export default function PoolView({
   onOpenPool: (pool: Address) => void
   onSwapToken: (p: { chainId: SwapChainId; sell?: SwapToken; buy?: SwapToken }) => void
   wallet: Wallet
+  /** Told while a transaction is in flight, when the page must not change. */
+  onBusy?: (busy: boolean) => void
 }) {
   const { address: me, isConnected, wrongChain, switching, switchChain, openConnectModal } = wallet
   const chain = chains.find((c) => c.id === chainId) || mainnet
@@ -247,6 +252,8 @@ export default function PoolView({
       setQty({})
     }
   })
+  useEffect(() => onBusy?.(tx.busy), [tx.busy])
+  useEffect(() => () => onBusy?.(false), [])
 
   // Read the reveal's outcome from its receipt.
   useEffect(() => {
@@ -896,6 +903,7 @@ export default function PoolView({
       )}
 
       <ActionDock>
+        {wrongChain && <SwitchNote chainName={chain.name} failed={wallet.switchFailed} />}
         <Action
           type="button"
           className={action.className}

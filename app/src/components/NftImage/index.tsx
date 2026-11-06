@@ -1,4 +1,4 @@
-import type { CSSProperties } from 'react'
+import type { CSSProperties, ReactNode } from 'react'
 import { useEffect, useMemo, useState } from 'react'
 import styled from 'styled-components/macro'
 
@@ -96,6 +96,7 @@ export default function NftImage({
   fit = 'cover',
   eager = false,
   fallback,
+  missing,
   className,
   style,
 }: {
@@ -109,6 +110,8 @@ export default function NftImage({
   eager?: boolean
   /** Shown when there is no image or every source failed. */
   fallback?: string
+  /** Shown instead of the "no image" words when there is nothing to show. */
+  missing?: ReactNode
   className?: string
   style?: CSSProperties
 }) {
@@ -147,7 +150,7 @@ export default function NftImage({
       ) : failed && fallback ? (
         <img className="main ready" src={fallback} alt={alt} style={{ opacity: 0.6 }} />
       ) : failed ? (
-        <Missing>{src ? 'Image unavailable' : 'No image yet'}</Missing>
+        <Missing>{missing ?? (src ? 'Image unavailable' : 'No image yet')}</Missing>
       ) : null}
     </Box>
   )

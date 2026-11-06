@@ -4,6 +4,7 @@ import { test } from 'node:test'
 
 import {
   changeTone,
+  emptyLast,
   ethInUsd,
   formatChange,
   formatCompactUsd,
@@ -15,8 +16,15 @@ import {
   formatAge,
   marketLinks,
   marketsFor,
+  isFeatured,
+  isFeaturedSlug,
+  lastTradeWords,
   nextSort,
+  priceStatus,
+  quoteForChain,
+  shortAddress,
   sortRows,
+  verifiedFirst,
 } from '../src/pages/Swap/board.ts'
 
 const A = '0xAAaaAAaaAAaaAAaaAAaaAAaaAAaaAAaaAAaaAAaa'
@@ -50,7 +58,9 @@ test('quoteFrom: no usable pair is no quote', () => {
 
 test('prices read at any size', () => {
   assert.equal(formatUsd(3412.7), '$3,413')
-  assert.equal(formatUsd(0.99), '$0.990')
+  assert.equal(formatUsd(0.99), '$0.99')
+  assert.equal(formatUsd(0.5), '$0.50')
+  assert.equal(formatUsd(0.123), '$0.123')
   assert.equal(formatUsd(1.5), '$1.50')
   assert.equal(formatUsd(0.0007962), '$0.000796')
   assert.equal(formatUsd(undefined), '–')
@@ -154,4 +164,58 @@ test('sorting keeps ties in order and leaves rows with no figure at the bottom',
       .join(''),
     'abcde',
   )
+})
+
+test('ETH on another chain borrows its price, not its volume or liquidity', () => {
+  const q = { priceUsd: 3000, change24h: 1, volume24h: 59_200_000, liquidityUsd: 83_800_000 }
+  assert.deepEqual(quoteForChain(q, true, 4663), { priceUsd: 3000, change24h: 1, volume24h: undefined, liquidityUsd: undefined })
+  assert.deepEqual(quoteForChain(q, true, 1), q)
+  assert.deepEqual(quoteForChain(q, false, 4663), q, 'a token on its own chain keeps its figures')
+  assert.equal(quoteForChain(undefined, true, 4663), undefined)
+})
+
+test('the price lamp says live only when every row has a price', () => {
+  const on = { quote: {} }
+  const off = {}
+  assert.equal(priceStatus([on, on], false, false), 'live')
+  assert.equal(priceStatus([on, off], false, false), 'some')
+  assert.equal(priceStatus([off, off], false, true), 'off')
+  assert.equal(priceStatus([off, off], false, false), 'off')
+  assert.equal(priceStatus([off, off], true, false), 'loading')
+  assert.equal(priceStatus([on, off], true, false), 'loading')
+})
+
+test('collections with nothing for sale go last, otherwise in order', () => {
+  assert.deepEqual(emptyLast([1, 2, 3, 4], (n) => n % 2 === 1), [2, 4, 1, 3])
+})
+
+test('verified collections come first, lookalikes last', () => {
+  const rows = [
+    { n: 'Milad Maker', v: false },
+    { n: 'Unknown', v: undefined },
+    { n: 'Milady Maker', v: true },
+    { n: 'Milady Clone', v: false },
+  ]
+  assert.deepEqual(verifiedFirst(rows, (r) => r.v).map((r) => r.n), ['Milady Maker', 'Unknown', 'Milad Maker', 'Milady Clone'])
+})
+
+test('featured collections are known by address or slug, whatever the case', () => {
+  assert.equal(isFeatured(1, '0x5AF0D9827E0C53E4799BB226655A1DE152A425A5'), true)
+  assert.equal(isFeatured(4663, '0x5AF0D9827E0C53E4799BB226655A1DE152A425A5'), false, 'per chain')
+  assert.equal(isFeatured(1, undefined), false)
+  assert.equal(isFeaturedSlug(1, 'milady'), true)
+  assert.equal(isFeaturedSlug(1, 'milad'), false)
+})
+
+test('an old last trade is said out loud', () => {
+  const now = 1_000_000
+  assert.equal(lastTradeWords(now - 100, 900, now), '', 'within two candles')
+  assert.equal(lastTradeWords(now - 5 * 3600, 3600, now), 'Last trade 5h ago')
+  assert.equal(lastTradeWords(now - 1800, 900, now), 'Last trade 30m ago')
+  assert.equal(lastTradeWords(now - 3 * 86400, 3600, now), 'Last trade 3d ago')
+  assert.equal(lastTradeWords(undefined, 3600, now), '')
+})
+
+test('shortAddress', () => {
+  assert.equal(shortAddress('0x53d0000000000000000000000000000000007921'), '0x53d0…7921')
 })

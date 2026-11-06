@@ -64,6 +64,8 @@ export const erc721Abi = parseAbi([
   'function tokenURI(uint256 id) view returns (string)',
   'function isApprovedForAll(address owner, address operator) view returns (bool)',
   'function setApprovalForAll(address operator, bool approved)',
+  'function getApproved(uint256 id) view returns (address)',
+  'function approve(address to, uint256 id)',
   'function safeTransferFrom(address from, address to, uint256 id, bytes data)',
 ])
 

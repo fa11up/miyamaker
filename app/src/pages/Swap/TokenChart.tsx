@@ -3,9 +3,9 @@ import { useEffect, useRef, useState } from 'react'
 import styled from 'styled-components/macro'
 import { useElementSize } from 'usehooks-ts'
 
-import { formatCompactUsd, formatUsd } from './board'
+import { formatCompactUsd, formatUsd, lastTradeWords } from './board'
 import type { Candle } from './chart'
-import { candleAt, candlesUrl, parseCandles, priceRange, priceTicks, TIMEFRAMES } from './chart'
+import { candleAt, candlesUrl, chartPrice, parseCandles, priceRange, priceTicks, TIMEFRAMES } from './chart'
 import { color, font, space, text } from './floor/tokens'
 
 const UP = '#35d07f'
@@ -43,6 +43,10 @@ const Top = styled.div`
     color: ${color.inkMuted};
     font-size: ${text.xs};
     cursor: pointer;
+    .narrow & {
+      min-height: 40px;
+      min-width: 40px;
+    }
   }
   button:hover {
     color: ${color.ink};
@@ -61,6 +65,13 @@ const Top = styled.div`
   .read b {
     font-weight: 400;
     color: ${color.ink};
+  }
+  .narrow & .read {
+    margin-left: 0;
+    white-space: normal;
+  }
+  .ago {
+    color: ${color.inkMuted};
   }
 `
 
@@ -90,7 +101,14 @@ const Area = styled.div`
   }
 `
 
-function draw(canvas: HTMLCanvasElement, width: number, height: number, candles: Candle[], hover?: number) {
+function draw(
+  canvas: HTMLCanvasElement,
+  width: number,
+  height: number,
+  candles: Candle[],
+  hover?: number,
+  live?: number,
+) {
   const ratio = window.devicePixelRatio || 1
   canvas.width = Math.round(width * ratio)
   canvas.height = Math.round(height * ratio)
@@ -106,7 +124,7 @@ function draw(canvas: HTMLCanvasElement, width: number, height: number, candles:
   const plotH = height - FOOT
   const volumeH = plotH * VOLUME_SHARE
   const priceH = plotH - volumeH
-  const { low, high } = priceRange(candles)
+  const { low, high } = priceRange(candles, live)
   const y = (price: number) => priceH - ((price - low) / (high - low)) * priceH
 
   for (const tick of priceTicks(low, high)) {
@@ -154,9 +172,9 @@ function draw(canvas: HTMLCanvasElement, width: number, height: number, candles:
     ctx.fillText(words, i * step + step / 2, height - FOOT / 2)
   }
 
-  // The last price, in the set's amber.
-  const last = candles[candles.length - 1]!
-  const lastY = Math.round(y(last.close)) + 0.5
+  // The current price, in the set's amber: the same one as the headline, even when the last trade here is hours old.
+  const last = live ?? candles[candles.length - 1]!.close
+  const lastY = Math.round(y(last)) + 0.5
   ctx.strokeStyle = AMBER
   ctx.setLineDash([3, 3])
   ctx.beginPath()
@@ -168,7 +186,7 @@ function draw(canvas: HTMLCanvasElement, width: number, height: number, candles:
   ctx.fillRect(plotW, lastY - 9, AXIS, 18)
   ctx.fillStyle = '#000'
   ctx.textAlign = 'left'
-  ctx.fillText(formatUsd(last.close), plotW + 6, lastY)
+  ctx.fillText(formatUsd(last), plotW + 6, lastY)
 
   if (hover !== undefined) {
     const x = Math.floor(hover * step + step / 2) + 0.5
@@ -194,11 +212,14 @@ export default function TokenChart({
   pool,
   token,
   symbol,
+  livePrice,
 }: {
   chain?: string
   pool?: string
   token?: string
   symbol: string
+  /** The price in the page's headline, so the two can't disagree. */
+  livePrice?: number
 }) {
   const [frame, setFrame] = useState<(typeof TIMEFRAMES)[number]>(TIMEFRAMES[1])
   const [hover, setHover] = useState<number>()
@@ -221,14 +242,17 @@ export default function TokenChart({
   })
   const candles = q.data ?? []
   const count = candles.length
+  const live = count ? chartPrice(livePrice, candles[count - 1]!.close) : undefined
 
   useEffect(() => setHover(undefined), [url])
   useEffect(() => {
-    if (canvas.current && width > 0 && height > 0 && count) draw(canvas.current, width, height, candles, hover)
+    if (canvas.current && width > 0 && height > 0 && count)
+      draw(canvas.current, width, height, candles, hover, live)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [q.data, width, height, hover])
+  }, [q.data, width, height, hover, live])
 
   const shown = hover !== undefined ? candles[hover] : candles[count - 1]
+  const ago = lastTradeWords(candles[count - 1]?.at, frame.seconds, Math.floor(Date.now() / 1000))
   return (
     <Box>
       <Top>
@@ -244,6 +268,7 @@ export default function TokenChart({
             {whenWords(shown)} · O <b>{formatUsd(shown.open)}</b> H <b>{formatUsd(shown.high)}</b> L{' '}
             <b>{formatUsd(shown.low)}</b> C <b>{formatUsd(shown.close)}</b> · Vol{' '}
             <b>{formatCompactUsd(shown.volume)}</b>
+            {ago && <span className="ago"> · {ago}</span>}
           </span>
         )}
       </Top>
@@ -252,7 +277,7 @@ export default function TokenChart({
           <canvas
             ref={canvas}
             role="img"
-            aria-label={`${symbol} price, ${frame.id} candles, last ${formatUsd(candles[count - 1]!.close)}`}
+            aria-label={`${symbol} price, ${frame.id} candles, now ${formatUsd(live ?? candles[count - 1]!.close)}`}
             data-token-chart
             onPointerMove={(e) => {
               const box = e.currentTarget.getBoundingClientRect()
