@@ -25,7 +25,7 @@ const Card = styled.div`
   padding: ${space[4]};
   text-align: center;
   color: ${color.highlight};
-  background: radial-gradient(ellipse at 50% 40%, #3b2f6e 0%, #1a1433 55%, #07050d 100%);
+  background: radial-gradient(ellipse at 50% 40%, #4a2c14 0%, #24130a 55%, #0a0503 100%);
   overflow: hidden;
 
   /* faint scanlines on our own cards only (never over a third-party player) */
@@ -43,7 +43,7 @@ const Card = styled.div`
     font-weight: 400;
     font-size: ${text.xxl};
     line-height: 1.05;
-    text-shadow: 3px 3px 0 ${color.accentDark};
+    text-shadow: 3px 3px 0 #8a4a14;
     .narrow & {
       font-size: ${text.xl};
     }
@@ -63,7 +63,7 @@ const Card = styled.div`
     font-size: ${text.xs};
     letter-spacing: 0.12em;
     text-transform: uppercase;
-    color: ${color.accent};
+    color: #f2a23c;
   }
 
   /* Phones: the glass is ~200px tall, keep only the name, the button and the note. */
@@ -88,21 +88,21 @@ const Watch = styled.a`
   gap: ${space[2]};
   min-height: 48px;
   padding: 0 ${space[5]};
-  outline: 1px solid ${color.dark};
-  outline-offset: -1px;
-  background: ${color.accent};
-  color: ${color.ink};
+  border-radius: 5px;
+  background: linear-gradient(180deg, #f2a23c 0%, #cf6a1c 100%);
+  color: #fff7e6;
   font-family: ${font.display};
   font-size: ${text.lg};
   letter-spacing: 0.04em;
   text-decoration: none;
-  text-shadow: 2px 2px 0 #f5c6f6;
-  box-shadow: inset -2px -2px ${color.accentDark}, inset 2px 2px #f5c6f6;
+  text-shadow: 1px 1px 0 #6e3208;
+  box-shadow: 0 3px 0 #6e3208, inset 0 1px 0 rgba(255, 255, 255, 0.45);
   &:hover {
-    background: #e48fe5;
+    filter: brightness(1.07);
   }
   &:active {
-    box-shadow: inset 2px 2px ${color.accentDark}, inset -2px -2px #f5c6f6;
+    transform: translateY(2px);
+    box-shadow: 0 1px 0 #6e3208;
   }
   &:focus-visible {
     outline: 2px dotted ${color.highlight};

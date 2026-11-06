@@ -8,7 +8,7 @@
  *     Firefox add it to the page (the faint glow everyone saw), WebKit/Safari drops it, so the wave
  *     never showed there. The glow is now done explicitly with CSS `mix-blend-mode: plus-lighter`
  *     (additive) on an opaque canvas, and the old `opacity: 0.1` lives in `uGain`.
- *  2. A surfable crest: `crest()` is the same formula as crestHeight() in surface.ts.
+ *  2. The pet rides the swell in `de()`: surface.ts projects the same sine to the screen.
  *
  * Precision is chosen at runtime (highp when the fragment shader supports it).
  */
@@ -31,8 +31,6 @@ uniform float uTime;
 uniform vec2 uResolution;   // drawing buffer, px
 uniform float uScale;       // drawing-buffer px per CSS px
 uniform float uGain;        // brightness of the water field (was the canvas opacity)
-uniform vec4 uCrestA;       // base, a1, l1, w1
-uniform vec4 uCrestB;       // a2, l2, w2, -
 
 mat2 rot(float a) {
   float c = cos(a);
@@ -93,12 +91,6 @@ vec3 waveColor(vec3 projClosest, vec3 projSecondClosest, float dist, vec2 frag) 
   return vec3(0.43, 0.77, 0.85) * (1.0 - frac);
 }
 
-float crest(float x) {
-  return uCrestA.x
-    + uCrestA.y * sin(TAU * x / uCrestA.z - uCrestA.w * uTime)
-    + uCrestB.x * sin(TAU * x / uCrestB.y + uCrestB.z * uTime + 1.7);
-}
-
 void main() {
   vec2 uv = gl_FragCoord.xy / uResolution.xy * 2.0 - 1.0;
   uv.y *= uResolution.y / uResolution.x;
@@ -124,13 +116,6 @@ void main() {
     }
   }
   color *= uGain;
-
-  // the crest the pet surfs on: a soft glow under it, faint y2k scanlines in the swell
-  vec2 css = gl_FragCoord.xy / uScale;
-  float d = css.y - crest(css.x);
-  float under = (1.0 - step(0.0, d)) * (1.0 - smoothstep(0.0, 110.0, -d));
-  float lines = step(0.5, fract(css.y / 5.0));
-  color += vec3(0.62, 0.86, 0.96) * under * (0.035 + 0.035 * lines);
 
   gl_FragColor = vec4(color, 1.0);
 }

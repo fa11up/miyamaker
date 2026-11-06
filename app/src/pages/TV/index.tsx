@@ -2,73 +2,57 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import styled from 'styled-components/macro'
 import { useElementSize } from 'usehooks-ts'
 
-import { Eyebrow } from '@/components/Retro'
-import { pinstripe, y2kSkin } from '@/components/Retro/y2k'
 import TitleBar from '@/components/TitleBar'
 import WindowWrapper from '@/components/WindowWrapper'
 import Pages from '@/constants/pages'
 import { useAppDispatch } from '@/store/hooks'
 import { closeWindow, minimizeWindow } from '@/store/windows/actions'
 import { useFullscreen } from '@/store/windows/hooks'
-import { bevel, color, font, space, text } from '@/theme/tokens'
+import { font, space, text } from '@/theme/tokens'
 
-import { gel } from '../DropMusic/y2k'
-import type { Channel } from './channels'
-import { CHANNELS, indexOfNumber, nativeChatFor, stepChannel, watchUrl } from './channels'
+import { CHANNELS, CHAT_DEFAULT, clampChat, indexOfNumber, nativeChatFor, stepChannel, watchUrl } from './channels'
 import ChatPanel from './chat/ChatPanel'
 import Screen from './Screen'
+import goldSkin from './skin/gold.webp'
+import woodSkin from './skin/wood.webp'
 import Static, { useReducedMotion } from './Static'
 
 const page = Pages.tv
 
 /* ---------- layout ---------- */
 
-/** miyatv's own material: atomic purple, the see-through plastic of every console of the time. */
+const CREAM = 'linear-gradient(180deg, #f8efd9 0%, #dccfae 100%)'
+const INK = '#2a1a0e'
+
+/** miyatv's skin: tiled walnut and gold bitmaps (scripts/make-tv-skin.py), the screen in the middle, chat beside it. */
 const Root = styled.div`
   position: relative;
   height: 100%;
   min-width: 0;
   display: grid;
-  grid-template-columns: 196px minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) 8px var(--chat-w);
   grid-template-rows: minmax(0, 1fr);
-  gap: ${space[2]};
   padding: ${space[2]};
   overflow: hidden;
-  ${y2kSkin({
-    ink: '#1a0838',
-    inkSoft: '#4a2a86',
-    material: `${pinstripe(
-      0.07
-    )}, radial-gradient(420px 260px at 92% -50px, rgba(255, 255, 255, 0.45), transparent 70%),
-      radial-gradient(360px 360px at -40px 105%, rgba(198, 255, 61, 0.22), transparent 70%),
-      linear-gradient(165deg, #8a4ff0 0%, #5b2bc4 48%, #2c0f66 100%)`,
-    head: '#ffffff',
-    headShadow: '#1a0838',
-    frost: 'rgba(247, 241, 255, 0.92)',
-    edge: '#1a0838',
-    glow: 'rgba(154, 92, 240, 0.28)',
-    gelTop: '#efffb8',
-    gelBottom: '#c6ff3d',
-    gelInk: '#1a0838',
-    smallTop: '#f2e6ff',
-    smallBottom: '#b98cff',
-    link: '#3b1fbf',
-  })}
+  border-radius: 0 0 16px 16px;
+  color: #f3e7cf;
+  background: url(${woodSkin}) 0 0 / 512px 512px;
+  box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.75), inset 0 0 0 1px rgba(20, 10, 2, 0.8);
   &:focus {
     outline: none;
   }
 
-  /* No chat: the channels fold into the strip's dropdown and the picture takes the whole window. */
-  &.mid,
+  /* Third-party frames would swallow the pointer while chat is being dragged. */
+  &.dragging iframe {
+    pointer-events: none;
+  }
+
+  /* No chat: the screen fills the cabinet. */
   &.no-chat {
     grid-template-columns: minmax(0, 1fr);
   }
-  &.mid .channel-list,
-  &.no-chat .channel-list {
-    display: none;
-  }
 
-  /* Phones / narrow windows: one column, player first, then switcher, then chat. */
+  /* Phones / narrow windows: one column, player first, then chat. */
   &.narrow {
     display: flex;
     flex-direction: column;
@@ -76,118 +60,75 @@ const Root = styled.div`
     overflow-x: hidden;
     padding: ${space[1]};
     gap: ${space[1]};
-  }
-  &.narrow .channel-list {
-    display: none;
-  }
-`
-
-const ChannelList = styled.nav`
-  min-height: 0;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: ${space[1]};
-  border: 1px solid #1a0838;
-  border-radius: 14px;
-  background: rgba(26, 8, 56, 0.55);
-  box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.45);
-
-  button {
-    display: grid;
-    grid-template-columns: 30px 1fr;
-    align-items: center;
-    gap: ${space[1]};
-    padding: ${space[2]} ${space[2]};
-    border: 1px solid transparent;
-    border-radius: 12px;
-    background: transparent;
-    text-align: left;
-    cursor: pointer;
-    color: #f2e6ff;
-    font-size: ${text.sm};
-    line-height: 1.2;
-  }
-  button:hover {
-    background: rgba(255, 255, 255, 0.14);
-  }
-  button[aria-current='true'] {
-    ${gel('#efffb8', '#c6ff3d', '#1a0838')}
-  }
-  .num {
-    font-family: ${font.mono};
-    font-size: 13px;
-    opacity: 0.85;
-  }
-  .kind {
-    display: block;
-    font-size: 11px;
-    opacity: 0.8;
+    border-radius: 0;
   }
 `
 
 const TvColumn = styled.div`
   min-height: 0;
   min-width: 0;
-  overflow: hidden;
+  overflow-y: auto;
+  overflow-x: hidden;
   display: flex;
   flex-direction: column;
-  gap: ${space[2]};
   .narrow & {
     overflow: visible;
     flex: 0 0 auto;
-    gap: ${space[1]};
   }
 `
 
-/** The TV set: see-through plastic, rounded glass, and a control strip. It takes all the height chat leaves. */
+/** The set itself: the picture in its gold trim, the gold control plate, the speaker below. */
 const Bezel = styled.div`
+  position: relative;
   flex: 1 1 auto;
   min-height: 0;
   display: flex;
   flex-direction: column;
-  padding: 14px 14px 10px;
-  border: 1px solid #1a0838;
-  border-radius: 22px;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.4) 0%, rgba(255, 255, 255, 0.06) 8%, transparent 14%),
-    linear-gradient(180deg, rgba(154, 92, 240, 0.92) 0%, rgba(58, 22, 130, 0.96) 100%);
-  box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.28), inset 0 -6px 10px rgba(0, 0, 0, 0.3),
-    0 4px 0 rgba(26, 8, 56, 0.45);
+  gap: 10px;
   .narrow & {
     flex: 0 0 auto;
-    padding: 6px 6px 4px;
-    border-radius: 12px;
+    gap: 6px;
+  }
+`
+/** With chat hidden: whatever room the set has, and the glass is the biggest 16:9 that fits in it. */
+const Stage = styled.div`
+  .no-chat:not(.narrow) & {
+    flex: 1 1 auto;
+    min-height: 0;
+    container-type: size;
+    display: grid;
+    place-items: center;
   }
 `
 
-/** Whatever room the bezel has for the picture; the glass is the biggest 16:9 that fits in it. */
-const Stage = styled.div`
-  flex: 1 1 auto;
-  min-height: 0;
-  container-type: size;
-  display: grid;
-  place-items: center;
+/** Gold moulding round the picture. Its width is what sizes the glass inside. */
+const Trim = styled.div`
+  padding: 6px;
+  border-radius: 30px / 24px;
+  background: url(${goldSkin}) 0 0 / 256px 256px;
+  box-shadow: 0 0 0 1px #2a1a04, inset 0 1px 0 rgba(255, 250, 220, 0.8), inset 0 -1px 0 rgba(60, 36, 4, 0.8),
+    0 4px 9px rgba(0, 0, 0, 0.65);
+  .no-chat:not(.narrow) & {
+    width: min(100cqw, calc((100cqh - 12px) * 16 / 9 + 12px));
+  }
   .narrow & {
-    flex: 0 0 auto;
-    container-type: normal;
+    padding: 4px;
+    border-radius: 14px;
   }
 `
 
 const Glass = styled.div`
   position: relative;
-  width: min(100cqw, calc(100cqh * 16 / 9));
+  width: 100%;
   aspect-ratio: 16 / 9;
   overflow: hidden;
-  border-radius: 18px / 14px;
+  border-radius: 24px / 18px;
   background: #000;
-  box-shadow: 0 0 0 2px #1a0838, 0 0 0 4px #d7dcec, 0 0 0 5px #1a0838, inset 0 0 40px rgba(0, 0, 0, 0.7);
+  box-shadow: 0 0 0 1px #2a1a04;
   .narrow & {
-    width: 100%;
-    border-radius: 8px;
+    border-radius: 10px;
   }
 `
-
 const Osd = styled.div`
   position: absolute;
   top: 10px;
@@ -197,78 +138,89 @@ const Osd = styled.div`
   font-family: ${font.mono};
   font-size: 22px;
   font-weight: 700;
-  color: #6dff8f;
-  text-shadow: 0 0 6px rgba(109, 255, 143, 0.8), 2px 2px 0 #000;
+  color: #ffb347;
+  text-shadow: 0 0 6px rgba(255, 179, 71, 0.8), 2px 2px 0 #000;
   .narrow & {
     font-size: 16px;
   }
 `
 
+/** Gold plate with cream buttons and a little amber dial window. */
 const Controls = styled.div`
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   gap: ${space[2]};
-  padding-top: 10px;
+  padding: 6px 10px;
   min-width: 0;
-  color: ${color.light};
+  border-radius: 9px;
+  background: url(${goldSkin}) 0 -90px / 256px 256px;
+  box-shadow: 0 0 0 1px #2a1a04, inset 0 1px 0 rgba(255, 250, 220, 0.85), inset 0 -1px 0 rgba(60, 36, 4, 0.8),
+    0 3px 6px rgba(0, 0, 0, 0.6);
+  color: ${INK};
   .narrow & {
-    padding-top: 6px;
+    padding: 4px 6px;
     gap: ${space[1]};
     flex-wrap: wrap;
   }
 
   .dial {
     display: flex;
-    gap: 2px;
+    gap: 4px;
   }
   .dial button,
   .toggle {
     flex: 0 0 auto;
-    ${gel('#f2e6ff', '#b98cff', '#1a0838')}
     min-width: 46px;
-    height: 34px;
+    height: 30px;
     padding: 0 ${space[2]};
+    border: none;
+    border-radius: 4px;
+    background: ${CREAM};
+    box-shadow: 0 2px 0 #6d5c3c, inset 0 1px 0 #fff;
+    color: ${INK};
     font-size: 12px;
     line-height: 1;
     white-space: nowrap;
     cursor: pointer;
   }
-  .dial button:active,
-  .toggle:active:not(:disabled) {
+  .dial button:active {
     transform: translateY(1px);
+    box-shadow: 0 1px 0 #6d5c3c;
   }
   .toggle[aria-pressed='true'] {
-    ${gel('#efffb8', '#c6ff3d', '#1a0838')}
+    transform: translateY(1px);
+    background: linear-gradient(180deg, #f2a23c 0%, #cf6a1c 100%);
+    box-shadow: 0 1px 0 #6e3208, inset 0 1px 0 rgba(255, 255, 255, 0.45);
+    color: #fff7e6;
+  }
+  button:focus-visible,
+  select:focus-visible,
+  a:focus-visible {
+    outline: 2px solid ${INK};
+    outline-offset: 1px;
   }
   .lcd {
-    min-width: 46px;
-    padding: 4px 6px;
-    border-radius: 8px;
+    min-width: 44px;
+    padding: 2px 6px;
+    border-radius: 3px;
     text-align: center;
     font-family: ${font.mono};
-    font-size: 20px;
+    font-size: 19px;
     font-weight: 700;
-    color: #c6ff3d;
-    background: #0e0420;
-    box-shadow: inset 0 2px 4px #000, 0 1px 0 rgba(255, 255, 255, 0.35);
-  }
-  .name {
-    flex: 1 1 auto;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-size: ${text.sm};
-    color: ${color.highlight};
+    color: #ffb347;
+    background: #1a0f06;
+    box-shadow: inset 0 2px 4px #000, 0 1px 0 rgba(255, 255, 255, 0.5);
+    text-shadow: 0 0 6px rgba(255, 179, 71, 0.7);
   }
   select {
+    flex: 0 1 auto;
     max-width: 100%;
-    height: 34px;
-    border: none;
-    border-radius: 0;
-    background: ${color.well};
-    box-shadow: ${bevel.field};
-    color: ${color.ink};
+    height: 30px;
+    border: 1px solid #5c4212;
+    border-radius: 4px;
+    background: #f8efd9;
+    color: ${INK};
     font-size: 14px;
     padding: 0 ${space[1]};
   }
@@ -277,28 +229,72 @@ const Controls = styled.div`
     min-width: 0;
   }
   a {
-    color: ${color.faceLight};
+    color: ${INK};
     font-size: ${text.xs};
     white-space: nowrap;
+  }
+  .open {
+    margin-left: auto;
   }
   .led {
     width: 8px;
     height: 8px;
+    flex: 0 0 auto;
     border-radius: 50%;
-    background: #ff3b6b;
-    box-shadow: 0 0 6px #ff3b6b;
+    background: #ff5a2a;
+    box-shadow: 0 0 6px #ff5a2a, inset 0 0 1px #fff;
   }
 `
 
-/** Chat, under the picture. */
-const ChatDock = styled.div`
-  /* Leaves the picture 769px wide: any narrower and Kick's player drops its mute and volume controls. */
-  flex: 0 0 136px;
+/** The speaker: walnut slats over dark cloth, filling what the picture leaves. */
+const Grille = styled.div`
+  flex: 1 1 auto;
+  min-height: 0;
+  border-radius: 9px;
+  background: repeating-linear-gradient(90deg, #0a0502 0 4px, transparent 4px 11px, rgba(255, 220, 170, 0.14) 11px 12px),
+    url(${woodSkin}) 40px 120px / 512px 512px;
+  box-shadow: inset 0 3px 8px rgba(0, 0, 0, 0.9), inset 0 0 0 1px #1a0d04, 0 1px 0 rgba(255, 220, 170, 0.25);
+  .no-chat &,
+  .narrow & {
+    display: none;
+  }
+`
+/** Drag to size chat: three gold studs on a strip between the screen and chat. */
+const ChatHandle = styled.div`
+  position: relative;
+  cursor: col-resize;
+  touch-action: none;
+  &::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 6px;
+    height: 46px;
+    margin: -23px 0 0 -3px;
+    border-radius: 3px;
+    background: radial-gradient(circle at 50% 50%, #fff2b8 0 1.5px, #a97f28 2.5px, transparent 3px) center / 6px 12px;
+  }
+  &:hover,
+  &:focus-visible {
+    outline: none;
+    background: rgba(255, 226, 140, 0.25);
+  }
+  .narrow & {
+    display: none;
+  }
+`
+
+/** Chat, framed in the same gold as the picture. */
+const Side = styled.div`
   min-height: 0;
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  padding: 5px;
+  border-radius: 14px;
+  background: url(${goldSkin}) -120px 0 / 256px 256px;
+  box-shadow: 0 0 0 1px #2a1a04, inset 0 1px 0 rgba(255, 250, 220, 0.8), 0 4px 9px rgba(0, 0, 0, 0.65);
   .narrow & {
     flex: 0 0 auto;
     height: 520px;
@@ -306,13 +302,10 @@ const ChatDock = styled.div`
   }
   > section:last-child {
     flex: 1 1 auto;
-    border: 1px solid #1a0838;
-    border-radius: 14px;
     overflow: hidden;
-    box-shadow: 0 3px 0 rgba(26, 8, 56, 0.35);
+    border-radius: 9px;
   }
 `
-
 /* ---------- helpers ---------- */
 
 const CHANNEL_KEY = 'miyatv.channel'
@@ -328,6 +321,16 @@ function initialIndex(): number {
 }
 
 const CHAT_KEY = 'miyatv.chat'
+const CHAT_WIDTH_KEY = 'miyatv.chatWidth'
+
+function initialChatWidth(): number {
+  try {
+    const saved = Number(window.localStorage.getItem(CHAT_WIDTH_KEY))
+    return saved > 0 ? saved : CHAT_DEFAULT
+  } catch {
+    return CHAT_DEFAULT
+  }
+}
 
 function initialChat(): boolean {
   try {
@@ -337,8 +340,6 @@ function initialChat(): boolean {
   }
 }
 
-const kindLabel = (c: Channel) =>
-  c.kind === 'iframe' ? 'live embed' : c.kind === 'external' ? 'external' : 'no signal'
 const pad = (n: number) => String(n).padStart(2, '0')
 
 const isTyping = (el: EventTarget | null) =>
@@ -358,6 +359,8 @@ export default function TV() {
   const [staticOn, setStaticOn] = useState(false)
   const [osd, setOsd] = useState(true)
   const [chatOn, setChatOn] = useState(initialChat)
+  const [chatWanted, setChatWanted] = useState(initialChatWidth)
+  const [dragging, setDragging] = useState(false)
   const staticTimer = useRef<ReturnType<typeof setTimeout>>()
   const osdTimer = useRef<ReturnType<typeof setTimeout>>()
 
@@ -403,6 +406,39 @@ export default function TV() {
   )
 
   const step = (d: number) => tune(stepChannel(CHANNELS.length, index, d))
+
+  const chatWidth = clampChat(chatWanted, width)
+
+  const sizeChat = (next: number) => {
+    const clamped = clampChat(next, width)
+    setChatWanted(clamped)
+    try {
+      window.localStorage.setItem(CHAT_WIDTH_KEY, String(clamped))
+    } catch {
+      // ignore
+    }
+  }
+
+  const startChatDrag = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    e.stopPropagation()
+    const handle = e.currentTarget
+    handle.setPointerCapture(e.pointerId)
+    const fromX = e.clientX
+    const fromWidth = chatWidth
+    setDragging(true)
+    const move = (ev: PointerEvent) => sizeChat(fromWidth + fromX - ev.clientX)
+    const up = () => {
+      setDragging(false)
+      handle.removeEventListener('pointermove', move)
+      handle.removeEventListener('pointerup', up)
+      handle.removeEventListener('pointercancel', up)
+    }
+
+    handle.addEventListener('pointermove', move)
+    handle.addEventListener('pointerup', up)
+    handle.addEventListener('pointercancel', up)
+  }
 
   const toggleChat = () => {
     const next = !chatOn
@@ -455,38 +491,28 @@ export default function TV() {
       </TitleBar>
       <Root
         ref={rootRef}
-        className={chatOn ? layout : `${layout} no-chat`}
+        className={[layout, chatOn ? '' : 'no-chat', dragging ? 'dragging' : ''].filter(Boolean).join(' ')}
+        style={{ '--chat-w': `${chatWidth}px` } as React.CSSProperties}
         tabIndex={-1}
         onKeyDown={onKeyDown}
         data-testid="miyatv"
         aria-label="miyatv. Number keys change channel, arrow up and down step through channels, C shows or hides chat."
       >
-        <ChannelList className="channel-list" aria-label="Channels">
-          <Eyebrow style={{ padding: '2px 4px 4px' }}>channels</Eyebrow>
-          {CHANNELS.map((c, i) => (
-            <button key={c.id} type="button" aria-current={i === index} onClick={() => tune(i)}>
-              <span className="num">{pad(c.number)}</span>
-              <span>
-                {c.name}
-                <span className="kind">{kindLabel(c)}</span>
-              </span>
-            </button>
-          ))}
-        </ChannelList>
-
         <TvColumn>
           <Bezel>
             <Stage>
-              <Glass>
-                <Screen channel={channel} source={source} />
-                <Static playing={staticOn} reducedMotion={reducedMotion} />
-                {(osd || staticOn) && (
-                  <Osd aria-hidden>
-                    CH {pad(channel.number)}
-                    {layout !== 'narrow' && <div style={{ fontSize: 13 }}>{channel.name}</div>}
-                  </Osd>
-                )}
-              </Glass>
+              <Trim>
+                <Glass>
+                  <Screen channel={channel} source={source} />
+                  <Static playing={staticOn} reducedMotion={reducedMotion} />
+                  {(osd || staticOn) && (
+                    <Osd aria-hidden>
+                      CH {pad(channel.number)}
+                      {layout !== 'narrow' && <div style={{ fontSize: 13 }}>{channel.name}</div>}
+                    </Osd>
+                  )}
+                </Glass>
+              </Trim>
             </Stage>
             <Controls>
               <span className="led" aria-hidden />
@@ -501,22 +527,18 @@ export default function TV() {
               <span className="lcd" aria-live="polite" aria-label={`Channel ${channel.number}`}>
                 {pad(channel.number)}
               </span>
-              {layout === 'wide' && chatOn ? (
-                <span className="name">{channel.name}</span>
-              ) : (
-                <select
-                  className="jump"
-                  aria-label="Jump to channel"
-                  value={index}
-                  onChange={(e) => tune(Number(e.target.value))}
-                >
-                  {CHANNELS.map((c, i) => (
-                    <option key={c.id} value={i}>
-                      {pad(c.number)} {c.name}
-                    </option>
-                  ))}
-                </select>
-              )}
+              <select
+                className="jump"
+                aria-label="Jump to channel"
+                value={index}
+                onChange={(e) => tune(Number(e.target.value))}
+              >
+                {CHANNELS.map((c, i) => (
+                  <option key={c.id} value={i}>
+                    {pad(c.number)} {c.name}
+                  </option>
+                ))}
+              </select>
               {sources.length > 1 && (
                 <select
                   aria-label="Creator"
@@ -537,24 +559,43 @@ export default function TV() {
                 type="button"
                 className="toggle"
                 aria-pressed={chatOn}
-                title={`${chatOn ? 'Hide' : 'Show'} chat (C). Hidden, the picture takes the whole window.`}
+                title={`${chatOn ? 'Hide' : 'Show'} chat (C). Hidden, the picture takes the whole cabinet.`}
                 onClick={toggleChat}
               >
                 {chatOn ? 'Chat on' : 'Chat off'}
               </button>
               {source && (
-                <a href={watchUrl(source)} target="_blank" rel="noopener noreferrer">
+                <a className="open" href={watchUrl(source)} target="_blank" rel="noopener noreferrer">
                   open ↗
                 </a>
               )}
             </Controls>
+            <Grille aria-hidden />
           </Bezel>
-          {chatOn && (
-            <ChatDock>
-              <ChatPanel room={channel.id} roomLabel={channel.id} native={native} />
-            </ChatDock>
-          )}
         </TvColumn>
+
+        {chatOn && (
+          <>
+            <ChatHandle
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="Chat width"
+              aria-valuenow={chatWidth}
+              tabIndex={0}
+              title="Drag to size chat"
+              onPointerDown={startChatDrag}
+              onKeyDown={(e) => {
+                if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
+                e.preventDefault()
+                e.stopPropagation()
+                sizeChat(chatWidth + (e.key === 'ArrowLeft' ? 20 : -20))
+              }}
+            />
+            <Side>
+              <ChatPanel room={channel.id} roomLabel={channel.id} native={native} />
+            </Side>
+          </>
+        )}
       </Root>
     </WindowWrapper>
   )

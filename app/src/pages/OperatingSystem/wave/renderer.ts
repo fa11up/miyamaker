@@ -13,7 +13,7 @@ export interface WaveRenderer {
   highp: boolean
   /** set drawing-buffer size from CSS size; returns the px-per-CSS-px scale in use */
   resize(cssW: number, cssH: number): number
-  draw(t: number, crest: readonly number[], gain: number): void
+  draw(t: number, gain: number): void
   dispose(): void
 }
 
@@ -83,8 +83,6 @@ export function createWaveRenderer(canvas: HTMLCanvasElement): WaveRenderer | nu
     res: gl.getUniformLocation(program, 'uResolution'),
     scale: gl.getUniformLocation(program, 'uScale'),
     gain: gl.getUniformLocation(program, 'uGain'),
-    a: gl.getUniformLocation(program, 'uCrestA'),
-    b: gl.getUniformLocation(program, 'uCrestB'),
   }
 
   const dims = gl.getParameter(gl.MAX_VIEWPORT_DIMS) as Int32Array | null
@@ -102,7 +100,7 @@ export function createWaveRenderer(canvas: HTMLCanvasElement): WaveRenderer | nu
       if (canvas.height !== h) canvas.height = h
       return scale
     },
-    draw(t, crest, gain) {
+    draw(t, gain) {
       const g = gl!
       if (g.isContextLost()) return
       g.viewport(0, 0, g.drawingBufferWidth, g.drawingBufferHeight)
@@ -111,8 +109,6 @@ export function createWaveRenderer(canvas: HTMLCanvasElement): WaveRenderer | nu
       // drawingBuffer may be smaller than asked for: derive the real scale from it
       g.uniform1f(u.scale, g.drawingBufferWidth / Math.max(1, canvas.clientWidth || g.drawingBufferWidth / scale))
       g.uniform1f(u.gain, gain)
-      g.uniform4f(u.a, crest[0] ?? 0, crest[1] ?? 0, crest[2] ?? 1, crest[3] ?? 0)
-      g.uniform4f(u.b, crest[4] ?? 0, crest[5] ?? 1, crest[6] ?? 0, 0)
       g.drawArrays(g.TRIANGLE_STRIP, 0, 4)
     },
     dispose() {

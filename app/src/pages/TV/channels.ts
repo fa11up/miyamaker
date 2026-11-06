@@ -119,6 +119,18 @@ export function embedSrc(source: Source): string {
   return `https://studio.x.com/embed/broadcast/${encodeURIComponent(source.broadcastId)}?dnt=true&lang=en`
 }
 
+export const CHAT_MIN = 222
+export const CHAT_DEFAULT = 340
+// Kick's player only offers mute and volume at 769px or wider. 770 for the glass, 12 for its trim, 8 for the drag
+// handle, 16 for the cabinet's padding.
+const SCREEN_NEEDS = 806
+
+/** How wide chat may be dragged in a cabinet this wide: never so far that the picture loses its volume controls. */
+export function clampChat(wanted: number, cabinetWidth: number): number {
+  const max = Math.max(CHAT_MIN, cabinetWidth - SCREEN_NEEDS)
+  return Math.round(Math.min(max, Math.max(CHAT_MIN, wanted)))
+}
+
 /** Where to watch the source on its own site. */
 export function watchUrl(source: Source): string {
   if (source.provider === 'kick') return `https://kick.com/${encodeURIComponent(source.slug)}`

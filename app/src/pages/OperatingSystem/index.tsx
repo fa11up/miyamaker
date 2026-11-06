@@ -196,6 +196,7 @@ export default function OperatingSystem() {
             baseSize={page.minSize}
             shaped={page.shaped}
             fixedSize={page.fixedSize}
+            corner={page.corner}
             onClick={() => zindex.indexOf(window) !== zindex.length - 1 && dispatch(setToFront({ value: window }))}
           >
             <DynamicWrapper identifier={window} />

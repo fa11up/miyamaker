@@ -5,6 +5,8 @@ import { test } from 'node:test'
 import type { Channel } from '../src/pages/TV/channels.ts'
 import {
   CHANNELS,
+  CHAT_MIN,
+  clampChat,
   embedSrc,
   indexOfNumber,
   nativeChatFor,
@@ -150,4 +152,12 @@ test('room socket URL from VITE_CHAT_URL', () => {
   assert.equal(roomSocketUrl('http://localhost:8787/', 'kick-imdusd'), 'ws://localhost:8787/rooms/kick-imdusd')
   assert.equal(roomSocketUrl('ftp://x', 'a'), undefined)
   assert.equal(roomSocketUrl('not a url', 'a'), undefined)
+})
+
+test('chat drags between its minimum and what leaves the picture its volume controls', () => {
+  assert.equal(clampChat(340, 1230), 340)
+  assert.equal(clampChat(900, 1230), 424)
+  assert.equal(clampChat(50, 1230), CHAT_MIN)
+  // A cabinet too small to give the picture its room still shows a usable chat.
+  assert.equal(clampChat(340, 900), CHAT_MIN)
 })

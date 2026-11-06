@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import styled from 'styled-components/macro'
 
+import mouldingSkin from '@/pages/TV/skin/moulding.webp'
 import { bevel, color, font, space, text } from '@/theme/tokens'
 
 const ChromeButton = styled.button`
@@ -65,7 +66,7 @@ const MARK: Record<TitleSkin, string> = {
   miyanet: '✦',
   floor: '●',
   aqua: '♪',
-  tv: '●',
+  tv: '✦',
   mint: '♥',
   launch: '✦',
   auction: '♦',
@@ -189,29 +190,37 @@ const StyledTitleBar = styled.div`
   }
 
   /* miyatv: the set's black plastic, with a red tally light. */
-  &[data-skin='tv'] {
-    background: linear-gradient(180deg, rgba(255, 255, 255, 0.62) 0%, rgba(255, 255, 255, 0.12) 48%, transparent 52%),
-      linear-gradient(90deg, #2c0f66, #5b2bc4 55%, #9a5cf0);
-    color: #fff;
+  /* miyatv: a bitmap of gold moulding, beads along its lower edge. It tiles across and keeps its gold when not on top. */
+  &[data-skin='tv'],
+  .react-draggable:not(.is-focused) &[data-skin='tv'] {
+    height: 38px;
+    margin: 0 -5px;
+    padding: 0 12px 9px 16px;
+    background: url(${mouldingSkin}) 0 0 / 256px 38px repeat-x;
+    color: #2e1c02;
     .mark {
-      color: #c6ff3d;
-      text-shadow: 0 0 6px #c6ff3d;
+      color: #6b1408;
+      text-shadow: 0 1px 0 rgba(255, 245, 200, 0.7);
     }
     .title-bar {
-      text-shadow: 1px 1px 0 #1a0838;
+      font-size: ${text.md};
+      letter-spacing: 0.04em;
+      text-shadow: 0 1px 0 rgba(255, 245, 200, 0.8);
     }
     ${ChromeButton} {
-      width: 18px;
+      width: 20px;
+      height: 20px;
       border-radius: 50%;
-      color: #1a0838;
-      background: radial-gradient(circle at 36% 28%, #fff 0 10%, #efd9ff 28%, #b98cff 56%, #5b2bc4 100%);
-      box-shadow: 0 0 0 1px #1a0838;
+      color: #2e1c02;
+      background: radial-gradient(circle at 36% 28%, #fffbe6 0 8%, #f3d27c 28%, #b98a2c 62%, #5c3d0a 100%);
+      box-shadow: 0 0 0 1px #2a1a04, 0 1px 2px rgba(0, 0, 0, 0.5);
     }
     ${ChromeButton}:hover {
-      filter: brightness(1.08);
+      filter: brightness(1.1);
     }
     ${ChromeButton}.close {
-      background: radial-gradient(circle at 36% 28%, #fff 0 10%, #ffc2e0 28%, #ff5fae 56%, #c81a78 100%);
+      color: #fff2e6;
+      background: radial-gradient(circle at 36% 28%, #fff 0 8%, #ff8a8a 26%, #c41e2e 60%, #5c0610 100%);
     }
   }
 
