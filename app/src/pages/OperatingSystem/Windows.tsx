@@ -34,7 +34,8 @@ const DummyWindow = ({
   return (
     <div
       ref={innerRef}
-      style={style}
+      // Focus lands here only to follow the window; the title bar shows which is on top, and real controls keep their rings.
+      style={label ? { ...style, outline: 'none' } : style}
       className={className}
       onClick={onClick}
       onMouseDown={onMouseDown}

@@ -28,14 +28,18 @@ export async function fetchMetadataJson<T = unknown>(uri: string): Promise<T | u
  * Metadata as a react-query: IPFS metadata is content-addressed, so it never goes stale; http metadata is refreshed
  * after an hour. Shared across every component that asks for the same URI (one request per URI per session).
  */
-export function useMetadata<T = unknown>(uri: string | undefined, enabled = true) {
+export function metadataQuery<T = unknown>(uri: string | undefined, enabled = true) {
   const immutable = !!uri && (!!ipfsPath(uri) || /^data:/i.test(uri) || /^ar:\/\//i.test(uri))
-  return useQuery({
+  return {
     queryKey: ['nft-metadata', uri],
     queryFn: () => fetchMetadataJson<T>(uri as string),
     enabled: enabled && !!uri,
     staleTime: immutable ? Infinity : 60 * 60_000,
     gcTime: immutable ? Infinity : 24 * 60 * 60_000,
     retry: 1,
-  })
+  }
+}
+
+export function useMetadata<T = unknown>(uri: string | undefined, enabled = true) {
+  return useQuery(metadataQuery<T>(uri, enabled))
 }

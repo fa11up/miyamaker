@@ -10,7 +10,13 @@ import { DESCRIPTION_SIZES, pickFitSize } from '@/pages/Auction/fitText'
  * size always fits. If even the smallest size is too long the text is cut at a whole line with an ellipsis and
  * `overflow` is set, so the caller can offer the full text elsewhere.
  */
-export function useFitText(ref: RefObject<HTMLElement>, text: string, sizes: readonly number[] = DESCRIPTION_SIZES) {
+export function useFitText(
+  ref: RefObject<HTMLElement>,
+  text: string,
+  sizes: readonly number[] = DESCRIPTION_SIZES,
+  /** Changes when something beside the text appears or goes, which takes its room without resizing the parent. */
+  layout?: string
+) {
   const [fit, setFit] = useState({ size: sizes[0] ?? 15, overflow: false })
 
   useLayoutEffect(() => {
@@ -63,7 +69,7 @@ export function useFitText(ref: RefObject<HTMLElement>, text: string, sizes: rea
       ro.disconnect()
     }
     // Re-runs when `overflow` flips too: the caller's "read more" link takes room from the box.
-  }, [ref, text, sizes, fit.overflow])
+  }, [ref, text, sizes, layout, fit.overflow])
 
   return fit
 }

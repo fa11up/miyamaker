@@ -34,8 +34,6 @@ const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 600" pres
     <ellipse cx="438" cy="566" rx="13" ry="5" fill="url(#stain)"/>
     <ellipse cx="830" cy="578" rx="22" ry="8" fill="url(#stain)"/>
   </g>
-  <text x="968" y="38" text-anchor="end" font-family="monospace" font-size="13" letter-spacing="3" fill="#a8e8c0" opacity=".55">PRESENT DAY</text>
-  <text x="968" y="58" text-anchor="end" font-family="monospace" font-size="13" letter-spacing="3" fill="#a8e8c0" opacity=".55">PRESENT TIME</text>
   <rect width="1000" height="600" fill="url(#scan)"/>
 </svg>`
 

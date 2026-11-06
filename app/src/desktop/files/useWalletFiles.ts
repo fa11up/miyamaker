@@ -36,7 +36,7 @@ export function formatAmount(value: bigint | undefined, decimals: number): strin
   return n.toLocaleString('en-US', { maximumFractionDigits: n < 1 ? 6 : n < 1000 ? 4 : 2 })
 }
 
-export function useTokenDocs(owner: Address | undefined): TokenDoc[] {
+export function useTokenDocs(owner: Address | undefined): { docs: TokenDoc[]; refetch: () => void } {
   const chainId = mainnet.id
   const eth = useBalance({ address: owner, chainId, query: { enabled: !!owner, refetchInterval: 60_000 } })
   const reads = useReadContracts({
@@ -77,7 +77,13 @@ export function useTokenDocs(owner: Address | undefined): TokenDoc[] {
       loading: reads.isLoading,
     })
   })
-  return docs
+  return {
+    docs,
+    refetch: () => {
+      eth.refetch()
+      reads.refetch()
+    },
+  }
 }
 
 const CHECK_BATCH = 20

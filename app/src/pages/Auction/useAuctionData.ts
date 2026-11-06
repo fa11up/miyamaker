@@ -1,16 +1,41 @@
 import type { Address } from 'viem'
 import { useReadContracts } from 'wagmi'
 
+import { AUCTION_CHAIN_ID } from '@/constants/contracts'
 import type { Auction } from '@/store/auction/reducer'
 
+import { lotPhase } from './bidding'
 import { ADDRESS0 } from './constants'
 
-export function useAuctionData({ nft, tokenId, address }: { nft: Address; tokenId: number; address: Address }) {
-  const { data, refetch } = useReadContracts({
-    query: { enabled: !!address },
+/** How often the lot on show is read again while it can still be bid on. Other people's bids arrive this way. */
+const LIVE_REFRESH_MS = 15_000
+
+export function useAuctionData({
+  nft,
+  tokenId,
+  address,
+  live = false,
+}: {
+  nft: Address
+  /** undefined until the lot list has answered: nothing is read for a guessed lot. */
+  tokenId: number | undefined
+  address: Address
+  live?: boolean
+}) {
+  const { data, refetch, isPending, isError, dataUpdatedAt } = useReadContracts({
+    query: {
+      enabled: !!address && tokenId !== undefined,
+      refetchInterval: (query) => {
+        if (!live) return false
+        const lot = query.state.data?.[0]?.result as unknown as Auction | undefined
+        const read = lot && { status: 'ready' as const, startTime: lot.startTime, endTime: lot.endTime, settled: lot.settled }
+        return read && lotPhase(read, Date.now()) === 'ended' ? false : LIVE_REFRESH_MS
+      },
+    },
     contracts: [
       {
         address,
+        chainId: AUCTION_CHAIN_ID,
         functionName: 'getAuction',
         abi: [
           {
@@ -70,10 +95,11 @@ export function useAuctionData({ nft, tokenId, address }: { nft: Address; tokenI
             type: 'function',
           },
         ],
-        args: [nft, BigInt(tokenId)],
+        args: [nft, BigInt(tokenId ?? 0)],
       },
       {
         address,
+        chainId: AUCTION_CHAIN_ID,
         functionName: 'bidIncrement',
         abi: [
           {
@@ -96,8 +122,13 @@ export function useAuctionData({ nft, tokenId, address }: { nft: Address; tokenI
 
   const auction = data?.[0]?.result as unknown as Auction
   const bidIncrement = data?.[1]?.result as bigint
+  // A failed multicall entry arrives inside a successful query, so each answer is checked. The minimum needs both.
+  const failed = isError || (!!data && (data[0]?.status !== 'success' || data[1]?.status !== 'success'))
+  const status: 'loading' | 'failed' | 'ready' = failed ? 'failed' : isPending ? 'loading' : 'ready'
 
   return {
+    status,
+    updatedAt: dataUpdatedAt,
     bidder: auction?.bidder || ADDRESS0,
     currentBid: (auction?.amount || 0n) as bigint,
     minPrice: (auction?.minPrice || 0n) as bigint,

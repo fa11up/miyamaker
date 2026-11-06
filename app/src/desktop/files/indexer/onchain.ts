@@ -216,7 +216,7 @@ export function createOnchainIndexer(client: PublicClient, collections: KnownCol
         }
       }
 
-      return { nfts, source: 'On-chain (known collections)', partial }
+      return { nfts, source: 'On-chain (known collections)', partial, limited: true }
     },
   }
 }

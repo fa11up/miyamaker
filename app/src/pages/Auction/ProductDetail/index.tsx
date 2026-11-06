@@ -1,25 +1,49 @@
-import { get } from 'lodash'
 import { useEffect, useRef, useState } from 'react'
 import styled from 'styled-components/macro'
-import type { Address } from 'viem'
-import { formatUnits } from 'viem'
-import { useAccount, useEnsName } from 'wagmi'
+import type { Address, Hash } from 'viem'
+import { formatEther } from 'viem'
+import { useAccount, useBalance, useEnsName, usePublicClient } from 'wagmi'
 
-import ArtViewer, { toArtwork } from '@/components/ArtViewer'
-import type { BalanceData } from '@/context/AccountProvider'
+import ArtViewer from '@/components/ArtViewer'
+import { NormalButton } from '@/components/Button/NormalButton'
+import { Skeleton } from '@/components/Retro'
+import { AUCTION_CHAIN_ID } from '@/constants/contracts'
 import { shortAddress } from '@/desktop/mints/dedupe'
 import { useWaitForTransaction } from '@/hooks/useWaitForTransaction'
+import {
+  BID_REVERTED,
+  BID_UNCONFIRMED,
+  bidErrorWords,
+  bidStanding,
+  checkBid,
+  lotFacts,
+  lotPhase,
+  minimumBid,
+} from '@/pages/Auction/bidding'
 import BidContainer from '@/pages/Auction/ProductDetail/BidContainer'
 import ImagesList from '@/pages/Auction/ProductDetail/ImagesList'
 import { useAuctionData } from '@/pages/Auction/useAuctionData'
 import { useFitText } from '@/pages/Auction/useFitText'
+import { useLotGallery } from '@/pages/Auction/useLots'
 import { usePlaceBid } from '@/pages/Auction/usePlaceBid'
 import { useToken } from '@/pages/Auction/useToken'
 import { setCurrentToken } from '@/store/collections/actions'
 import { NO_LOT } from '@/store/collections/reducer'
 import { useAppDispatch, useAppSelector } from '@/store/hooks'
 import { color } from '@/theme/tokens'
-import { getTokenAttribute } from '@/utils/getTokenAttribute'
+
+const DetailColumn = styled.div`
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  gap: 0.5rem;
+`
+
+const BackRow = styled.div`
+  flex: none;
+`
 
 const ProductDetailWrapper = styled.div`
   display: flex;
@@ -141,20 +165,31 @@ const Facts = styled.dl`
   }
 `
 
+const Updated = styled.span`
+  margin-left: 0.5rem;
+  color: #5f4030;
+  font-size: 0.75rem;
+`
+
 export default function ProductDetail({
   setErrorMessage,
-  setErrorName,
-  balance,
   auctionContract,
+  onBack,
 }: {
   setErrorMessage: (value: string) => void
-  setErrorName: (value: string) => void
-  balance: BalanceData | undefined
   auctionContract: Address
+  onBack: () => void
 }) {
   const dispatch = useAppDispatch()
   // Account
-  const { isConnected } = useAccount()
+  const { address: account, chain, isConnected } = useAccount()
+  const { data: wallet } = useBalance({
+    address: account,
+    chainId: AUCTION_CHAIN_ID,
+    query: { enabled: !!account, refetchInterval: 30_000 },
+  })
+  const balance = wallet?.value
+  const client = usePublicClient({ chainId: AUCTION_CHAIN_ID })
 
   const nft = useAppSelector((state) => state.collections.currentNFT)
   const currentAuctionToken = useAppSelector((state) => state.collections.currentToken)
@@ -165,19 +200,49 @@ export default function ProductDetail({
   // Until a lot is chosen the panel shows the first one, so its art, its bid data and any bid all name the same token.
   const tokenId = chosenTokenId === NO_LOT ? tokenIds[0] : chosenTokenId
 
-  const [transacting, setTransacting] = useState(false)
+  const [busy, setBusy] = useState<'wallet' | 'mining'>()
   const [txHash, setTxHash] = useState('')
   const [bidAmount, setBidAmount] = useState('')
   const [viewing, setViewing] = useState(false)
+  const [confirmedLot, setConfirmedLot] = useState<string>()
+  // The countdown, the "updated" age and the moment bidding closes all run off this.
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const tick = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(tick)
+  }, [])
 
   // Get contract data
-  const { currentBid, endTime, bidder, refetch } = useAuctionData({
-    nft: nftContract,
-    tokenId: tokenId ?? 1,
-    address: auctionContract,
-  })
-  const { placeBid, isValidBid } = usePlaceBid({ address: auctionContract, bidAmount })
+  const { status, currentBid, minPrice, startTime, endTime, settled, bidIncrement, bidder, updatedAt, refetch } =
+    useAuctionData({
+      nft: nftContract,
+      tokenId,
+      address: auctionContract,
+      live: true,
+    })
+  const { placeBid } = usePlaceBid({ address: auctionContract, bidAmount })
   const { name, description, image, attributes } = useToken({ tokenURI: tokenURIs[0] || '', isFetch: !!tokenId })
+  const gallery = useLotGallery({ nft: nftContract, tokenIds, tokenURIs, address: auctionContract })
+
+  const phase = lotPhase({ status, startTime, endTime, settled }, now)
+  const facts = lotFacts({ phase, bidder, currentBid, minPrice })
+  const minimum = minimumBid({ currentBid, minPrice, bidIncrement })
+  const check = checkBid(bidAmount, minimum, balance)
+  const canSend = isConnected && chain?.id === AUCTION_CHAIN_ID
+
+  // Being overtaken is only news to someone this window has seen in the lead.
+  const lotKey = `${nftContract}:${tokenId}:${account}`
+  const ledLots = useRef(new Set<string>())
+  if (phase === 'live' && account && bidder.toLowerCase() === account.toLowerCase()) ledLots.current.add(lotKey)
+  const standing = phase === 'live' ? bidStanding(bidder, account, ledLots.current.has(lotKey)) : 'none'
+  let standingNote: { good: boolean; words: string } | undefined
+  if (standing === 'leading') {
+    standingNote = { good: true, words: `You're the highest bidder at ${formatEther(currentBid)} ETH.` }
+  } else if (standing === 'outbid') {
+    standingNote = { good: false, words: "You've been outbid. Your ETH came back to your wallet." }
+  } else if (confirmedLot === lotKey) {
+    standingNote = { good: true, words: 'Your bid went through.' }
+  }
 
   // The arrows step through the lots in list order and wrap round. Metadata is cached, shared with the lot cards.
   const lotIndex = Math.max(0, tokenIds.indexOf(tokenId as number))
@@ -211,19 +276,39 @@ export default function ProductDetail({
   const highestBidderENS = useEnsName({
     address: bidder as Address,
     chainId: 1,
+    query: { enabled: !facts.bidderValue },
   })
+
+  const bidSettled = () => {
+    setBusy(undefined)
+    setTxHash('')
+    refetch()
+  }
 
   useWaitForTransaction({
     hash: (txHash as Address) || '0x',
     enabled: !!txHash,
-    onSuccess: () => {
-      setTransacting(false)
-      setTxHash('')
-      refetch()
+    onSuccess: (receipt) => {
+      bidSettled()
+      if (receipt.status === 'reverted') {
+        setErrorMessage(BID_REVERTED)
+        return
+      }
+      setBidAmount('')
+      setConfirmedLot(lotKey)
     },
-    onReplaced: () => {
-      setTransacting(false)
-      setTxHash('')
+    // wagmi turns a reverted receipt into an error, so a failure here may be a real answer or only a failed wait.
+    onError: async (error) => {
+      console.error('Waiting for bid failed', error)
+      const receipt = await client?.getTransactionReceipt({ hash: txHash as Hash }).catch(() => undefined)
+      bidSettled()
+      setErrorMessage(receipt?.status === 'reverted' ? BID_REVERTED : BID_UNCONFIRMED)
+    },
+    // A sped-up bid is still the same bid, and its own receipt arrives through this wait. A cancelled one is over.
+    onReplaced: (reason) => {
+      if (reason !== 'cancelled') return
+      bidSettled()
+      setErrorMessage('You cancelled in your wallet. No bid was placed.')
     },
   })
 
@@ -236,16 +321,17 @@ export default function ProductDetail({
   }
 
   const handleBid = async () => {
-    if (!isConnected || !isValidBid || tokenId === undefined) return
-    setTransacting(true)
+    if (!canSend || !check.valid || busy || phase !== 'live' || tokenId === undefined) return
+    setBusy('wallet')
     try {
       const result = await placeBid(nftContract, tokenId)
       setTxHash(result.hash)
+      setBusy('mining')
     } catch (e) {
-      setTransacting(false)
-      // warn message
-      setErrorMessage(get(e, 'shortMessage') || '')
-      setErrorName(get(e, 'name') || '')
+      console.error('Bid failed', e)
+      setBusy(undefined)
+      setErrorMessage(bidErrorWords(e))
+      refetch()
     }
   }
 
@@ -269,88 +355,121 @@ export default function ProductDetail({
   const tokenAttributes = currentAuctionToken.attributes.length > 0 ? currentAuctionToken.attributes : attributes
   const artist = tokenAttributes.find((item) => item.trait_type === 'Artist')?.value
   const descriptionRef = useRef<HTMLParagraphElement>(null)
-  const descriptionFit = useFitText(descriptionRef, tokenDescription)
+  const descriptionFit = useFitText(
+    descriptionRef,
+    tokenDescription,
+    undefined,
+    `${phase}:${!!standingNote}:${check.valid}:${balance !== undefined}`
+  )
   const dimensions = tokenAttributes.find((item) => item.trait_type === 'Dimensions')?.value
+  const known = phase !== 'loading' && phase !== 'failed' && phase !== 'missing'
 
   return (
-    <ProductDetailWrapper>
-      <ImagesListWrapper>
-        <ImagesList
-          image={currentAuctionToken.image || image}
-          position={lotIndex}
-          total={lotCount}
-          onPrevious={() => openLot(previousIndex, previousLot)}
-          onNext={() => openLot(nextIndex, nextLot)}
-          onView={() => setViewing(true)}
-        />
-        {viewing && (
-          <ArtViewer
-            skin="auction"
-            onClose={() => setViewing(false)}
-            items={[
-              toArtwork(
-                {
-                  name: currentAuctionToken.name || name,
-                  description: currentAuctionToken.description || description,
-                  image: currentAuctionToken.image || image,
-                  external_url: currentAuctionToken.external_url,
-                  attributes: currentAuctionToken.attributes.length > 0 ? currentAuctionToken.attributes : attributes,
-                },
-                [['Final bid', currentBid ? `${formatUnits(currentBid, 18)} ETH` : undefined]]
-              ),
-            ]}
+    <DetailColumn>
+      <BackRow>
+        <NormalButton type="button" onClick={onBack}>
+          ← Collections
+        </NormalButton>
+      </BackRow>
+      <ProductDetailWrapper>
+        <ImagesListWrapper>
+          <ImagesList
+            image={currentAuctionToken.image || image}
+            position={lotIndex}
+            total={lotCount}
+            onPrevious={() => openLot(previousIndex, previousLot)}
+            onNext={() => openLot(nextIndex, nextLot)}
+            onView={() => setViewing(true)}
           />
-        )}
-      </ImagesListWrapper>
-      <Placard>
-        <Heading>
-          <Title>{tokenName}</Title>
-          {artist && (
-            <Byline>
-              by <b>{artist}</b>
-            </Byline>
+          {viewing && gallery.items.length > 0 && (
+            <ArtViewer
+              skin="auction"
+              onClose={() => setViewing(false)}
+              items={gallery.items}
+              startIndex={Math.max(0, gallery.ids.indexOf(tokenId as number))}
+            />
           )}
-          {nft.name && <Collection>{nft.name}</Collection>}
-        </Heading>
-        {tokenDescription && (
-          <Description ref={descriptionRef} style={{ fontSize: descriptionFit.size }}>
-            {tokenDescription}
-          </Description>
-        )}
-        {descriptionFit.overflow && (
-          <ReadMore type="button" onClick={() => setViewing(true)}>
-            Read the full description
-          </ReadMore>
-        )}
-        <Facts>
-          {dimensions && (
-            <>
-              <dt>Dimensions</dt>
-              <dd>{dimensions}</dd>
-            </>
+        </ImagesListWrapper>
+        <Placard>
+          <Heading>
+            <Title>{tokenName}</Title>
+            {artist && (
+              <Byline>
+                by <b>{artist}</b>
+              </Byline>
+            )}
+            {nft.name && <Collection>{nft.name}</Collection>}
+          </Heading>
+          {tokenDescription && (
+            <Description ref={descriptionRef} style={{ fontSize: descriptionFit.size }}>
+              {tokenDescription}
+            </Description>
           )}
-          <dt>Final bid</dt>
-          <dd>
-            {formatUnits(currentBid, 18)} {getTokenAttribute(tokenAttributes, 'Currency')}
-          </dd>
-          <dt>Highest bidder</dt>
-          <dd title={bidder}>{highestBidderENS?.data || shortAddress(bidder)}</dd>
-        </Facts>
-        <BidArea>
-          <BidContainer
-            bidAmount={bidAmount}
-            bidDisabled={!isValidBid}
-            handleCheckBidAmount={handleCheckBidAmount}
-            handleBid={handleBid}
-            isConnected={isConnected}
-            transacting={transacting}
-            balance={balance}
-            currentAuctionToken={currentAuctionToken}
-            attributes={attributes}
-            endTime={endTime}
-          />
-        </BidArea>
-      </Placard>
-    </ProductDetailWrapper>
+          {descriptionFit.overflow && (
+            <ReadMore type="button" onClick={() => setViewing(true)}>
+              Read the full description
+            </ReadMore>
+          )}
+          <Facts>
+            {dimensions && (
+              <>
+                <dt>Dimensions</dt>
+                <dd>{dimensions}</dd>
+              </>
+            )}
+            {known ? (
+              <>
+                <dt>{facts.bidLabel}</dt>
+                <dd>
+                  {facts.bidValue}
+                  {phase === 'live' && updatedAt > 0 && (
+                    <Updated>Updated {Math.max(0, Math.floor((now - updatedAt) / 1000))}s ago</Updated>
+                  )}
+                </dd>
+                <dt>{facts.bidderLabel}</dt>
+                <dd title={facts.bidderValue ? undefined : bidder}>
+                  {facts.bidderValue || highestBidderENS?.data || shortAddress(bidder)}
+                </dd>
+              </>
+            ) : (
+              phase === 'loading' && (
+                <>
+                  <dt>
+                    <Skeleton h="0.9em" w="5rem" />
+                  </dt>
+                  <dd>
+                    <Skeleton h="0.9em" w="7rem" />
+                  </dd>
+                  <dt>
+                    <Skeleton h="0.9em" w="5rem" />
+                  </dt>
+                  <dd>
+                    <Skeleton h="0.9em" w="7rem" />
+                  </dd>
+                </>
+              )
+            )}
+          </Facts>
+          <BidArea>
+            <BidContainer
+              phase={phase}
+              startTime={startTime}
+              endTime={endTime}
+              now={now}
+              bidAmount={bidAmount}
+              onBidAmount={handleCheckBidAmount}
+              onBid={handleBid}
+              onRetry={() => refetch()}
+              minimum={minimum}
+              check={check}
+              busy={busy}
+              canSend={canSend}
+              balance={balance}
+              standing={standingNote}
+            />
+          </BidArea>
+        </Placard>
+      </ProductDetailWrapper>
+    </DetailColumn>
   )
 }

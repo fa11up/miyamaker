@@ -15,6 +15,7 @@ import type { Size } from './fitArtwork'
 import { fitArtwork, isPixelArt } from './fitArtwork'
 import type { Selection } from './MyFiles'
 import { safeLinkUrl } from './sanitize'
+import { fileType, QUARANTINE_WARNING } from './scam'
 
 /** The same dark CRT as the My Files window it opens over. */
 const PHOSPHOR = '#cfe8d3'
@@ -236,7 +237,7 @@ const Dialog = styled.div`
     }
     .bar button {
       width: 36px;
-      height: 30px;
+      height: 32px;
     }
     .actions a,
     .actions button {
@@ -331,6 +332,7 @@ export default function Properties({
 
   if (selection.kind === 'nft') {
     const n = selection.nft
+    const quarantined = !!n.scamReason || !!n.checking
     const explorer = explorerUrl(n.chainId)
     title = n.name || `#${n.tokenId}`
     const full = n.fullImage || n.image
@@ -357,19 +359,20 @@ export default function Properties({
       </div>
     )
     rows = [
-      ['Name', n.name],
-      ['Collection', n.collectionName],
+      ...(n.name && !quarantined ? ([['Name', n.name]] as [string, React.ReactNode][]) : []),
+      ...(n.collectionName ? ([['Collection', n.collectionName]] as [string, React.ReactNode][]) : []),
       ['Token ID', n.tokenId],
       ['Contract', shortAddress(n.contract)],
-      ['Type', 'ERC-721 token'],
+      ['Type', fileType(n)],
       ...(n.scamReason ? ([['Why it is here', n.scamReason]] as [string, React.ReactNode][]) : []),
+      ...(n.checking ? ([['Status', 'Contract not checked yet']] as [string, React.ReactNode][]) : []),
     ]
     description = n.description
     links = [
       { label: 'Etherscan', href: `${explorer}/nft/${n.contract}/${n.tokenId}` },
       ...(n.externalUrl ? [{ label: 'Website', href: n.externalUrl }] : []),
     ]
-    app = n.scamReason ? undefined : findCollection(n.chainId, n.contract)?.app
+    app = quarantined ? undefined : findCollection(n.chainId, n.contract)?.app
   } else {
     const d = selection.doc
     const explorer = explorerUrl(1)
@@ -405,8 +408,8 @@ export default function Properties({
           </div>
         ))}
       </dl>
-      {selection.kind === 'nft' && selection.nft.scamReason && (
-        <p className="warn">Don&apos;t follow any link or offer in this file, or sign anything it asks for.</p>
+      {selection.kind === 'nft' && (selection.nft.scamReason || selection.nft.checking) && (
+        <p className="warn">{QUARANTINE_WARNING}</p>
       )}
       {description && <p className="desc">{description}</p>}
       <div className="actions">

@@ -17,12 +17,12 @@ export function useWaitForTransaction({
   enabled?: boolean
   onSuccess?: (receipt: TransactionReceipt) => void
   onError?: (error: Error) => void
-  onReplaced?: () => void
+  onReplaced?: (reason: 'cancelled' | 'repriced' | 'replaced') => void
 }) {
   const validHash = hash && hash !== '0x' ? (hash as Hash) : undefined
   const result = useWaitForTransactionReceipt({
     hash: validHash,
-    onReplaced: onReplaced ? () => onReplaced() : undefined,
+    onReplaced: onReplaced ? ({ reason }) => onReplaced(reason) : undefined,
     query: { enabled: enabled && !!validHash },
   })
 
