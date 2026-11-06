@@ -82,7 +82,7 @@ test('embed and watch URLs', () => {
   )
 })
 
-test('native chat: kick frames, YouTube links out, shows have none', () => {
+test('native chat: only kick sits in the sidebar', () => {
   const kick = CHANNELS.find((c) => c.id === 'kick-imdusd')!
   const kickSource = kick.kind === 'iframe' ? kick.sources[0] : undefined
   assert.deepEqual(nativeChatFor(kick, kickSource), {
@@ -92,11 +92,7 @@ test('native chat: kick frames, YouTube links out, shows have none', () => {
   })
   assert.equal(nativeChatFor(CHANNELS.find((c) => c.id === 'squeekchain')!), undefined)
   const lofi = CHANNELS.find((c) => c.id === 'lofi')!
-  assert.deepEqual(nativeChatFor(lofi, lofi.kind === 'iframe' ? lofi.sources[0] : undefined), {
-    kind: 'link',
-    href: 'https://www.youtube.com/watch?v=rFZHOHl-L8A',
-    label: 'YouTube chat',
-  })
+  assert.equal(nativeChatFor(lofi, lofi.kind === 'iframe' ? lofi.sources[0] : undefined), undefined)
 })
 
 test('channel dial wraps both ways; number lookup', () => {

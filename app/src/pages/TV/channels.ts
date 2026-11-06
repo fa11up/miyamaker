@@ -48,7 +48,7 @@ export type ShowKind = 'radio' | 'squeek' | 'public'
 export type ChannelLink = { label: string; href: string }
 
 type ChannelBase = {
-  /** Stable id. Also the chat room name, so it must match /^[a-z0-9][a-z0-9-]{0,47}$/. */
+  /** Stable id, matching /^[a-z0-9][a-z0-9-]{0,47}$/. */
   id: string
   /** Channel number shown on the TV and reachable with the number keys. Unique, 1-99. */
   number: number
@@ -122,7 +122,7 @@ export const CHANNELS: Channel[] = [
     section: 'Onchain',
     name: 'squeekchain',
     tagline: 'A hamster runs the wheel, the wheel mines the chain.',
-    description: 'The real wheel’s telemetry and the chain’s public feed, on testnet.',
+    description: 'The real wheel’s telemetry, live.',
     links: [{ label: 'squeekchain.com', href: 'https://squeekchain.com/' }],
   },
   {
@@ -171,6 +171,9 @@ export function embedSrc(source: Source): string {
   return `https://studio.x.com/embed/broadcast/${encodeURIComponent(source.broadcastId)}?dnt=true&lang=en`
 }
 
+/** miyatv chat is one room, whatever is on. */
+export const CHAT_ROOM = 'miyatv'
+
 export const CHAT_MIN = 222
 export const CHAT_DEFAULT = 340
 // Kick's player only offers mute and volume at 769px or wider. 770 for the glass, 12 for its trim, 8 for the drag
@@ -190,23 +193,16 @@ export function watchUrl(source: Source): string {
   return `https://x.com/i/broadcasts/${encodeURIComponent(source.broadcastId)}`
 }
 
-export type NativeChat = { kind: 'iframe'; src: string; label: string } | { kind: 'link'; href: string; label: string }
+export type NativeChat = { kind: 'iframe'; src: string; label: string }
 
-/**
- * The platform's own chat. Kick's popout chat frames fine (no frame headers, checked 2026-11-01);
- * YouTube and X broadcasts only link out.
- */
+/** A platform's own chat, where it can sit in our sidebar. Kick's popout chat frames fine (checked 2026-11-01). */
 export function nativeChatFor(channel: Channel, source?: Source): NativeChat | undefined {
-  if (channel.kind !== 'iframe' || !source) return undefined
-  if (source.provider === 'kick') {
-    return {
-      kind: 'iframe',
-      src: `https://kick.com/popout/${encodeURIComponent(source.slug)}/chat`,
-      label: 'kick chat',
-    }
+  if (channel.kind !== 'iframe' || source?.provider !== 'kick') return undefined
+  return {
+    kind: 'iframe',
+    src: `https://kick.com/popout/${encodeURIComponent(source.slug)}/chat`,
+    label: 'kick chat',
   }
-
-  return { kind: 'link', href: watchUrl(source), label: source.provider === 'youtube' ? 'YouTube chat' : 'X chat' }
 }
 
 /** Index of the channel `step` positions away, wrapping around like a real dial. */
