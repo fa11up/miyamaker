@@ -8,13 +8,15 @@ import { useRadio } from '@/context/RadioProvider'
 import { fetchStation, toTrack } from '@/music/community'
 import { font, space, text } from '@/theme/tokens'
 
-import { airList, parseYouTubeId, STATION_SUBMITTER } from '../../../api/_lib/publicaccess'
+import { airList, parseYouTubeId, STATION_SUBMITTER, tapeProblem } from '../../../api/_lib/publicaccess'
 import { glow } from './chat/ChatPanel'
 import { LAND_PATH } from './earth'
+import type { FocusTimer } from './focusTimer'
+import { focusLength, mmss } from './focusTimer'
 import { fetchTapes, reviewTape, submitTape } from './publicAccess'
 import type { Point } from './issMath'
-import { bearing, compass, destination, mapSegments, nightSide, viewFan, viewRing } from './issMath'
-import { parseVitals, SQUEEK_API } from './squeek'
+import { bearing, compass, destination, headingLabel, mapSegments, nightSide, viewFan, viewRing } from './issMath'
+import { formatDistance, parseVitals, SQUEEK_API } from './squeek'
 
 /* Each channel's own sidebar, in the same dark walnut and cream as its chat. */
 
@@ -54,6 +56,9 @@ const Panel = styled.div`
     color: #2a1a0e;
     font-size: ${text.xs};
     cursor: pointer;
+    .narrow & {
+      min-height: 40px;
+    }
   }
   button:active:not(:disabled) {
     transform: translateY(1px);
@@ -72,6 +77,11 @@ const Panel = styled.div`
     background: #120b06;
     color: ${glow.ink};
     font-size: 14px;
+    /* Under 16px, iPhone Safari zooms the page when the field is pressed. */
+    .narrow & {
+      height: 40px;
+      font-size: 16px;
+    }
   }
 `
 
@@ -164,12 +174,7 @@ const Big = styled.div`
   text-shadow: 0 0 8px rgba(255, 179, 71, 0.5);
 `
 
-const mmss = (s: number) => `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`
-
 /* ---------- Lofi Girl: a focus timer ---------- */
-
-const FOCUS = 25 * 60
-const REST = 5 * 60
 
 const Pips = styled.span`
   display: inline-flex;
@@ -195,31 +200,18 @@ const SpreadRow = styled.div`
   min-width: 0;
 `
 
-const PLAIN_LINK = { all: 'unset', cursor: 'pointer', textDecoration: 'underline', color: glow.link } as const
-
-export function FocusPanel({ onRadio }: { onRadio: () => void }) {
-  const [left, setLeft] = useState(FOCUS)
-  const [running, setRunning] = useState(false)
-  const [resting, setResting] = useState(false)
-  const [done, setDone] = useState(0)
-
-  useEffect(() => {
-    if (!running) return undefined
-    const tick = setInterval(() => {
-      setLeft((l) => {
-        if (l > 1) return l - 1
-        setResting((r) => {
-          if (!r) setDone((d) => d + 1)
-          setLeft(r ? FOCUS : REST)
-          return !r
-        })
-        return l
-      })
-    }, 1000)
-    return () => clearInterval(tick)
-  }, [running])
-
-  const length = resting ? REST : FOCUS
+/** The timer itself lives with the set, so hiding the sidebar or changing channel leaves it running. */
+export function FocusPanel({
+  timer,
+  onToggle,
+  onReset,
+}: {
+  timer: FocusTimer
+  onToggle: () => void
+  onReset: () => void
+}) {
+  const { left, running, resting, done } = timer
+  const length = focusLength(timer)
   return (
     <Panel>
       <SpreadRow>
@@ -233,17 +225,10 @@ export function FocusPanel({ onRadio }: { onRadio: () => void }) {
       <SpreadRow>
         <Big role="timer">{mmss(left)}</Big>
         <Row style={{ flexWrap: 'nowrap' }}>
-          <button type="button" onClick={() => setRunning((r) => !r)}>
+          <button type="button" onClick={onToggle}>
             {running ? 'Pause' : 'Start'}
           </button>
-          <button
-            type="button"
-            onClick={() => {
-              setRunning(false)
-              setResting(false)
-              setLeft(FOCUS)
-            }}
-          >
+          <button type="button" onClick={onReset}>
             Reset
           </button>
         </Row>
@@ -255,13 +240,7 @@ export function FocusPanel({ onRadio }: { onRadio: () => void }) {
       >
         <div style={{ width: `${(100 * (length - left)) / length}%` }} />
       </Bar>
-      <p>
-        25 minutes on, 5 off. Or try{' '}
-        <button type="button" style={PLAIN_LINK} onClick={onRadio}>
-          miya radio
-        </button>{' '}
-        on channel 2.
-      </p>
+      <p>25 minutes on, 5 off.</p>
     </Panel>
   )
 }
@@ -287,6 +266,21 @@ const Tiles = styled.div`
   }
   b {
     font-family: ${font.mono};
+  }
+`
+
+const ClearLink = styled.button`
+  && {
+    min-height: 0;
+    padding: 0 2px;
+    background: none;
+    box-shadow: none;
+    color: ${glow.link};
+    text-decoration: underline;
+  }
+  .narrow && {
+    min-height: 32px;
+    padding: 0 8px;
   }
 `
 
@@ -317,14 +311,31 @@ export function SpottingPanel() {
     <Panel>
       <SpreadRow>
         <h3>Spotting log</h3>
-        <Readout as="span" style={{ display: 'block' }}>
-          <dd>{total} seen</dd>
-        </Readout>
+        <SpreadRow>
+          {total > 0 && (
+            <ClearLink
+              type="button"
+              onClick={() => {
+                setCounts({})
+                try {
+                  window.localStorage.removeItem(SPOTTED_KEY)
+                } catch {
+                  // ignore
+                }
+              }}
+            >
+              Clear
+            </ClearLink>
+          )}
+          <Readout as="span" style={{ display: 'block' }}>
+            <dd>{total} seen</dd>
+          </Readout>
+        </SpreadRow>
       </SpreadRow>
       <p>Who’s in the aviary? Tap when you see one.</p>
       <Tiles>
         {BIRDS.map((bird) => (
-          <button key={bird} type="button" aria-label={`Spotted a ${bird}`} onClick={() => spot(bird)}>
+          <button key={bird} type="button" aria-label={`Spotted: ${bird}`} onClick={() => spot(bird)}>
             <span>{bird}</span>
             <b>{counts[bird] ?? 0}</b>
           </button>
@@ -430,12 +441,10 @@ export function IssPanel() {
   return (
     <Panel>
       <SpreadRow>
-        <h3>Where it is now</h3>
+        <h3>Right now</h3>
         {heading !== undefined && (
           <Readout as="span" style={{ display: 'block' }}>
-            <dd>
-              Heading {compass(heading)} · {Math.round(heading)}°
-            </dd>
+            <dd>{headingLabel(heading)}</dd>
           </Readout>
         )}
       </SpreadRow>
@@ -510,16 +519,24 @@ export function IssPanel() {
       </Map>
       {iss.isError && !d && <p>Could not find the station just now.</p>}
       {d && (
-        <Readout style={{ gridTemplateColumns: 'auto 1fr auto 1fr' }}>
-          <dt>Over</dt>
-          <dd>{placeName(over.data)}</dd>
-          <dt>Outside</dt>
-          <dd>{d.visibility === 'daylight' ? 'Sunlight' : 'Shadow'}</dd>
-          <dt>Altitude</dt>
-          <dd>{d.altitude.toFixed(0)} km</dd>
-          <dt>Speed</dt>
-          <dd>{Math.round(d.velocity).toLocaleString()} km/h</dd>
-        </Readout>
+        <Wheel>
+          <div>
+            <span>Over</span>
+            <b>{placeName(over.data)}</b>
+          </div>
+          <div>
+            <span>Light</span>
+            <b>{d.visibility === 'daylight' ? 'Sunlight' : 'In shadow'}</b>
+          </div>
+          <div>
+            <span>Altitude</span>
+            <b>{d.altitude.toFixed(0)} km</b>
+          </div>
+          <div>
+            <span>Speed</span>
+            <b>{Math.round(d.velocity).toLocaleString()} km/h</b>
+          </div>
+        </Wheel>
       )}
     </Panel>
   )
@@ -586,7 +603,7 @@ export function SqueekPanel() {
     <Panel>
       <SpreadRow>
         <h3>Hamster vitals</h3>
-        {v && <Lamp $on={v.online}>{v.online ? 'Live from the wheel' : 'Gone quiet'}</Lamp>}
+        {v && <Lamp $on={v.online}>{v.online ? 'Sensor online' : 'Sensor quiet'}</Lamp>}
       </SpreadRow>
       {status.isError && !v && <p>Could not reach squeekchain.</p>}
       {v && (
@@ -596,7 +613,7 @@ export function SqueekPanel() {
             <p style={{ flex: 1 }}>
               RPM
               <br />
-              {v.running ? 'On the wheel' : 'Off the wheel'}
+              {v.running ? 'On the wheel' : 'Resting'}
             </p>
           </SpreadRow>
           <Wheel>
@@ -605,8 +622,9 @@ export function SqueekPanel() {
               <b>{v.metresPerMinute.toFixed(1)} m/min</b>
             </div>
             <div>
-              <span>This run</span>
-              <b>{v.distanceMetres.toFixed(1)} m</b>
+              {/* The feed's running counter, which carries on from run to run, so not "this run". */}
+              <span>Distance</span>
+              <b>{formatDistance(v.distanceMetres)}</b>
             </div>
           </Wheel>
         </>
@@ -627,9 +645,13 @@ const PageRow = styled.div`
   button {
     min-height: 22px;
   }
+  .narrow & button {
+    min-width: 36px;
+    min-height: 36px;
+  }
 `
 
-/** Lists page instead of scrolling, as the panel never scrolls. */
+/** Lists page rather than scroll, so a panel stays short. */
 function usePages<T>(items: T[], size: number) {
   const [wanted, setPage] = useState(0)
   const pages = Math.max(1, Math.ceil(items.length / size))
@@ -712,14 +734,14 @@ export function PublicPanel({ tapeId, onPick }: { tapeId?: string; onPick: (vide
       setNote(done)
       qc.invalidateQueries({ queryKey: ['public-access'] })
     } catch (e) {
-      const m = (e as { shortMessage?: string })?.shortMessage || (e as Error).message
-      setNote(/user rejected|user denied|rejected the request/i.test(m) ? 'You cancelled it in your wallet.' : m)
+      setNote(tapeProblem(e))
     } finally {
       setBusy(false)
     }
   }
 
   const videoId = parseYouTubeId(link)
+  const onNow = tapes.some((t) => t.videoId === tapeId) ? tapeId : tapes[0]?.videoId
   const onAir = usePages(tapes, 3)
   const waiting = usePages(pending, 2)
   return (
@@ -730,15 +752,21 @@ export function PublicPanel({ tapeId, onPick }: { tapeId?: string; onPick: (vide
       </SpreadRow>
       <List>
         {onAir.shown.map((t) => (
-          <li key={t.videoId} className={(tapeId ?? tapes[0]?.videoId) === t.videoId ? 'on' : undefined}>
+          <li key={t.videoId} className={onNow === t.videoId ? 'on' : undefined}>
             <span className="words">
               <b title={t.title}>{t.title}</b>
               <span title={t.author}>{t.author}</span>
             </span>
             <span className="row">
-              <button type="button" aria-label={`Play ${t.title}`} onClick={() => onPick(t.videoId)}>
-                Play
-              </button>
+              {onNow === t.videoId ? (
+                <button type="button" disabled>
+                  On now
+                </button>
+              ) : (
+                <button type="button" aria-label={`Play ${t.title}`} onClick={() => onPick(t.videoId)}>
+                  Play
+                </button>
+              )}
               {address && t.submitter !== STATION_SUBMITTER && (isAdmin || t.submitter === me) && (
                 <button
                   type="button"
@@ -755,6 +783,7 @@ export function PublicPanel({ tapeId, onPick }: { tapeId?: string; onPick: (vide
       </List>
 
       <h3>Send in a tape</h3>
+      <p>Free to send. You sign a message. The station checks each tape before it airs.</p>
       <SpreadRow>
         <input
           type="url"
@@ -766,25 +795,24 @@ export function PublicPanel({ tapeId, onPick }: { tapeId?: string; onPick: (vide
           onChange={(e) => setLink(e.target.value)}
           onKeyDown={(e) => e.stopPropagation()}
         />
-        {isConnected && address ? (
-          <button
-            type="button"
-            disabled={!videoId || busy}
-            onClick={() =>
-              videoId &&
-              act(async () => {
-                await submitTape(videoId, address, sign)
-                setLink('')
-              }, 'Sent in. It airs once the station has looked at it.')
+        <button
+          type="button"
+          disabled={!videoId || busy}
+          onClick={() => {
+            if (!videoId) return
+            if (!isConnected || !address) {
+              openConnectModal?.()
+              return
             }
-          >
-            {busy ? 'Working…' : 'Send it in'}
-          </button>
-        ) : (
-          <button type="button" onClick={() => openConnectModal?.()}>
-            Connect wallet
-          </button>
-        )}
+
+            act(async () => {
+              await submitTape(videoId, address, sign)
+              setLink('')
+            }, 'Sent in. It airs once the station has looked at it.')
+          }}
+        >
+          {busy ? 'Check your wallet…' : 'Send it in'}
+        </button>
       </SpreadRow>
       {link && !videoId && <p>That doesn’t look like a YouTube video link.</p>}
       {note && <p role="status">{note}</p>}

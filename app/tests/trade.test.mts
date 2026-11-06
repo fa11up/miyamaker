@@ -7,6 +7,7 @@ import {
   blocksToReveal,
   commitPhase,
   depositPlan,
+  directSendOnly,
   filterPools,
   KIND,
   MODE,
@@ -57,7 +58,7 @@ test('1 NFT is 1e18 pool tokens', () => {
   assert.equal(unitsText(undefined), '–')
   assert.equal(unitsText(0n), '0')
   assert.equal(unitsText(POOL_UNIT * 1234n), '1,234')
-  assert.equal(unitsText(POOL_UNIT * 5n / 2n), '2.5')
+  assert.equal(unitsText((POOL_UNIT * 5n) / 2n), '2.5')
   assert.equal(unitsText(1n), '0.0001')
 })
 
@@ -77,6 +78,12 @@ test('deposit plan: direct transfers skip approvals; several ERC-721s need the p
   assert.equal(depositPlan(KIND.ERC1155, 5, false), 'transfer-1155')
   assert.equal(depositPlan(KIND.ERC721, 1, false), 'transfer-721')
   assert.equal(depositPlan(KIND.ERC721, 2, false), 'approve')
+  assert.equal(depositPlan(KIND.ERC721, 2, true), 'deposit')
+  // Robinhood collections refuse approved operators: never ask for an approval that cannot work.
+  assert.equal(depositPlan(KIND.ERC721, 2, false, true), 'transfer-721-each')
+  assert.equal(depositPlan(KIND.ERC721, 2, true, true), 'transfer-721-each')
+  assert.equal(depositPlan(KIND.ERC721, 1, false, true), 'transfer-721')
+  assert.equal(depositPlan(KIND.ERC1155, 2, false, true), 'transfer-1155')
   assert.equal(depositPlan(KIND.ERC721, 2, undefined), 'approve')
   assert.equal(depositPlan(KIND.ERC721, 2, true), 'deposit')
 })
@@ -91,7 +98,7 @@ test('random redeems: my open commits, and when each can be revealed', () => {
   ]
   assert.deepEqual(
     pendingFor(rows, ME).map((r) => r.id),
-    [1n, 3n]
+    [1n, 3n],
   )
   assert.deepEqual(pendingFor(rows, undefined), [])
 
@@ -110,13 +117,39 @@ test('pool list: newest first, filtered by name, ticker or address', () => {
   assert.deepEqual(poolIndexes(2, 10), [1, 0])
   assert.deepEqual(poolIndexes(0, 10), [])
   const pools = [
-    { address: POOL, collection: '0x2222222222222222222222222222222222222222', kind: KIND.ERC721, mode: MODE.TARGETED, symbol: 'mMIL', name: 'miya pool: Milady', collectionName: 'Milady', held: 3n },
-    { address: '0x3333333333333333333333333333333333333333', collection: '0x4444444444444444444444444444444444444444', kind: KIND.ERC1155, mode: MODE.RANDOM, symbol: 'mSONG', name: 'miya pool: Song', held: 1n },
+    {
+      address: POOL,
+      collection: '0x2222222222222222222222222222222222222222',
+      kind: KIND.ERC721,
+      mode: MODE.TARGETED,
+      symbol: 'mMIL',
+      name: 'miya pool: Milady',
+      collectionName: 'Milady',
+      held: 3n,
+    },
+    {
+      address: '0x3333333333333333333333333333333333333333',
+      collection: '0x4444444444444444444444444444444444444444',
+      kind: KIND.ERC1155,
+      mode: MODE.RANDOM,
+      symbol: 'mSONG',
+      name: 'miya pool: Song',
+      held: 1n,
+    },
   ]
   assert.equal(filterPools(pools, '').length, 2)
-  assert.deepEqual(filterPools(pools, 'milady').map((p) => p.symbol), ['mMIL'])
-  assert.deepEqual(filterPools(pools, 'msong').map((p) => p.symbol), ['mSONG'])
-  assert.deepEqual(filterPools(pools, '0x4444').map((p) => p.symbol), ['mSONG'])
+  assert.deepEqual(
+    filterPools(pools, 'milady').map((p) => p.symbol),
+    ['mMIL'],
+  )
+  assert.deepEqual(
+    filterPools(pools, 'msong').map((p) => p.symbol),
+    ['mSONG'],
+  )
+  assert.deepEqual(
+    filterPools(pools, '0x4444').map((p) => p.symbol),
+    ['mSONG'],
+  )
   assert.equal(poolTitle(pools[0]!), 'Milady')
   assert.equal(poolTitle(pools[1]!), 'Song')
   assert.equal(poolTitle({ name: '', collection: pools[1]!.collection }), '0x4444…4444')
@@ -128,4 +161,18 @@ test('revealWords: says when the pool is holding an NFT', () => {
   const mixed = revealWords([1n, 2n], [2n])
   assert.match(mixed, /^You got #1, now in your wallet/)
   assert.match(mixed, /refused to send #2/)
+})
+
+test('Robinhood Chain sells by direct send', () => {
+  assert.equal(directSendOnly(4663), true)
+  assert.equal(directSendOnly(1), false)
+})
+
+test('token pages have their own paths, and Sepolia links are gone', () => {
+  const A = '0x53d0eA0A685220718Dc6a0a6e4617194C6F37921'
+  assert.equal(tradePath('tokens', undefined, undefined, { chainId: 1, address: A }), `/trade/tokens/1/${A}`)
+  assert.deepEqual(parseTradePath(`/trade/tokens/4663/${A}`), { mode: 'tokens', token: { chainId: 4663, address: A } })
+  assert.deepEqual(parseTradePath('/trade/tokens/1/nope'), { mode: 'tokens' })
+  assert.deepEqual(parseTradePath(`/trade/tokens/11155111/${A}`), { mode: 'tokens' })
+  assert.deepEqual(parseTradePath(`/trade/nfts/collection/11155111/${A}`), { mode: 'nfts' })
 })

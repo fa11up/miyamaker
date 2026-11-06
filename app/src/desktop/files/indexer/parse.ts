@@ -52,6 +52,8 @@ export function parseAlchemyOwnedNfts(
         (Array.isArray(contract.spamClassifications) && contract.spamClassifications.length > 0),
       hostedThumb,
       hostedFull,
+      tokenType: tokenType === 'ERC1155' || tokenType === 'ERC721' ? tokenType : undefined,
+      balance: typeof n.balance === 'string' && /^\d+$/.test(n.balance) ? n.balance : undefined,
     })
   }
 

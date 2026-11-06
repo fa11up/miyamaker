@@ -8,6 +8,7 @@ import { d1TapeStore, handlePublicAccessRequest, PUBLIC_ACCESS_PATH, youtubeLook
 import { serveRange } from './_lib/ranges'
 import type { D1Like } from './_lib/station'
 import { d1Store, gatewayContentType, handleStationRequest, STATION_PATH } from './_lib/station'
+import { kickOnAir, kickReader } from './_lib/tvkick'
 import { handleTvLiveRequest, TV_LIVE_PATH } from './_lib/tvlive'
 import { CONTRACT_CHECK_PATH, etherscanReader, handleContractCheck } from './_lib/contractcheck'
 import { clientKey, createRateLimiter, handleZeroExRequest, PROXY_PREFIX, sameOrigin } from './_lib/zeroex'
@@ -106,9 +107,11 @@ export default {
     }
 
     if (url.pathname === TV_LIVE_PATH) {
+      const cache = edgeCache((caches as unknown as { default?: Cache }).default)
       return handleTvLiveRequest(request, {
         key: env.YOUTUBE_API_KEY,
-        cache: edgeCache((caches as unknown as { default?: Cache }).default),
+        cache,
+        kick: () => kickOnAir({ read: kickReader, cache, now: Date.now() }),
       })
     }
 

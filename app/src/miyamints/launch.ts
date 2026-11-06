@@ -7,7 +7,7 @@
  * ETH amounts go through parseEther only; links must be http(s), ipfs or ar.
  */
 import type { Address } from 'viem'
-import { getAddress, isAddress, parseEther, zeroAddress } from 'viem'
+import { formatEther, getAddress, isAddress, parseEther, zeroAddress } from 'viem'
 
 /**
  * Kept identical to src/music/drop.ts (makeSalt, PRICING_MODEL; parseAlignmentPct with plainer words): this module
@@ -552,4 +552,69 @@ export function txPlan(type: LaunchType): { id: 'deploy' | 'first'; label: strin
     { id: 'deploy', label: 'Create the collection' },
     { id: 'first', label: 'Add your first edition' },
   ]
+}
+
+// ── plain words for the Review step ──────────────────────────────────────────
+
+/** A datetime-local value as "12 Nov 18:00", in the person's own time zone. */
+export function whenWords(local: string): string {
+  return new Date(local)
+    .toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
+    .replace(',', '')
+}
+
+/** One sale phase on one line: "0.02 ETH, limit 2 per wallet, starts 12 Nov 18:00". */
+export function phaseLine(p: PhaseForm): string {
+  const price = parseEth(p.price, { allowZero: true })
+  const cap = parseWhole(p.maxPerWallet, { min: 1, max: 100_000, label: 'Limit', blank: 0 })
+  const sale = parseWhole(p.supplyCap, { min: 1, max: 100_000, label: 'Pieces', blank: 0 })
+  return [
+    price.ok ? (price.wei === 0n ? 'Free' : `${formatEther(price.wei)} ETH`) : '—',
+    cap.ok && cap.n ? `limit ${cap.n} per wallet` : 'no limit per wallet',
+    ...(sale.ok && sale.n ? [`${sale.n.toLocaleString('en-US')} for sale`] : []),
+    p.start ? `starts ${whenWords(p.start)}` : 'starts right away',
+    ...(p.end ? [`ends ${whenWords(p.end)}`] : []),
+  ].join(', ')
+}
+
+/** Which of a phase's boxes hold something that cannot be used. The step's error names the phase; these mark the box. */
+export function phaseFieldsBad(p: PhaseForm): Partial<Record<keyof PhaseForm, boolean>> {
+  const start = parseLocalTime(p.start, 0n)
+  const end = parseLocalTime(p.end, 0n)
+  return {
+    price: !parseEth(p.price, { allowZero: true }).ok,
+    maxPerWallet: !parseWhole(p.maxPerWallet, { min: 1, max: 100_000, label: 'Limit', blank: 0 }).ok,
+    supplyCap: !parseWhole(p.supplyCap, { min: 1, max: 100_000, label: 'Pieces', blank: 0 }).ok,
+    start: !start.ok,
+    end: !end.ok || (end.at !== 0n && start.ok && start.at !== 0n && end.at <= start.at),
+  }
+}
+
+/** The fields worth asking about before closing. Picking a kind or leaving a default is nothing to lose. */
+const DRAFT_FIELDS: (keyof LaunchForm)[] = [
+  'name',
+  'symbol',
+  'description',
+  'website',
+  'imageUri',
+  'audioUri',
+  'artist',
+  'supply',
+  'ownerReserve',
+  'royaltyPct',
+  'revealUri',
+  'reserve',
+  'durationHours',
+  'bidStep',
+  'editionPrice',
+  'editionSupply',
+  'editionStart',
+  'customVault',
+]
+
+/** Whether closing the window would lose anything typed or chosen. */
+export function draftHasData(f: LaunchForm, hasFiles: boolean): boolean {
+  if (hasFiles) return true
+  if (DRAFT_FIELDS.some((k) => f[k] !== EMPTY_FORM[k])) return true
+  return f.phases.length > 1 || Object.values(f.phases[0] || {}).some(Boolean)
 }

@@ -1,20 +1,10 @@
 import type { Address } from 'viem'
-import { parseEther } from 'viem'
 
+import { AUCTION_CHAIN_ID } from '@/constants/contracts'
 import { useContractWrite } from '@/hooks/useContractWrite'
 
+import { parseBidAmount } from './bidding'
 import { abi } from './constants'
-
-/** Parses a user-typed ETH amount; undefined for '' or anything parseEther rejects (never throws). */
-export function parseBidAmount(bidAmount: string): bigint | undefined {
-  if (!/^(\d+\.?\d*|\.\d+)$/.test(bidAmount)) return undefined
-  try {
-    const value = parseEther(bidAmount)
-    return value > 0n ? value : undefined
-  } catch {
-    return undefined
-  }
-}
 
 export function usePlaceBid({ address, bidAmount }: { address: Address; bidAmount: string }) {
   const value = parseBidAmount(bidAmount)
@@ -23,6 +13,8 @@ export function usePlaceBid({ address, bidAmount }: { address: Address; bidAmoun
     functionName: 'placeBid',
     abi,
     value,
+    // Reads are pinned to this chain too, so a wallet on another network can never send ETH to this address there.
+    chainId: AUCTION_CHAIN_ID,
   })
 
   const placeBid = async (nft: Address, tokenId: number) => {
@@ -30,5 +22,5 @@ export function usePlaceBid({ address, bidAmount }: { address: Address; bidAmoun
     return writeAsync({ args: [nft, tokenId] })
   }
 
-  return { placeBid, isValidBid: value !== undefined }
+  return { placeBid }
 }

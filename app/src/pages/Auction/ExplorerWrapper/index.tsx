@@ -1,4 +1,5 @@
 import type { CSSProperties, ReactNode } from 'react'
+import { Fragment } from 'react'
 import styled from 'styled-components/macro'
 
 import { HighlightButton } from '@/components/Button'
@@ -34,12 +35,30 @@ const Wrapper = styled.fieldset`
     color: #f4dd9c;
     text-transform: uppercase;
 
-    > div:nth-child(odd) {
+    > button {
+      padding: 0;
+      border: none;
+      background: none;
+      color: inherit;
+      font: inherit;
+      text-transform: inherit;
       cursor: pointer;
 
       :hover {
         color: #fff6d6;
         text-decoration: underline;
+      }
+
+      :focus-visible {
+        outline: 1px dotted #f4dd9c;
+        outline-offset: 2px;
+      }
+
+      /* A bigger target on phones, without making the legend any taller. */
+      @media only screen and (max-width: 640px) {
+        padding: 10px 0;
+        margin-top: -10px;
+        margin-bottom: -10px;
       }
     }
 
@@ -69,12 +88,18 @@ const Wrapper = styled.fieldset`
     background: #fbf5e4;
     box-shadow: none;
     color: #5f4030;
-    font-size: 0.6rem;
+    font-size: 0.75rem;
     white-space: nowrap;
   }
 
   && ${NormalButton}, && ${HighlightButton} {
     ${paddleButton}
+  }
+
+  @media only screen and (max-width: 640px) {
+    && ${NormalButton}, && ${HighlightButton} {
+      min-height: 44px;
+    }
   }
 `
 
@@ -102,12 +127,12 @@ export default function ExplorerWrapper({
         {titleSeparate.map((item, index) => {
           if (index === titleSeparate.length - 1) return <div key={index}>{item}</div>
           return (
-            <>
-              <div key={index} onClick={() => handleClick(item)}>
+            <Fragment key={index}>
+              <button type="button" onClick={() => handleClick(item)}>
                 {item}
-              </div>
+              </button>
               <div> &gt; </div>
-            </>
+            </Fragment>
           )
         })}
       </legend>

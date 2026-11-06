@@ -16,7 +16,7 @@ import {
   erc1155FactoryAbi,
   erc1155InstanceAbi,
 } from '@/miyamints/abi'
-import { describeError } from '@/miyamints/errors'
+import { describeError, plainTxError, TX_CHECK_WORDS } from '@/miyamints/errors'
 import type { LaunchForm, LaunchType, Resolved } from '@/miyamints/launch'
 import { buildAuctionArgs, buildDropArgs, buildEditionArgs, makeSalt } from '@/miyamints/launch'
 import { rememberLaunch } from '@/miyamints/local'
@@ -60,6 +60,8 @@ export function useLaunch() {
   const [result, setResult] = useState<LaunchResult>()
   const [error, setError] = useState('')
   const [running, setRunning] = useState(false)
+  /** What the current upload is waiting for, in the storage service's own steps. */
+  const [note, setNote] = useState('')
   const [check, setCheck] = useState<{ state: 'idle' | 'checking' | 'ok' | 'error'; message?: string }>({
     state: 'idle',
   })
@@ -77,11 +79,14 @@ export function useLaunch() {
       ],
       undefined,
       getIrysToken(chain?.id || 1),
-      chain
-    ).catch((e) => {
-      mark(id, 'error')
-      throw e
-    })
+      chain,
+      setNote
+    )
+      .catch((e) => {
+        mark(id, 'error')
+        throw e
+      })
+      .finally(() => setNote(''))
 
     mark(id, 'done')
     return `ar://${tx}`
@@ -136,7 +141,7 @@ export function useLaunch() {
         await simulateContract(wagmiConfig, { account: address, chainId, ...(call as any) })
         setCheck({ state: 'ok' })
       } catch (e) {
-        setCheck({ state: 'error', message: describeError(e) })
+        setCheck({ state: 'error', message: plainTxError(e, TX_CHECK_WORDS) })
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -262,7 +267,10 @@ export function useLaunch() {
           deployHash = hash
           setHashes((h) => ({ ...h, deploy: hash }))
           const receipt = await waitForTransactionReceipt(wagmiConfig, { hash, chainId })
-          if (receipt.status !== 'success') throw new Error('The create transaction failed on-chain.')
+          if (receipt.status !== 'success') {
+            throw new Error('Creating the collection failed. Your uploads are saved, so press the button to try again.')
+          }
+
           if (form.type === 'drop') {
             inst = parseEventLogs({ abi: dropFactoryAbi, eventName: 'DropCreated', logs: receipt.logs })[0]?.args.drop
           } else if (form.type === 'auction') {
@@ -305,7 +313,7 @@ export function useLaunch() {
           })
           return next
         })
-        setError(describeError(e))
+        setError(plainTxError(e))
       } finally {
         setRunning(false)
       }
@@ -331,5 +339,5 @@ export function useLaunch() {
     mark(what, 'idle')
   }
 
-  return { steps, uploaded, instance, hashes, result, error, running, check, simulate, run, reset, invalidate }
+  return { steps, uploaded, instance, hashes, result, error, running, note, check, simulate, run, reset, invalidate }
 }

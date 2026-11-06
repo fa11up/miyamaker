@@ -6,8 +6,12 @@ import { useAccount, useSignMessage } from 'wagmi'
 import { Err, SmallButton } from '@/components/LaunchKit'
 import { BigButton, StatusBox, Well } from '@/components/Retro'
 import { useRadio } from '@/context/RadioProvider'
+import { plainTxError } from '@/miyamints/errors'
 import { addTrack, toTrack } from '@/music/community'
+import { stationStorageWords, storedBytes } from '@/music/creatorWords'
 import { space, text } from '@/theme/tokens'
+import { FREE_BYTES } from '@/utils/fundAndUpload'
+import { useStorageQuote } from '@/utils/useStorageQuote'
 
 import { cleanLine } from '../../../api/_lib/station'
 
@@ -53,6 +57,8 @@ export default function StationAdd({
   audioUri,
   coverUri,
   store,
+  stored,
+  storing,
 }: {
   /** The step's main action, while editions are not open: the big button, and a word on what it still needs. */
   primary: boolean
@@ -64,6 +70,10 @@ export default function StationAdd({
   audioUri?: string
   coverUri?: string
   store: (id: 'audio' | 'cover', file: File) => Promise<string>
+  /** Files the release already holds: those are not paid for again. */
+  stored: { audio?: string; cover?: string }
+  /** What the upload in progress is waiting for. */
+  storing?: string
 }) {
   const { address } = useAccount()
   const { signMessageAsync } = useSignMessage()
@@ -77,15 +87,25 @@ export default function StationAdd({
   const name = cleanLine(title, 120)
   const by = cleanLine(artist, 80)
   const linked = arId(audioUri)
+  const toStore = [
+    ...(audioFile && !linked && !stored.audio ? [audioFile] : []),
+    ...(coverFile && !stored.cover ? [coverFile] : []),
+  ]
+  const storage = useStorageQuote(
+    storedBytes(
+      toStore.map((f) => f.size),
+      FREE_BYTES
+    )
+  )
 
   const add = async () => {
     if (!address) return
     setError(undefined)
     try {
-      setNote('Uploading your track…')
+      setNote('Storing your track. Check your wallet.')
       const txId = linked || arId(await store('audio', audioFile as File))
       if (!txId) throw new Error('That upload did not land on Arweave. Try again.')
-      if (coverFile) setNote('Uploading your cover…')
+      if (coverFile) setNote('Storing your cover. Check your wallet.')
       const artworkId = coverFile ? arId(await store('cover', coverFile)) : arId(coverUri)
       setNote('Sign to put it on the station. This one costs nothing.')
       const { track } = await addTrack(
@@ -96,8 +116,7 @@ export default function StationAdd({
       client.invalidateQueries({ queryKey: ['station'] })
       setDone(`${track.title} is on the station, and in your radio.`)
     } catch (e) {
-      const m = (e as { shortMessage?: string })?.shortMessage || (e as Error).message
-      setError(/user rejected|user denied|rejected the request/i.test(m) ? 'You cancelled it in your wallet.' : m)
+      setError(plainTxError(e))
     } finally {
       setNote(undefined)
     }
@@ -127,11 +146,11 @@ export default function StationAdd({
 
   const button = primary ? (
     <BigButton type="button" disabled={!rights || !!note} onClick={add}>
-      {note ? 'Working…' : 'Add to community station'}
+      {note ? 'Working… check your wallet' : 'Add to community station'}
     </BigButton>
   ) : (
     <SmallButton type="button" disabled={!rights || !!note} onClick={add}>
-      {note ? 'Working…' : 'Add to community station'}
+      {note ? 'Working… check your wallet' : 'Add to community station'}
     </SmallButton>
   )
 
@@ -143,12 +162,9 @@ export default function StationAdd({
           <input type="checkbox" checked={rights} disabled={!!note} onChange={(e) => setRights(e.target.checked)} />
           <span>I made this or have the right to share it.</span>
         </label>
-        <p>{note || 'Small storage fee, free to list. The file stays on Arweave for good.'}</p>
-        {error && (
-          <div role="alert">
-            <Err>{error}</Err>
-          </div>
-        )}
+        <p role={note ? 'status' : undefined}>{storing || note || stationStorageWords(storage)}</p>
+        {coverUri && !arId(coverUri) && <p>Covers must be on Arweave to show on the station.</p>}
+        <Err>{error}</Err>
         {!primary && button}
       </Box>
       {primary && button}

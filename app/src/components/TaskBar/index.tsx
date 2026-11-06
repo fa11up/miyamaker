@@ -105,6 +105,16 @@ const InsetContainer = styled.div`
   font-size: ${text.xs};
 `
 
+/** A small icon, with room round it to press on a phone. */
+const WaveButton = styled(ButtonIcon)`
+  position: relative;
+  &::after {
+    content: '';
+    position: absolute;
+    inset: -8px;
+  }
+`
+
 const BlockNumber = styled.div`
   padding: 0 8px 0 12px;
 `
@@ -179,7 +189,7 @@ export default function TaskBar({
           <VerticalSeparator />
           <InsetContainer>
             <RadioTray showTitle={!mobile} />
-            <ButtonIcon
+            <WaveButton
               onClick={() => toggleWaves()}
               aria-label="Wave background"
               aria-pressed={waves}
@@ -195,7 +205,7 @@ export default function TaskBar({
                 style={{ minWidth: 16, width: 16, border: 'none' }}
                 alt=""
               />
-            </ButtonIcon>
+            </WaveButton>
             {block && !mobile && (
               <BlockNumber title="Latest Ethereum block. A new one comes about every 12 seconds; if this number moves, you are online.">
                 {block}

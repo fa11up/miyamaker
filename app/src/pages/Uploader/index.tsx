@@ -1,7 +1,8 @@
+import { useCallback, useRef, useState } from 'react'
 import styled from 'styled-components/macro'
 
 import ProgressBarUploader from '@/components/ProgressUploader'
-import { Panel } from '@/components/Retro'
+import { Panel, StatusBox } from '@/components/Retro'
 import { pinstripe, y2kSkin } from '@/components/Retro/y2k'
 import TitleBar from '@/components/TitleBar'
 import WindowWrapper from '@/components/WindowWrapper'
@@ -68,11 +69,44 @@ const Layout = styled.div`
     /* See-through enough that the disc still shows behind it. */
     background: rgba(240, 248, 255, 0.84);
     color: #07184a;
+    /* A short window or a phone scrolls the panel, so nothing is cut off under the fold. */
+    max-height: 100%;
+    overflow-y: auto;
     button {
       ${gel('#c8f6ff', '#27b8ff', '#04123a')}
       min-height: 28px;
       padding: 0 ${space[3]};
       cursor: pointer;
+    }
+    @media (max-width: 640px) {
+      button,
+      a {
+        min-height: 44px;
+      }
+    }
+  }
+`
+
+const CloseCheck = styled(StatusBox)`
+  position: absolute;
+  z-index: 2;
+  left: ${space[3]};
+  right: ${space[3]};
+  bottom: ${space[3]};
+  flex-wrap: wrap;
+  align-items: center;
+  > span {
+    flex: 1 1 14rem;
+  }
+  button {
+    ${gel('#c8f6ff', '#27b8ff', '#04123a')}
+    min-height: 32px;
+    padding: 0 ${space[3]};
+    cursor: pointer;
+  }
+  @media (max-width: 640px) {
+    button {
+      min-height: 44px;
     }
   }
 `
@@ -85,12 +119,26 @@ export default function MintPage() {
 
   const [fullscreen, toggleFullscreen] = useFullscreen(pageId)
   const dispatch = useAppDispatch()
-  const close = () => {
+  const dropArea = useRef<HTMLDivElement>(null)
+  const [busy, setBusy] = useState(false)
+  const [checkingClose, setCheckingClose] = useState(false)
+  const onBusyChange = useCallback((value: boolean) => {
+    setBusy(value)
+    if (!value) setCheckingClose(false)
+  }, [])
+
+  const closeNow = () => {
     if (uploadRequest) {
       dispatch(deleteUploadOrder({ requestFrom: uploadRequest.requestFrom }))
     }
 
     dispatch(closeWindow({ value: pageId }))
+  }
+
+  // Closing unmounts the window and loses the result, so a running upload asks first.
+  const close = () => {
+    if (busy) setCheckingClose(true)
+    else closeNow()
   }
 
   const minimize = () => dispatch(minimizeWindow({ value: pageId }))
@@ -118,10 +166,22 @@ export default function MintPage() {
       >
         {page?.label}
       </TitleBar>
-      <Layout>
+      <Layout ref={dropArea}>
         <Panel>
-          <ProgressBarUploader request={uploadRequest} onRequest={(value) => finalize(value)} />
+          <ProgressBarUploader
+            request={uploadRequest}
+            onRequest={(value) => finalize(value)}
+            dropArea={dropArea}
+            onBusyChange={onBusyChange}
+          />
         </Panel>
+        {checkingClose && (
+          <CloseCheck tone="info" role="alertdialog">
+            <span>Upload still running. Close anyway? If you paid, it stays on your storage balance.</span>
+            <button onClick={() => setCheckingClose(false)}>Keep uploading</button>
+            <button onClick={closeNow}>Close anyway</button>
+          </CloseCheck>
+        )}
       </Layout>
     </WindowWrapper>
   )

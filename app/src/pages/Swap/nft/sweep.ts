@@ -60,7 +60,7 @@ export function sweepTotals(plans: readonly { total: bigint; lines: readonly Swe
 export const isWalletRefusal = (message: string) =>
   /user rejected|user denied|rejected the request|denied transaction/i.test(message)
 
-export type ItemState = 'ready' | 'wallet' | 'pending' | 'bought' | 'gone' | 'failed' | 'stopped'
+export type ItemState = 'ready' | 'wallet' | 'pending' | 'bought' | 'gone' | 'failed' | 'stopped' | 'unconfirmed'
 
 export const SWEEP_STATE_WORDS: Record<ItemState, string> = {
   ready: 'Ready',
@@ -70,6 +70,92 @@ export const SWEEP_STATE_WORDS: Record<ItemState, string> = {
   gone: 'No longer available, skipped',
   failed: 'Failed, not bought',
   stopped: 'Not bought',
+  unconfirmed: 'Not confirmed yet',
+}
+
+export type SweepRun = { state: ItemState; hash?: string; note?: string }
+
+/**
+ * One buy after another, strictly in order. The wallet and chain calls are passed in so `node --test` can run all of it.
+ *
+ * `isStopped` is asked before every wallet prompt: when the screen has gone, no new prompt may open with no screen to
+ * explain it. A refusal in the wallet stops the rest; any other failure costs only that NFT. A receipt that cannot be
+ * read is `unconfirmed`, not failed: that buy may yet land.
+ */
+export async function runSweep<T, R>(
+  items: readonly T[],
+  d: {
+    simulate: (item: T) => Promise<R>
+    send: (item: T, request: R) => Promise<string>
+    /** Resolves with the receipt, whatever its status. Throws only when it cannot be read. */
+    wait: (hash: string) => Promise<{ status?: string }>
+    isStopped: () => boolean
+    isRefusal: (error: unknown) => boolean
+    /** What a failed simulation means: this listing has gone, or something else went wrong. */
+    simulationFailed: (item: T, error: unknown) => SweepRun
+    /** Plain words for a failed send, and for a transaction that failed on the network. */
+    sendFailedNote: (error: unknown) => string
+    revertedNote: string
+    unconfirmedNote: string
+    onState: (item: T, run: SweepRun) => void
+    onRefused?: () => void
+  }
+) {
+  let stopped = false
+  for (const item of items) {
+    if (d.isStopped()) stopped = true
+    if (stopped) {
+      d.onState(item, { state: 'stopped' })
+      // eslint-disable-next-line no-continue
+      continue
+    }
+
+    d.onState(item, { state: 'wallet' })
+    let request: R
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      request = await d.simulate(item)
+    } catch (e) {
+      // Sold, cancelled or expired while the sweep ran: no prompt, no transaction, on to the next.
+      d.onState(item, d.simulationFailed(item, e))
+      // eslint-disable-next-line no-continue
+      continue
+    }
+
+    // The screen may have gone during that check.
+    if (d.isStopped()) {
+      stopped = true
+      d.onState(item, { state: 'stopped' })
+      // eslint-disable-next-line no-continue
+      continue
+    }
+
+    let hash: string
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      hash = await d.send(item, request)
+    } catch (e) {
+      if (d.isRefusal(e)) {
+        stopped = true
+        d.onRefused?.()
+        d.onState(item, { state: 'stopped' })
+      } else d.onState(item, { state: 'failed', note: d.sendFailedNote(e) })
+      // eslint-disable-next-line no-continue
+      continue
+    }
+
+    d.onState(item, { state: 'pending', hash })
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      const receipt = await d.wait(hash)
+      d.onState(
+        item,
+        receipt.status === 'success' ? { state: 'bought', hash } : { state: 'failed', hash, note: d.revertedNote }
+      )
+    } catch {
+      d.onState(item, { state: 'unconfirmed', hash, note: d.unconfirmedNote })
+    }
+  }
 }
 
 /**

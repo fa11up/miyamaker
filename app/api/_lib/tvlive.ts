@@ -2,13 +2,14 @@
  * Which YouTube stream each miyatv channel should play right now. A live stream's id changes whenever it restarts, so the
  * channels ask here instead of trusting a fixed id.
  *
- *   GET /api/tv/live   { ids: { lofi: '<videoId>', ... } }
+ *   GET /api/tv/live   { ids: { lofi: '<videoId>', ... }, kick: [{ slug, label, viewers }] }
  *
  * YouTube's daily quota is 10,000 units: checking the known ids costs 1, a channel search costs 100. So everyone reads one
  * cached answer, the ids are re-checked at most every 10 minutes, and a search only runs for a stream that has really
  * stopped. Without a key, or if YouTube is down, the last known ids stand. The key stays on the server.
  */
 import type { MarketCache } from './market'
+import type { KickStream } from './tvkick'
 
 export const TV_LIVE_PATH = '/api/tv/live'
 const CACHE_KEY = 'tv-live:v1'
@@ -27,6 +28,8 @@ export type TvLiveDeps = {
   /** A YouTube Data API GET returning parsed JSON; throws when it fails. */
   youtube?: (path: string, query: Record<string, string>) => Promise<unknown>
   now?: () => number
+  /** The Kick streams on air (./tvkick.ts). */
+  kick?: () => Promise<KickStream[]>
 }
 
 export const youtubeReader = (key: string) => async (path: string, query: Record<string, string>) => {
@@ -83,7 +86,8 @@ export async function handleTvLiveRequest(request: { method: string }, deps: TvL
   const now = deps.now?.() ?? Date.now()
   const cached = (await deps.cache.get(CACHE_KEY)) as { at: number; body: Record<string, string> } | undefined
   const known = { ...fallbacks(), ...cached?.body }
-  if (cached && now - cached.at < RECHECK_MS) return reply(200, { ids: known }, 300)
+  const kick = (await deps.kick?.()) ?? []
+  if (cached && now - cached.at < RECHECK_MS) return reply(200, { ids: known, kick }, 120)
   let ids = known
   try {
     ids = await refresh(known, deps)
@@ -93,5 +97,5 @@ export async function handleTvLiveRequest(request: { method: string }, deps: TvL
   }
 
   await deps.cache.put(CACHE_KEY, { at: now, body: ids })
-  return reply(200, { ids }, 300)
+  return reply(200, { ids, kick }, 120)
 }

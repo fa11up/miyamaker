@@ -1,4 +1,13 @@
 import MiyaLogo from 'assets/134321870.png'
+import CultLogo from 'assets/tokens/cult.webp'
+import EthLogo from 'assets/tokens/eth.webp'
+import ImdLogo from 'assets/tokens/imd.webp'
+import ImdusdLogo from 'assets/tokens/imdusd.webp'
+import InferLogo from 'assets/tokens/infer.webp'
+import UsdcLogo from 'assets/tokens/usdc.webp'
+import UsdgLogo from 'assets/tokens/usdg.webp'
+import WbtcLogo from 'assets/tokens/wbtc.webp'
+import WethLogo from 'assets/tokens/weth.webp'
 import type { Address } from 'viem'
 import { mainnet, robinhood } from 'viem/chains'
 
@@ -23,8 +32,24 @@ export const sameAddress = (a?: string, b?: string) => !!a && !!b && a.toLowerCa
 
 export type SwapToken = ListToken & { address: Address }
 
-const withLogo = (t: ListToken): SwapToken =>
-  sameAddress(t.address, MIYA_ADDRESS) ? { ...t, logoURI: MiyaLogo } : (t as SwapToken)
+/** The curated tokens' logos, bundled so the picker never waits on or trusts someone else's image host. */
+const LOGOS: Record<string, string> = {
+  [NATIVE_TOKEN.toLowerCase()]: EthLogo,
+  [MIYA_ADDRESS.toLowerCase()]: MiyaLogo,
+  '0x53d0ea0a685220718dc6a0a6e4617194c6f37921': InferLogo,
+  '0x61aaf8a992a3143e2b0c9cb0030b9fe702854a25': ImdusdLogo,
+  '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48': UsdcLogo,
+  '0x2260fac5e5542a773aa44fbcfedf7c193bc2c599': WbtcLogo,
+  '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2': WethLogo,
+  '0xd34a99bc0f67ae1bbd63c660e6d0b0dd03e263b7': ImdLogo,
+  '0x0000000000c5dc95539589fbd24be07c6c14eca4': CultLogo,
+  '0x5fc5360d0400a0fd4f2af552add042d716f1d168': UsdgLogo,
+}
+
+export const withLogo = (t: ListToken): SwapToken => {
+  const logoURI = LOGOS[t.address.toLowerCase()]
+  return (logoURI ? { ...t, logoURI } : t) as SwapToken
+}
 
 /** The curated miya list per chain, pinned to the top of the picker and shown as quick picks. */
 export const PINNED_TOKENS: Record<SwapChainId, SwapToken[]> = {

@@ -3,13 +3,23 @@ import { useRef, useState } from 'react'
 import styled from 'styled-components/macro'
 
 import ComputerIcon from '@/assets/computer.png'
+import EditionsIcon from '@/assets/filepack-0.png'
 import AuctionIcon from '@/assets/icon/auction.png'
-import DropMusicIcon from '@/assets/icon/drop_music.png'
-import { DropZone, Err, Field, Row2, Segmented, SmallButton, SplitMeter, Thumb } from '@/components/LaunchKit'
+import {
+  DropWords,
+  DropZone,
+  Err,
+  Field,
+  Row2,
+  Segmented,
+  SmallButton,
+  SplitMeter,
+  Thumb,
+} from '@/components/LaunchKit'
 import MyUploads from '@/components/MyUploads'
 import { Eyebrow, Well } from '@/components/Retro'
 import type { FieldErrors, LaunchForm, LaunchType, PhaseForm } from '@/miyamints/launch'
-import { EMPTY_PHASE, MAX_PHASES, parseAlignmentPct } from '@/miyamints/launch'
+import { EMPTY_PHASE, MAX_PHASES, parseAlignmentPct, parseEth, phaseFieldsBad } from '@/miyamints/launch'
 import { pctLabel } from '@/miyamints/split'
 import type { FileCheck } from '@/music/audio'
 import { AUDIO_ACCEPT, formatDuration, IMAGE_ACCEPT } from '@/music/audio'
@@ -111,8 +121,8 @@ const TYPES: { id: LaunchType; title: string; body: string; icon: string }[] = [
   {
     id: 'editions',
     title: 'Editions',
-    body: 'Copies of one artwork. Anyone can buy a copy at your price. Releasing a song? Drop Music is made for that.',
-    icon: DropMusicIcon,
+    body: 'Copies of one artwork or song. Anyone can buy a copy at your price.',
+    icon: EditionsIcon,
   },
 ]
 
@@ -213,7 +223,7 @@ function FilePick({
             </>
           ) : (
             <>
-              Drop a file here
+              <DropWords mouse="Drop a file here" touch="Choose a file" />
               <small>{hint}</small>
             </>
           )}
@@ -246,7 +256,15 @@ export function ArtStep({
   audio,
   onImage,
   onAudio,
-}: StepProps & { image?: Pick; audio?: Pick; onImage: (f?: File) => void; onAudio: (f?: File) => void }) {
+  requiredDone,
+}: StepProps & {
+  image?: Pick
+  audio?: Pick
+  onImage: (f?: File) => void
+  onAudio: (f?: File) => void
+  /** The name, ticker and art are in: the optional boxes can come out. */
+  requiredDone: boolean
+}) {
   const music = form.type === 'editions' && form.editionKind === 'music'
   const input = (k: keyof LaunchForm) => ({
     value: form[k] as string,
@@ -393,16 +411,20 @@ export function ArtStep({
           <span />
         )}
       </Row2>
-      <Field>
-        Description
-        <textarea {...input('description')} maxLength={1000} placeholder="What is this? Who made it?" />
-        <Err>{errors.description}</Err>
-      </Field>
-      <Field>
-        Website (optional)
-        <input {...input('website')} placeholder="https://…" inputMode="url" />
-        <Err>{errors.website}</Err>
-      </Field>
+      {(requiredDone || form.description || form.website) && (
+        <>
+          <Field>
+            Description (optional)
+            <textarea {...input('description')} maxLength={1000} placeholder="What is this? Who made it?" />
+            <Err>{errors.description}</Err>
+          </Field>
+          <Field>
+            Website (optional)
+            <input {...input('website')} placeholder="https://…" inputMode="url" />
+            <Err>{errors.website}</Err>
+          </Field>
+        </>
+      )}
     </Stack>
   )
 }
@@ -462,7 +484,8 @@ export function SaleStep({ form, set, errors }: StepProps) {
             Starting bid (ETH)
             <input {...input('reserve')} inputMode="decimal" placeholder="0.1" />
             <small>
-              You pay this now as a deposit. You get it back when the piece sells. If nobody bids, it goes to miya.
+              You pay this now as a deposit. You get it back when the piece sells. If nobody bids, miya keeps the
+              deposit.
             </small>
             <Err>{errors.reserve}</Err>
           </Field>
@@ -506,12 +529,14 @@ export function SaleStep({ form, set, errors }: StepProps) {
             <Err>{errors.editionSupply}</Err>
           </Field>
         </Row2>
-        <Field>
-          Sale opens (optional)
-          <input type="datetime-local" {...input('editionStart')} />
-          <small>Leave empty to open as soon as you create it.</small>
-          <Err>{errors.editionStart}</Err>
-        </Field>
+        {(parseEth(form.editionPrice).ok || form.editionStart) && (
+          <Field>
+            Sale opens (optional)
+            <input type="datetime-local" {...input('editionStart')} />
+            <small>Leave empty to open as soon as you create it.</small>
+            <Err>{errors.editionStart}</Err>
+          </Field>
+        )}
       </Stack>
     )
   }
@@ -564,6 +589,7 @@ export function SaleStep({ form, set, errors }: StepProps) {
               Price (ETH)
               <input
                 value={p.price}
+                aria-invalid={!!errors.phases && !!phaseFieldsBad(p).price}
                 inputMode="decimal"
                 placeholder="0.01"
                 onChange={(e) => setPhase(i, 'price', e.target.value)}
@@ -574,6 +600,7 @@ export function SaleStep({ form, set, errors }: StepProps) {
               Limit per wallet
               <input
                 value={p.maxPerWallet}
+                aria-invalid={!!errors.phases && !!phaseFieldsBad(p).maxPerWallet}
                 inputMode="numeric"
                 placeholder="No limit"
                 onChange={(e) => setPhase(i, 'maxPerWallet', e.target.value)}
@@ -583,6 +610,7 @@ export function SaleStep({ form, set, errors }: StepProps) {
               Pieces for sale
               <input
                 value={p.supplyCap}
+                aria-invalid={!!errors.phases && !!phaseFieldsBad(p).supplyCap}
                 inputMode="numeric"
                 placeholder="No limit"
                 onChange={(e) => setPhase(i, 'supplyCap', e.target.value)}
@@ -593,19 +621,29 @@ export function SaleStep({ form, set, errors }: StepProps) {
           <Row2>
             <Field>
               Starts
-              <input type="datetime-local" value={p.start} onChange={(e) => setPhase(i, 'start', e.target.value)} />
+              <input
+                type="datetime-local"
+                value={p.start}
+                aria-invalid={!!errors.phases && !!phaseFieldsBad(p).start}
+                onChange={(e) => setPhase(i, 'start', e.target.value)}
+              />
               <small>Empty: right away.</small>
             </Field>
             <Field>
               Ends
-              <input type="datetime-local" value={p.end} onChange={(e) => setPhase(i, 'end', e.target.value)} />
+              <input
+                type="datetime-local"
+                value={p.end}
+                aria-invalid={!!errors.phases && !!phaseFieldsBad(p).end}
+                onChange={(e) => setPhase(i, 'end', e.target.value)}
+              />
               <small>Empty: runs until sold out.</small>
             </Field>
           </Row2>
         </PhaseBox>
       ))}
       <Err>{errors.phases}</Err>
-      {form.phases.length < MAX_PHASES && (
+      {form.phases.length < MAX_PHASES && (form.phases.length > 1 || !!form.phases[0]?.price.trim()) && (
         <div>
           <SmallButton type="button" onClick={() => set('phases', [...form.phases, { ...EMPTY_PHASE }])}>
             + Add a phase (for example an early price)
@@ -618,8 +656,8 @@ export function SaleStep({ form, set, errors }: StepProps) {
           Metadata folder link (optional)
           <input {...input('revealUri')} placeholder="ipfs://…/" inputMode="url" />
           <small>
-            Piece 1 reads this link + 1, piece 2 this link + 2. Until you add one, every piece shows your artwork. You
-            can add it later in Manage.
+            Piece 1 reads &lt;link&gt;/1, piece 2 reads &lt;link&gt;/2. Until you add one, every piece shows your
+            artwork. You can add it later in Manager.
           </small>
           <Err>{errors.revealUri}</Err>
         </Field>
@@ -692,11 +730,11 @@ export function AlignStep({
   return (
     <Stack>
       <Lead>
-        Every sale is split three ways, and you keep most of it. At least {minAlignmentBps / 100}% goes to a community
-        fund (a vault) that buys a token and adds it to a shared pool, so the community grows with your art. You also
-        earn part of that pool&apos;s trading fees. miya keeps {protocolFeeBps / 100}%.
+        Every sale is split three ways: you, a community vault and miya. At least {minAlignmentBps / 100}% goes to the
+        vault. It buys a token and adds it to a shared pool. If that pool trades, you can claim a part of its fees in
+        Manager. miya keeps {protocolFeeBps / 100}%.
       </Lead>
-      <div role="radiogroup" aria-label="Alignment vault" style={{ display: 'grid', gap: space[2] }}>
+      <div role="radiogroup" aria-label="Community vault" style={{ display: 'grid', gap: space[2] }}>
         <VaultCard
           type="button"
           role="radio"

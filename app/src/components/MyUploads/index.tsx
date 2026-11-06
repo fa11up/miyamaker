@@ -156,7 +156,7 @@ function FolderRow({
         <span className="glyph">
           <img src={FOLDER_ICON} alt="" style={{ objectFit: 'contain' }} />
         </span>
-        <span className="name">
+        <span className="name" title={upload.name || 'Folder'}>
           {upload.name || 'Folder'}
           {upload.files ? ` · ${upload.files} files` : ''}
         </span>
@@ -212,7 +212,7 @@ export default function MyUploads({
     if (u.name) return u.name
     const track = station.data?.tracks.find((t) => t.txId === u.id)
     if (track) return `${track.artist} - ${track.title}`
-    return `${u.mime || u.kind}${u.at ? `, ${when(u.at)}` : ''}`
+    return `Untitled ${u.kind}${u.at ? `, ${when(u.at)}` : ''}`
   }
 
   if (!address)
@@ -228,7 +228,7 @@ export default function MyUploads({
       {uploads.isLoading && <Note>Looking up your uploads…</Note>}
       {uploads.isError && (
         <Note>
-          Could not reach Irys.{' '}
+          Could not reach the storage service.{' '}
           <SmallButton type="button" onClick={() => uploads.refetch()}>
             Try again
           </SmallButton>
@@ -262,7 +262,7 @@ export default function MyUploads({
             <span className="glyph">
               <img src={FOLDER_ICON} alt="" style={{ objectFit: 'contain' }} />
             </span>
-            <span className="name">
+            <span className="name" title={u.name || 'Folder'}>
               {u.name || 'Folder'}
               {u.files ? ` · ${u.files} files` : ''}
             </span>

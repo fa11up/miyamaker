@@ -344,7 +344,7 @@ export default function TokenPicker({
             </Note>
             <List style={{ flex: '0 0 auto', minHeight: 0 }}>
               <TokenRow
-                token={{ ...custom.token, name: `${custom.token.name} (unverified)` }}
+                token={{ ...custom.token, name: `${custom.token.name} (not verified)` }}
                 selected={false}
                 onSelect={onSelect}
               />

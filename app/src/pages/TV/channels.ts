@@ -131,9 +131,10 @@ export const CHANNELS: Channel[] = [
     kind: 'iframe',
     section: 'Creators',
     name: 'Kick',
-    tagline: 'Live creators, through Kick’s official player.',
+    tagline: 'Creators live on Kick right now.',
     description: 'Kick creators, embedded with the official Kick player. Markets on these streams are coming soon.',
-    // Picked 2026-11-01 to fit the market templates (chess results are settleable from public chess
+    // The page only ever offers whoever is on right now (api/_lib/tvkick.ts), these first when they're live. This list is
+    // what the server asks about, never played as it stands. Picked 2026-11-01 to fit the market templates (chess results are settleable from public chess
     // casino streams. Kick follower counts then: xQc 1.47M, GMHikaru 214k, chessbrah 35k.
     sources: [
       { provider: 'kick', slug: 'xqc', label: 'xQc' },
@@ -177,10 +178,10 @@ export const CHAT_ROOM = 'miyatv'
 export const CHAT_MIN = 222
 export const CHAT_DEFAULT = 340
 // Kick's player only offers mute and volume at 769px or wider. 770 for the glass, 12 for its trim, 8 for the drag
-// handle, 16 for the cabinet's padding.
+// gap, 16 for the cabinet's padding.
 const SCREEN_NEEDS = 806
 
-/** How wide chat may be dragged in a cabinet this wide: never so far that the picture loses its volume controls. */
+/** How wide chat is in a cabinet this wide: never so far that the picture loses its volume controls. */
 export function clampChat(wanted: number, cabinetWidth: number): number {
   const max = Math.max(CHAT_MIN, cabinetWidth - SCREEN_NEEDS)
   return Math.round(Math.min(max, Math.max(CHAT_MIN, wanted)))
@@ -191,6 +192,29 @@ export function watchUrl(source: Source): string {
   if (source.provider === 'kick') return `https://kick.com/${encodeURIComponent(source.slug)}`
   if (source.provider === 'youtube') return `https://www.youtube.com/watch?v=${encodeURIComponent(source.videoId)}`
   return `https://x.com/i/broadcasts/${encodeURIComponent(source.broadcastId)}`
+}
+
+/** The words on the plate's link: where it goes, not just that it goes. */
+export function watchLabel(source: Source): string {
+  if (source.provider === 'kick') return 'Watch on Kick ↗'
+  if (source.provider === 'youtube') return 'Watch on YouTube ↗'
+  return 'Watch on X ↗'
+}
+
+/** The plate's link: the source being played, or a show's own site. */
+export function plateLink(channel: Channel, source?: Source): { href: string; label: string } | undefined {
+  if (source) return { href: watchUrl(source), label: watchLabel(source) }
+  const site = channel.kind === 'show' ? channel.links[0] : undefined
+  return site && { href: site.href, label: `${site.label} ↗` }
+}
+
+/**
+ * Who stays on as the list of live streams changes: the one being watched, however the list reorders. With nobody chosen yet
+ * that is the biggest. `ended` says the chosen one has really gone, the only time the picture changes by itself.
+ */
+export function pinnedSource(labels: string[], pinned?: string): { label?: string; ended: boolean } {
+  if (!labels.length || (pinned && labels.includes(pinned))) return { label: pinned, ended: false }
+  return { label: labels[0], ended: !!pinned }
 }
 
 export type NativeChat = { kind: 'iframe'; src: string; label: string }

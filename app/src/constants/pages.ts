@@ -135,7 +135,7 @@ const Pages: Record<string, Page> = {
   tv: {
     id: 'tv',
     path: '/tv',
-    label: 'miyatv',
+    label: 'miyaTV',
     icon: TvIcon[0],
     fixedSize: true,
     corner: 22,

@@ -17,10 +17,11 @@ import { bevel, color, MOBILE_BREAKPOINT, space, text } from '@/theme/tokens'
 
 import { findCollection } from '../collections'
 import { shortAddress } from '../mints/dedupe'
+import { isPixelArt } from './fitArtwork'
 import { groupByCollection } from './indexer/parse'
 import type { OwnedNft } from './indexer/types'
 import Properties from './Properties'
-import { splitScam } from './scam'
+import { fileLabel, QUARANTINE_WARNING, splitScam } from './scam'
 import type { TokenDoc } from './useWalletFiles'
 import { useContractChecks, useTokenDocs, useWalletNfts } from './useWalletFiles'
 import { WIRED_BACKDROP } from './wired'
@@ -69,6 +70,15 @@ const Toolbar = styled.div`
       min-height: 40px;
       min-width: 44px;
     }
+  }
+`
+
+const RefreshButton = styled.button`
+  && {
+    min-width: 36px;
+    padding: 0 ${space[1]};
+    font-size: 24px;
+    line-height: 1;
   }
 `
 
@@ -147,6 +157,9 @@ const Item = styled.button`
     height: 100%;
     object-fit: cover;
     display: block;
+  }
+  .thumb img.pixel,
+  .thumb img.placeholder {
     image-rendering: pixelated;
   }
   .thumb img.placeholder {
@@ -249,10 +262,10 @@ const StatusBar = styled.div`
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  > div:first-child {
+  > div {
     flex: 0 0 auto;
   }
-  > div:last-child {
+  > div.status {
     flex: 1 1 auto;
     min-width: 0;
   }
@@ -309,14 +322,18 @@ const Empty = styled.div`
 
 export type Selection = { kind: 'nft'; nft: OwnedNft } | { kind: 'token'; doc: TokenDoc }
 
+const touchOnly = () => typeof window !== 'undefined' && !!window.matchMedia?.('(hover: none)').matches
+
 const isTouch = (e: React.MouseEvent | React.PointerEvent) =>
-  (e.nativeEvent as PointerEvent).pointerType === 'touch' ||
-  (typeof window !== 'undefined' && window.matchMedia?.('(hover: none)').matches)
+  (e.nativeEvent as PointerEvent).pointerType === 'touch' || touchOnly()
 
 const SCAM_KEY = 'scam'
+const CHECKING_KEY = 'checking'
+
+const nftKey = (n: OwnedNft) => `nft:${n.chainId}:${n.contract}:${n.tokenId}`
 
 const keyOf = (s: Selection) =>
-  s.kind === 'nft' ? `nft:${s.nft.chainId}:${s.nft.contract}:${s.nft.tokenId}` : s.doc.key
+  s.kind === 'nft' ? nftKey(s.nft) : s.doc.key
 
 const toViewerItem = (n: OwnedNft): Artwork => ({
   src: n.fullImage || n.image,
@@ -327,8 +344,10 @@ const toViewerItem = (n: OwnedNft): Artwork => ({
     ['Token ID', n.tokenId],
     ['Contract', shortAddress(n.contract)],
     ['Why it is here', n.scamReason],
+    ['Status', n.checking ? 'Contract not checked yet' : undefined],
   ],
   link: n.externalUrl || undefined,
+  warning: n.scamReason || n.checking ? QUARANTINE_WARNING : undefined,
 })
 
 export default function MyFiles() {
@@ -337,13 +356,14 @@ export default function MyFiles() {
   const { address, isConnected } = useAccount()
   const { openConnectModal } = useConnectModal()
   const nfts = useWalletNfts(address)
-  const tokens = useTokenDocs(address)
+  const { docs: tokens, refetch: refetchTokens } = useTokenDocs(address)
   const [folderKey, setFolderKey] = useState<string>()
   const [selected, setSelected] = useState<string>()
   // Popups, last in front. Each stays open until closed, so two can be compared side by side.
   const [open, setOpen] = useState<{ selection: Selection; cascade: number }[]>([])
   const opened = useRef(0)
-  const [viewing, setViewing] = useState<{ items: Artwork[]; start: number }>()
+  const [viewing, setViewing] = useState<{ nfts: OwnedNft[]; start: number }>()
+  const [notice, setNotice] = useState('')
   const stack = useAppSelector((state) => state.windows.zIndex)
   const onTop = useAppSelector((state) => state.windows.onTop)
   const minimized = useAppSelector((state) => state.windows.minimized).includes(ID)
@@ -370,6 +390,7 @@ export default function MyFiles() {
   useEffect(() => {
     setOpen([])
     setViewing(undefined)
+    setNotice('')
   }, [address])
 
   const allNfts = nfts.data?.nfts
@@ -380,19 +401,47 @@ export default function MyFiles() {
       [allNfts],
     ),
   )
-  const { clean, scam } = useMemo(
+  const { clean, scam, checking } = useMemo(
     () => splitScam(allNfts ?? [], checks.data ?? {}, (n) => !!findCollection(n.chainId, n.contract)),
     [allNfts, checks.data],
   )
   const collections = useMemo(() => groupByCollection(clean), [clean])
   const folders = useMemo(
-    () =>
-      scam.length
-        ? [...collections, { key: SCAM_KEY, chainId: 1, contract: '', name: 'Scam / Unverified', items: scam }]
-        : collections,
-    [collections, scam],
+    () => [
+      ...collections,
+      ...(checking.length
+        ? [
+            {
+              key: CHECKING_KEY,
+              chainId: 1,
+              contract: '',
+              name: `Still checking (${checking.length})`,
+              items: checking,
+            },
+          ]
+        : []),
+      ...(scam.length ? [{ key: SCAM_KEY, chainId: 1, contract: '', name: 'Scam / Unverified', items: scam }] : []),
+    ],
+    [collections, checking, scam],
   )
   const folder = folders.find((f) => f.key === folderKey)
+
+  // A file's popup and viewer show what is known about it now, so a contract that turns out bad loses its link there too.
+  const latest = useMemo(() => {
+    const byKey = new Map<string, OwnedNft>()
+    folders.forEach((f) => f.items.forEach((n) => byKey.set(nftKey(n), n)))
+    return (n: OwnedNft) => byKey.get(nftKey(n)) ?? n
+  }, [folders])
+
+  // An open folder can empty out when Etherscan answers. Say where its files went instead of silently leaving.
+  useEffect(() => {
+    if (!folderKey || folder || !allNfts) return
+    const contract = folderKey.split(':')[1]
+    setFolderKey(undefined)
+    setSelected(undefined)
+    if (folderKey === CHECKING_KEY) setNotice('Every file in that folder has been checked.')
+    else if (scam.some((n) => n.contract === contract)) setNotice('This collection was moved to Scam / Unverified.')
+  }, [folderKey, folder, allNfts, scam])
 
   const path = `C:\\Wallet\\${address ? shortAddress(address) : 'Disconnected'}${folder ? `\\${folder.name}` : ''}`
   const count = !isConnected ? 0 : folder ? folder.items.length : folders.length + tokens.length
@@ -413,12 +462,18 @@ export default function MyFiles() {
 
   const viewNft = (nft: OwnedNft) => {
     const inFolder = folders.find((f) => f.items.includes(nft))?.items.filter((n) => n.image) ?? [nft]
-    setViewing({ items: inFolder.map(toViewerItem), start: Math.max(0, inFolder.indexOf(nft)) })
+    setViewing({ nfts: inFolder, start: Math.max(0, inFolder.indexOf(nft)) })
   }
 
   const goUp = () => {
+    setSelected(folderKey)
     setFolderKey(undefined)
-    setSelected(undefined)
+  }
+
+  const refresh = () => {
+    nfts.refetch()
+    refetchTokens()
+    checks.refetch()
   }
 
   let body: React.ReactNode
@@ -427,7 +482,8 @@ export default function MyFiles() {
       <Empty>
         <img src={FolderIcon} alt="" />
         <p>
-          <strong>My Files</strong> shows your wallet as a folder: NFTs grouped by collection, tokens as documents.
+          See your Ethereum NFTs by collection, and ETH, INFER, imdUSD and MIYA as documents. Nothing here moves your
+          money.
         </p>
         <BigButton type="button" onClick={() => openConnectModal?.()} data-files-connect="">
           Connect wallet
@@ -439,9 +495,14 @@ export default function MyFiles() {
       <>
         {folder.key === SCAM_KEY && (
           <ScamNote role="note">
-            Quarantined so you don&apos;t use these by accident. Look all you like, but don&apos;t follow any link or
-            offer in them or sign anything they ask for. Unverified doesn&apos;t always mean a scam; each file says why
-            it&apos;s here.
+            These may be scams. Don&apos;t follow a link or offer in them, or sign anything they ask for. Some are only
+            unverified; each file says why it&apos;s here.
+          </ScamNote>
+        )}
+        {folder.key === CHECKING_KEY && (
+          <ScamNote role="note">
+            We&apos;re still checking these contracts. Their links and names stay hidden until then. Files that pass go
+            back to their collections.
           </ScamNote>
         )}
         <Grid role="listbox" aria-label={folder.name}>
@@ -456,13 +517,21 @@ export default function MyFiles() {
               <span className="icon">
                 <span className="thumb">
                   {n.image ? (
-                    <img src={n.image} alt="" loading="lazy" referrerPolicy="no-referrer" />
+                    <img
+                      src={n.image}
+                      alt=""
+                      loading="lazy"
+                      referrerPolicy="no-referrer"
+                      onLoad={({ currentTarget: img }) =>
+                        img.classList.toggle('pixel', isPixelArt({ w: img.naturalWidth, h: img.naturalHeight }))
+                      }
+                    />
                   ) : (
                     <img src={FileEye} alt="" className="placeholder" />
                   )}
                 </span>
               </span>
-              <span className="label">#{n.tokenId}</span>
+              <span className="label">{fileLabel(n)}</span>
             </Item>
           ))}
         </Grid>
@@ -478,6 +547,7 @@ export default function MyFiles() {
             role="option"
             title={f.name}
             {...itemProps(f.key, () => {
+              setNotice('')
               setFolderKey(f.key)
               setSelected(undefined)
             })}
@@ -538,54 +608,68 @@ export default function MyFiles() {
       </TitleBar>
       <Root data-my-files="">
         <Toolbar>
-          <button type="button" onClick={goUp} disabled={!folder} aria-label="Up one level" title="Up">
-            ← Up
-          </button>
+          {folder && (
+            <button type="button" onClick={goUp} aria-label="Up one level" title="Up">
+              ← Up
+            </button>
+          )}
           <AddressBar title={path}>{path}</AddressBar>
-          <button
+          <RefreshButton
             type="button"
-            onClick={() => nfts.refetch()}
+            onClick={refresh}
             disabled={!isConnected || nfts.isFetching}
             aria-label="Refresh"
             title="Refresh"
           >
             ⟳
-          </button>
+          </RefreshButton>
         </Toolbar>
         {nfts.isError && isConnected && (
           <StatusBox tone="error">Couldn&apos;t read NFTs for this wallet. Tokens still load; try ⟳.</StatusBox>
         )}
+        {isConnected && nfts.data?.limited && (
+          <StatusBox tone="error">
+            Couldn&apos;t read your full NFT list. Only miyaOS collections are showing. Try ⟳.
+          </StatusBox>
+        )}
+        {isConnected && nfts.data?.partial && !nfts.data.limited && (
+          <StatusBox tone="info">Showing your first 500 NFTs.</StatusBox>
+        )}
+        {notice && <StatusBox tone="info">{notice}</StatusBox>}
         <Pane onClick={(e) => e.target === e.currentTarget && setSelected(undefined)}>{body}</Pane>
         <StatusBar>
           <div>{count} object(s)</div>
-          <div>
+          <div className="status">
             {!isConnected
               ? 'Not connected'
-              : nfts.isFetching
-                ? 'Reading wallet…'
-                : nfts.data
-                  ? `${nfts.data.source}${nfts.data.partial ? ' · partial' : ''}`
-                  : ''}
+              : selected && !touchOnly()
+                ? 'Double-click to open'
+                : nfts.isFetching
+                  ? 'Reading wallet…'
+                  : checking.length
+                    ? 'Checking contracts…'
+                    : 'Ready'}
           </div>
+          {!folder && <div>Ethereum only</div>}
         </StatusBar>
         {address &&
           open.map(({ selection, cascade }, i) => (
             <Properties
               key={keyOf(selection)}
-              selection={selection}
+              selection={selection.kind === 'nft' ? { kind: 'nft', nft: latest(selection.nft) } : selection}
               owner={address}
               cascade={cascade}
               zIndex={popupDepth + i}
               hidden={minimized}
               onFront={() => toFront(selection)}
               onClose={() => setOpen((list) => list.filter((o) => o.selection !== selection))}
-              onView={() => selection.kind === 'nft' && viewNft(selection.nft)}
+              onView={() => selection.kind === 'nft' && viewNft(latest(selection.nft))}
             />
           ))}
         {viewing && (
           <ArtViewer
             skin="files"
-            items={viewing.items}
+            items={viewing.nfts.map((n) => toViewerItem(latest(n)))}
             startIndex={viewing.start}
             onClose={() => setViewing(undefined)}
           />

@@ -1,5 +1,5 @@
 import { useConnectModal } from '@rainbow-me/rainbowkit'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import styled from 'styled-components/macro'
 import type { Address } from 'viem'
 import { useAccount, useSwitchChain } from 'wagmi'
@@ -7,31 +7,39 @@ import { useAccount, useSwitchChain } from 'wagmi'
 import LoadingHourglass from '@/assets/loading_hourglass.gif'
 import NftImage from '@/components/NftImage'
 import type { SupportedChainId } from '@/config/wagmi'
-import { chains, mainnet, pickerChains } from '@/config/wagmi'
+import { chains, mainnet } from '@/config/wagmi'
 import { groupByCollection } from '@/desktop/files/indexer/parse'
 import { useWalletNfts } from '@/desktop/files/useWalletFiles'
 import { txWords, useTx } from '@/miyamints/useTx'
 
+import type { Sort } from '../board'
+import { isFeaturedSlug, verifiedFirst } from '../board'
 import type { SwapChainId, SwapToken } from '../constants'
 import { Chip, Eyebrow, Skeleton, StatusBox } from '../floor/retro'
 import { bevel, color, space, text } from '../floor/tokens'
-import { Body, ChainTabs, Toolbar } from '../layout'
-import type { BoardRow } from '../MarketBoard'
-import { BadgeWall, CollectionTable, TokenTable } from '../MarketBoard'
+import { Body } from '../layout'
+import type { CollectionColumn } from '../MarketBoard'
+import { CollectionTable, Section } from '../MarketBoard'
 import type { CollectionRef } from '../tradePath'
 import { poolFactoryAbi } from './abi'
+import type { CollectionPlace } from './CollectionView'
 import CollectionView from './CollectionView'
 import ItemView from './ItemView'
-import { OPENSEA_CHAIN, otherMarkets } from './markets'
+import { OPENSEA_CHAIN } from './markets'
 import type { PoolMode } from './pool'
 import { filterPools, MODE, MODE_HINT, MODE_LABEL, poolTitle } from './pool'
 import PoolView from './PoolView'
-import { Card, Field, Head, Hint, Prose, PushButton } from './ui'
-import { contractForSlug, useOpenSeaOwned, useOpenSeaSearch } from './useMarkets'
+import { Card, Field, Head, Hint, LinkButton, Prose, PushButton, SwitchNote } from './ui'
+import {
+  contractForSlug,
+  useCollectionRow,
+  useCollectionsVerified,
+  useOpenSeaOwned,
+  useOpenSeaSearch,
+  useOpenSeaCollection,
+} from './useMarkets'
 import type { Pool } from './usePools'
 import { poolFactoryFor, usePools, usePoolsForCollection } from './usePools'
-
-const isPoolChain = (id: number | undefined): id is SupportedChainId => chains.some((c) => c.id === id)
 
 const List = styled.ul`
   list-style: none;
@@ -60,6 +68,12 @@ const Row = styled.button`
   }
   &:active {
     box-shadow: ${bevel.pressed};
+  }
+  .pic {
+    display: inline-block;
+    width: 24px;
+    margin-right: ${space[2]};
+    vertical-align: middle;
   }
   .name {
     font-size: ${text.md};
@@ -96,22 +110,6 @@ const Empty = styled.div`
   align-items: center;
   b {
     font-size: ${text.md};
-  }
-`
-
-const FindRow = styled.div`
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: ${space[2]};
-  align-items: center;
-  button {
-    flex: none;
-    width: max-content;
-    padding: 0 ${space[3]};
-    overflow: visible;
-  }
-  .slim & {
-    grid-template-columns: minmax(0, 1fr);
   }
 `
 
@@ -198,13 +196,35 @@ const PickRow = styled.button`
     color: ${color.inkMuted};
     white-space: nowrap;
   }
+  .warn {
+    display: block;
+    font-size: ${text.xs};
+    font-weight: 400;
+    color: ${color.warning};
+    white-space: normal;
+  }
 `
 
-function PoolRow({ pool, onOpen }: { pool: Pool; onOpen: () => void }) {
+const SectionBody = styled.div`
+  display: flex;
+  flex-direction: column;
+  gap: ${space[2]};
+  padding: ${space[2]};
+`
+
+function PoolRow({ chainId, pool, onOpen }: { chainId: number; pool: Pool; onOpen: () => void }) {
+  const os = useOpenSeaCollection(chainId, pool.collection)
   return (
     <li>
       <Row type="button" onClick={onOpen} data-pool={pool.address}>
-        <span className="name">{poolTitle(pool)}</span>
+        <span className="name">
+          {os.info?.image && (
+            <span className="pic" aria-hidden>
+              <NftImage src={os.info.image} alt="" variant="thumb" />
+            </span>
+          )}
+          {poolTitle(pool)}
+        </span>
         <span className="count">
           {pool.held.toLocaleString('en-US')} NFT{pool.held === 1n ? '' : 's'}
         </span>
@@ -223,72 +243,110 @@ function Pick({
   side,
   onOpen,
   busy,
+  warning,
 }: {
   name: string
   image?: string
   side: string
   onOpen: () => void
   busy?: boolean
+  /** Said plainly on the row, e.g. that a collection has no OpenSea badge. */
+  warning?: string
 }) {
+  const letter = name.slice(0, 1)
   return (
     <li>
-      <PickRow type="button" onClick={onOpen} disabled={busy} aria-label={`${name}, ${side}. See every market`}>
+      <PickRow
+        type="button"
+        onClick={onOpen}
+        disabled={busy}
+        aria-label={`${name}${warning ? `, ${warning}` : ''}, ${side}. Open`}
+        data-pick-unverified={warning ? '' : undefined}
+      >
         <span className="pic" aria-hidden>
-          {image ? <NftImage src={image} alt="" variant="thumb" /> : <span className="letter">{name.slice(0, 1)}</span>}
+          {image ? (
+            <NftImage src={image} alt="" variant="thumb" missing={<b>{letter}</b>} />
+          ) : (
+            <span className="letter">{letter}</span>
+          )}
         </span>
-        <span className="name">{name}</span>
+        <span className="name">
+          {name}
+          {warning && <span className="warn">{warning}</span>}
+        </span>
         <span className="side">{side}</span>
       </PickRow>
     </li>
   )
 }
 
+/** One of your collections, under its real name: OpenSea's wallet list gives only a slug. */
+function YourCollection({
+  group,
+  onOpen,
+}: {
+  group: { slug?: string; name: string; image?: string; count: number }
+  onOpen: () => void
+}) {
+  const { info } = useCollectionRow(group.slug)
+  return (
+    <Pick
+      name={info?.name || group.name}
+      image={group.image || info?.image}
+      side={`${group.count} held · Open →`}
+      onOpen={onOpen}
+    />
+  )
+}
+
+const YOURS_SHOWN = 8
+
+/** The nearest box that scrolls: the pane on a wide window, the whole floor on a slim one. */
+function scrollParent(el: HTMLElement | null): HTMLElement | undefined {
+  for (let at = el?.parentElement; at; at = at.parentElement) {
+    if (/(auto|scroll)/.test(getComputedStyle(at).overflowY)) return at
+  }
+
+  return undefined
+}
+
 const shortAddress = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`
 
 /**
- * The NFTs tab of Trade. The list: find a collection (search by name on OpenSea, paste an address, pick one of
+ * Trade's NFTs. The list, on the left of the home page: find a collection (search by name on OpenSea, paste an address, pick one of
  * your NFTs' collections, or a MiyaPool pool), then the collection's Markets (CollectionView), one NFT across
  * markets (ItemView), or one pool (PoolView). Pools come from the MiyaPoolFactory set in env or
  * contracts/deployments; a network without one says so calmly and the other markets still work.
  */
 export default function NftTrade({
+  query,
+  chainId,
+  onBusy,
   pool,
   collection,
-  board,
-  onTradeToken,
+  visible,
   onOpenPool,
   onOpenCollection,
   onSwapToken,
 }: {
+  /** The home page's search, shared with the tokens. */
+  query: string
+  /** The floor's one network. */
+  chainId: SupportedChainId
+  onBusy?: (busy: boolean) => void
   pool?: Address
   collection?: CollectionRef
-  board: { rows: BoardRow[]; failed: boolean }
-  onTradeToken: (t: SwapToken) => void
+  /** False while a token's page covers this pane. */
+  visible: boolean
   onOpenPool: (pool: Address | undefined) => void
   onOpenCollection: (ref: CollectionRef | undefined) => void
   onSwapToken: (p: { chainId: SwapChainId; sell?: SwapToken; buy?: SwapToken }) => void
 }) {
   const { address, chainId: walletChainId, isConnected } = useAccount()
-  const { switchChain, isPending: switching } = useSwitchChain()
+  const { switchChain, isPending: switching, error: switchError } = useSwitchChain()
   const { openConnectModal } = useConnectModal()
-  const [chainId, setChainId] = useState<SupportedChainId>(
-    collection && isPoolChain(collection.chainId)
-      ? collection.chainId
-      : isPoolChain(walletChainId)
-      ? walletChainId
-      : mainnet.id
-  )
-  const [query, setQuery] = useState('')
   const [opening, setOpening] = useState<string>()
   const [openError, setOpenError] = useState<string>()
-
-  // Follow the wallet onto a supported chain (unless a shared collection link chose one).
-  useEffect(() => {
-    if (isPoolChain(walletChainId) && walletChainId !== chainId && !collection) setChainId(walletChainId)
-  }, [walletChainId])
-  useEffect(() => {
-    if (collection && isPoolChain(collection.chainId) && collection.chainId !== chainId) setChainId(collection.chainId)
-  }, [collection?.chainId])
 
   const chain = chains.find((c) => c.id === chainId) || mainnet
   const factory = poolFactoryFor(chainId)
@@ -301,6 +359,42 @@ export default function NftTrade({
     lookup.refetch()
     list.refetch()
   })
+  // The page open below this one, whose own reviews report here.
+  const [pageBusy, setPageBusy] = useState(false)
+  const busy = create.busy || pageBusy
+  useEffect(() => onBusy?.(busy), [busy])
+
+  // A chosen place survives going back: each page's settings and scroll, and the table's order.
+  const [tableSort, setTableSort] = useState<Sort<CollectionColumn>>()
+  const places = useRef<Record<string, CollectionPlace>>({})
+  const scrolls = useRef<Record<string, number>>({})
+  const bodyRef = useRef<HTMLDivElement>(null)
+  const viewKey = collection
+    ? `${collection.address}/${collection.tokenId ?? ''}`.toLowerCase()
+    : pool
+    ? pool.toLowerCase()
+    : 'home'
+  useLayoutEffect(() => {
+    const scroller = visible ? scrollParent(bodyRef.current) : undefined
+    if (!scroller) return undefined
+    const restore = () => {
+      scroller.scrollTop = scrolls.current[viewKey] ?? 0
+    }
+    restore()
+    // Once more after the first paint: a list from the cache may only just have laid out.
+    const frame = requestAnimationFrame(restore)
+    const save = () => {
+      scrolls.current[viewKey] = scroller.scrollTop
+    }
+    scroller.addEventListener('scroll', save, { passive: true })
+    return () => {
+      cancelAnimationFrame(frame)
+      scroller.removeEventListener('scroll', save)
+    }
+  }, [viewKey, visible])
+
+  const [showHidden, setShowHidden] = useState(false)
+  const [showAllYours, setShowAllYours] = useState(false)
 
   const shown = useMemo(() => {
     const found = lookup.pools.filter((p) => !list.pools.some((q) => q.address === p.address))
@@ -310,15 +404,33 @@ export default function NftTrade({
   // Your collections: OpenSea's view of the wallet when the key is set, else the desktop indexer (Ethereum).
   const yours = useMemo(() => {
     if (owned.groups)
-      return owned.groups.map((g) => ({ contract: g.contract, name: g.name, image: g.image, count: g.ids.length }))
+      return owned.groups.map((g) => ({
+        contract: g.contract,
+        slug: g.slug,
+        name: g.name,
+        image: g.image,
+        count: g.ids.length,
+        flagged: !!g.flagged,
+      }))
     if (!walletNfts.data) return []
     return groupByCollection(walletNfts.data.nfts.filter((n) => n.chainId === chainId)).map((f) => ({
       contract: f.contract,
+      slug: undefined,
+      flagged: false,
       name: f.name || shortAddress(f.contract),
       image: f.items[0]?.image || undefined,
       count: f.items.length,
     }))
   }, [owned.groups, walletNfts.data, chainId])
+  const hiddenCount = yours.filter((g) => g.flagged).length
+  const yoursListed = yours.filter((g) => showHidden || !g.flagged)
+
+  // The badge decides the order: the real collection comes before its lookalikes.
+  const hitSlugs = useMemo(() => search.hits.slice(0, 12).map((h) => h.slug), [search.hits])
+  const looked = useCollectionsVerified(hitSlugs)
+  const hitIsVerified = (h: { slug: string; verified?: boolean }) =>
+    isFeaturedSlug(chainId, h.slug) ? true : h.verified ?? looked[h.slug]
+  const hits = verifiedFirst(search.hits.slice(0, 12), hitIsVerified)
 
   const openCollection = (contract: string) => onOpenCollection({ chainId, address: contract as Address })
   const openSlug = async (slug: string) => {
@@ -336,32 +448,9 @@ export default function NftTrade({
   }
 
   const wrongChain = isConnected && walletChainId !== chainId
-  const chainPicker = (
-    <Toolbar>
-      <ChainTabs role="group" aria-label="Network">
-        {pickerChains.map((c) => (
-          <button
-            key={c.id}
-            type="button"
-            aria-pressed={c.id === chainId}
-            onClick={() => {
-              setChainId(c.id)
-              if (pool) onOpenPool(undefined)
-              if (collection) onOpenCollection(undefined)
-            }}
-            disabled={create.busy}
-          >
-            {c.name}
-          </button>
-        ))}
-      </ChainTabs>
-    </Toolbar>
-  )
-
   if (collection && collection.chainId === chainId) {
     return (
-      <Body>
-        {chainPicker}
+      <Body ref={bodyRef}>
         {collection.tokenId ? (
           <ItemView
             key={`${collection.address}-${collection.tokenId}`}
@@ -370,6 +459,7 @@ export default function NftTrade({
             tokenId={collection.tokenId}
             onBack={() => onOpenCollection({ chainId, address: collection.address })}
             onOpenPool={(p) => onOpenPool(p)}
+            onBusy={setPageBusy}
           />
         ) : (
           <CollectionView
@@ -379,6 +469,11 @@ export default function NftTrade({
             onBack={() => onOpenCollection(undefined)}
             onOpenItem={(tokenId) => onOpenCollection({ chainId, address: collection.address, tokenId })}
             onOpenPool={(p) => onOpenPool(p)}
+            onBusy={setPageBusy}
+            place={places.current[viewKey]}
+            onPlace={(p) => {
+              places.current[viewKey] = p
+            }}
           />
         )}
       </Body>
@@ -387,14 +482,23 @@ export default function NftTrade({
 
   if (pool && factory) {
     return (
-      <Body>
-        {chainPicker}
+      <Body ref={bodyRef}>
         <PoolView
           chainId={chainId}
           address={pool}
           onBack={() => onOpenPool(undefined)}
+          onOpenPool={onOpenPool}
           onSwapToken={onSwapToken}
-          wallet={{ address, isConnected, wrongChain, switching, switchChain, openConnectModal }}
+          onBusy={setPageBusy}
+          wallet={{
+            address,
+            isConnected,
+            wrongChain,
+            switching,
+            switchChain,
+            switchFailed: !!switchError,
+            openConnectModal,
+          }}
         />
       </Body>
     )
@@ -415,54 +519,48 @@ export default function NftTrade({
   const nameQuery = query.trim().length >= 2 && !lookup.collection
 
   return (
-    <Body>
-      <FindRow>
-        <Field
-          type="search"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder={
-            marketsHere ? 'Search NFT collections, or paste an address' : 'Search pools, or paste an address'
-          }
-          aria-label="Search collections by name, or paste a collection address"
-          spellCheck={false}
-        />
-        {chainPicker}
-      </FindRow>
-
+    <Body ref={bodyRef}>
       {lookup.collection && (
         <Picks aria-label="Pasted address">
           <Pick
             name={shortAddress(lookup.collection)}
-            side="Every market →"
+            side="Open →"
             onOpen={() => openCollection(lookup.collection!)}
           />
         </Picks>
       )}
 
-      {nameQuery && marketsHere && (search.loading || search.hits.length > 0) && (
-        <Card aria-label="Collections on OpenSea">
-          <Eyebrow>Collections</Eyebrow>
-          {search.loading ? (
-            <Skeleton h="44px" />
-          ) : (
-            <Picks>
-              {search.hits.map((h) => (
-                <Pick
-                  key={h.slug}
-                  name={h.name}
-                  image={h.image}
-                  side={opening === h.slug ? 'Opening…' : 'Markets →'}
-                  busy={!!opening}
-                  onOpen={() => openSlug(h.slug)}
-                />
-              ))}
-            </Picks>
-          )}
-        </Card>
+      {nameQuery && marketsHere && (search.loading || hits.length > 0 || search.empty) && (
+        <Section aria-label="Collections on OpenSea">
+          <h2>Collections</h2>
+          <SectionBody>
+            {search.loading ? (
+              <Skeleton h="44px" />
+            ) : search.empty ? (
+              <Hint data-search-empty>
+                No collections match &quot;{query.trim()}&quot; on {chain.name}. Paste a contract address if you have
+                one.
+              </Hint>
+            ) : (
+              <Picks>
+                {hits.map((h) => (
+                  <Pick
+                    key={h.slug}
+                    name={h.name}
+                    image={h.image}
+                    side={opening === h.slug ? 'Opening…' : 'Open →'}
+                    busy={!!opening}
+                    warning={hitIsVerified(h) === false ? 'Not verified: check the address' : undefined}
+                    onOpen={() => openSlug(h.slug)}
+                  />
+                ))}
+              </Picks>
+            )}
+          </SectionBody>
+        </Section>
       )}
-      {nameQuery && marketsHere && search.needsKey && (
-        <Hint>Search by name needs the OpenSea API key. Paste a collection address instead.</Hint>
+      {nameQuery && marketsHere && (search.needsKey || search.failed) && (
+        <Hint data-search-failed>Search is not working right now. Paste a contract address instead.</Hint>
       )}
       {openError && (
         <StatusBox tone="error" role="alert">
@@ -470,24 +568,29 @@ export default function NftTrade({
         </StatusBox>
       )}
 
-      {!query && <TokenTable rows={board.rows} failed={board.failed} onTrade={onTradeToken} />}
-      {!query && chainId === mainnet.id && <CollectionTable onOpen={openCollection} />}
+      {!query && <CollectionTable chainId={chainId} onOpen={openCollection} sort={tableSort} onSort={setTableSort} />}
 
       {!query && yours.length > 0 && (
-        <Card aria-label="Your collections">
-          <Eyebrow>Your NFTs on {chain.name}</Eyebrow>
-          <Picks>
-            {yours.slice(0, 8).map((g) => (
-              <Pick
-                key={g.contract}
-                name={g.name}
-                image={g.image}
-                side={`${g.count} held · Markets →`}
-                onOpen={() => openCollection(g.contract)}
-              />
-            ))}
-          </Picks>
-        </Card>
+        <Section aria-label="Your collections">
+          <h2>Your NFTs on {chain.name}</h2>
+          <SectionBody>
+            <Picks>
+              {(showAllYours ? yoursListed : yoursListed.slice(0, YOURS_SHOWN)).map((g) => (
+                <YourCollection key={g.contract} group={g} onOpen={() => openCollection(g.contract)} />
+              ))}
+            </Picks>
+            {!showAllYours && yoursListed.length > YOURS_SHOWN && (
+              <LinkButton type="button" onClick={() => setShowAllYours(true)}>
+                Show all ({yoursListed.length})
+              </LinkButton>
+            )}
+            {hiddenCount > 0 && (
+              <LinkButton type="button" onClick={() => setShowHidden((v) => !v)}>
+                {showHidden ? 'Hide flagged' : `Show hidden (${hiddenCount})`}
+              </LinkButton>
+            )}
+          </SectionBody>
+        </Section>
       )}
 
       {!factory ? (
@@ -531,7 +634,7 @@ export default function NftTrade({
           ) : shown.length ? (
             <List aria-label={`Pools on ${chain.name}`}>
               {shown.map((p) => (
-                <PoolRow key={p.address} pool={p} onOpen={() => onOpenPool(p.address)} />
+                <PoolRow key={p.address} chainId={chainId} pool={p} onOpen={() => onOpenPool(p.address)} />
               ))}
             </List>
           ) : !lookup.collection ? (
@@ -569,9 +672,12 @@ export default function NftTrade({
                   Connect wallet
                 </PushButton>
               ) : wrongChain ? (
-                <PushButton type="button" onClick={() => switchChain({ chainId })} disabled={switching}>
-                  {switching ? 'Switching…' : `Switch to ${chain.name}`}
-                </PushButton>
+                <>
+                  <SwitchNote chainName={chain.name} failed={!!switchError} />
+                  <PushButton type="button" onClick={() => switchChain({ chainId })} disabled={switching}>
+                    {switching ? 'Switching…' : `Switch to ${chain.name}`}
+                  </PushButton>
+                </>
               ) : null}
               {create.tx.phase !== 'idle' && (
                 <StatusBox tone={create.tx.phase === 'error' ? 'error' : create.tx.phase === 'done' ? 'ok' : 'info'}>
@@ -592,12 +698,8 @@ export default function NftTrade({
           )}
         </>
       )}
-      {!query && <BadgeWall />}
       <Footer>
         {factory ? `Pools on ${chain.name}: no fees, no owner, the contracts cannot be changed or paused. ` : ''}
-        {marketsHere
-          ? `Other markets: ${otherMarkets(chainId)}. Open any collection to compare them.`
-          : `OpenSea and Blur do not trade on ${chain.name}.`}
       </Footer>
     </Body>
   )

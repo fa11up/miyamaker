@@ -73,7 +73,7 @@ export const MIYA_LIST: Record<number, ListToken[]> = {
       decimals: 18,
       miya: true,
       tint: '#1f7a47',
-      mark: '$',
+      mark: 'Ɨ',
     },
     {
       chainId: MAINNET,
@@ -84,6 +84,16 @@ export const MIYA_LIST: Record<number, ListToken[]> = {
       miya: true,
       tint: '#2775ca',
       mark: '$',
+    },
+    {
+      chainId: MAINNET,
+      address: '0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599',
+      symbol: 'WBTC',
+      name: 'Wrapped BTC',
+      decimals: 8,
+      miya: true,
+      tint: '#f7931a',
+      mark: '₿',
     },
     {
       chainId: MAINNET,

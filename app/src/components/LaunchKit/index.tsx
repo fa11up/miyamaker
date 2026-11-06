@@ -3,6 +3,7 @@
  * labelled fields, file drop zones, segmented toggles, the money-split meter and the transaction step list.
  */
 import type { ReactNode } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import styled from 'styled-components/macro'
 
 import { describeSplit } from '@/miyamints/split'
@@ -73,11 +74,17 @@ export const Row2 = styled.div`
   }
 `
 
+const ErrText = styled.small`
+  && {
+    color: ${color.danger};
+  }
+`
+
 export function Err({ children, id }: { children?: ReactNode; id?: string }) {
   return children ? (
-    <small className="err" id={id} role="alert">
+    <ErrText className="err" id={id} role="alert">
       {children}
-    </small>
+    </ErrText>
   ) : null
 }
 
@@ -103,6 +110,30 @@ export const DropZone = styled.div<{ $over?: boolean }>`
     font-size: ${text.xs};
   }
 `
+
+const TouchSwap = styled.span`
+  .touch {
+    display: none;
+  }
+  @media (hover: none) {
+    .mouse {
+      display: none;
+    }
+    .touch {
+      display: inline;
+    }
+  }
+`
+
+/** "Drop a file here" means nothing on a touch screen, so those read as what the button beside them does. */
+export function DropWords({ mouse, touch }: { mouse: string; touch: string }) {
+  return (
+    <TouchSwap>
+      <span className="mouse">{mouse}</span>
+      <span className="touch">{touch}</span>
+    </TouchSwap>
+  )
+}
 
 export const Thumb = styled.div<{ $size?: number }>`
   width: ${({ $size }) => $size || 56}px;
@@ -238,6 +269,97 @@ export function TxSteps({
       ))}
     </StepList>
   )
+}
+
+/**
+ * Covers the window, not the page: rendered inside an app's scrolling layout so it takes that app's skin, and placed
+ * against the window body because the layout itself has no position.
+ */
+export const CloseGuardScreen = styled.div`
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: ${space[3]};
+  background: rgba(2, 8, 20, 0.55);
+`
+
+export const CloseGuardBox = styled.div`
+  display: flex;
+  flex-direction: column;
+  gap: ${space[3]};
+  width: min(380px, 100%);
+  padding: ${space[4]};
+  background: ${color.face};
+  box-shadow: ${bevel.raised};
+  color: ${color.ink};
+  font-size: ${text.sm};
+  line-height: 1.4;
+  h2 {
+    margin: 0;
+    font-size: ${text.md};
+  }
+  p {
+    margin: 0;
+  }
+  .choices {
+    display: flex;
+    gap: ${space[2]};
+    justify-content: flex-end;
+    flex-wrap: wrap;
+  }
+`
+
+/**
+ * The window's X, with a question first when closing would lose a draft or walk away from a wallet that is mid-step.
+ * Spread `dialog` inside the app's layout and call `ask` from the title bar.
+ */
+export function useCloseGuard({ draft, running, close }: { draft: boolean; running: boolean; close: () => void }) {
+  const [asking, setAsking] = useState(false)
+  const keep = useRef<HTMLButtonElement>(null)
+  useEffect(() => {
+    if (asking) keep.current?.focus()
+  }, [asking])
+
+  const ask = () => {
+    if (draft || running) setAsking(true)
+    else close()
+  }
+
+  const dialog = asking ? (
+    <CloseGuardScreen
+      onKeyDown={(e) => {
+        if (e.key === 'Escape') setAsking(false)
+        // Only two buttons, so Tab just moves between them and stays inside.
+        if (e.key === 'Tab') {
+          const buttons = Array.from(e.currentTarget.querySelectorAll('button'))
+          const at = buttons.indexOf(document.activeElement as HTMLButtonElement)
+          e.preventDefault()
+          buttons[(at + 1) % buttons.length]?.focus()
+        }
+      }}
+    >
+      <CloseGuardBox role="alertdialog" aria-modal="true" aria-labelledby="close-guard-title">
+        <h2 id="close-guard-title">{running ? 'Close while your wallet is working?' : 'Close and lose this draft?'}</h2>
+        <p>
+          {running
+            ? 'Your wallet is still working. Closing now can leave this unfinished.'
+            : 'What you filled in here is not saved anywhere yet.'}
+        </p>
+        <div className="choices">
+          <SmallButton type="button" onClick={close}>
+            Close
+          </SmallButton>
+          <SmallButton ref={keep} type="button" className="keep" onClick={() => setAsking(false)}>
+            Keep working
+          </SmallButton>
+        </div>
+      </CloseGuardBox>
+    </CloseGuardScreen>
+  ) : null
+
+  return { ask, dialog }
 }
 
 const Bar = styled.div`

@@ -1,5 +1,5 @@
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import styled from 'styled-components/macro'
 import { useElementSize } from 'usehooks-ts'
 import { useAccount } from 'wagmi'
@@ -9,8 +9,9 @@ import type { RadioApi } from '@/context/RadioProvider'
 import { playableUrl, useRadio, useRadioClock } from '@/context/RadioProvider'
 import { estimateKbps, formatDuration } from '@/music/audio'
 import { communitySource } from '@/music/community'
+import { addedWords, sourceWords } from '@/music/creatorWords'
 import { LISTED_MUSIC_CHAINS } from '@/music/config'
-import { positionLabel } from '@/music/queue'
+import { countNew, positionLabel } from '@/music/queue'
 import { musicDropsSource, stationSource } from '@/music/sources'
 import type { PlaylistSource, Track } from '@/music/types'
 import { useOpenApp } from '@/music/useOpenApp'
@@ -18,6 +19,7 @@ import { useAppDispatch } from '@/store/hooks'
 import { closeWindow, minimizeWindow, setAlwaysOnTop } from '@/store/windows/actions'
 import type { PageKey } from '@/store/windows/reducer'
 import { font } from '@/theme/tokens'
+import { resolveUri } from '@/utils/resolveUri'
 
 import Equalizer from './Equalizer'
 import { Glyph } from './Glyph'
@@ -31,6 +33,7 @@ import featherSkin from './skin/feather.webp'
 import plateSkin from './skin/plate.webp'
 import type { RadioLayout } from './skins'
 import { loadLayout, saveLayout, skinById } from './skins'
+import { STATIONS } from './stations'
 import type { VizKind } from './Visualizer'
 import Visualizer, { VIZ_KINDS, VIZ_LABEL } from './Visualizer'
 
@@ -74,6 +77,12 @@ const Root = styled.div`
   && .console .lcd-glass {
     pointer-events: none;
   }
+  && .phone-strip,
+  && .phone-strip *,
+  && .phone-sheet,
+  && .phone-sheet * {
+    pointer-events: auto;
+  }
 
   /* Phones: the heart fills the width on its own backdrop, with the wing tips running off the edges. */
   &.narrow {
@@ -82,6 +91,71 @@ const Root = styled.div`
   }
   &&.narrow {
     pointer-events: auto;
+  }
+`
+
+/* Phones: the heart stays, and its controls come again under it at a size a thumb can press. */
+const PhoneStrip = styled.div`
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  padding: 16px 16px 8px;
+  button {
+    all: unset;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    min-height: 44px;
+    border-radius: 22px;
+    font-size: 14px;
+    color: var(--rk-btn-ink);
+    background: linear-gradient(180deg, #e4e8f4 0%, #a2aac2 55%, #6a7192 100%);
+    box-shadow: 0 0 0 1px #10101d, inset 0 1px 0 rgba(255, 255, 255, 0.7);
+    cursor: pointer;
+  }
+  button.play {
+    color: #fff;
+    background: radial-gradient(circle at 40% 25%, #ff9df0 0%, #c82bd0 45%, #57107f 100%);
+  }
+  button:active:not(:disabled) {
+    filter: brightness(0.85);
+  }
+  button:focus-visible {
+    outline: 2px dotted #fff;
+    outline-offset: 2px;
+  }
+  button:disabled {
+    cursor: default;
+    opacity: 0.45;
+  }
+`
+
+const PhoneSheet = styled.div`
+  padding: 0 16px 16px;
+  .sheet-row {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .sheet-row button {
+    all: unset;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 44px;
+    border-radius: 8px;
+    font-size: 14px;
+    color: var(--rk-frame-ink);
+    background: var(--rk-frame-2);
+    box-shadow: 0 0 0 1px var(--rk-seam);
+    cursor: pointer;
+  }
+  .sheet-row button:focus-visible {
+    outline: 2px dotted #fff;
+    outline-offset: 2px;
   }
 `
 
@@ -376,6 +450,9 @@ export default function RadioWindow() {
   const [scrub, setScrub] = useState<number | undefined>()
   const [status, setStatus] = useState<{ text: string; tone?: 'error' }>()
   const [busy, setBusy] = useState(false)
+  const [failed, setFailed] = useState<{ id: string; label: string }>()
+  const [askAdd, setAskAdd] = useState(false)
+  const [sheet, setSheet] = useState<HTMLElement | null>(null)
   const [layout, setLayout] = useState<RadioLayout>(loadLayout)
   const [menu, setMenu] = useState<'options' | 'info'>()
   const [vizKind, setVizKind] = useState<VizKind>('bars')
@@ -407,7 +484,12 @@ export default function RadioWindow() {
 
   // Adapters: on-chain music drops per supported chain, plus the curated stations file.
   const sources = useMemo<PlaylistSource[]>(
-    () => [communitySource, ...LISTED_MUSIC_CHAINS.map((c) => musicDropsSource(c.chainId)), stationSource],
+    () => [
+      communitySource,
+      ...LISTED_MUSIC_CHAINS.map((c) => musicDropsSource(c.chainId)),
+      // Empty until someone curates it: an option with nothing behind it only says "nothing".
+      ...(STATIONS.length ? [stationSource] : []),
+    ],
     []
   )
   const defaultSource = communitySource.id
@@ -427,21 +509,22 @@ export default function RadioWindow() {
     : 'MIYA RADIO *** NO TRACK LOADED'
 
   const [checked, setChecked] = useState(false)
-  const loadSource = async (id = defaultSource) => {
+  const clearAskAdd = useCallback(() => setAskAdd(false), [])
+  const loadSource = async (id = defaultSource, thenPlay = false) => {
     const source = sources.find((s) => s.id === id) || sources[0]
     if (!source) return
     setBusy(true)
+    setFailed(undefined)
     setStatus({ text: `Loading ${source.label}…` })
     try {
       const tracks = await source.load()
+      const fresh = countNew(radio.queue, tracks)
       radio.enqueue(tracks)
-      if (!tracks.length) setChecked(true)
-      setStatus(
-        tracks.length
-          ? { text: `Added ${tracks.length} track${tracks.length === 1 ? '' : 's'} from ${source.label}.` }
-          : { text: `${source.label}: nothing to add yet.` }
-      )
+      setChecked(id === communitySource.id && !tracks.length)
+      setStatus({ text: addedWords(source.label, tracks.length, fresh) })
+      if (thenPlay && tracks.length) radio.play()
     } catch (e) {
+      setFailed({ id: source.id, label: source.label })
       setStatus({ text: `Could not load ${source.label}.`, tone: 'error' })
     } finally {
       setBusy(false)
@@ -470,10 +553,22 @@ export default function RadioWindow() {
     if (current) radio.toggle()
   }
 
+  // Nothing to play yet: the one press a newcomer tries fills the list and starts it.
+  const tuneIn = () => {
+    show('pl')
+    loadSource(defaultSource, true)
+  }
+
   // The orb is one button: it plays what's stopped and pauses what's playing.
   const orb = () => {
-    if (radio.playing) radio.pause()
+    if (!queue.tracks.length) tuneIn()
+    else if (radio.playing) radio.pause()
     else radio.play()
+  }
+
+  const openAdd = () => {
+    show('pl')
+    setAskAdd(true)
   }
 
   // Classic player hotkeys while the radio has focus: Z prev, X play, C pause, V stop, B next.
@@ -481,7 +576,7 @@ export default function RadioWindow() {
     if (e.altKey || e.ctrlKey || e.metaKey || isTyping(e.target)) return
     const map: Record<string, (() => void) | undefined> = {
       z: current ? radio.prev : undefined,
-      x: queue.tracks.length ? play : undefined,
+      x: queue.tracks.length ? play : tuneIn,
       c: pause,
       v: current ? radio.stop : undefined,
       b: current ? radio.next : undefined,
@@ -512,6 +607,8 @@ export default function RadioWindow() {
   const narrow = width > 0 && width <= 480
   // Phones scale the heart itself to the width; the wings run off the sides.
   const zoom = narrow ? Math.min(1, Math.floor((width / 360) * 100) / 100) : 1
+  const menuSheet = narrow ? sheet : null
+  const orbLabel = !queue.tracks.length ? 'Tune in to the community station' : radio.playing ? 'Pause' : 'Play'
   const setRoot = (el: HTMLDivElement | null) => {
     ;(rootRef as { current: HTMLDivElement | null }).current = el
     sizeRef(el)
@@ -787,7 +884,7 @@ export default function RadioWindow() {
               style={at(308, 282)}
               aria-label="Eject: add tracks"
               title="Eject: add tracks"
-              onClick={() => show('pl')}
+              onClick={openAdd}
             >
               <Glyph kind="eject" size={10} />
             </Bead>
@@ -806,10 +903,10 @@ export default function RadioWindow() {
               $size={42}
               $lit={radio.playing}
               style={at(249, 267)}
-              aria-label={radio.playing ? 'Pause' : 'Play'}
-              title={radio.playing ? 'Pause (C)' : 'Play (X)'}
+              aria-label={orbLabel}
+              title={`${orbLabel} (${radio.playing ? 'C' : 'X'})`}
               onClick={orb}
-              disabled={!queue.tracks.length}
+              disabled={busy && !queue.tracks.length}
             >
               <Glyph kind={radio.playing ? 'pause' : 'play'} size={14} />
             </Bead>
@@ -875,8 +972,12 @@ export default function RadioWindow() {
                     sources={sources}
                     busy={busy}
                     checked={checked}
+                    failed={failed}
+                    sheet={menuSheet}
+                    askAdd={askAdd}
+                    onAskedAdd={clearAskAdd}
                     onLoad={loadSource}
-                    onDropMusic={() => openApp('dropmusic')}
+                    onTuneIn={tuneIn}
                     onUpload={() => openApp('dropmusic')}
                     onTestTone={import.meta.env.DEV ? loadTestTone : undefined}
                     onInfo={() => setMenu('info')}
@@ -914,7 +1015,7 @@ export default function RadioWindow() {
             </Screen>
 
             {menu === 'options' && (
-              <Menu label="Options" style={{ left: 186, top: 44 }} onClose={() => setMenu(undefined)}>
+              <Menu label="Options" sheet={menuSheet} style={{ left: 186, top: 44 }} onClose={() => setMenu(undefined)}>
                 {(
                   [
                     ['Time remaining', remaining, () => setRemaining((r) => !r)],
@@ -939,9 +1040,22 @@ export default function RadioWindow() {
               </Menu>
             )}
             {menu === 'info' && (
-              <Menu label="Track info" style={{ left: 165, top: 84, width: 210 }} onClose={() => setMenu(undefined)}>
+              <Menu
+                label="Track info"
+                sheet={menuSheet}
+                style={{ left: 165, top: 84, width: 210 }}
+                onClose={() => setMenu(undefined)}
+              >
                 {current ? (
                   <dl>
+                    {current.artwork && (
+                      <>
+                        <dt>Cover</dt>
+                        <dd>
+                          <img src={resolveUri(current.artwork)} alt={`Cover of ${current.title}`} />
+                        </dd>
+                      </>
+                    )}
                     <dt>Title</dt>
                     <dd title={current.title}>{current.title}</dd>
                     <dt>Artist</dt>
@@ -953,7 +1067,7 @@ export default function RadioWindow() {
                     <dt>Channels</dt>
                     <dd>{channels || 'Unknown'}</dd>
                     <dt>Source</dt>
-                    <dd>{current.token ? `On-chain, token ${current.token.tokenId}` : current.source}</dd>
+                    <dd>{sourceWords(current)}</dd>
                   </dl>
                 ) : (
                   <dl>
@@ -968,6 +1082,37 @@ export default function RadioWindow() {
           </Controls>
         </Player>
       </Stage>
+      {narrow && (
+        <>
+          <PhoneStrip className="phone-strip" role="group" aria-label="Radio controls">
+            <button type="button" aria-label="Previous" onClick={radio.prev} disabled={!current}>
+              <Glyph kind="prev" size={14} />
+            </button>
+            <button
+              type="button"
+              className="play"
+              aria-label={orbLabel}
+              onClick={orb}
+              disabled={busy && !queue.tracks.length}
+            >
+              <Glyph kind={radio.playing ? 'pause' : 'play'} size={16} />
+            </button>
+            <button type="button" aria-label="Next" onClick={radio.next} disabled={!current}>
+              <Glyph kind="next" size={14} />
+            </button>
+            <button type="button" onClick={openAdd}>
+              Add music
+            </button>
+            <button type="button" aria-pressed={view === 'pl'} onClick={() => show('pl')}>
+              Playlist
+            </button>
+            <button type="button" onClick={() => dispatch(closeWindow({ value: pageId }))}>
+              Close
+            </button>
+          </PhoneStrip>
+          <PhoneSheet className="phone-sheet" ref={setSheet} />
+        </>
+      )}
     </Root>
   )
 }

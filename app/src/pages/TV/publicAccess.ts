@@ -1,16 +1,15 @@
 import type { Tape } from '../../../api/_lib/publicaccess'
-import { PUBLIC_ACCESS_PATH, reviewMessage, submitMessage } from '../../../api/_lib/publicaccess'
+import { NOT_SENT, PUBLIC_ACCESS_PATH, reviewMessage, submitMessage, TapeRefusal } from '../../../api/_lib/publicaccess'
 
 export type PublicAccessList = { tapes: Tape[]; pending: Tape[]; admins: string[] }
 type Sign = (message: string) => Promise<string>
 
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${PUBLIC_ACCESS_PATH}${path}`, init).catch(() => {
-    throw new Error('Could not reach public access. Check your connection and try again.')
-  })
+  const res = await fetch(`${PUBLIC_ACCESS_PATH}${path}`, init)
   const json = (await res.json().catch(() => ({}))) as T & { error?: string }
-  if (!res.ok) throw new Error(json.error || `Public access answered ${res.status}.`)
-  return json
+  if (res.ok) return json
+  // A crash can answer with anything: only a refusal, or "opens soon", is ours to show.
+  throw json.error && (res.status < 500 || res.status === 503) ? new TapeRefusal(json.error) : new Error(NOT_SENT)
 }
 
 const post = <T>(path: string, body: unknown) =>

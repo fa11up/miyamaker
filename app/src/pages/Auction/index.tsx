@@ -2,22 +2,21 @@ import WarningIcon from 'assets/icon/warning.png'
 import { useEffect, useRef, useState } from 'react'
 import styled from 'styled-components/macro'
 import type { Address } from 'viem'
-import { mainnet } from 'viem/chains'
-import { useAccount as useWagmiAccount } from 'wagmi'
 
 import { NormalButton } from '@/components/Button/NormalButton'
 import { ErrorButtonWrapper, ErrorContent, ErrorMessage, ErrorWindow, ErrorWrapper } from '@/components/Errors'
 import TitleBar from '@/components/TitleBar'
 import WindowWrapper from '@/components/WindowWrapper'
-import { AUCTION_CONTRACT } from '@/constants/contracts'
+import { AUCTION_CHAIN_ID, AUCTION_CONTRACT } from '@/constants/contracts'
 import Pages from '@/constants/pages'
-import { useAccount } from '@/context/AccountProvider'
 import CollectionsList from '@/pages/Auction/CollectionsList'
-import { AUCTION_PAGE_SECTION, ERROR_MESSAGES } from '@/pages/Auction/constants'
+import { AUCTION_PAGE_SECTION } from '@/pages/Auction/constants'
 import ExplorerWrapper from '@/pages/Auction/ExplorerWrapper'
 import ProductDetail from '@/pages/Auction/ProductDetail'
 import ProductsList from '@/pages/Auction/ProductsList'
 import damaskSkin from '@/pages/Auction/skin/damask.webp'
+import { paddleButton } from '@/pages/Auction/skin/paddle'
+import paperSkin from '@/pages/Auction/skin/paper.webp'
 import { useNFTsList } from '@/pages/Auction/useNFTsList'
 import { setNFTsList } from '@/store/collections/actions'
 import { useAppDispatch, useAppSelector } from '@/store/hooks'
@@ -43,11 +42,36 @@ const Body = styled.div`
 
   @media only screen and (max-width: 640px) {
     overflow-y: auto;
+    scrollbar-color: #c9a24c #3f0a12;
 
     > fieldset {
       flex: none !important;
       height: auto !important;
     }
+  }
+`
+
+/* A slip from the sale catalogue: the auction's own paper, type and paddle button. */
+const Popup = styled(ErrorWrapper)`
+  z-index: 10;
+  top: 50%;
+  left: 50%;
+  width: min(420px, 92%);
+  height: auto;
+  transform: translate(-50%, -50%);
+
+  .window-body > div:last-child {
+    background: #f6eeda url(${paperSkin}) 0 0 / 256px 256px;
+    color: #2a1410;
+  }
+
+  .window-body * {
+    font-family: Georgia, 'Times New Roman', serif;
+  }
+
+  && ${NormalButton} {
+    ${paddleButton}
+    min-height: 32px;
   }
 `
 
@@ -61,10 +85,7 @@ export default function AuctionPage() {
   const close = () => dispatch(closeWindow({ value: pageId }))
   const minimize = () => dispatch(minimizeWindow({ value: pageId }))
 
-  const { balance } = useAccount()
-
   const [errorMessage, setErrorMessage] = useState('')
-  const [errorName, setErrorName] = useState('MiyaAuction Error')
   const [pageSection, setPageSection] = useState(AUCTION_PAGE_SECTION.COLLECTIONS_SECTION)
 
   // On phones the body scrolls; picking a lot further down brings its detail (at the top) back into view.
@@ -74,30 +95,29 @@ export default function AuctionPage() {
     bodyRef.current?.scrollTo?.({ top: 0, behavior: 'smooth' })
   }, [currentToken, pageSection])
 
-  // Network
-  const { chain } = useWagmiAccount()
-  const auctionContract = AUCTION_CONTRACT[chain?.id || mainnet.id] || AUCTION_CONTRACT[mainnet.id]!
+  // Whatever network the wallet is on: the catalogue reads the same, and the bid button offers the switch.
+  const auctionContract = AUCTION_CONTRACT[AUCTION_CHAIN_ID]!
 
   // Get contract data
-  const { nftsList } = useNFTsList({
+  const { nftsList, isLoading, isError, refetch } = useNFTsList({
     address: auctionContract as Address,
   })
 
-  const handleCloseErrorPopup = () => {
-    setErrorName('MiyaAuction Error')
-    setErrorMessage('')
-
-    if (errorMessage === ERROR_MESSAGES.AUCTION_ENDED) {
-      setPageSection(AUCTION_PAGE_SECTION.COLLECTIONS_SECTION)
-    }
-  }
+  const handleCloseErrorPopup = () => setErrorMessage('')
 
   const renderSection = () => {
     switch (pageSection) {
       case AUCTION_PAGE_SECTION.COLLECTIONS_SECTION:
         return (
           <ExplorerWrapper style={{ height: '100%' }} title={'Collections'}>
-            <CollectionsList nfts={nftsList} setPageSection={setPageSection} />
+            <CollectionsList
+              nfts={nftsList}
+              isLoading={isLoading}
+              isError={isError}
+              onRetry={() => refetch()}
+              setPageSection={setPageSection}
+              auctionContract={auctionContract as Address}
+            />
           </ExplorerWrapper>
         )
       case AUCTION_PAGE_SECTION.PRODUCT_SECTION:
@@ -105,10 +125,9 @@ export default function AuctionPage() {
           <>
             <ExplorerWrapper style={{ flex: '3 1 0' }} title={'Collections > Detail'} setPageSection={setPageSection}>
               <ProductDetail
-                balance={balance}
                 setErrorMessage={setErrorMessage}
-                setErrorName={setErrorName}
                 auctionContract={auctionContract as Address}
+                onBack={() => setPageSection(AUCTION_PAGE_SECTION.COLLECTIONS_SECTION)}
               />
             </ExplorerWrapper>
             <ExplorerWrapper style={{ flex: '2 1 0' }} title={'Lots'}>
@@ -148,21 +167,27 @@ export default function AuctionPage() {
       <Body ref={bodyRef}>
         {renderSection()}
         {errorMessage && (
-          <ErrorWrapper>
-            <ErrorWindow errorLabel={errorName} handleClose={handleCloseErrorPopup}>
+          <Popup
+            role="alertdialog"
+            aria-label="Auction"
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') handleCloseErrorPopup()
+            }}
+          >
+            <ErrorWindow skin="auction" errorLabel="Auction" handleClose={handleCloseErrorPopup}>
               <ErrorContent>
-                <ErrorMessage>
-                  <img src={WarningIcon} alt="Error icon" />
+                <ErrorMessage style={{ height: 'auto' }}>
+                  <img src={WarningIcon} alt="" />
                   <div>{errorMessage}</div>
                 </ErrorMessage>
                 <ErrorButtonWrapper>
-                  <NormalButton style={{ width: '30%' }} onClick={handleCloseErrorPopup}>
+                  <NormalButton autoFocus style={{ width: '30%' }} onClick={handleCloseErrorPopup}>
                     OK
                   </NormalButton>
                 </ErrorButtonWrapper>
               </ErrorContent>
             </ErrorWindow>
-          </ErrorWrapper>
+          </Popup>
         )}
       </Body>
     </WindowWrapper>

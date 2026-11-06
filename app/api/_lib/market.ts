@@ -7,8 +7,8 @@
  *   GET /api/market/listings?slug=<slug>   { at, stale, count, sources, floor, listings }
  *   GET /api/market/sales?slug=<slug>      { at, stale, day: { count, volume }, sales }
  *
- * Only OpenSea today. MiyaPool joins as a second source when pools are live. Blur has no official API, so it stays a
- * link. Upstream, the key and the cache are passed in, so `node --test` runs all of it (tests/market.test.mts).
+ * Only OpenSea today. MiyaPool joins as a second source when pools are live.
+ * Upstream, the key and the cache are passed in, so `node --test` runs all of it (tests/market.test.mts).
  */
 
 export const MARKET_PREFIX = '/api/market'
@@ -131,14 +131,16 @@ export function fromOpenSeaSale(raw: unknown): MarketSale | undefined {
   }
 }
 
-/** Newest first, with the last day's count and ETH volume. */
+/**
+ * Newest first, with the last day's count and ETH volume. Sales in other tokens (BETH, say) have no ETH figure to add, so
+ * they are counted apart and the screen can say so instead of implying the volume covers them.
+ */
 export function summarizeSales(rows: readonly MarketSale[], nowSeconds: number) {
   const sales = [...rows].sort((a, b) => b.at - a.at)
   const day = sales.filter((s) => nowSeconds - s.at <= DAY_S)
-  const volume = day
-    .filter((s) => s.currency === 'ETH' || s.currency === 'WETH')
-    .reduce((v, s) => v + BigInt(s.price), 0n)
-  return { day: { count: day.length, volume: volume.toString() }, sales }
+  const inEth = day.filter((s) => s.currency === 'ETH' || s.currency === 'WETH')
+  const volume = inEth.reduce((v, s) => v + BigInt(s.price), 0n)
+  return { day: { count: day.length, volume: volume.toString(), other: day.length - inEth.length }, sales }
 }
 
 export type MarketCache = {
