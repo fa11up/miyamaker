@@ -5,6 +5,7 @@ import { verifyMessage } from 'viem'
 import { edgeCache, handleMarketRequest, MARKET_PREFIX, openSeaReader } from './_lib/market'
 import { handleOpenSeaRequest, OPENSEA_PROXY_PATH, quoteBigInts } from './_lib/opensea'
 import { d1TapeStore, handlePublicAccessRequest, PUBLIC_ACCESS_PATH, youtubeLookup } from './_lib/publicaccess'
+import { serveRange } from './_lib/ranges'
 import type { D1Like } from './_lib/station'
 import { d1Store, gatewayContentType, handleStationRequest, STATION_PATH } from './_lib/station'
 import { handleTvLiveRequest, TV_LIVE_PATH } from './_lib/tvlive'
@@ -115,6 +116,11 @@ export default {
           limiter: publicAccessLimiter,
         }
       )
+    }
+
+    if (url.pathname.startsWith('/commercials/')) {
+      // Asked for without its range, because the asset store answers those whole anyway.
+      return serveRange(request, await env.ASSETS.fetch(new Request(url.toString())))
     }
 
     return env.ASSETS.fetch(request)
