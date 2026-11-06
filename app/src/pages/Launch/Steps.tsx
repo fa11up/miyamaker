@@ -6,6 +6,7 @@ import ComputerIcon from '@/assets/computer.png'
 import AuctionIcon from '@/assets/icon/auction.png'
 import DropMusicIcon from '@/assets/icon/drop_music.png'
 import { DropZone, Err, Field, Row2, Segmented, SmallButton, SplitMeter, Thumb } from '@/components/LaunchKit'
+import MyUploads from '@/components/MyUploads'
 import { Eyebrow, Well } from '@/components/Retro'
 import type { FieldErrors, LaunchForm, LaunchType, PhaseForm } from '@/miyamints/launch'
 import { EMPTY_PHASE, MAX_PHASES, parseAlignmentPct } from '@/miyamints/launch'
@@ -35,6 +36,15 @@ const Stack = styled.div`
   display: flex;
   flex-direction: column;
   gap: ${space[3]};
+`
+
+/** The same room for a file however it is added, so switching between the three moves nothing below. */
+const MediaSlot = styled.div`
+  min-height: 152px;
+  ${DropZone} {
+    min-height: 130px;
+    box-sizing: border-box;
+  }
 `
 
 // ── 1. type ──────────────────────────────────────────────────────────────────
@@ -260,6 +270,7 @@ export function ArtStep({
             type="button"
             aria-pressed={form.imageMode === 'upload'}
             onClick={() => {
+              set('fromUploads', false)
               set('imageMode', 'upload')
               set('audioMode', 'upload')
             }}
@@ -268,8 +279,20 @@ export function ArtStep({
           </SmallButton>
           <SmallButton
             type="button"
-            aria-pressed={form.imageMode === 'link'}
+            aria-pressed={form.fromUploads}
             onClick={() => {
+              set('fromUploads', true)
+              set('imageMode', 'link')
+              set('audioMode', 'link')
+            }}
+          >
+            Your uploads
+          </SmallButton>
+          <SmallButton
+            type="button"
+            aria-pressed={form.imageMode === 'link' && !form.fromUploads}
+            onClick={() => {
+              set('fromUploads', false)
               set('imageMode', 'link')
               set('audioMode', 'link')
             }}
@@ -279,43 +302,67 @@ export function ArtStep({
         </Segmented>
       </div>
 
-      {form.imageMode === 'upload' ? (
-        <FilePick
-          kind="image"
-          label="Artwork"
-          accept={IMAGE_ACCEPT}
-          pick={image}
-          onPick={onImage}
-          hint="PNG, JPG, GIF or WebP, up to 10 MB. Stored for good on Arweave."
-          error={errors.image}
-        />
-      ) : (
-        <Field>
-          Artwork link
-          <input {...input('imageUri')} placeholder="ipfs://… or ar://… or https://…" inputMode="url" />
-          <small>A link that starts with ipfs://, ar:// or https://.</small>
-          <Err>{errors.image}</Err>
-        </Field>
-      )}
-
-      {music &&
-        (form.audioMode === 'upload' ? (
+      <MediaSlot>
+        {form.fromUploads ? (
+          <div>
+            Artwork
+            <MyUploads kind="image" value={form.imageUri} onPick={({ uri }) => set('imageUri', uri)} />
+            <Err>{errors.image}</Err>
+          </div>
+        ) : form.imageMode === 'upload' ? (
           <FilePick
-            kind="audio"
-            label="Track"
-            accept={AUDIO_ACCEPT}
-            pick={audio}
-            onPick={onAudio}
-            hint="MP3, WAV, OGG, FLAC or M4A, up to 50 MB."
-            error={errors.audio}
+            kind="image"
+            label="Artwork"
+            accept={IMAGE_ACCEPT}
+            pick={image}
+            onPick={onImage}
+            hint="PNG, JPG, GIF or WebP, up to 10 MB. Stored for good on Arweave."
+            error={errors.image}
           />
         ) : (
           <Field>
-            Track link
-            <input {...input('audioUri')} placeholder="ar://… or ipfs://…" inputMode="url" />
-            <Err>{errors.audio}</Err>
+            Artwork link
+            <input {...input('imageUri')} placeholder="ipfs://… or ar://… or https://…" inputMode="url" />
+            <small>A link that starts with ipfs://, ar:// or https://.</small>
+            <Err>{errors.image}</Err>
           </Field>
-        ))}
+        )}
+      </MediaSlot>
+
+      {music && (
+        <MediaSlot>
+          {form.fromUploads ? (
+            <div>
+              Track
+              <MyUploads
+                kind="audio"
+                value={form.audioUri}
+                onPick={({ uri, mime }) => {
+                  set('audioUri', uri)
+                  set('audioMime', mime || '')
+                }}
+              />
+              <Err>{errors.audio}</Err>
+            </div>
+          ) : form.audioMode === 'upload' ? (
+            <FilePick
+              kind="audio"
+              label="Track"
+              accept={AUDIO_ACCEPT}
+              pick={audio}
+              onPick={onAudio}
+              hint="MP3, WAV, OGG, FLAC or M4A, up to 50 MB."
+              error={errors.audio}
+            />
+          ) : (
+            <Field>
+              Track link
+              <input {...input('audioUri')} placeholder="ar://… or ipfs://…" inputMode="url" />
+              <Err>{errors.audio}</Err>
+            </Field>
+          )}
+        </MediaSlot>
+      )}
 
       <Row2>
         <Field>
@@ -394,6 +441,7 @@ const DURATIONS = [
 ] as const
 
 export function SaleStep({ form, set, errors }: StepProps) {
+  const [pickingFolder, setPickingFolder] = useState(false)
   const input = (k: keyof LaunchForm) => ({
     value: form[k] as string,
     'aria-invalid': !!errors[k],
@@ -402,7 +450,7 @@ export function SaleStep({ form, set, errors }: StepProps) {
   const setPhase = (i: number, k: keyof PhaseForm, v: string) =>
     set(
       'phases',
-      form.phases.map((p, n) => (n === i ? { ...p, [k]: v } : p))
+      form.phases.map((p, n) => (n === i ? { ...p, [k]: v } : p)),
     )
 
   if (form.type === 'auction') {
@@ -503,7 +551,7 @@ export function SaleStep({ form, set, errors }: StepProps) {
                 onClick={() =>
                   set(
                     'phases',
-                    form.phases.filter((_, n) => n !== i)
+                    form.phases.filter((_, n) => n !== i),
                   )
                 }
               >
@@ -575,6 +623,14 @@ export function SaleStep({ form, set, errors }: StepProps) {
           </small>
           <Err>{errors.revealUri}</Err>
         </Field>
+        <div style={{ marginTop: space[2] }}>
+          <SmallButton type="button" aria-expanded={pickingFolder} onClick={() => setPickingFolder((o) => !o)}>
+            Choose from your folders
+          </SmallButton>
+          {pickingFolder && (
+            <MyUploads kind="folder" value={form.revealUri} onPick={({ uri }) => set('revealUri', uri)} />
+          )}
+        </div>
       </details>
     </Stack>
   )

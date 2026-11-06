@@ -132,7 +132,7 @@ export default function ProductsList({ auctionContract }: { auctionContract: Add
         </Pager>
       )}
       {viewing !== null && items.length > 0 && (
-        <ArtViewer items={items} startIndex={Math.max(0, gallery.indexOf(viewing))} onClose={() => setViewing(null)} />
+        <ArtViewer skin="auction" items={items} startIndex={Math.max(0, gallery.indexOf(viewing))} onClose={() => setViewing(null)} />
       )}
     </LotsPanel>
   )

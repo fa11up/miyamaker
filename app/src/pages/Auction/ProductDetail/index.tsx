@@ -15,7 +15,9 @@ import { useAuctionData } from '@/pages/Auction/useAuctionData'
 import { useFitText } from '@/pages/Auction/useFitText'
 import { usePlaceBid } from '@/pages/Auction/usePlaceBid'
 import { useToken } from '@/pages/Auction/useToken'
-import { useAppSelector } from '@/store/hooks'
+import { setCurrentToken } from '@/store/collections/actions'
+import { NO_LOT } from '@/store/collections/reducer'
+import { useAppDispatch, useAppSelector } from '@/store/hooks'
 import { color } from '@/theme/tokens'
 import { getTokenAttribute } from '@/utils/getTokenAttribute'
 
@@ -80,7 +82,7 @@ const Byline = styled.div`
 
 const Collection = styled.div`
   font-size: 0.75rem;
-  color: ${color.inkMuted};
+  color: #5f4030;
   margin-top: 0.15rem;
 `
 
@@ -101,7 +103,7 @@ const ReadMore = styled.button`
   padding: 0;
   border: none;
   background: transparent;
-  color: ${color.link};
+  color: #7a1620;
   font-size: 0.75rem;
   text-decoration: underline;
   cursor: pointer;
@@ -124,13 +126,13 @@ const Facts = styled.dl`
   row-gap: 0.25rem;
   margin: 0;
   padding-top: 0.6rem;
-  border-top: 1px solid ${color.shadow};
-  box-shadow: inset 0 1px 0 ${color.highlight};
+  border-top: 1px solid #c9a862;
+  box-shadow: inset 0 1px 0 #fffaf0;
   font-size: 0.8rem;
   line-height: 1.2;
 
   > dt {
-    color: ${color.inkMuted};
+    color: #5f4030;
   }
 
   > dd {
@@ -150,15 +152,18 @@ export default function ProductDetail({
   balance: BalanceData | undefined
   auctionContract: Address
 }) {
+  const dispatch = useAppDispatch()
   // Account
   const { isConnected } = useAccount()
 
   const nft = useAppSelector((state) => state.collections.currentNFT)
   const currentAuctionToken = useAppSelector((state) => state.collections.currentToken)
-  const tokenId = useAppSelector((state) => state.collections.currentTokenId)
+  const chosenTokenId = useAppSelector((state) => state.collections.currentTokenId)
   const nftContract = useAppSelector((state) => state.collections.currentNFTContract)
   const tokenIds = useAppSelector((state) => state.auction.currentTokenIds)
   const tokenURIs = useAppSelector((state) => state.auction.currentTokenURIs)
+  // Until a lot is chosen the panel shows the first one, so its art, its bid data and any bid all name the same token.
+  const tokenId = chosenTokenId === NO_LOT ? tokenIds[0] : chosenTokenId
 
   const [transacting, setTransacting] = useState(false)
   const [txHash, setTxHash] = useState('')
@@ -168,11 +173,40 @@ export default function ProductDetail({
   // Get contract data
   const { currentBid, endTime, bidder, refetch } = useAuctionData({
     nft: nftContract,
-    tokenId: tokenId || tokenIds[0] || 1,
+    tokenId: tokenId ?? 1,
     address: auctionContract,
   })
   const { placeBid, isValidBid } = usePlaceBid({ address: auctionContract, bidAmount })
   const { name, description, image, attributes } = useToken({ tokenURI: tokenURIs[0] || '', isFetch: !!tokenId })
+
+  // The arrows step through the lots in list order and wrap round. Metadata is cached, shared with the lot cards.
+  const lotIndex = Math.max(0, tokenIds.indexOf(tokenId as number))
+  const lotCount = tokenIds.length
+  const previousIndex = (lotIndex - 1 + lotCount) % lotCount
+  const nextIndex = (lotIndex + 1) % lotCount
+  const previousLot = useToken({ tokenURI: tokenURIs[previousIndex] || '', isFetch: lotCount > 1 })
+  const nextLot = useToken({ tokenURI: tokenURIs[nextIndex] || '', isFetch: lotCount > 1 })
+  const openLot = (index: number, lot: typeof nextLot) => {
+    const id = tokenIds[index]
+    if (id === undefined || !lot.image) return
+    dispatch(
+      setCurrentToken({
+        tokenId: id,
+        metadata: {
+          name: lot.name,
+          description: lot.description,
+          image: lot.image,
+          external_url: lot.externalURL,
+          attributes: lot.attributes,
+        },
+      })
+    )
+  }
+
+  // A bid typed for one piece must not carry over to the next.
+  useEffect(() => {
+    setBidAmount('')
+  }, [tokenId])
 
   const highestBidderENS = useEnsName({
     address: bidder as Address,
@@ -202,7 +236,7 @@ export default function ProductDetail({
   }
 
   const handleBid = async () => {
-    if (!isConnected || !isValidBid) return
+    if (!isConnected || !isValidBid || tokenId === undefined) return
     setTransacting(true)
     try {
       const result = await placeBid(nftContract, tokenId)
@@ -241,9 +275,17 @@ export default function ProductDetail({
   return (
     <ProductDetailWrapper>
       <ImagesListWrapper>
-        <ImagesList images={[currentAuctionToken.image || image]} onView={() => setViewing(true)} />
+        <ImagesList
+          image={currentAuctionToken.image || image}
+          position={lotIndex}
+          total={lotCount}
+          onPrevious={() => openLot(previousIndex, previousLot)}
+          onNext={() => openLot(nextIndex, nextLot)}
+          onView={() => setViewing(true)}
+        />
         {viewing && (
           <ArtViewer
+            skin="auction"
             onClose={() => setViewing(false)}
             items={[
               toArtwork(

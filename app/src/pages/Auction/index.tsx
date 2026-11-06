@@ -17,6 +17,7 @@ import { AUCTION_PAGE_SECTION, ERROR_MESSAGES } from '@/pages/Auction/constants'
 import ExplorerWrapper from '@/pages/Auction/ExplorerWrapper'
 import ProductDetail from '@/pages/Auction/ProductDetail'
 import ProductsList from '@/pages/Auction/ProductsList'
+import damaskSkin from '@/pages/Auction/skin/damask.webp'
 import { useNFTsList } from '@/pages/Auction/useNFTsList'
 import { setNFTsList } from '@/store/collections/actions'
 import { useAppDispatch, useAppSelector } from '@/store/hooks'
@@ -33,6 +34,8 @@ const Body = styled.div`
   gap: 1rem;
   height: 100%;
   min-height: 0;
+  /* The sale room's wallpaper. */
+  background: #3f0a12 url(${damaskSkin}) 0 0 / 360px 360px;
 
   > fieldset {
     min-height: 0;

@@ -55,6 +55,10 @@ const Root = styled.div`
   &:focus {
     outline: none;
   }
+  & *::selection {
+    background: var(--rk-strip-a);
+    color: var(--rk-strip-ink);
+  }
 
   /* No window behind it: only what it paints takes clicks, so the desktop works in the gaps between the feathers. */
   &&,

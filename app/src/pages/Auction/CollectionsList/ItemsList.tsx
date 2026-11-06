@@ -19,7 +19,7 @@ const Items = styled.div`
   cursor: pointer;
 
   :hover {
-    background-color: rgba(255, 255, 255, 0.2);
+    background-color: rgba(122, 22, 32, 0.07);
   }
 
   /* Rows stack on phones and the list scrolls, so each row takes the height its content needs. */
@@ -53,12 +53,11 @@ const DescriptionItem = styled(Item)`
   }
 `
 
-const LinkItem = styled.a`
+const LinkItem = styled.div`
   width: 25%;
   display: flex;
   align-items: center;
   padding: 0.5rem;
-  text-decoration: none;
 
   @media only screen and (max-width: 640px) {
     width: 100%;
@@ -160,8 +159,11 @@ export default function ItemsList({ nft, setPageSection }: { nft: string; setPag
         {description}
       </DescriptionItem>
       {safeLink ? (
-        <LinkItem href={safeLink} target="_blank" rel="noreferrer noopener">
-          {externalLink.replace('https://', '')}
+        <LinkItem>
+          {/* Only the link itself leaves the site; the rest of the row opens the collection. */}
+          <a href={safeLink} target="_blank" rel="noreferrer noopener" onClick={(e) => e.stopPropagation()}>
+            {externalLink.replace('https://', '')}
+          </a>
         </LinkItem>
       ) : (
         <Item>{externalLink}</Item>
