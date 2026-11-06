@@ -5,12 +5,12 @@ import { useReducedMotion } from '@/desktop/prefs'
 
 import { waveBus } from './bus'
 import { createWaveRenderer } from './renderer'
-import { crestHeight, crestParams, crestUniforms, shaderTime } from './surface'
+import { crestHeight, crestParams, shaderTime } from './surface'
 
 /*
  * The animated desktop wave. An opaque WebGL canvas composited additively over the purple
  * desktop (plus-lighter; `screen` where that is missing), or, when WebGL is unavailable or keeps
- * failing, a static CSS/SVG wave drawn from the same crest params so the pet can still surf it.
+ * failing, a static SVG swell at the same height so the pet can still surf it.
  */
 
 const Canvas = styled.canvas<{ blend: string }>`
@@ -92,7 +92,7 @@ export default function WaveBackground() {
     const frame = (now: number) => {
       if (!renderer) return
       const t = reducedMotion ? 0 : shaderTime((now - epoch) / 1000, renderer.highp)
-      renderer.draw(t, crestUniforms(params), blend.gain)
+      renderer.draw(t, blend.gain)
       waveBus.frameTime = t
     }
 
@@ -185,7 +185,15 @@ export default function WaveBackground() {
   }, [failed, size])
 
   if (failed) return <StaticWave w={size.w} h={size.h} />
-  return <Canvas key={`${generation}-${reducedMotion}`} ref={canvasRef} blend={blend?.mode || 'normal'} aria-hidden data-wave="webgl" />
+  return (
+    <Canvas
+      key={`${generation}-${reducedMotion}`}
+      ref={canvasRef}
+      blend={blend?.mode || 'normal'}
+      aria-hidden
+      data-wave="webgl"
+    />
+  )
 }
 
 /** No-WebGL wave: the same crest, frozen, as an SVG (soft swell). */

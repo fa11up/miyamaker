@@ -25,6 +25,8 @@ export type Page = {
   shaped?: boolean
   /** Always opens at minSize and keeps it: no resizing, no remembered size. */
   fixedSize?: boolean
+  /** Rounds the whole window to this radius, in px. */
+  corner?: number
 }
 
 const Pages: Record<string, Page> = {
@@ -136,8 +138,9 @@ const Pages: Record<string, Page> = {
     label: 'miyatv',
     icon: TvIcon[0],
     fixedSize: true,
+    corner: 22,
     minSize: {
-      width: 1100,
+      width: 1240,
       height: 700,
     },
   },

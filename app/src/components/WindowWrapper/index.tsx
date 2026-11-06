@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 import styled from 'styled-components/macro'
 
 import type { TitleSkin } from '@/components/TitleBar'
+import goldSkin from '@/pages/TV/skin/gold.webp'
 import { bevel, color } from '@/theme/tokens'
 
 /** Classic raised window frame. Content below the title bar fills the remaining height. */
@@ -44,9 +45,14 @@ const WindowFrame = styled.div`
     background: linear-gradient(90deg, #bcc8de, #f7faff 50%, #bcc8de);
     box-shadow: inset 0 0 0 1px #7f92b8, 4px 6px 0 rgba(11, 31, 92, 0.3);
   }
+  /* Gold trim all the way round the walnut. */
   &[data-skin='tv'] {
-    background: linear-gradient(180deg, #5b2bc4, #2c0f66);
-    box-shadow: inset 0 0 0 1px #1a0838, 4px 6px 0 rgba(26, 8, 56, 0.4);
+    padding: 0 5px 5px;
+    background: url(${goldSkin}) 0 0 / 256px 256px;
+    box-shadow: inset 0 0 0 1px #2a1a04;
+  }
+  &[data-skin='tv'] > .window-body {
+    background: none;
   }
 
   &[data-skin='mint'] {

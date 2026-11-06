@@ -3,7 +3,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import styled from 'styled-components/macro'
 
 import { BigButton, Chip, StatusBox } from '@/components/Retro'
-import { bevel, color, font, space, text } from '@/theme/tokens'
+import { color, font, space, text } from '@/theme/tokens'
 
 import type { NativeChat } from '../channels'
 import { linkify, shortAddress } from './linkify'
@@ -11,16 +11,37 @@ import type { Badge, ChatMessage } from './protocol'
 import { cleanText, codePoints, MAX_MESSAGE_LENGTH } from './protocol'
 import { CHAT_URL, useChatRoom, useChatSession } from './useChat'
 
+/** miyatv's chat, in the cabinet's dark walnut and cream. */
+const glow = {
+  screen: '#1c130c',
+  panel: '#2a1c11',
+  line: '#5a3f25',
+  ink: '#f3e7cf',
+  muted: '#c8b392',
+  name: '#f2a23c',
+  link: '#ecd48a',
+} as const
+
 const Root = styled.section`
   display: flex;
   flex-direction: column;
   min-height: 0;
   min-width: 0;
   height: 100%;
-  background: ${color.face};
-  box-shadow: ${bevel.raised};
+  background: ${glow.panel};
+  color: ${glow.ink};
   padding: ${space[1]};
   gap: ${space[1]};
+  ${BigButton} {
+    min-height: 40px;
+    outline: none;
+    border-radius: 5px;
+    background: linear-gradient(180deg, #f8efd9 0%, #dccfae 100%);
+    box-shadow: 0 2px 0 #6d5c3c, inset 0 1px 0 #fff;
+    color: #2a1a0e;
+    font-size: ${text.sm};
+    text-shadow: none;
+  }
 `
 
 const Tabs = styled.div`
@@ -29,16 +50,20 @@ const Tabs = styled.div`
   button {
     flex: 1;
     min-height: 30px;
-    border: none;
-    background: ${color.face};
-    box-shadow: ${bevel.raised};
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    border: 1px solid ${glow.line};
+    border-radius: 4px 4px 0 0;
+    background: transparent;
+    color: ${glow.muted};
     cursor: pointer;
-    font-size: ${text.sm};
+    font-size: ${text.xs};
     white-space: nowrap;
   }
   button[aria-selected='true'] {
-    background: ${color.well};
-    box-shadow: ${bevel.pressed};
+    background: ${glow.screen};
+    color: ${glow.ink};
     font-weight: 700;
   }
 `
@@ -58,7 +83,7 @@ const Header = styled.div`
   gap: ${space[2]};
   padding: 0 ${space[1]};
   font-size: ${text.xs};
-  color: ${color.inkMuted};
+  color: ${glow.muted};
   min-width: 0;
   > span {
     overflow: hidden;
@@ -75,8 +100,7 @@ const Log = styled.ol`
   list-style: none;
   overflow-y: auto;
   overflow-x: hidden;
-  background: ${color.well};
-  box-shadow: ${bevel.sunken};
+  background: ${glow.screen};
   font-family: ${font.body};
   font-size: 14px;
   line-height: 1.4;
@@ -86,36 +110,36 @@ const Log = styled.ol`
 
   li {
     overflow-wrap: anywhere;
-    color: ${color.ink};
+    color: ${glow.ink};
   }
   .from {
     font-family: ${font.mono};
     font-size: 12px;
     font-weight: 700;
-    color: ${color.accentDark};
+    color: ${glow.name};
     margin-right: 6px;
   }
   .time {
     font-family: ${font.mono};
     font-size: 11px;
-    color: ${color.inkMuted};
+    color: ${glow.muted};
     margin-right: 6px;
   }
   a {
-    color: ${color.link};
+    color: ${glow.link};
   }
   .del {
     margin-left: 6px;
     border: none;
     background: none;
-    color: ${color.danger};
+    color: #ff8fa3;
     cursor: pointer;
     font-size: 12px;
     padding: 0 2px;
   }
   .empty {
     margin: auto;
-    color: ${color.inkMuted};
+    color: ${glow.muted};
     text-align: center;
     font-family: ${font.ui};
   }
@@ -149,24 +173,25 @@ const Composer = styled.form`
     min-width: 0;
     height: 36px;
     padding: 0 ${space[2]};
-    border: none;
-    border-radius: 0;
-    background: ${color.well};
-    box-shadow: ${bevel.field};
+    border: 1px solid ${glow.line};
+    border-radius: 4px;
+    background: ${glow.screen};
+    color: ${glow.ink};
     font-size: 15px;
     font-family: ${font.body};
   }
   button[type='submit'] {
-    min-width: 64px;
-    border: none;
-    background: ${color.face};
-    box-shadow: ${bevel.raised};
+    min-width: 56px;
+    border: 1px solid ${glow.line};
+    border-radius: 4px;
+    background: ${glow.line};
+    color: ${glow.ink};
     cursor: pointer;
     &:active:not(:disabled) {
-      box-shadow: ${bevel.pressed};
+      transform: translateY(1px);
     }
     &:disabled {
-      color: ${color.shadow};
+      color: ${glow.muted};
       cursor: not-allowed;
     }
   }
@@ -175,18 +200,18 @@ const Composer = styled.form`
     justify-content: space-between;
     gap: ${space[2]};
     font-size: ${text.xs};
-    color: ${color.inkMuted};
+    color: ${glow.muted};
   }
   .meta button {
     border: none;
     background: none;
     padding: 0;
-    color: ${color.link};
+    color: ${glow.link};
     cursor: pointer;
     font-size: ${text.xs};
   }
   .over {
-    color: ${color.danger};
+    color: #ff8fa3;
   }
 `
 
@@ -196,7 +221,6 @@ const Frame = styled.iframe`
   width: 100%;
   border: none;
   background: #0b0e0f;
-  box-shadow: ${bevel.sunken};
 `
 
 const Offline = styled.div`
@@ -209,18 +233,17 @@ const Offline = styled.div`
   gap: ${space[2]};
   padding: ${space[4]};
   text-align: center;
-  background: ${color.well};
-  box-shadow: ${bevel.sunken};
-  color: ${color.inkMuted};
+  background: ${glow.screen};
+  color: ${glow.muted};
   font-size: ${text.sm};
   strong {
     font-family: ${font.display};
     font-weight: 400;
-    font-size: ${text.lg};
-    color: ${color.ink};
+    font-size: ${text.md};
+    color: ${glow.ink};
   }
   a {
-    color: ${color.link};
+    color: ${glow.link};
   }
 `
 
