@@ -7,6 +7,7 @@ import type { SupportedChainId } from '@/config/wagmi'
 import { BigButton, Panel } from '../floor/retro'
 import { bevel, color, font, space, text } from '../floor/tokens'
 import type { PoolKind } from './pool'
+import { useOpenSeaNftImage } from './useMarkets'
 import { useNftMeta } from './usePools'
 
 /** Building blocks shared by the NFTs tab (pool list and pool view), in the Tokens tab's style. */
@@ -261,6 +262,12 @@ export function NftTile({
   onToggle?: () => void
 }) {
   const meta = useNftMeta(chainId, image ? undefined : collection, kind, id)
+  // Many collections' metadata hosts refuse browsers, so a token's own link can come back empty. OpenSea has a copy.
+  const fallback = useOpenSeaNftImage(
+    chainId,
+    image || meta.image || meta.loading ? undefined : collection,
+    id.toString(),
+  )
   const label = `#${id.toString()}`
   const title = name || meta.name || label
   return (
@@ -272,7 +279,7 @@ export function NftTile({
       title={title}
       aria-label={`${title}${units !== undefined && units > 1n ? `, ${units} in the pool` : ''}`}
     >
-      <NftImage src={image || meta.image} alt="" variant="thumb" />
+      <NftImage src={image || meta.image || fallback} alt="" variant="thumb" />
       <span className="label">
         <span>{label}</span>
         {units !== undefined && units > 1n && <span>×{units.toString()}</span>}

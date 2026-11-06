@@ -7,8 +7,8 @@
  *   GET /api/market/listings?slug=<slug>   { at, stale, count, sources, floor, listings }
  *   GET /api/market/sales?slug=<slug>      { at, stale, day: { count, volume }, sales }
  *
- * Only OpenSea today. MiyaPool joins as a second source when pools are live. Blur has no official API, so it stays a
- * link. Upstream, the key and the cache are passed in, so `node --test` runs all of it (tests/market.test.mts).
+ * Only OpenSea today. MiyaPool joins as a second source when pools are live.
+ * Upstream, the key and the cache are passed in, so `node --test` runs all of it (tests/market.test.mts).
  */
 
 export const MARKET_PREFIX = '/api/market'

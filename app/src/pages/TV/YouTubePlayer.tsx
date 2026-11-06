@@ -12,6 +12,25 @@ const Slot = styled.div`
     height: 100%;
     border: none;
   }
+  iframe {
+    pointer-events: none;
+  }
+`
+
+const Curtain = styled.div`
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  background: #000 center / cover no-repeat;
+  span {
+    padding: 4px 12px;
+    background: rgba(0, 0, 0, 0.75);
+    color: #e8e8e8;
+    font-size: 13px;
+    letter-spacing: 0.1em;
+  }
 `
 
 const Failed = styled.div`
@@ -52,6 +71,9 @@ function loadApi(): Promise<any> {
   return api
 }
 
+/** How long the first moments stay covered: YouTube shows its title and buttons as a video starts. */
+const CURTAIN_AFTER_PLAY_MS = 7500
+const CURTAIN_MOST_MS = 15_000
 const PLAYING = 1
 const BUFFERING = 3
 const ENDED = 0
@@ -77,13 +99,18 @@ export default function YouTubePlayer({
   const slot = useRef<HTMLDivElement>(null)
   const player = useRef<any>()
   const [failed, setFailed] = useState(false)
+  const [curtain, setCurtain] = useState(true)
   const latest = useRef({ volume, muted, onAutoMuted, onEnded })
   latest.current = { volume, muted, onAutoMuted, onEnded }
 
   useEffect(() => {
     setFailed(false)
+    setCurtain(true)
     let gone = false
     let check: ReturnType<typeof setTimeout>
+    let lift: ReturnType<typeof setTimeout>
+    // Whatever YouTube does, the picture is never left covered.
+    const most = setTimeout(() => setCurtain(false), CURTAIN_MOST_MS)
     const host = document.createElement('div')
     slot.current?.appendChild(host)
     loadApi().then((YT) => {
@@ -92,7 +119,17 @@ export default function YouTubePlayer({
         videoId,
         width: '100%',
         height: '100%',
-        playerVars: { autoplay: 1, playsinline: 1, rel: 0, origin: window.location.origin },
+        // No YouTube buttons: the set has its own. The film stays clear of the pointer, so hovering can't call them up.
+        playerVars: {
+          autoplay: 1,
+          playsinline: 1,
+          rel: 0,
+          controls: 0,
+          disablekb: 1,
+          fs: 0,
+          iv_load_policy: 3,
+          origin: window.location.origin,
+        },
         events: {
           onReady: (e: any) => {
             e.target.setVolume(Math.round(latest.current.volume * 100))
@@ -101,15 +138,19 @@ export default function YouTubePlayer({
             e.target.playVideo()
             check = setTimeout(() => {
               const state = e.target.getPlayerState?.()
-              // Long enough that a slow connection isn't taken for the browser refusing sound.
+              // Quick, so a refused start isn't a frozen screen. A slow connection reads as buffering, not refused.
               if (gone || state === PLAYING || state === BUFFERING) return
               e.target.mute()
               e.target.playVideo()
               latest.current.onAutoMuted?.()
-            }, 7000)
+            }, 2000)
           },
           onStateChange: (e: any) => {
             if (e.data === ENDED) latest.current.onEnded?.()
+            if (e.data === PLAYING) {
+              clearTimeout(lift)
+              lift = setTimeout(() => setCurtain(false), CURTAIN_AFTER_PLAY_MS)
+            }
           },
           onError: () => setFailed(true),
         },
@@ -118,6 +159,8 @@ export default function YouTubePlayer({
     return () => {
       gone = true
       clearTimeout(check)
+      clearTimeout(lift)
+      clearTimeout(most)
       player.current?.destroy?.()
       player.current = undefined
       host.remove()
@@ -136,6 +179,14 @@ export default function YouTubePlayer({
   return (
     <>
       <Slot ref={slot} />
+      {curtain && !failed && (
+        <Curtain
+          aria-hidden
+          style={{ backgroundImage: `url(https://i.ytimg.com/vi/${encodeURIComponent(videoId)}/hqdefault.jpg)` }}
+        >
+          <span>Tuning in…</span>
+        </Curtain>
+      )}
       {failed && (
         <Failed>
           <strong>This stream has moved or ended.</strong>

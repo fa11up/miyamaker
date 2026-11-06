@@ -8,7 +8,6 @@
  *   MiyaPool  our pools, on-chain, 0% fees (Ethereum, Sepolia, Robinhood Chain once the factory is live).
  *   OpenSea   API v2 through our proxy (/api/opensea): prices, listings, offers, in-app Seaport fills.
  *             Ethereum + Robinhood Chain. OpenSea closed its testnets, so no Sepolia.
- *   Blur      no public API: link out only (Ethereum).
  * Left out: Reservoir (api.reservoir.tools no longer resolves), LooksRare (API v2 answers 404), X2Y2 (API down).
  */
 
@@ -17,7 +16,7 @@ export type MarketChainKey = 'ethereum' | 'robinhood'
 /** OpenSea's chain identifier per chain id (undefined = OpenSea does not serve that chain). */
 export const OPENSEA_CHAIN: Record<number, MarketChainKey | undefined> = { 1: 'ethereum', 4663: 'robinhood' }
 
-export type VenueId = 'miyapool' | 'opensea' | 'blur'
+export type VenueId = 'miyapool' | 'opensea'
 
 export type Venue = {
   id: VenueId
@@ -42,12 +41,11 @@ export const VENUES: Venue[] = [
     data: 'opensea',
     inApp: true,
   },
-  { id: 'blur', name: 'Blur', fees: '0% fee + creator fee set on Blur', chains: [1], data: 'none', inApp: false },
 ]
 
 export const venuesFor = (chainId: number) => VENUES.filter((v) => v.chains.includes(chainId))
 
-/** "OpenSea and Blur" (Ethereum), "OpenSea" (Robinhood Chain), "" where only MiyaPool trades. */
+/** "OpenSea" where it trades, "" where only MiyaPool does. */
 export function otherMarkets(chainId: number): string {
   const names = venuesFor(chainId)
     .filter((v) => v.id !== 'miyapool')
@@ -62,7 +60,6 @@ export function collectionUrl(venue: VenueId, chainId: number, contract: string,
   // opensea.io/contract/<chain>/<address> redirects to the collection page, so no slug is needed.
   if (venue === 'opensea' && os)
     return slug ? `https://opensea.io/collection/${encodeURIComponent(slug)}` : `https://opensea.io/contract/${os}/${c}`
-  if (venue === 'blur' && chainId === 1) return `https://blur.io/eth/collection/${c}`
   return undefined
 }
 
@@ -71,7 +68,6 @@ export function itemUrl(venue: VenueId, chainId: number, contract: string, token
   const c = contract.toLowerCase()
   const os = OPENSEA_CHAIN[chainId]
   if (venue === 'opensea' && os) return `https://opensea.io/item/${os}/${c}/${tokenId}`
-  if (venue === 'blur' && chainId === 1) return `https://blur.io/eth/asset/${c}/${tokenId}`
   return undefined
 }
 

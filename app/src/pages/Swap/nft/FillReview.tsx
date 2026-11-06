@@ -283,7 +283,9 @@ export default function FillReview({
     err instanceof MarketError && err.needsKey
       ? 'In-app buying needs the OpenSea API key. Use the OpenSea link instead.'
       : err
-      ? err.message
+      ? /can not perform trading/i.test(err.message)
+        ? 'OpenSea has restricted this wallet from trading, so it cannot buy this here. Try another wallet.'
+        : err.message
       : plan && !plan.ok
       ? (plan as { error: string }).error
       : undefined

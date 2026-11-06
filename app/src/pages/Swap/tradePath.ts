@@ -1,8 +1,10 @@
 /**
  * Trade window paths. No runtime imports, so `node --test` can load it (tests/trade.test.mts).
  *
- *   /trade                    Tokens (the 0x swap)
- *   /trade/nfts               NFTs: pools on the chosen chain
+ *   /trade                    Home: NFTs on the left, tokens on the right
+ *   /trade/tokens/<chainId>/<address>
+ *                             Tokens: one token
+ *   /trade/nfts               Home too
  *   /trade/nfts/<pool>        NFTs: one pool
  *   /trade/nfts/collection/<chainId>/<address>[/<tokenId>]
  *                             NFTs: one collection (or one NFT) and every place it trades
@@ -35,15 +37,25 @@ const ADDRESS = /^0x[0-9a-fA-F]{40}$/
 
 export type CollectionRef = { chainId: number; address: `0x${string}`; tokenId?: string }
 
-const CHAIN_IDS = [1, 11155111, 4663]
+const CHAIN_IDS = [1, 4663]
+
+export type TokenRef = { chainId: number; address: `0x${string}` }
 
 /** Mode, pool or collection from a /trade path. Anything unknown falls back to Tokens. */
 export function parseTradePath(pathname: string): {
   mode: TradeMode
   pool?: `0x${string}`
   collection?: CollectionRef
+  token?: TokenRef
 } {
   const parts = pathname.split(/[?#]/)[0]!.split('/').filter(Boolean)
+  if (parts[0] === TRADE_PATH.slice(1) && parts[1] === 'tokens') {
+    const chainId = Number(parts[2])
+    const address = parts[3]
+    if (!CHAIN_IDS.includes(chainId) || !address || !ADDRESS.test(address)) return { mode: 'tokens' }
+    return { mode: 'tokens', token: { chainId, address: address as `0x${string}` } }
+  }
+
   if (parts[0] !== TRADE_PATH.slice(1) || parts[1] !== 'nfts') return { mode: 'tokens' }
   if (parts[2] === 'collection') {
     const chainId = Number(parts[3])
@@ -59,8 +71,8 @@ export function parseTradePath(pathname: string): {
   return pool ? { mode: 'nfts', pool } : { mode: 'nfts' }
 }
 
-export function tradePath(mode: TradeMode, pool?: string, collection?: CollectionRef): string {
-  if (mode === 'tokens') return TRADE_PATH
+export function tradePath(mode: TradeMode, pool?: string, collection?: CollectionRef, token?: TokenRef): string {
+  if (mode === 'tokens') return token ? `${TRADE_PATH}/tokens/${token.chainId}/${token.address}` : TRADE_PATH
   if (collection) {
     const base = `${TRADE_PATH}/nfts/collection/${collection.chainId}/${collection.address}`
     return collection.tokenId ? `${base}/${collection.tokenId}` : base

@@ -17,7 +17,7 @@ import { bevel, color, space, text } from '../floor/tokens'
 import { useEthUsd } from '../MarketBoard'
 import { erc721Abi, poolFactoryAbi } from './abi'
 import type { OsOrder, Price } from './markets'
-import { bestQuote, collectionUrl, formatAmount, formatPrice, lowerPrice, venuesFor } from './markets'
+import { bestQuote, formatAmount, formatPrice, lowerPrice, venuesFor } from './markets'
 import { DEFAULT_PAIR_SYMBOL, pickPair } from './pairs'
 import type { PoolMode } from './pool'
 import { KIND, MODE, MODE_HINT, MODE_LABEL } from './pool'
@@ -129,6 +129,10 @@ const TileButton = styled.button`
     white-space: nowrap;
     overflow: hidden;
   }
+  .buy {
+    color: ${color.accent};
+    font-weight: 700;
+  }
   .label b {
     font-variant-numeric: tabular-nums;
     overflow: hidden;
@@ -234,6 +238,7 @@ function ListingTile({
         <span className="label">
           <span>#{id}</span>
           <b>{formatPrice(listing.price)}</b>
+          <span className="buy">Buy →</span>
         </span>
       </TileButton>
     </li>
@@ -390,9 +395,13 @@ export default function CollectionView({
         price: poolSide(ethPrices[p.address.toLowerCase()], 'bid'),
       })),
     ],
-    'highest'
+    'highest',
   )
   const poolLines = swap ? pools.pools : poolsWithNfts
+  // The one Buy button goes wherever is cheapest right now.
+  const cheapestPool = poolsWithNfts.find((p) => `on ${poolVenue(p)}` === cheapest?.where)
+  const cheapestListing = canSweep[0] ?? listed[0]
+  const offerPool = pools.pools.find((p) => `sell into ${poolVenue(p)}` === topOffer?.where)
 
   const createPool = (mode: PoolMode) =>
     factory &&
@@ -403,6 +412,41 @@ export default function CollectionView({
       args: [address, mode],
       chainId,
     })
+
+  const startButtons = (
+    <>
+      {pools.freeModes.map((m) =>
+        !isConnected ? null : (
+          <PushButton
+            key={m}
+            type="button"
+            title={MODE_HINT[m]}
+            disabled={create.busy || wrongChain}
+            onClick={() => createPool(m)}
+          >
+            Start a {MODE_LABEL[m]} pool
+          </PushButton>
+        ),
+      )}
+      {pools.freeModes.length > 0 && !isConnected && (
+        <PushButton type="button" onClick={() => openConnectModal?.()}>
+          Connect to start a pool
+        </PushButton>
+      )}
+      {pools.freeModes.length > 0 && wrongChain && (
+        <PushButton type="button" onClick={() => switchChain({ chainId })} disabled={switching}>
+          Switch to {chain.name}
+        </PushButton>
+      )}
+    </>
+  )
+  const createStatus = create.tx.phase !== 'idle' && (
+    <StatusBox tone={create.tx.phase === 'error' ? 'error' : create.tx.phase === 'done' ? 'ok' : 'info'}>
+      {create.busy && <img src={LoadingHourglass} alt="" />}
+      <span>{create.tx.phase === 'done' ? 'Pool started. Open it above.' : txWords(create.tx)}</span>
+    </StatusBox>
+  )
+  const noPoolYet = !!factory && !pools.loading && pools.pools.length === 0
 
   return (
     <>
@@ -466,7 +510,7 @@ export default function CollectionView({
         )}
 
         {/* The figures above already give OpenSea's prices; this is for comparing them against our pools. */}
-        {poolLines.length > 0 && (
+        {(poolLines.length > 0 || cheapest) && (
           <Best aria-label="Best prices">
             {cheapest && (
               <div className="line">
@@ -484,6 +528,21 @@ export default function CollectionView({
                 </strong>
               </div>
             )}
+            {cheapest &&
+              (cheapestPool ? (
+                <PushButton type="button" data-best-buy onClick={() => onOpenPool(cheapestPool.address)}>
+                  Buy for {formatPrice(cheapest.price)} {cheapest.where}
+                </PushButton>
+              ) : cheapestListing?.tokenId ? (
+                <PushButton type="button" data-best-buy onClick={() => onOpenItem(cheapestListing.tokenId!)}>
+                  Buy #{cheapestListing.tokenId} for {formatPrice(cheapestListing.price)} on OpenSea
+                </PushButton>
+              ) : null)}
+            {offerPool && (
+              <PushButton type="button" onClick={() => onOpenPool(offerPool.address)}>
+                Sell into the pool
+              </PushButton>
+            )}
             {poolLines.map((p) => (
               <PoolPriceLine
                 key={p.address}
@@ -493,7 +552,7 @@ export default function CollectionView({
                 price={shownPrices[p.address.toLowerCase()]}
               />
             ))}
-            {poolLines.length > 0 && (
+            {swap && poolLines.length > 0 && (
               <PairSwitch
                 label="Pool price in"
                 options={pairs.map((t) => t.symbol)}
@@ -504,6 +563,19 @@ export default function CollectionView({
           </Best>
         )}
       </Card>
+
+      {noPoolYet && (
+        <Card aria-label="Start the first pool" data-start-pool>
+          <Eyebrow>Start the first pool</Eyebrow>
+          <Prose>
+            A pool lets anyone swap one of these NFTs for a token and back, with no fees. Anyone can start it. It shows
+            no price until someone adds liquidity for its token.
+          </Prose>
+          <Chips>{startButtons}</Chips>
+          {createStatus}
+          {pools.freeModes.includes(MODE.RANDOM) && isConnected && <Hint>Random pools work only for ERC-721.</Hint>}
+        </Card>
+      )}
 
       {sweeping && pickedListings.length > 0 ? (
         <SweepReview
@@ -541,9 +613,10 @@ export default function CollectionView({
 
       {os.slug && (listings.loading || (listings.listings && listings.listings.length > 0)) && (
         <Card aria-label="Cheapest for sale">
-          <Eyebrow>Cheapest for sale</Eyebrow>
+          <Eyebrow>For sale{listed.length ? ` · ${listed.length}` : ''}</Eyebrow>
           <Hint>
-            Press one to see it and buy it here.{listings.stale ? ' These prices may be a few minutes old.' : ''}
+            Cheapest first. Press one to see it and buy it right here.
+            {listings.stale ? ' These prices may be a few minutes old.' : ''}
           </Hint>
           {listings.loading ? (
             <Tiles>
@@ -612,7 +685,7 @@ export default function CollectionView({
                   note={
                     pools.pools.length
                       ? 'Swap an NFT for 1 pool token, or 1 pool token for an NFT.'
-                      : 'No pool for this collection yet. Anyone can start one.'
+                      : 'No pool for this collection yet. Start one above.'
                   }
                   facts={pools.pools.map((p) => ({
                     label: MODE_LABEL[p.mode],
@@ -624,34 +697,11 @@ export default function CollectionView({
                       Open {MODE_LABEL[p.mode]} pool
                     </PushButton>
                   ))}
-                  {pools.freeModes.map((m) =>
-                    !isConnected ? null : (
-                      <PushButton
-                        key={m}
-                        type="button"
-                        title={MODE_HINT[m]}
-                        disabled={create.busy || wrongChain}
-                        onClick={() => createPool(m)}
-                      >
-                        Start a {MODE_LABEL[m]} pool
-                      </PushButton>
-                    )
-                  )}
-                  {pools.freeModes.length > 0 && !isConnected && (
-                    <PushButton type="button" onClick={() => openConnectModal?.()}>
-                      Connect to start a pool
-                    </PushButton>
-                  )}
-                  {pools.freeModes.length > 0 && wrongChain && (
-                    <PushButton type="button" onClick={() => switchChain({ chainId })} disabled={switching}>
-                      Switch to {chain.name}
-                    </PushButton>
-                  )}
+                  {pools.pools.length > 0 && startButtons}
                 </VenueRow>
               )
             }
 
-            const href = collectionUrl(v.id, chainId, address, os.slug)
             if (v.id === 'opensea') {
               const facts: { label: string; value: string }[] = []
               if (os.stats?.floor) facts.push({ label: 'Floor', value: formatPrice(os.stats.floor) })
@@ -667,42 +717,22 @@ export default function CollectionView({
                     os.loading && !os.needsKey
                       ? 'Getting prices…'
                       : os.missing
-                      ? 'OpenSea does not list this contract (yet).'
-                      : os.needsKey
-                      ? 'Listings and offers need an API key. The link works.'
-                      : listings.listings?.length
-                      ? 'Buy listed NFTs right here, above.'
-                      : undefined
+                        ? 'Not on OpenSea yet.'
+                        : os.needsKey
+                          ? 'Listings are unavailable right now.'
+                          : listings.listings?.length
+                            ? 'Buy listed NFTs right here, above.'
+                            : undefined
                   }
-                >
-                  {href && (
-                    <OutLink href={href} target="_blank" rel="noreferrer">
-                      Open on OpenSea ↗
-                    </OutLink>
-                  )}
-                </VenueRow>
+                ></VenueRow>
               )
             }
 
-            return (
-              <VenueRow key={v.id} venue={v} note={`${v.name} has no public price feed. See prices there.`}>
-                {href && (
-                  <OutLink href={href} target="_blank" rel="noreferrer">
-                    Open on {v.name} ↗
-                  </OutLink>
-                )}
-              </VenueRow>
-            )
+            return null
           })}
         </VenueList>
-        {!os.supported && <Hint>OpenSea and Blur do not trade on {chain.name}. Only MiyaPool does.</Hint>}
-        {os.error && <Hint>Could not get OpenSea prices right now. The links still work.</Hint>}
-        {create.tx.phase !== 'idle' && (
-          <StatusBox tone={create.tx.phase === 'error' ? 'error' : create.tx.phase === 'done' ? 'ok' : 'info'}>
-            {create.busy && <img src={LoadingHourglass} alt="" />}
-            <span>{create.tx.phase === 'done' ? 'Pool started. Open it above.' : txWords(create.tx)}</span>
-          </StatusBox>
-        )}
+        {os.error && <Hint>Could not get OpenSea prices right now.</Hint>}
+        {!noPoolYet && createStatus}
         {pools.freeModes.includes(MODE.RANDOM) && pools.freeModes.length > 0 && isConnected && (
           <Hint>Random pools work only for ERC-721.</Hint>
         )}

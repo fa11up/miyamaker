@@ -217,24 +217,17 @@ export default function ItemView({
                       Review and sell
                     </PushButton>
                   )}
-                  {href && (
+                  {/* Only listing your own takes a trip to OpenSea: buying and accepting an offer happen here. */}
+                  {href && mine && (
                     <OutLink href={href} target="_blank" rel="noreferrer">
-                      {mine ? 'List on OpenSea ↗' : 'Open on OpenSea ↗'}
+                      List on OpenSea ↗
                     </OutLink>
                   )}
                 </VenueRow>
               )
             }
 
-            return (
-              <VenueRow key={v.id} venue={v} note={`Check ${v.name} for its price.`}>
-                {href && (
-                  <OutLink href={href} target="_blank" rel="noreferrer">
-                    {mine ? `List on ${v.name} ↗` : `Open on ${v.name} ↗`}
-                  </OutLink>
-                )}
-              </VenueRow>
-            )
+            return null
           })}
         </VenueList>
         {listingIsMine && <Hint>You listed this one on OpenSea for {formatPrice(item.listing!.price)}.</Hint>}

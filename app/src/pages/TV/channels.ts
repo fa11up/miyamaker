@@ -133,7 +133,8 @@ export const CHANNELS: Channel[] = [
     name: 'Kick',
     tagline: 'Live creators, through Kick’s official player.',
     description: 'Kick creators, embedded with the official Kick player. Markets on these streams are coming soon.',
-    // Picked 2026-11-01 to fit the market templates (chess results are settleable from public chess
+    // The page offers whoever is on right now (api/_lib/tvkick.ts): these first when they're live, and this list when Kick
+    // can't be asked. Picked 2026-11-01 to fit the market templates (chess results are settleable from public chess
     // casino streams. Kick follower counts then: xQc 1.47M, GMHikaru 214k, chessbrah 35k.
     sources: [
       { provider: 'kick', slug: 'xqc', label: 'xQc' },
@@ -177,10 +178,10 @@ export const CHAT_ROOM = 'miyatv'
 export const CHAT_MIN = 222
 export const CHAT_DEFAULT = 340
 // Kick's player only offers mute and volume at 769px or wider. 770 for the glass, 12 for its trim, 8 for the drag
-// handle, 16 for the cabinet's padding.
+// gap, 16 for the cabinet's padding.
 const SCREEN_NEEDS = 806
 
-/** How wide chat may be dragged in a cabinet this wide: never so far that the picture loses its volume controls. */
+/** How wide chat is in a cabinet this wide: never so far that the picture loses its volume controls. */
 export function clampChat(wanted: number, cabinetWidth: number): number {
   const max = Math.max(CHAT_MIN, cabinetWidth - SCREEN_NEEDS)
   return Math.round(Math.min(max, Math.max(CHAT_MIN, wanted)))

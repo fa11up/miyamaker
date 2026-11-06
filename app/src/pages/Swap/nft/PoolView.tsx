@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
 import styled from 'styled-components/macro'
+import { useElementSize } from 'usehooks-ts'
 import type { Address } from 'viem'
 import { parseEventLogs } from 'viem'
 import { useBlockNumber } from 'wagmi'
 
 import LoadingHourglass from '@/assets/loading_hourglass.gif'
+import NftImage from '@/components/NftImage'
 import type { SupportedChainId } from '@/config/wagmi'
 import { chains, explorerUrl, mainnet } from '@/config/wagmi'
 import { txWords, useTx } from '@/miyamints/useTx'
@@ -13,13 +15,15 @@ import { useCanBatch } from '@/utils/batch'
 import type { SwapChainId, SwapToken } from '../constants'
 import { isSwapChain } from '../constants'
 import { Chip, Eyebrow, Skeleton, StatusBox, Stepper } from '../floor/retro'
-import { color, space, text } from '../floor/tokens'
+import { bevel, color, space, text } from '../floor/tokens'
 import { erc721Abi, erc1155Abi, poolAbi } from './abi'
 import { EscrowClaim } from './EscrowClaim'
 import { formatPrice } from './markets'
 import { DEFAULT_PAIR_SYMBOL, pairWords, pickPair } from './pairs'
 import type { CommitRow } from './pool'
 import {
+  directSendOnly,
+  modesOn,
   blocksToReveal,
   commitPhase,
   depositPlan,
@@ -55,6 +59,7 @@ import {
 } from './ui'
 import { pairsFor, poolSide, usePoolPrices } from './usePoolPrices'
 import type { Pool } from './usePools'
+import { useOpenSeaCollection } from './useMarkets'
 import {
   HELD_PAGE,
   useApprovedForAll,
@@ -63,6 +68,8 @@ import {
   useOwnedInCollection,
   useOwnership,
   usePool,
+  poolFactoryFor,
+  usePoolsForCollection,
 } from './usePools'
 import { PairSwitch } from './venueUi'
 
@@ -120,16 +127,58 @@ const poolSwapToken = (pool: Pool, chainId: SwapChainId): SwapToken => ({
 })
 
 /** One pool: what it holds, buy NFTs with pool tokens, sell NFTs for pool tokens. */
+const BOTH_SIDES_WIDTH = 620
+
+const Sides = styled.div`
+  display: grid;
+  gap: ${space[2]};
+  &[data-both] {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: start;
+  }
+  &[data-both] > [data-active] {
+    outline: 1px solid ${color.accent};
+  }
+`
+
+const PoolHero = styled.div`
+  display: flex;
+  align-items: center;
+  gap: ${space[3]};
+  .pic {
+    flex: 0 0 72px;
+    width: 72px;
+    padding: 2px;
+    background: ${color.well};
+    box-shadow: ${bevel.sunken};
+  }
+  .price {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+  b {
+    font-size: ${text.lg};
+    font-variant-numeric: tabular-nums;
+  }
+  small {
+    font-size: ${text.xs};
+    color: ${color.inkMuted};
+  }
+`
+
 export default function PoolView({
   chainId,
   address: poolAddress,
   onBack,
+  onOpenPool,
   onSwapToken,
   wallet,
 }: {
   chainId: SupportedChainId
   address: Address
   onBack: () => void
+  onOpenPool: (pool: Address) => void
   onSwapToken: (p: { chainId: SwapChainId; sell?: SwapToken; buy?: SwapToken }) => void
   wallet: Wallet
 }) {
@@ -140,6 +189,13 @@ export default function PoolView({
   const info = usePool(chainId, poolAddress, me)
   const { pool } = info
   const [side, setSide] = useState<'buy' | 'sell'>('buy')
+  const [sidesRef, { width: sidesWidth }] = useElementSize()
+  // Room for both: the pool's NFTs next to yours, and tapping either one says which you're doing.
+  const bothSides = sidesWidth >= BOTH_SIDES_WIDTH
+  const os = useOpenSeaCollection(chainId, pool?.collection)
+  const siblings = usePoolsForCollection(chainId, poolFactoryFor(chainId), pool?.collection ?? '')
+  const ethPair = pickPair(pairsFor(chainId), 'ETH')
+  const nowPrice = usePoolPrices(chainId, pool ? [poolAddress] : [], ethPair)[poolAddress.toLowerCase()]
   const [pages, setPages] = useState(1)
   const held = useHeldIds(chainId, pool, info.heldIdsCount, pages)
   const random = pool?.mode === MODE.RANDOM
@@ -165,7 +221,7 @@ export default function PoolView({
   const owned = useOwnedInCollection(chainId, pool?.collection, me)
   const ownedForPool = useMemo(
     () => (owned.nfts || []).filter((n) => n.contract.toLowerCase() === pool?.collection.toLowerCase()),
-    [owned.nfts, pool?.collection]
+    [owned.nfts, pool?.collection],
   )
   const sellIds = useMemo(() => selling.map((s) => BigInt(s)), [selling])
   const ownership = useOwnership(chainId, pool?.collection, pool?.kind ?? KIND.ERC721, me, sellIds)
@@ -184,7 +240,8 @@ export default function PoolView({
   const tx = useTx((id) => {
     refresh()
     if (id === 'redeem') setPicked([])
-    if (id.startsWith('deposit')) {
+    if (id === 'deposit-one') setSelling((list) => list.slice(1))
+    else if (id.startsWith('deposit')) {
       setSelling([])
       setManualIds([])
       setQty({})
@@ -237,6 +294,7 @@ export default function PoolView({
   }
 
   const title = poolTitle(pool)
+  const poolAsk = poolSide(nowPrice, 'ask')
   const { symbol } = pool
   const { balance } = info
   const affordable = wholeUnits(balance)
@@ -250,6 +308,7 @@ export default function PoolView({
 
   const toggleBuy = (id: bigint) => {
     const k = id.toString()
+    setSide('buy')
     setPicked((p) => (p.includes(k) ? p.filter((x) => x !== k) : [...p, k]))
   }
 
@@ -296,11 +355,15 @@ export default function PoolView({
 
   /* ---------- sell ---------- */
 
-  const toggleSell = (id: string) => setSelling((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]))
+  const toggleSell = (id: string) => {
+    setSide('sell')
+    setSelling((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]))
+  }
   const addTyped = () => {
     const { ids, error } = parseTokenIds(typed)
     setTypedError(error)
     if (error || !ids.length) return
+    setSide('sell')
     const keys = ids.map(String)
     setManualIds((m) => [...new Set([...m, ...keys])])
     setSelling((s) => [...new Set([...s, ...keys])])
@@ -314,11 +377,11 @@ export default function PoolView({
   }
 
   const notOwned = selling.filter(
-    (_, i) => ownership.held[i] !== undefined && ownership.held[i]! < amountFor(selling[i]!)
+    (_, i) => ownership.held[i] !== undefined && ownership.held[i]! < amountFor(selling[i]!),
   )
   const checking = selling.length > 0 && ownership.held.some((h) => h === undefined) && ownership.loading
   const sellUnits = selling.reduce((sum, id) => sum + amountFor(id), 0n)
-  const plan = depositPlan(pool.kind, selling.length, approval.approved)
+  const plan = depositPlan(pool.kind, selling.length, approval.approved, directSendOnly(chainId))
 
   const deposit = () => {
     if (!me) return
@@ -331,7 +394,17 @@ export default function PoolView({
         args: [me, poolAddress, ids[0]!, '0x'],
         chainId,
       })
-    else if (plan === 'transfer-1155')
+    else if (plan === 'transfer-721-each') {
+      const sends = ids.map((id) => ({
+        address: pool.collection,
+        abi: erc721Abi,
+        functionName: 'safeTransferFrom',
+        args: [me, poolAddress, id, '0x'],
+        chainId,
+      }))
+      if (batches) tx.runBatch('deposit', sends, 'deposit-one')
+      else tx.run('deposit-one', sends[0])
+    } else if (plan === 'transfer-1155')
       tx.run('deposit', {
         address: pool.collection,
         abi: erc1155Abi,
@@ -404,6 +477,14 @@ export default function PoolView({
     if (!selling.length) return { label: 'Choose NFTs to sell', disabled: true }
     if (checking) return { label: 'Checking your NFTs…', disabled: true }
     if (notOwned.length) return { label: `You do not hold #${notOwned[0]}`, disabled: true }
+    if (plan === 'transfer-721-each')
+      return {
+        label: batches ? `Sell ${nfts(sellUnits)} for ${sellUnits.toString()} ${symbol}` : `Sell #${selling[0]}`,
+        step: batches
+          ? 'One signature, all or nothing.'
+          : `This collection only allows one at a time. ${selling.length} to go: sign for each.`,
+        onClick: deposit,
+      }
     if (plan === 'approve' && batches)
       return {
         label: `Sell ${nfts(sellUnits)} for ${sellUnits.toString()} ${symbol}`,
@@ -434,6 +515,7 @@ export default function PoolView({
     commit: 'Paid. Reveal your NFT below once the next block is in.',
     approve: 'Allowed. Now press Sell.',
     deposit: `Sold. The ${symbol} is in your wallet.`,
+    'deposit-one': `Sold one. The ${symbol} is in your wallet.`,
   }
 
   return (
@@ -443,6 +525,18 @@ export default function PoolView({
       </LinkButton>
 
       <Card aria-label={`${title} pool`} data-pool-view>
+        <PoolHero>
+          {os.info?.image && (
+            <span className="pic" aria-hidden>
+              <NftImage src={os.info.image} alt="" variant="thumb" />
+            </span>
+          )}
+          <span className="price" data-pool-now>
+            {poolAsk && <small>One NFT costs about</small>}
+            <b>{poolAsk ? formatPrice(poolAsk) : nowPrice?.state === 'loading' && swapChain ? '…' : 'No price yet'}</b>
+            {!poolAsk && nowPrice?.state !== 'loading' && <small>Nobody has added liquidity for {symbol} yet.</small>}
+          </span>
+        </PoolHero>
         <Head>
           <h2>{title}</h2>
           <Chips>
@@ -484,6 +578,27 @@ export default function PoolView({
         </Hint>
       </Card>
 
+      {modesOn(chainId).length > 1 && (
+        <Segmented role="group" aria-label="Which NFT you get" data-pool-modes>
+          {modesOn(chainId).map((m) => {
+            const there = m === pool.mode ? pool : siblings.pools.find((p) => p.mode === m)
+            return (
+              <button
+                key={m}
+                type="button"
+                aria-pressed={m === pool.mode}
+                disabled={busy || !there}
+                title={there ? MODE_HINT[m] : `This collection has no ${MODE_LABEL[m]} pool yet`}
+                onClick={() => there && m !== pool.mode && onOpenPool(there.address)}
+              >
+                {m === MODE.TARGETED ? 'Pick yours' : 'Random'}
+                {!there && ' (no pool yet)'}
+              </button>
+            )
+          })}
+        </Segmented>
+      )}
+
       <Segmented role="group" aria-label="Buy or sell">
         <button type="button" aria-pressed={side === 'buy'} onClick={() => setSide('buy')} disabled={busy}>
           Buy NFTs
@@ -507,8 +622,8 @@ export default function PoolView({
                     {phase === 'waiting'
                       ? `ready in ${left} block${left === 1 ? '' : 's'}`
                       : phase === 'late'
-                      ? 'late: revealing picks a new block'
-                      : 'ready'}
+                        ? 'late: revealing picks a new block'
+                        : 'ready'}
                   </span>
                   <PushButton
                     type="button"
@@ -539,173 +654,176 @@ export default function PoolView({
         <EscrowClaim pool={poolAddress} chainId={chainId} me={me} busy={busy} disabled={wrongChain} tx={tx} />
       )}
 
-      {side === 'buy' ? (
-        <Card aria-label="Buy NFTs">
-          <Eyebrow>{random ? 'What is in the pool' : `Pick NFTs · ${picked.length} chosen`}</Eyebrow>
-          <Hint>
-            {random
-              ? `You cannot choose: a block picks for you. Each costs 1 ${symbol}.`
-              : `Tap the NFTs you want. Each costs 1 ${symbol}.`}
-          </Hint>
-          {held.loading ? (
-            <Grid>
-              {Array.from({ length: 6 }, (_, i) => (
-                <Skeleton key={i} h="120px" />
-              ))}
-            </Grid>
-          ) : held.ids.length ? (
-            <Grid>
-              {held.ids.map((id, i) => (
-                <NftTile
-                  key={id.toString()}
-                  chainId={chainId}
-                  collection={pool.collection}
-                  kind={pool.kind}
-                  id={id}
-                  units={held.unitsOf(i)}
-                  selected={picked.includes(id.toString())}
-                  onToggle={random || busy ? undefined : () => toggleBuy(id)}
-                />
-              ))}
-            </Grid>
-          ) : (
-            <Prose>The pool is empty. Sell one in to start it.</Prose>
-          )}
-          {held.more && (
-            <PushButton type="button" onClick={() => setPages((p) => p + 1)}>
-              Show {HELD_PAGE} more
-            </PushButton>
-          )}
-          {random && (
-            <QtyRow>
-              <span>How many?</span>
-              <Stepper>
-                <button
-                  type="button"
-                  aria-label="One fewer"
-                  onClick={() => setCount((c) => Math.max(1, c - 1))}
-                  disabled={count <= 1 || busy}
-                >
-                  −
-                </button>
-                <input
-                  aria-label="How many random NFTs"
-                  inputMode="numeric"
-                  value={count}
-                  onChange={(e) => {
-                    const n = Number(e.target.value.replace(/\D/g, ''))
-                    setCount(Math.max(1, Math.min(n || 1, maxDraw)))
-                  }}
-                  disabled={busy}
-                />
-                <button
-                  type="button"
-                  aria-label="One more"
-                  onClick={() => setCount((c) => Math.min(maxDraw, c + 1))}
-                  disabled={count >= maxDraw || busy}
-                >
-                  +
-                </button>
-              </Stepper>
-            </QtyRow>
-          )}
-          {short && buyUnits > 0 && (
-            <Hint style={{ color: color.warning }}>
-              You need {buyUnits} {symbol} and have {unitsText(balance)}.{' '}
-              {swapChain
-                ? 'Get more on the Tokens tab, or sell an NFT into the pool.'
-                : 'Sell an NFT into the pool to get some.'}
+      <Sides ref={sidesRef} data-both={bothSides || undefined}>
+        {(bothSides || side === 'buy') && (
+          <Card aria-label="Buy NFTs" data-active={side === 'buy' || undefined}>
+            <Eyebrow>{random ? 'What is in the pool' : `Pick NFTs · ${picked.length} chosen`}</Eyebrow>
+            <Hint>
+              {random
+                ? `You cannot choose: a block picks for you. Each costs 1 ${symbol}.`
+                : `Tap the NFTs you want. Each costs 1 ${symbol}.`}
             </Hint>
-          )}
-        </Card>
-      ) : (
-        <Card aria-label="Sell NFTs">
-          <Eyebrow>Your {title} NFTs</Eyebrow>
-          <Hint>Each NFT you sell gives you 1 {symbol}. Tap the ones to sell.</Hint>
-          {!me ? (
-            <Prose>Connect a wallet to see your NFTs.</Prose>
-          ) : owned.supported && owned.loading ? (
-            <Grid>
-              {Array.from({ length: 3 }, (_, i) => (
-                <Skeleton key={i} h="120px" />
-              ))}
-            </Grid>
-          ) : (
-            <>
-              {(ownedForPool.length > 0 || manualIds.length > 0) && (
-                <Grid>
-                  {ownedForPool.map((n) => (
-                    <NftTile
-                      key={n.tokenId}
-                      chainId={chainId}
-                      collection={pool.collection}
-                      kind={pool.kind}
-                      id={BigInt(n.tokenId)}
-                      image={n.image || undefined}
-                      name={n.name}
-                      selected={selling.includes(n.tokenId)}
-                      onToggle={busy ? undefined : () => toggleSell(n.tokenId)}
-                    />
-                  ))}
-                  {manualIds
-                    .filter((id) => !ownedForPool.some((n) => n.tokenId === id))
-                    .map((id) => (
+            {held.loading ? (
+              <Grid>
+                {Array.from({ length: 6 }, (_, i) => (
+                  <Skeleton key={i} h="120px" />
+                ))}
+              </Grid>
+            ) : held.ids.length ? (
+              <Grid>
+                {held.ids.map((id, i) => (
+                  <NftTile
+                    key={id.toString()}
+                    chainId={chainId}
+                    collection={pool.collection}
+                    kind={pool.kind}
+                    id={id}
+                    units={held.unitsOf(i)}
+                    selected={picked.includes(id.toString())}
+                    onToggle={random || busy ? undefined : () => toggleBuy(id)}
+                  />
+                ))}
+              </Grid>
+            ) : (
+              <Prose>The pool is empty. Sell one in to start it.</Prose>
+            )}
+            {held.more && (
+              <PushButton type="button" onClick={() => setPages((p) => p + 1)}>
+                Show {HELD_PAGE} more
+              </PushButton>
+            )}
+            {random && (
+              <QtyRow>
+                <span>How many?</span>
+                <Stepper>
+                  <button
+                    type="button"
+                    aria-label="One fewer"
+                    onClick={() => setCount((c) => Math.max(1, c - 1))}
+                    disabled={count <= 1 || busy}
+                  >
+                    −
+                  </button>
+                  <input
+                    aria-label="How many random NFTs"
+                    inputMode="numeric"
+                    value={count}
+                    onChange={(e) => {
+                      const n = Number(e.target.value.replace(/\D/g, ''))
+                      setCount(Math.max(1, Math.min(n || 1, maxDraw)))
+                    }}
+                    disabled={busy}
+                  />
+                  <button
+                    type="button"
+                    aria-label="One more"
+                    onClick={() => setCount((c) => Math.min(maxDraw, c + 1))}
+                    disabled={count >= maxDraw || busy}
+                  >
+                    +
+                  </button>
+                </Stepper>
+              </QtyRow>
+            )}
+            {short && buyUnits > 0 && (
+              <Hint style={{ color: color.warning }}>
+                You need {buyUnits} {symbol} and have {unitsText(balance)}.{' '}
+                {swapChain
+                  ? 'Get more on the Tokens tab, or sell an NFT into the pool.'
+                  : 'Sell an NFT into the pool to get some.'}
+              </Hint>
+            )}
+          </Card>
+        )}
+        {(bothSides || side === 'sell') && (
+          <Card aria-label="Sell NFTs" data-active={side === 'sell' || undefined}>
+            <Eyebrow>Your {title} NFTs</Eyebrow>
+            <Hint>Each NFT you sell gives you 1 {symbol}. Tap the ones to sell.</Hint>
+            {!me ? (
+              <Prose>Connect a wallet to see your NFTs.</Prose>
+            ) : owned.supported && owned.loading ? (
+              <Grid>
+                {Array.from({ length: 3 }, (_, i) => (
+                  <Skeleton key={i} h="120px" />
+                ))}
+              </Grid>
+            ) : (
+              <>
+                {(ownedForPool.length > 0 || manualIds.length > 0) && (
+                  <Grid>
+                    {ownedForPool.map((n) => (
                       <NftTile
-                        key={id}
+                        key={n.tokenId}
                         chainId={chainId}
                         collection={pool.collection}
                         kind={pool.kind}
-                        id={BigInt(id)}
-                        selected={selling.includes(id)}
-                        onToggle={busy ? undefined : () => toggleSell(id)}
+                        id={BigInt(n.tokenId)}
+                        image={n.image || undefined}
+                        name={n.name}
+                        selected={selling.includes(n.tokenId)}
+                        onToggle={busy ? undefined : () => toggleSell(n.tokenId)}
                       />
                     ))}
-                </Grid>
-              )}
-              {owned.supported && !ownedForPool.length && !manualIds.length && (
-                <Prose>We did not find any in this wallet. If you have some, type their numbers below.</Prose>
-              )}
-              <AddRow
-                onSubmit={(e) => {
-                  e.preventDefault()
-                  addTyped()
-                }}
-              >
-                <Field
-                  value={typed}
-                  onChange={(e) => setTyped(e.target.value)}
-                  placeholder={owned.supported ? 'Or type token numbers: 12, 40-45' : 'Token numbers: 12, 40-45'}
-                  aria-label="Token numbers to sell"
-                  inputMode="numeric"
-                  disabled={busy}
-                />
-                <PushButton type="submit" disabled={busy || !typed.trim()}>
-                  Add
-                </PushButton>
-              </AddRow>
-              {typedError && <Hint style={{ color: color.danger }}>{typedError}</Hint>}
-              {is1155 &&
-                selling.map((id) => (
-                  <QtyRow key={id}>
-                    <span>How many #{id}?</span>
-                    <Field
-                      inputMode="numeric"
-                      aria-label={`How many of #${id} to sell`}
-                      value={qty[id] ?? '1'}
-                      onChange={(e) => setQty((q) => ({ ...q, [id]: e.target.value.replace(/\D/g, '') }))}
-                      disabled={busy}
-                    />
-                  </QtyRow>
-                ))}
-              {notOwned.length > 0 && (
-                <Hint style={{ color: color.danger }}>
-                  This wallet does not hold enough of {notOwned.map((id) => `#${id}`).join(', ')}. Tap to remove.
-                </Hint>
-              )}
-            </>
-          )}
-        </Card>
-      )}
+                    {manualIds
+                      .filter((id) => !ownedForPool.some((n) => n.tokenId === id))
+                      .map((id) => (
+                        <NftTile
+                          key={id}
+                          chainId={chainId}
+                          collection={pool.collection}
+                          kind={pool.kind}
+                          id={BigInt(id)}
+                          selected={selling.includes(id)}
+                          onToggle={busy ? undefined : () => toggleSell(id)}
+                        />
+                      ))}
+                  </Grid>
+                )}
+                {owned.supported && !ownedForPool.length && !manualIds.length && (
+                  <Prose>We did not find any in this wallet. If you have some, type their numbers below.</Prose>
+                )}
+                <AddRow
+                  onSubmit={(e) => {
+                    e.preventDefault()
+                    addTyped()
+                  }}
+                >
+                  <Field
+                    value={typed}
+                    onChange={(e) => setTyped(e.target.value)}
+                    placeholder={owned.supported ? 'Or type token numbers: 12, 40-45' : 'Token numbers: 12, 40-45'}
+                    aria-label="Token numbers to sell"
+                    inputMode="numeric"
+                    disabled={busy}
+                  />
+                  <PushButton type="submit" disabled={busy || !typed.trim()}>
+                    Add
+                  </PushButton>
+                </AddRow>
+                {typedError && <Hint style={{ color: color.danger }}>{typedError}</Hint>}
+                {is1155 &&
+                  selling.map((id) => (
+                    <QtyRow key={id}>
+                      <span>How many #{id}?</span>
+                      <Field
+                        inputMode="numeric"
+                        aria-label={`How many of #${id} to sell`}
+                        value={qty[id] ?? '1'}
+                        onChange={(e) => setQty((q) => ({ ...q, [id]: e.target.value.replace(/\D/g, '') }))}
+                        disabled={busy}
+                      />
+                    </QtyRow>
+                  ))}
+                {notOwned.length > 0 && (
+                  <Hint style={{ color: color.danger }}>
+                    This wallet does not hold enough of {notOwned.map((id) => `#${id}`).join(', ')}. Tap to remove.
+                  </Hint>
+                )}
+              </>
+            )}
+          </Card>
+        )}
+      </Sides>
 
       {tx.tx.phase !== 'idle' && !(tx.tx.phase === 'done' && tx.tx.id?.startsWith('reveal')) && (
         <StatusBox

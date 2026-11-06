@@ -19,7 +19,7 @@ export interface DesktopPrefs {
 }
 
 export const DEFAULT_PREFS: DesktopPrefs = {
-  petEnabled: true,
+  petEnabled: false,
   petId: 'fumo',
   petVariant: '',
   screensaverEnabled: true,

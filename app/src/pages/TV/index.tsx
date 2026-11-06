@@ -13,8 +13,19 @@ import { closeWindow, minimizeWindow } from '@/store/windows/actions'
 import { useFullscreen } from '@/store/windows/hooks'
 import { font, space, text } from '@/theme/tokens'
 
+import type { KickStream } from '../../../api/_lib/tvkick'
 import { TV_LIVE_PATH } from '../../../api/_lib/tvlive'
-import { CHANNELS, CHAT_DEFAULT, CHAT_ROOM, clampChat, indexOfNumber, nativeChatFor, stepChannel, watchUrl } from './channels'
+import {
+  CHANNELS,
+  CHAT_DEFAULT,
+  CHAT_ROOM,
+  clampChat,
+  indexOfNumber,
+  nativeChatFor,
+  stepChannel,
+  watchUrl,
+} from './channels'
+import type { Source } from './channels'
 import ChatPanel from './chat/ChatPanel'
 import Guide from './Guide'
 import { FocusPanel, IssPanel, PublicPanel, RadioPanel, SpottingPanel, SqueekPanel } from './panels'
@@ -36,21 +47,19 @@ const Root = styled.div`
   height: 100%;
   min-width: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 8px var(--chat-w);
+  grid-template-columns: minmax(0, 1fr) var(--chat-w);
+  column-gap: 12px;
   grid-template-rows: minmax(0, 1fr);
   padding: ${space[2]};
   overflow: hidden;
   border-radius: 0 0 16px 16px;
   color: #f3e7cf;
   background: url(${woodSkin}) 0 0 / 512px 512px;
-  box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.75), inset 0 0 0 1px rgba(20, 10, 2, 0.8);
+  box-shadow:
+    inset 0 2px 5px rgba(0, 0, 0, 0.75),
+    inset 0 0 0 1px rgba(20, 10, 2, 0.8);
   &:focus {
     outline: none;
-  }
-
-  /* Third-party frames would swallow the pointer while chat is being dragged. */
-  &.dragging iframe {
-    pointer-events: none;
   }
 
   /* Maximized: a whole window of cabinet, no rounded corners against the screen's edge. */
@@ -72,6 +81,10 @@ const Root = styled.div`
     padding: ${space[1]};
     gap: ${space[1]};
     border-radius: 0;
+  }
+  /* The guide scrolls itself; the cabinet behind it holds still. */
+  &.narrow.guide-open {
+    overflow: hidden;
   }
 `
 
@@ -114,10 +127,15 @@ const Stage = styled.div`
 
 /** Gold moulding round the picture. Its width is what sizes the glass inside. */
 const Trim = styled.div`
+  position: relative;
   padding: 6px;
   border-radius: 30px / 24px;
-  background: url(${goldSkin}) 0 0 / 256px 256px;
-  box-shadow: 0 0 0 1px #2a1a04, inset 0 1px 0 rgba(255, 250, 220, 0.8), inset 0 -1px 0 rgba(60, 36, 4, 0.8),
+  /* Hung from the edge the ear grows out of, so the grain runs on into it at any width. */
+  background: url(${goldSkin}) right 0 top 0 / 256px 256px;
+  box-shadow:
+    0 0 0 1px #2a1a04,
+    inset 0 1px 0 rgba(255, 250, 220, 0.8),
+    inset 0 -1px 0 rgba(60, 36, 4, 0.8),
     0 4px 9px rgba(0, 0, 0, 0.65);
   .fit & {
     width: min(100cqw, calc((100cqh - 12px) * 16 / 9 + 12px));
@@ -125,6 +143,10 @@ const Trim = styled.div`
   .narrow & {
     padding: 4px;
     border-radius: 14px;
+    background-position: left 0 bottom 0;
+  }
+  .narrow.no-chat & {
+    margin-bottom: 4px;
   }
 `
 
@@ -150,7 +172,9 @@ const Osd = styled.div`
   font-size: 22px;
   font-weight: 700;
   color: #ffb347;
-  text-shadow: 0 0 6px rgba(255, 179, 71, 0.8), 2px 2px 0 #000;
+  text-shadow:
+    0 0 6px rgba(255, 179, 71, 0.8),
+    2px 2px 0 #000;
   .narrow & {
     font-size: 16px;
   }
@@ -166,7 +190,10 @@ const Controls = styled.div`
   min-width: 0;
   border-radius: 9px;
   background: url(${goldSkin}) 0 -90px / 256px 256px;
-  box-shadow: 0 0 0 1px #2a1a04, inset 0 1px 0 rgba(255, 250, 220, 0.85), inset 0 -1px 0 rgba(60, 36, 4, 0.8),
+  box-shadow:
+    0 0 0 1px #2a1a04,
+    inset 0 1px 0 rgba(255, 250, 220, 0.85),
+    inset 0 -1px 0 rgba(60, 36, 4, 0.8),
     0 3px 6px rgba(0, 0, 0, 0.6);
   color: ${INK};
   /* The plate's menus, in its own materials. */
@@ -195,7 +222,9 @@ const Controls = styled.div`
     border: none;
     border-radius: 4px;
     background: ${CREAM};
-    box-shadow: 0 2px 0 #6d5c3c, inset 0 1px 0 #fff;
+    box-shadow:
+      0 2px 0 #6d5c3c,
+      inset 0 1px 0 #fff;
     color: ${INK};
     font-size: 12px;
     line-height: 1;
@@ -209,7 +238,9 @@ const Controls = styled.div`
   .toggle[aria-pressed='true'] {
     transform: translateY(1px);
     background: linear-gradient(180deg, #f2a23c 0%, #cf6a1c 100%);
-    box-shadow: 0 1px 0 #6e3208, inset 0 1px 0 rgba(255, 255, 255, 0.45);
+    box-shadow:
+      0 1px 0 #6e3208,
+      inset 0 1px 0 rgba(255, 255, 255, 0.45);
     color: #fff7e6;
   }
   button:focus-visible,
@@ -228,7 +259,9 @@ const Controls = styled.div`
     font-weight: 700;
     color: #ffb347;
     background: #1a0f06;
-    box-shadow: inset 0 2px 4px #000, 0 1px 0 rgba(255, 255, 255, 0.5);
+    box-shadow:
+      inset 0 2px 4px #000,
+      0 1px 0 rgba(255, 255, 255, 0.5);
     text-shadow: 0 0 6px rgba(255, 179, 71, 0.7);
   }
   a {
@@ -267,7 +300,9 @@ const Controls = styled.div`
     flex: 0 0 auto;
     border-radius: 50%;
     background: #ff5a2a;
-    box-shadow: 0 0 6px #ff5a2a, inset 0 0 1px #fff;
+    box-shadow:
+      0 0 6px #ff5a2a,
+      inset 0 0 1px #fff;
   }
 `
 
@@ -276,76 +311,141 @@ const Grille = styled.div`
   flex: 1 1 auto;
   min-height: 0;
   border-radius: 9px;
-  background: repeating-linear-gradient(90deg, #0a0502 0 4px, transparent 4px 11px, rgba(255, 220, 170, 0.14) 11px 12px),
+  background:
+    repeating-linear-gradient(90deg, #0a0502 0 4px, transparent 4px 11px, rgba(255, 220, 170, 0.14) 11px 12px),
     url(${woodSkin}) 40px 120px / 512px 512px;
-  box-shadow: inset 0 3px 8px rgba(0, 0, 0, 0.9), inset 0 0 0 1px #1a0d04, 0 1px 0 rgba(255, 220, 170, 0.25);
+  box-shadow:
+    inset 0 3px 8px rgba(0, 0, 0, 0.9),
+    inset 0 0 0 1px #1a0d04,
+    0 1px 0 rgba(255, 220, 170, 0.25);
   .fit &,
   .narrow & {
     display: none;
   }
 `
-/** Drag to size chat: three gold studs on a strip between the screen and chat. */
-const ChatHandle = styled.div`
-  position: relative;
-  cursor: col-resize;
-  touch-action: none;
-  &::before {
-    content: '';
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    width: 6px;
-    height: 46px;
-    margin: -23px 0 0 -3px;
-    border-radius: 3px;
-    background: radial-gradient(circle at 50% 50%, #fff2b8 0 1.5px, #a97f28 2.5px, transparent 3px) center / 6px 12px;
-  }
-  &:hover,
-  &:focus-visible {
-    outline: none;
-    background: rgba(255, 226, 140, 0.25);
-  }
-  .narrow & {
-    display: none;
-  }
-`
+/** Where the open tab sits on the sidebar's border, which its texture has to line up with. */
+const EAR_TOP = 18
+const EAR_DEPTH = 9
+const EAR_LONG = 46
+const EAR_PHONE = 9
+const EAR_PHONE_LEFT = 18
+const SIDE_GOLD_X = -120
 
-/** A small gold tab on the sidebar's border: it points the way the sidebar will go. */
+/**
+ * An ear on the gold border that shows or hides the sidebar: cut from the same gold, lined up with it, and open where it
+ * meets the border so there is no line between them. It points the way the sidebar will go.
+ */
 const SideTab = styled.button`
   position: absolute;
   z-index: 3;
-  top: 10px;
-  left: -9px;
-  width: 16px;
-  height: 30px;
+  top: ${EAR_TOP}px;
+  left: -${EAR_DEPTH}px;
+  width: ${EAR_DEPTH}px;
+  height: ${EAR_LONG}px;
   padding: 0;
   border: none;
-  border-radius: 4px 0 0 4px;
-  background: url(${goldSkin}) -40px 0 / 256px 256px;
-  box-shadow: 0 0 0 1px #2a1a04, inset 0 1px 0 rgba(255, 250, 220, 0.8);
-  color: #2a1a04;
-  font-size: 16px;
+  border-radius: 7px 0 0 7px;
+  background: url(${goldSkin}) ${SIDE_GOLD_X + EAR_DEPTH}px -${EAR_TOP}px / 256px 256px;
+  box-shadow:
+    -1px 0 0 #2a1a04,
+    0 -1px 0 #2a1a04,
+    0 1px 0 #2a1a04,
+    inset 1px 1px 0 rgba(255, 250, 220, 0.6);
+  color: #5a3d0c;
+  font-size: 13px;
   font-weight: 700;
-  line-height: 26px;
+  line-height: ${EAR_LONG}px;
+  text-align: center;
+  text-shadow: 0 1px 0 rgba(255, 250, 220, 0.75);
   cursor: pointer;
+  /* Covers the border's outline where the ear joins it. */
+  &::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    right: -2px;
+    width: 3px;
+    background: url(${goldSkin}) ${SIDE_GOLD_X + 1}px -${EAR_TOP}px / 256px 256px;
+  }
+  /* A bigger place to press than there is ear to see. */
+  &::after {
+    content: '';
+    position: absolute;
+    inset: -8px -6px;
+  }
   &:hover,
   &:focus-visible {
     outline: none;
-    filter: brightness(1.15);
+    color: #1a0e02;
   }
+  /* Chat hidden: the same ear, on the picture's own gold. */
   &.closed {
-    top: 18px;
     left: auto;
-    right: 0;
+    right: -${EAR_DEPTH - 1}px;
+    width: ${EAR_DEPTH - 1}px;
+    border-radius: 0 7px 7px 0;
+    background-position: 0 -${EAR_TOP}px;
+    box-shadow:
+      1px 0 0 #2a1a04,
+      0 -1px 0 #2a1a04,
+      0 1px 0 #2a1a04,
+      inset 0 1px 0 rgba(255, 250, 220, 0.6);
   }
+  &.closed::before {
+    right: auto;
+    left: -2px;
+    background-position: 2px -${EAR_TOP}px;
+  }
+  /* Phones: chat is below the picture, so the ear sits on the top edge. */
   .narrow & {
+    top: -${EAR_PHONE}px;
+    left: ${EAR_PHONE_LEFT}px;
+    width: ${EAR_LONG}px;
+    height: ${EAR_PHONE}px;
+    border-radius: 7px 7px 0 0;
+    background-position: ${SIDE_GOLD_X - EAR_PHONE_LEFT}px ${EAR_PHONE}px;
+    line-height: ${EAR_PHONE}px;
+    font-size: 10px;
+    box-shadow:
+      0 -1px 0 #2a1a04,
+      -1px 0 0 #2a1a04,
+      1px 0 0 #2a1a04,
+      inset 0 1px 0 rgba(255, 250, 220, 0.6);
+  }
+  .narrow &::before {
+    top: auto;
+    bottom: -2px;
     left: 0;
-    border-radius: 0 0 4px 0;
+    right: 0;
+    width: auto;
+    height: 3px;
+    background-position: ${SIDE_GOLD_X - EAR_PHONE_LEFT}px 1px;
   }
   .narrow &.closed {
-    left: auto;
-    right: 0;
-    border-radius: 4px 0 0 4px;
+    top: auto;
+    bottom: -${EAR_PHONE}px;
+    right: auto;
+    width: ${EAR_LONG}px;
+    border-radius: 0 0 7px 7px;
+    background-position: -${EAR_PHONE_LEFT}px 0;
+    box-shadow:
+      0 1px 0 #2a1a04,
+      -1px 0 0 #2a1a04,
+      1px 0 0 #2a1a04;
+  }
+  .narrow &.closed::before {
+    top: -2px;
+    bottom: auto;
+    left: 0;
+    background-position: -${EAR_PHONE_LEFT}px 2px;
+  }
+  /* Enough to press with a thumb, without reaching over the buttons or the chat next to it. */
+  .narrow &::after {
+    inset: -3px -8px -8px;
+  }
+  .narrow &.closed::after {
+    inset: -14px -8px -4px;
   }
 `
 
@@ -359,9 +459,13 @@ const Side = styled.div`
   padding: 5px;
   border-radius: 14px;
   background: url(${goldSkin}) -120px 0 / 256px 256px;
-  box-shadow: 0 0 0 1px #2a1a04, inset 0 1px 0 rgba(255, 250, 220, 0.8), 0 4px 9px rgba(0, 0, 0, 0.65);
+  box-shadow:
+    0 0 0 1px #2a1a04,
+    inset 0 1px 0 rgba(255, 250, 220, 0.8),
+    0 4px 9px rgba(0, 0, 0, 0.65);
   .narrow & {
     flex: 0 0 auto;
+    margin-top: 6px;
     height: 520px;
     max-height: 80svh;
   }
@@ -386,7 +490,6 @@ function initialIndex(): number {
 }
 
 const CHAT_KEY = 'miyatv.chat'
-const CHAT_WIDTH_KEY = 'miyatv.chatWidth'
 const VOLUME_KEY = 'miyatv.volume'
 
 function initialVolume(): number {
@@ -395,15 +498,6 @@ function initialVolume(): number {
     return saved >= 0 && saved <= 1 ? saved : 0.8
   } catch {
     return 0.8
-  }
-}
-
-function initialChatWidth(): number {
-  try {
-    const saved = Number(window.localStorage.getItem(CHAT_WIDTH_KEY))
-    return saved > 0 ? saved : CHAT_DEFAULT
-  } catch {
-    return CHAT_DEFAULT
   }
 }
 
@@ -430,12 +524,10 @@ export default function TV() {
   const reducedMotion = useReducedMotion()
 
   const [index, setIndex] = useState(initialIndex)
-  const [sourceIndex, setSourceIndex] = useState(0)
+  const [sourceLabel, setSourceLabel] = useState<string>()
   const [staticOn, setStaticOn] = useState(false)
   const [osd, setOsd] = useState(true)
   const [chatOn, setChatOn] = useState(initialChat)
-  const [chatWanted, setChatWanted] = useState(initialChatWidth)
-  const [dragging, setDragging] = useState(false)
   const [guideOpen, setGuideOpen] = useState(false)
   const [tapeId, setTapeId] = useState<string>()
   const [tvVolume, setTvVolume] = useState(initialVolume)
@@ -447,14 +539,23 @@ export default function TV() {
   const osdTimer = useRef<ReturnType<typeof setTimeout>>()
 
   const channel = CHANNELS[index] ?? CHANNELS[0]!
-  const sources = channel.kind === 'iframe' ? channel.sources : []
-  const picked = sources[sourceIndex] ?? sources[0]
-  const liveIds = useQuery({
+  const live = useQuery({
     queryKey: ['tv-live'],
-    queryFn: async () => ((await (await fetch(TV_LIVE_PATH)).json()) as { ids: Record<string, string> }).ids,
-    refetchInterval: 10 * 60_000,
+    queryFn: async () =>
+      (await (await fetch(TV_LIVE_PATH)).json()) as { ids: Record<string, string>; kick?: KickStream[] },
+    refetchInterval: 3 * 60_000,
     retry: 1,
   }).data
+  const liveIds = live?.ids
+  const onKick = channel.kind === 'iframe' && channel.sources[0].provider === 'kick'
+  const sources: Source[] =
+    channel.kind !== 'iframe'
+      ? []
+      : onKick && live?.kick?.length
+        ? live.kick.map((k) => ({ provider: 'kick', slug: k.slug, label: k.label }))
+        : channel.sources
+  // By name, not place: the list reorders as viewers come and go. A stream that has ended falls through to the biggest.
+  const picked = sources.find((s) => s.label === sourceLabel) ?? sources[0]
   const moved = picked?.provider === 'youtube' ? liveIds?.[channel.id] : undefined
   const source = picked?.provider === 'youtube' && moved ? { ...picked, videoId: moved } : picked
 
@@ -484,7 +585,7 @@ export default function TV() {
       }
 
       setIndex(next)
-      setSourceIndex(0)
+      setSourceLabel(undefined)
       flash()
       try {
         window.localStorage.setItem(CHANNEL_KEY, CHANNELS[next]!.id)
@@ -492,43 +593,12 @@ export default function TV() {
         // ignore
       }
     },
-    [index, flash]
+    [index, flash],
   )
 
   const step = (d: number) => tune(stepChannel(CHANNELS.length, index, d))
 
-  const chatWidth = clampChat(chatWanted, width)
-
-  const sizeChat = (next: number) => {
-    const clamped = clampChat(next, width)
-    setChatWanted(clamped)
-    try {
-      window.localStorage.setItem(CHAT_WIDTH_KEY, String(clamped))
-    } catch {
-      // ignore
-    }
-  }
-
-  const startChatDrag = (e: React.PointerEvent<HTMLDivElement>) => {
-    e.preventDefault()
-    e.stopPropagation()
-    const handle = e.currentTarget
-    handle.setPointerCapture(e.pointerId)
-    const fromX = e.clientX
-    const fromWidth = chatWidth
-    setDragging(true)
-    const move = (ev: PointerEvent) => sizeChat(fromWidth + fromX - ev.clientX)
-    const up = () => {
-      setDragging(false)
-      handle.removeEventListener('pointermove', move)
-      handle.removeEventListener('pointerup', up)
-      handle.removeEventListener('pointercancel', up)
-    }
-
-    handle.addEventListener('pointermove', move)
-    handle.addEventListener('pointerup', up)
-    handle.addEventListener('pointercancel', up)
-  }
+  const chatWidth = clampChat(CHAT_DEFAULT, width)
 
   // YouTube and our own shows take our buttons; Kick and X only listen to the controls inside their players.
   const isRadio = channel.kind === 'show' && channel.show === 'radio'
@@ -558,8 +628,7 @@ export default function TV() {
   }
 
   const panel = (() => {
-    if (channel.id === 'lofi')
-      return <FocusPanel onRadio={() => tune(CHANNELS.findIndex((c) => c.id === 'miya-radio'))} />
+    if (channel.id === 'lofi') return <FocusPanel />
     if (channel.id === 'monterey') return <SpottingPanel />
     if (channel.id === 'iss') return <IssPanel />
     if (channel.id === 'squeekchain') return <SqueekPanel />
@@ -567,6 +636,17 @@ export default function TV() {
     if (channel.id === 'public-access') return <PublicPanel tapeId={tapeId} onPick={setTapeId} />
     return undefined
   })()
+
+  // The browser made it start silent: the first press anywhere brings the sound in. The sound button does that itself.
+  useEffect(() => {
+    const press = (e: PointerEvent) => {
+      if (!autoMuted.current || (e.target as Element | null)?.closest?.('.sound')) return
+      autoMuted.current = false
+      setTvMuted(false)
+    }
+    window.addEventListener('pointerdown', press)
+    return () => window.removeEventListener('pointerdown', press)
+  }, [])
 
   const toggleChat = () => {
     const next = !chatOn
@@ -631,9 +711,9 @@ export default function TV() {
         className={[
           layout,
           chatOn ? '' : 'no-chat',
-          dragging ? 'dragging' : '',
           fullscreen ? 'maximized' : '',
           layout !== 'narrow' && (fullscreen || !chatOn) ? 'fit' : '',
+          guideOpen ? 'guide-open' : '',
         ]
           .filter(Boolean)
           .join(' ')}
@@ -669,6 +749,18 @@ export default function TV() {
                     </Osd>
                   )}
                 </Glass>
+                {!chatOn && (
+                  <SideTab
+                    type="button"
+                    className="closed"
+                    aria-expanded={false}
+                    aria-label="Show the sidebar"
+                    title="Show the sidebar (C)"
+                    onClick={toggleChat}
+                  >
+                    {layout === 'narrow' ? '▾' : '‹'}
+                  </SideTab>
+                )}
               </Trim>
             </Stage>
             <Controls>
@@ -684,19 +776,19 @@ export default function TV() {
               <span className="lcd" aria-live="polite" aria-label={`Channel ${channel.number}`}>
                 {pad(channel.number)}
               </span>
-              <button type="button" className="toggle guide" title="The guide (G)" onClick={() => setGuideOpen(true)}>
-                Guide
-              </button>
               <span className="name" title={channel.name}>
                 {channel.name}
               </span>
+              <button type="button" className="toggle guide" title="The guide (G)" onClick={() => setGuideOpen(true)}>
+                Guide
+              </button>
               {sources.length > 1 && (
                 <SkinMenu
                   label="Creator"
-                  value={String(sourceIndex)}
-                  options={sources.map((s, i) => ({ value: String(i), label: s.label }))}
+                  value={picked?.label ?? ''}
+                  options={sources.map((s) => ({ value: s.label, label: s.label }))}
                   onChange={(v) => {
-                    setSourceIndex(Number(v))
+                    setSourceLabel(v)
                     flash()
                   }}
                 />
@@ -735,21 +827,6 @@ export default function TV() {
 
         {chatOn && (
           <>
-            <ChatHandle
-              role="separator"
-              aria-orientation="vertical"
-              aria-label="Chat width"
-              aria-valuenow={chatWidth}
-              tabIndex={0}
-              title="Drag to size chat"
-              onPointerDown={startChatDrag}
-              onKeyDown={(e) => {
-                if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
-                e.preventDefault()
-                e.stopPropagation()
-                sizeChat(chatWidth + (e.key === 'ArrowLeft' ? 20 : -20))
-              }}
-            />
             <Side>
               <SideTab
                 type="button"
@@ -758,29 +835,11 @@ export default function TV() {
                 title="Hide the sidebar (C)"
                 onClick={toggleChat}
               >
-                ›
+                {layout === 'narrow' ? '▴' : '›'}
               </SideTab>
-              <ChatPanel
-                room={CHAT_ROOM}
-                roomLabel={CHAT_ROOM}
-                channelId={channel.id}
-                native={native}
-                panel={panel}
-              />
+              <ChatPanel room={CHAT_ROOM} roomLabel={CHAT_ROOM} channelId={channel.id} native={native} panel={panel} />
             </Side>
           </>
-        )}
-        {!chatOn && (
-          <SideTab
-            type="button"
-            className="closed"
-            aria-expanded={false}
-            aria-label="Show the sidebar"
-            title="Show the sidebar (C)"
-            onClick={toggleChat}
-          >
-            ‹
-          </SideTab>
         )}
         {guideOpen && (
           <Guide

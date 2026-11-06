@@ -195,9 +195,7 @@ const SpreadRow = styled.div`
   min-width: 0;
 `
 
-const PLAIN_LINK = { all: 'unset', cursor: 'pointer', textDecoration: 'underline', color: glow.link } as const
-
-export function FocusPanel({ onRadio }: { onRadio: () => void }) {
+export function FocusPanel() {
   const [left, setLeft] = useState(FOCUS)
   const [running, setRunning] = useState(false)
   const [resting, setResting] = useState(false)
@@ -255,13 +253,7 @@ export function FocusPanel({ onRadio }: { onRadio: () => void }) {
       >
         <div style={{ width: `${(100 * (length - left)) / length}%` }} />
       </Bar>
-      <p>
-        25 minutes on, 5 off. Or try{' '}
-        <button type="button" style={PLAIN_LINK} onClick={onRadio}>
-          miya radio
-        </button>{' '}
-        on channel 2.
-      </p>
+      <p>25 minutes on, 5 off.</p>
     </Panel>
   )
 }

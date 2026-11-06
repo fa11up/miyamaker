@@ -39,7 +39,7 @@ test('the miya list is pinned first, in order, with its own metadata', () => {
   const pinned = MAIN
   assert.deepEqual(
     merged.slice(0, pinned.length).map((t) => t.symbol),
-    ['ETH', 'INFER', 'imdUSD', 'USDC', 'WETH', 'IMD', 'CULT', 'MIYA']
+    ['ETH', 'INFER', 'imdUSD', 'USDC', 'WBTC', 'WETH', 'IMD', 'CULT', 'MIYA']
   )
   const usdc = merged.find((t) => t.address.toLowerCase() === USDC.toLowerCase())
   assert.equal((usdc || {}).name, 'USD Coin', 'remote metadata never overrides the curated entry')
@@ -78,7 +78,7 @@ test('curated entries: checksummed-looking addresses, verified decimals, ETH is 
   const m = MAIN
   assert.equal(m[0].address, NATIVE)
   const dec = Object.fromEntries(m.map((t) => [t.symbol, t.decimals]))
-  assert.deepEqual(dec, { ETH: 18, INFER: 18, imdUSD: 18, USDC: 6, WETH: 18, IMD: 18, CULT: 18, MIYA: 18 })
+  assert.deepEqual(dec, { ETH: 18, INFER: 18, imdUSD: 18, USDC: 6, WBTC: 8, WETH: 18, IMD: 18, CULT: 18, MIYA: 18 })
   for (const t of m) assert.match(t.address, /^0x[0-9a-fA-F]{40}$/)
   assert.equal(IMDUSD_ADDRESS.toLowerCase(), fee.IMDUSD.toLowerCase(), 'fee-free token matches the list')
 })

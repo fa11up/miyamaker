@@ -19,11 +19,12 @@ import {
   isSwapChain,
   sameAddress,
   SWAP_CHAINS,
+  withLogo,
 } from './constants'
 import { FEE_BPS, FEE_CHAIN_IDS, feeApplies, feeFree } from './fee'
 import { BigButton, Eyebrow, Panel, Skeleton, StatusBox, Well } from './floor/retro'
 import { bevel, color, font, space, text } from './floor/tokens'
-import { Body, ChainTabs, Toolbar } from './layout'
+import { Body, Toolbar } from './layout'
 import SwapSettings from './SwapSettings'
 import { quickPicks } from './tokenList'
 import TokenPicker, { TokenLogo } from './TokenPicker'
@@ -189,7 +190,9 @@ const FlipRow = styled.div`
     height: 44px;
     border: none;
     background: ${color.face};
-    box-shadow: ${bevel.raised}, 0 0 0 3px ${color.face};
+    box-shadow:
+      ${bevel.raised},
+      0 0 0 3px ${color.face};
     color: ${color.ink};
     font-size: ${text.lg};
     cursor: pointer;
@@ -197,7 +200,9 @@ const FlipRow = styled.div`
       background: ${color.faceLight};
     }
     &:active:not(:disabled) {
-      box-shadow: ${bevel.pressed}, 0 0 0 3px ${color.face};
+      box-shadow:
+        ${bevel.pressed},
+        0 0 0 3px ${color.face};
     }
   }
 `
@@ -383,7 +388,9 @@ function receivedFromLogs(receipt: TransactionReceipt | undefined, token: SwapTo
   const to = `0x${taker.slice(2).toLowerCase().padStart(64, '0')}`
   const transfers = receipt.logs.filter(
     (log) =>
-      sameAddress(log.address, token.address) && log.topics[0] === TRANSFER_TOPIC && log.topics[2]?.toLowerCase() === to
+      sameAddress(log.address, token.address) &&
+      log.topics[0] === TRANSFER_TOPIC &&
+      log.topics[2]?.toLowerCase() === to,
   )
   return transfers.length ? transfers.reduce((sum, log) => sum + BigInt(log.data), 0n) : undefined
 }
@@ -396,13 +403,21 @@ const shortHash = (h: string) => `${h.slice(0, 10)}…${h.slice(-8)}`
 export type SwapPreset = { key: number; chainId: SwapChainId; sell?: SwapToken; buy?: SwapToken }
 
 /**
- * The Tokens tab of Trade: the 0x swap. Rendered inside the Trade window (index.tsx), which owns the title bar,
+ * The swap on Trade's Tokens page, routed by 0x, the engine behind Matcha. Rendered by TokenPage.tsx, inside the Trade window, which owns the title bar,
  * banner and tabs. It stays mounted while the NFTs tab is shown, so a swap in flight is never lost.
  */
 export default function TokenSwap({
+  chainId,
+  onChain,
+  onBusy,
   preset,
   onOffline,
 }: {
+  /** The floor's one network. */
+  chainId: SwapChainId
+  onChain: (chainId: SwapChainId) => void
+  /** Told while a swap is in flight, when the network must not change. */
+  onBusy?: (busy: boolean) => void
   preset?: SwapPreset
   /** Told whether the swap service is configured, so the window can show an Offline chip. */
   onOffline?: (offline: boolean) => void
@@ -411,18 +426,12 @@ export default function TokenSwap({
   const { switchChain, isPending: switching } = useSwitchChain()
   const { openConnectModal } = useConnectModal()
 
-  const [chainId, setChainId] = useState<SwapChainId>(isSwapChain(walletChainId) ? walletChainId : 1)
   const [sell, setSell] = useState<SwapToken>(DEFAULT_PAIR[chainId][0])
   const [buy, setBuy] = useState<SwapToken>(DEFAULT_PAIR[chainId][1])
   const [input, setInput] = useState('')
   const [slippageBps, setSlippageBps] = useState(DEFAULT_SLIPPAGE_BPS)
   const [picker, setPicker] = useState<'sell' | 'buy' | undefined>()
   const [inverted, setInverted] = useState(false)
-
-  // Follow the wallet onto a supported chain.
-  useEffect(() => {
-    if (isSwapChain(walletChainId) && walletChainId !== chainId) setChainId(walletChainId)
-  }, [walletChainId])
 
   // A requested pair waits here while the chain switches, then replaces the chain's default pair.
   const pendingPreset = useRef<SwapPreset>()
@@ -470,7 +479,7 @@ export default function TokenSwap({
             slippageBps,
           }
         : undefined,
-    [chainId, sell, buy, debouncedAmount, address, slippageBps]
+    [chainId, sell, buy, debouncedAmount, address, slippageBps],
   )
 
   const price = usePrice(request)
@@ -535,6 +544,7 @@ export default function TokenSwap({
   const { firm } = exec
   const busy = exec.quoting || exec.approving || exec.awaitingWallet || exec.confirming
   const locked = busy || !!exec.swapHash
+  useEffect(() => onBusy?.(locked), [locked])
   const done = exec.confirmed
 
   // A pair asked for by the NFTs tab. Ignored while a swap is in flight; clears a finished one.
@@ -544,7 +554,7 @@ export default function TokenSwap({
     if (preset.chainId === chainId) applyPreset(preset)
     else {
       pendingPreset.current = preset
-      setChainId(preset.chainId)
+      onChain(preset.chainId)
     }
   }, [preset?.key])
 
@@ -586,8 +596,8 @@ export default function TokenSwap({
         label: exec.approving
           ? `Approving ${sell.symbol}…`
           : exec.needsAllowanceReset
-          ? `Reset ${sell.symbol} allowance`
-          : `Approve ${sell.symbol}`,
+            ? `Reset ${sell.symbol} allowance`
+            : `Approve ${sell.symbol}`,
         step: exec.needsAllowanceReset
           ? `Step 1 of 3: set the old ${sell.symbol} allowance to 0 (this token needs it).`
           : `Step 1 of 2: approve exactly ${fmt(firm.sellAmount, sell.decimals)} ${
@@ -606,8 +616,8 @@ export default function TokenSwap({
             sell.symbol
           } for 0x and swaps, all or nothing.`
         : isNative(sell.address)
-        ? undefined
-        : 'Step 2 of 2: swap.',
+          ? undefined
+          : 'Step 2 of 2: swap.',
       disabled: exec.quoting,
       onClick: exec.swap,
     }
@@ -620,26 +630,16 @@ export default function TokenSwap({
   const noFee = feeFree(sell.address, buy.address)
   const feeChain = FEE_CHAIN_IDS.includes(chainId)
   const txError = describeTxError(exec.swapError || exec.approveError)
-  const picks = (quickPicks(chainId) as SwapToken[]).filter((t) => !sameAddress(t.address, sell.address))
+  const picks = quickPicks(chainId)
+    .map(withLogo)
+    .filter((t) => !sameAddress(t.address, sell.address))
   const received = receivedFromLogs(exec.swapReceipt, buy, address)
 
   return (
     <>
       <Body>
         <Toolbar>
-          <ChainTabs role="group" aria-label="Network">
-            {SWAP_CHAINS.map((c) => (
-              <button
-                key={c.id}
-                type="button"
-                aria-pressed={c.id === chainId}
-                onClick={() => setChainId(c.id)}
-                disabled={locked}
-              >
-                {c.name}
-              </button>
-            ))}
-          </ChainTabs>
+          <span style={{ flex: 1, fontSize: text.sm, color: color.inkMuted }}>Swap on {chainName}</span>
           <SwapSettings slippageBps={slippageBps} onChange={setSlippageBps} disabled={locked} />
         </Toolbar>
 
@@ -783,8 +783,8 @@ export default function TokenSwap({
                   impact !== undefined && impact >= 0.05
                     ? { color: color.danger }
                     : impact !== undefined && impact >= 0.02
-                    ? { color: color.warning }
-                    : undefined
+                      ? { color: color.warning }
+                      : undefined
                 }
               >
                 {impact === undefined ? '–' : impact < 0.0001 ? 'under 0.01%' : `${(impact * 100).toFixed(2)}%`}
@@ -942,9 +942,7 @@ export default function TokenSwap({
           {'step' in action && action.step && <Hint>{action.step}</Hint>}
         </ActionDock>
 
-        <Footer>
-          Best price found by 0x on {chainName}. You approve only the 0x contract, and only the amount you swap.
-        </Footer>
+        <Footer>Best price from Matcha. You approve only the amount you swap.</Footer>
       </Body>
 
       {picker && (

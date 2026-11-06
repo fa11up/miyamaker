@@ -1,20 +1,22 @@
 import { useQueries, useQuery } from '@tanstack/react-query'
-import { Fragment, useMemo } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 import styled, { keyframes } from 'styled-components/macro'
 
 import NftImage from '@/components/NftImage'
 
-import type { DexPair, TokenQuote } from './board'
+import type { DexPair, Sort, TokenQuote } from './board'
 import {
   changeTone,
   ethInUsd,
-  FEATURED_COLLECTIONS,
+  featuredOn,
   formatChange,
   formatCompactUsd,
   formatUsd,
+  nextSort,
   quoteFrom,
+  sortRows,
 } from './board'
-import type { SwapToken } from './constants'
+import type { SwapChainId, SwapToken } from './constants'
 import { PINNED_TOKENS } from './constants'
 import { color, font, space, text } from './floor/tokens'
 import { formatPrice, lowerPrice } from './nft/markets'
@@ -23,18 +25,44 @@ import { NATIVE } from './tokenList'
 import { TokenLogo } from './TokenPicker'
 
 const WETH = '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2'
-const BOARD_SYMBOLS = ['ETH', 'INFER', 'imdUSD', 'IMD', 'CULT']
+const BOARD_SYMBOLS = ['ETH', 'WBTC', 'INFER', 'imdUSD', 'IMD', 'CULT']
 
 /** The tokens the floor quotes, with the address DexScreener prices them under (ETH as WETH). */
-const boardTokens = () =>
-  BOARD_SYMBOLS.map((s) => PINNED_TOKENS[1].find((t) => t.symbol === s)).filter((t): t is SwapToken => !!t)
-const priceAddress = (t: SwapToken) => (t.address.toLowerCase() === NATIVE.toLowerCase() ? WETH : t.address)
+const boardTokens = (chainId: SwapChainId) =>
+  chainId === 1
+    ? BOARD_SYMBOLS.map((s) => PINNED_TOKENS[1].find((t) => t.symbol === s)).filter((t): t is SwapToken => !!t)
+    : PINNED_TOKENS[chainId]
+const isNative = (t: SwapToken) => t.address.toLowerCase() === NATIVE.toLowerCase()
+const priceAddress = (t: SwapToken) => (isNative(t) ? WETH : t.address)
+/** ETH is one price everywhere, so it is always read from Ethereum's deepest market. */
+const priceChain = (t: SwapToken) => (isNative(t) || t.chainId === 1 ? 'ethereum' : 'robinhood')
+
+/** Every pool DexScreener knows for a token, shared with the board's own query. ETH is read from Ethereum's WETH. */
+export function usePairs(token: SwapToken | undefined) {
+  return useQuery({
+    queryKey: ['dex-token', token ? priceAddress(token).toLowerCase() : ''],
+    enabled: !!token,
+    staleTime: 60_000,
+    refetchInterval: 60_000,
+    retry: 1,
+    queryFn: async ({ signal }) => {
+      const res = await fetch(
+        `https://api.dexscreener.com/token-pairs/v1/${priceChain(token!)}/${priceAddress(token!)}`,
+        {
+          signal,
+        },
+      )
+      if (!res.ok) throw new Error(`DexScreener ${res.status}`)
+      return (await res.json()) as DexPair[]
+    },
+  })
+}
 
 export type BoardRow = { token: SwapToken; quote?: TokenQuote }
 
 /** Live quotes for the board. One request per token, shared by the tape and the table, refreshed each minute. */
-export function useBoard() {
-  const tokens = useMemo(boardTokens, [])
+export function useBoard(chainId: SwapChainId = 1) {
+  const tokens = useMemo(() => boardTokens(chainId), [chainId])
   const results = useQueries({
     queries: tokens.map((t) => ({
       queryKey: ['dex-token', priceAddress(t).toLowerCase()],
@@ -42,7 +70,9 @@ export function useBoard() {
       refetchInterval: 60_000,
       retry: 1,
       queryFn: async ({ signal }: { signal: AbortSignal }) => {
-        const res = await fetch(`https://api.dexscreener.com/token-pairs/v1/ethereum/${priceAddress(t)}`, { signal })
+        const res = await fetch(`https://api.dexscreener.com/token-pairs/v1/${priceChain(t)}/${priceAddress(t)}`, {
+          signal,
+        })
         if (!res.ok) throw new Error(`DexScreener ${res.status}`)
         return (await res.json()) as DexPair[]
       },
@@ -70,7 +100,7 @@ export function useEthUsd() {
   return quoteFrom(q.data, WETH)?.priceUsd
 }
 
-const Change = styled.span<{ $tone: 'up' | 'down' | 'flat' }>`
+export const Change = styled.span<{ $tone: 'up' | 'down' | 'flat' }>`
   color: ${({ $tone }) => ($tone === 'up' ? color.success : $tone === 'down' ? color.danger : color.inkMuted)};
   font-variant-numeric: tabular-nums;
 `
@@ -167,7 +197,7 @@ export function Tape({ rows, onTrade }: { rows: BoardRow[]; onTrade: (t: SwapTok
 
 /* ---------- the tables ---------- */
 
-const Section = styled.section`
+export const Section = styled.section`
   display: flex;
   flex-direction: column;
   border: 1px solid ${color.dark};
@@ -177,7 +207,8 @@ const Section = styled.section`
     margin: 0;
     padding: ${space[2]} ${space[3]};
     border-bottom: 1px solid ${color.accentDark};
-    background: repeating-linear-gradient(0deg, rgba(0, 0, 0, 0.25) 0 1px, transparent 1px 3px),
+    background:
+      repeating-linear-gradient(0deg, rgba(0, 0, 0, 0.25) 0 1px, transparent 1px 3px),
       linear-gradient(90deg, #4a3408, ${color.face} 70%);
     font-family: ${font.mono};
     font-size: ${text.xs};
@@ -245,6 +276,26 @@ const Table = styled.table`
     color: ${color.link};
     white-space: nowrap;
   }
+  .sort {
+    padding: 0;
+    border: none;
+    background: none;
+    color: inherit;
+    font: inherit;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+  .sort:hover,
+  .sort[data-on] {
+    color: ${color.accent};
+  }
+  .sort span {
+    opacity: 0.45;
+    font-size: 9px;
+  }
+  .sort[data-on] span {
+    opacity: 1;
+  }
   .name .words {
     min-width: 0;
     overflow: hidden;
@@ -289,6 +340,44 @@ const Table = styled.table`
   }
 `
 
+/** A column header that sorts its table: down, then up, then back to the list's order. */
+function SortHead<K extends string>({
+  label,
+  column,
+  sort,
+  onSort,
+  className,
+}: {
+  label: string
+  column: K
+  sort: Sort<K>
+  onSort: (next: Sort<K>) => void
+  className?: string
+}) {
+  const dir = sort?.key === column ? sort.dir : undefined
+  return (
+    <th
+      scope="col"
+      className={className}
+      aria-sort={dir === 'desc' ? 'descending' : dir === 'asc' ? 'ascending' : 'none'}
+    >
+      <button
+        type="button"
+        className="sort"
+        data-on={dir ? '' : undefined}
+        onClick={() => onSort(nextSort(sort, column))}
+      >
+        {label}
+        <span aria-hidden>{dir === 'desc' ? ' ▼' : dir === 'asc' ? ' ▲' : ' ↕'}</span>
+      </button>
+    </th>
+  )
+}
+
+type TokenColumn = 'change' | 'volume' | 'liquidity'
+const tokenFigure = ({ quote }: BoardRow, column: TokenColumn) =>
+  column === 'change' ? quote?.change24h : column === 'volume' ? quote?.volume24h : quote?.liquidityUsd
+
 export function TokenTable({
   rows,
   failed,
@@ -298,6 +387,7 @@ export function TokenTable({
   failed: boolean
   onTrade: (t: SwapToken) => void
 }) {
+  const [sort, setSort] = useState<Sort<TokenColumn>>()
   return (
     <Section aria-label="Tokens">
       <h2>Tokens</h2>
@@ -307,18 +397,14 @@ export function TokenTable({
           <tr>
             <th scope="col">Token</th>
             <th scope="col">Price</th>
-            <th scope="col">24h</th>
-            <th scope="col" className="opt">
-              Volume
-            </th>
-            <th scope="col" className="opt">
-              Liquidity
-            </th>
+            <SortHead label="24h" column="change" sort={sort} onSort={setSort} />
+            <SortHead label="Volume" column="volume" sort={sort} onSort={setSort} className="opt" />
+            <SortHead label="Liquidity" column="liquidity" sort={sort} onSort={setSort} className="opt" />
             <th scope="col" aria-label="Action" />
           </tr>
         </thead>
         <tbody>
-          {rows.map(({ token, quote }) => (
+          {sortRows(rows, sort, tokenFigure).map(({ token, quote }) => (
             <tr key={token.symbol} onClick={() => onTrade(token)}>
               <td>
                 <button
@@ -343,31 +429,41 @@ export function TokenTable({
               <td className="opt">{formatCompactUsd(quote?.volume24h)}</td>
               <td className="opt">{formatCompactUsd(quote?.liquidityUsd)}</td>
               <td className="go" aria-hidden>
-                Swap →
+                Open →
               </td>
             </tr>
           ))}
         </tbody>
       </Table>
-      <p className="note">Press a token to load it into the swap. 24h is the change over the last day.</p>
+      <p className="note">Press a token for its chart and swap. 24h is the change over the last day.</p>
     </Section>
   )
 }
+
+type CollectionColumn = 'floor' | 'sales' | 'volume'
+type CollectionFigures = Partial<Record<CollectionColumn, number>>
 
 function CollectionRow({
   slug,
   name,
   address,
   onOpen,
+  onFigures,
 }: {
   slug: string
   name: string
   address: string
   onOpen: (address: string) => void
+  /** Each row loads its own numbers, so it tells the table what to sort by. */
+  onFigures: (slug: string, figures: CollectionFigures) => void
 }) {
   const { info, stats, loading } = useCollectionRow(slug)
   const market = useMarketListings(slug)
   const floor = lowerPrice(stats?.floor, market.floor)
+  const floorEth = floor ? Number(floor.amount) / 10 ** floor.decimals : undefined
+  useEffect(() => {
+    onFigures(slug, { floor: floorEth, sales: stats?.sales7d, volume: stats?.volume7d })
+  }, [slug, floorEth, stats?.sales7d, stats?.volume7d, onFigures])
   const ethUsd = useEthUsd()
   const dash = loading ? '…' : '–'
   return (
@@ -393,7 +489,6 @@ function CollectionRow({
       </td>
       <td className="opt">{stats?.sales7d ?? dash}</td>
       <td className="opt">{stats?.volume7d !== undefined ? `${stats.volume7d.toFixed(1)} ETH` : dash}</td>
-      <td className="opt">{stats?.owners?.toLocaleString('en-US') ?? dash}</td>
       <td className="go" aria-hidden>
         Open →
       </td>
@@ -401,7 +496,13 @@ function CollectionRow({
   )
 }
 
-export function CollectionTable({ onOpen }: { onOpen: (address: string) => void }) {
+export function CollectionTable({ chainId, onOpen }: { chainId: number; onOpen: (address: string) => void }) {
+  const [sort, setSort] = useState<Sort<CollectionColumn>>()
+  const [figures, setFigures] = useState<Record<string, CollectionFigures>>({})
+  const onFigures = useCallback(
+    (slug: string, next: CollectionFigures) => setFigures((all) => ({ ...all, [slug]: next })),
+    [],
+  )
   return (
     <Section aria-label="Collections">
       <h2>Collections</h2>
@@ -409,76 +510,26 @@ export function CollectionTable({ onOpen }: { onOpen: (address: string) => void 
         <thead>
           <tr>
             <th scope="col">Collection</th>
-            <th scope="col">Floor</th>
-            <th scope="col" className="opt">
-              Sales 7d
-            </th>
-            <th scope="col" className="opt">
-              Volume 7d
-            </th>
-            <th scope="col" className="opt">
-              Owners
-            </th>
+            <SortHead label="Floor" column="floor" sort={sort} onSort={setSort} />
+            <SortHead label="Sales 7d" column="sales" sort={sort} onSort={setSort} className="opt" />
+            <SortHead label="Volume 7d" column="volume" sort={sort} onSort={setSort} className="opt" />
             <th scope="col" aria-label="Action" />
           </tr>
         </thead>
         <tbody>
-          {FEATURED_COLLECTIONS.map((c) => (
-            <CollectionRow key={c.slug} slug={c.slug} name={c.name} address={c.address} onOpen={onOpen} />
+          {sortRows(featuredOn(chainId), sort, (c, column) => figures[c.slug]?.[column]).map((c) => (
+            <CollectionRow
+              key={c.slug}
+              slug={c.slug}
+              name={c.name}
+              address={c.address}
+              onOpen={onOpen}
+              onFigures={onFigures}
+            />
           ))}
         </tbody>
       </Table>
       <p className="note">Floor is the cheapest one for sale right now. Open a collection to see them and buy.</p>
     </Section>
-  )
-}
-
-/* ---------- the badge wall ---------- */
-
-const Wall = styled.div`
-  display: flex;
-  flex-wrap: wrap;
-  gap: ${space[2]};
-  padding-bottom: ${space[3]};
-  span {
-    box-sizing: border-box;
-    width: 88px;
-    height: 31px;
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    padding: 0 4px;
-    border: 1px solid #000;
-    box-shadow: inset 1px 1px rgba(255, 255, 255, 0.45), inset -1px -1px rgba(0, 0, 0, 0.5);
-    font-size: 9px;
-    line-height: 1.15;
-  }
-  b {
-    display: block;
-    font-size: 11px;
-  }
-`
-
-/** The 88x31 wall: where the numbers and fills really come from. */
-export function BadgeWall() {
-  return (
-    <Wall aria-label="Where this comes from">
-      <span style={{ background: '#000', color: color.success }}>
-        swaps by
-        <b>0x</b>
-      </span>
-      <span style={{ background: 'linear-gradient(#2081e2, #0d4f96)', color: '#fff' }}>
-        NFTs from
-        <b>OpenSea</b>
-      </span>
-      <span style={{ background: '#1b2630', color: color.accent }}>
-        prices by
-        <b>DexScreener</b>
-      </span>
-      <span style={{ background: '#000080', color: '#f5c6f6' }}>
-        best viewed in
-        <b>miyaOS</b>
-      </span>
-    </Wall>
   )
 }

@@ -47,10 +47,13 @@ test('GET ops: only known ops and params, validated, never a page-chosen path', 
   assert.equal(ok.path, '/api/v2/collections/milady/stats')
   assert.equal(ok.keyless, true)
   assert.equal(openSeaGet(new URLSearchParams({ op: 'listings', slug: 'milady' })).query?.get('limit'), '6')
-  assert.equal(openSeaGet(new URLSearchParams({ op: 'listings', slug: 'milady', limit: '50' })).error, 'limit is not valid.')
+  assert.equal(
+    openSeaGet(new URLSearchParams({ op: 'listings', slug: 'milady', limit: '50' })).error,
+    'limit is not valid.',
+  )
   assert.equal(
     openSeaGet(new URLSearchParams({ op: 'contract', chain: 'ethereum', address: MILADY })).path,
-    `/api/v2/chain/ethereum/contract/${MILADY}`
+    `/api/v2/chain/ethereum/contract/${MILADY}`,
   )
   assert.match(openSeaGet(new URLSearchParams({ op: 'contract', chain: 'sepolia', address: MILADY })).error!, /chain/)
   assert.match(openSeaGet(new URLSearchParams({ op: 'stats', slug: '../auth/keys' })).error!, /slug/)
@@ -58,7 +61,10 @@ test('GET ops: only known ops and params, validated, never a page-chosen path', 
   assert.match(openSeaGet(new URLSearchParams('op=stats&slug=a&slug=b')).error!, /twice/)
   assert.match(openSeaGet(new URLSearchParams({ op: 'auth' })).error!, /Unknown/)
   assert.match(openSeaGet(new URLSearchParams({ op: 'toString' })).error!, /Unknown/)
-  assert.match(openSeaGet(new URLSearchParams({ op: 'nft', chain: 'ethereum', address: MILADY, id: '1e5' })).error!, /id/)
+  assert.match(
+    openSeaGet(new URLSearchParams({ op: 'nft', chain: 'ethereum', address: MILADY, id: '1e5' })).error!,
+    /id/,
+  )
   const s = openSeaGet(new URLSearchParams({ op: 'search', query: 'milady', chain: 'robinhood' }))
   assert.equal(s.query?.get('asset_types'), 'collection')
   assert.equal(s.query?.get('chains'), 'robinhood')
@@ -75,7 +81,10 @@ test('POST ops: the proxy builds OpenSea body; no recipient, no extra fields, ne
     include_optional_creator_fees: false,
   })
   // The page cannot ask for optional creator fees.
-  assert.match(openSeaPost('fulfill_listing', { ...base, include_optional_creator_fees: true }).error!, /include_optional_creator_fees is not accepted/)
+  assert.match(
+    openSeaPost('fulfill_listing', { ...base, include_optional_creator_fees: true }).error!,
+    /include_optional_creator_fees is not accepted/,
+  )
   assert.match(openSeaPost('fulfill_listing', { ...base, recipient: SELLER }).error!, /recipient is not accepted/)
   assert.match(openSeaPost('fulfill_listing', { ...base, hash: '0x12' }).error!, /hash/)
   assert.match(openSeaPost('fulfill_listing', { ...base, fulfiller: `0x${'0'.repeat(40)}` }).error!, /fulfiller/)
@@ -100,7 +109,8 @@ test('big integers survive JSON.parse after quoteBigInts', () => {
 })
 
 test('quoteBigInts leaves long decimals as numbers (OpenSea sends 16+ fraction digits in volumes)', () => {
-  const text = '{"volume": 0.4335819821334922, "big": 2454.626698788311123, "e": 1.5e+25, "f": 12345678901234567e2, "n": [0.1234567890123456789,7]}'
+  const text =
+    '{"volume": 0.4335819821334922, "big": 2454.626698788311123, "e": 1.5e+25, "f": 12345678901234567e2, "n": [0.1234567890123456789,7]}'
   const j = JSON.parse(quoteBigInts(text))
   assert.equal(j.volume, 0.4335819821334922)
   assert.equal(j.big, 2454.626698788311123)
@@ -139,7 +149,9 @@ test('proxy: no key = keyless ops forwarded without a key, the rest 503 without 
   assert.equal((await r2.json()).name, 'MARKET_NOT_CONFIGURED')
   assert.equal(calls.length, 1)
   // status is answered locally and says whether a key is set, never what it is.
-  assert.deepEqual(await (await handleOpenSeaRequest(req('op=status'), {}, guards(), fetchImpl)).json(), { configured: false })
+  assert.deepEqual(await (await handleOpenSeaRequest(req('op=status'), {}, guards(), fetchImpl)).json(), {
+    configured: false,
+  })
   const on = await handleOpenSeaRequest(req('op=status'), { OPENSEA_API_KEY: 'k-secret' }, guards(), fetchImpl)
   assert.equal(await on.text(), '{"configured":true}')
   assert.equal(calls.length, 1)
@@ -167,25 +179,44 @@ test('proxy: key injected; 401 → not configured; 404 → NOT_FOUND; cross-site
   assert.equal(r401.status, 503)
   assert.doesNotMatch(await r401.text(), /k-secret/)
   status = 404
-  assert.equal((await (await handleOpenSeaRequest(req('op=stats&slug=nope'), env, g, fetchImpl)).json()).name, 'NOT_FOUND')
+  assert.equal(
+    (await (await handleOpenSeaRequest(req('op=stats&slug=nope'), env, g, fetchImpl)).json()).name,
+    'NOT_FOUND',
+  )
 
   const cross = await handleOpenSeaRequest(
     req('op=stats&slug=milady', { headers: new Headers({ 'sec-fetch-site': 'cross-site' }) }),
     env,
     g,
-    fetchImpl
+    fetchImpl,
   )
   assert.equal(cross.status, 403)
-  assert.equal((await handleOpenSeaRequest(req('op=stats&slug=milady', { headers: new Headers() }), env, g, fetchImpl)).status, 403)
+  assert.equal(
+    (await handleOpenSeaRequest(req('op=stats&slug=milady', { headers: new Headers() }), env, g, fetchImpl)).status,
+    403,
+  )
 
   status = 200
   const fillBody = JSON.stringify({ chain: 'ethereum', hash: HASH, protocol_address: SEAPORT, fulfiller: ME })
-  const fill = await handleOpenSeaRequest(req('op=fulfill_listing', { method: 'POST', body: fillBody }), env, g, fetchImpl)
+  const fill = await handleOpenSeaRequest(
+    req('op=fulfill_listing', { method: 'POST', body: fillBody }),
+    env,
+    g,
+    fetchImpl,
+  )
   assert.equal(fill.status, 200)
   assert.equal(fill.headers.get('cache-control'), 'no-store')
   assert.equal(JSON.parse(body!).fulfiller.address, ME)
-  assert.equal((await handleOpenSeaRequest(req('op=fulfill_listing&x=1', { method: 'POST', body: fillBody }), env, g, fetchImpl)).status, 400)
-  assert.equal((await handleOpenSeaRequest(req('op=fulfill_listing', { method: 'POST', body: fillBody }), env, g, fetchImpl)).status, 429)
+  assert.equal(
+    (await handleOpenSeaRequest(req('op=fulfill_listing&x=1', { method: 'POST', body: fillBody }), env, g, fetchImpl))
+      .status,
+    400,
+  )
+  assert.equal(
+    (await handleOpenSeaRequest(req('op=fulfill_listing', { method: 'POST', body: fillBody }), env, g, fetchImpl))
+      .status,
+    429,
+  )
   assert.equal((await handleOpenSeaRequest(req('op=stats&slug=a', { method: 'PUT' }), env, g, fetchImpl)).status, 405)
 })
 
@@ -203,18 +234,27 @@ test('collection and item paths round-trip', () => {
 })
 
 test('venues per chain, MiyaPool first; links work with no key', () => {
-  assert.deepEqual(venuesFor(1).map((v) => v.id), ['miyapool', 'opensea', 'blur'])
-  assert.deepEqual(venuesFor(4663).map((v) => v.id), ['miyapool', 'opensea'])
-  assert.deepEqual(venuesFor(11155111).map((v) => v.id), ['miyapool'])
+  assert.deepEqual(
+    venuesFor(1).map((v) => v.id),
+    ['miyapool', 'opensea'],
+  )
+  assert.deepEqual(
+    venuesFor(4663).map((v) => v.id),
+    ['miyapool', 'opensea'],
+  )
+  assert.deepEqual(
+    venuesFor(11155111).map((v) => v.id),
+    ['miyapool'],
+  )
   assert.equal(collectionUrl('opensea', 1, MILADY, 'milady'), 'https://opensea.io/collection/milady')
-  assert.equal(collectionUrl('opensea', 4663, MILADY.toUpperCase().replace('0X', '0x')), `https://opensea.io/contract/robinhood/${MILADY}`)
-  assert.equal(collectionUrl('blur', 1, MILADY), `https://blur.io/eth/collection/${MILADY}`)
-  assert.equal(collectionUrl('blur', 4663, MILADY), undefined)
+  assert.equal(
+    collectionUrl('opensea', 4663, MILADY.toUpperCase().replace('0X', '0x')),
+    `https://opensea.io/contract/robinhood/${MILADY}`,
+  )
   assert.equal(collectionUrl('opensea', 11155111, MILADY), undefined)
   assert.equal(itemUrl('opensea', 1, MILADY, '7'), `https://opensea.io/item/ethereum/${MILADY}/7`)
-  assert.equal(itemUrl('blur', 1, MILADY, '7'), `https://blur.io/eth/asset/${MILADY}/7`)
   assert.equal(itemUrl('magiceden' as never, 1, MILADY, '7'), undefined)
-  assert.equal(otherMarkets(1), 'OpenSea and Blur')
+  assert.equal(otherMarkets(1), 'OpenSea')
   assert.equal(otherMarkets(4663), 'OpenSea')
   assert.equal(otherMarkets(11155111), '')
 })
@@ -237,7 +277,10 @@ test('OpenSea collection, stats, offers, search and wallet NFTs parse', () => {
     collection: 'milady',
     name: 'Milady Maker',
     safelist_status: 'verified',
-    contracts: [{ address: MILADY, chain: 'ethereum' }, { address: 'bad', chain: 'x' }],
+    contracts: [
+      { address: MILADY, chain: 'ethereum' },
+      { address: 'bad', chain: 'x' },
+    ],
     fees: [
       { fee: 1.0, recipient: OPENSEA_FEE_RECIPIENT, required: true },
       { fee: 5.0, recipient: CREATOR, required: false },
@@ -257,25 +300,47 @@ test('OpenSea collection, stats, offers, search and wallet NFTs parse', () => {
   assert.equal(s.sales7d, 36)
   assert.deepEqual(parseStats(null), { floor: undefined, owners: undefined, sales7d: undefined, volume7d: undefined })
 
-  const o = parseOfferAggregate({ offer_aggregates: [{ offer_price: { token_unit: 0.65, symbol: 'WETH', chain: 'ethereum', usd_price: '1' }, total_offers: 3, bidders: [], total_value: {} }] })!
+  const o = parseOfferAggregate({
+    offer_aggregates: [
+      {
+        offer_price: { token_unit: 0.65, symbol: 'WETH', chain: 'ethereum', usd_price: '1' },
+        total_offers: 3,
+        bidders: [],
+        total_value: {},
+      },
+    ],
+  })!
   assert.equal(formatPrice(o.price), '0.65 WETH')
   assert.equal(o.count, 3)
 
   assert.deepEqual(
-    parseSearch({ results: [
-      { type: 'collection', collection: { collection: 'milady', name: 'Milady Maker', is_disabled: false, is_nsfw: false } },
-      { type: 'collection', collection: { collection: 'bad', name: 'Bad', is_disabled: false, is_nsfw: true } },
-      { type: 'token', token: {} },
-    ] }).map((h) => h.slug),
-    ['milady']
+    parseSearch({
+      results: [
+        {
+          type: 'collection',
+          collection: { collection: 'milady', name: 'Milady Maker', is_disabled: false, is_nsfw: false },
+        },
+        { type: 'collection', collection: { collection: 'bad', name: 'Bad', is_disabled: false, is_nsfw: true } },
+        { type: 'token', token: {} },
+      ],
+    }).map((h) => h.slug),
+    ['milady'],
   )
-  const g = groupAccountNfts({ nfts: [
-    { contract: MILADY, collection: 'milady', identifier: '1' },
-    { contract: MILADY.toUpperCase().replace('0X', '0x'), collection: 'milady', identifier: '2' },
-    { contract: SELLER, collection: 'other', identifier: '9' },
-    { contract: CREATOR, collection: 'spam', identifier: '3', is_nsfw: true },
-  ] })
-  assert.deepEqual(g.map((x) => [x.slug, x.ids.length]), [['milady', 2], ['other', 1]])
+  const g = groupAccountNfts({
+    nfts: [
+      { contract: MILADY, collection: 'milady', identifier: '1' },
+      { contract: MILADY.toUpperCase().replace('0X', '0x'), collection: 'milady', identifier: '2' },
+      { contract: SELLER, collection: 'other', identifier: '9' },
+      { contract: CREATOR, collection: 'spam', identifier: '3', is_nsfw: true },
+    ],
+  })
+  assert.deepEqual(
+    g.map((x) => [x.slug, x.ids.length]),
+    [
+      ['milady', 2],
+      ['other', 1],
+    ],
+  )
 })
 
 const listingJson = (id: string, wei: string, extra: Record<string, unknown> = {}) => ({
@@ -293,7 +358,9 @@ const listingJson = (id: string, wei: string, extra: Record<string, unknown> = {
 })
 
 test('listings and offers parse; inactive ones are dropped', () => {
-  const ls = parseListings({ listings: [listingJson('42', '720000000000000000'), listingJson('7', '1', { status: 'CANCELLED' })] })
+  const ls = parseListings({
+    listings: [listingJson('42', '720000000000000000'), listingJson('7', '1', { status: 'CANCELLED' })],
+  })
   assert.equal(ls.length, 1)
   assert.equal(ls[0]!.tokenId, '42')
   assert.equal(formatPrice(ls[0]!.price), '0.72 ETH')
@@ -313,8 +380,23 @@ test('listings and offers parse; inactive ones are dropped', () => {
 test('best price: cheapest listing / highest offer in one money; ETH and WETH compare', () => {
   const eth = (n: number, symbol = 'ETH') => priceFromFloat(n, symbol)
   assert.equal(bestQuote([{ v: 'a', price: eth(0.8) }, { v: 'b', price: eth(0.7, 'WETH') }, { v: 'c' }])!.v, 'b')
-  assert.equal(bestQuote([{ v: 'a', price: eth(0.6) }, { v: 'b', price: eth(0.65) }], 'highest')!.v, 'b')
-  assert.equal(bestQuote([{ v: 'a', price: eth(0.8) }, { v: 'pool', price: { amount: 1n, decimals: 18, symbol: 'mMIL' } }])!.v, 'a')
+  assert.equal(
+    bestQuote(
+      [
+        { v: 'a', price: eth(0.6) },
+        { v: 'b', price: eth(0.65) },
+      ],
+      'highest',
+    )!.v,
+    'b',
+  )
+  assert.equal(
+    bestQuote([
+      { v: 'a', price: eth(0.8) },
+      { v: 'pool', price: { amount: 1n, decimals: 18, symbol: 'mMIL' } },
+    ])!.v,
+    'a',
+  )
   assert.equal(bestQuote([{ v: 'none' }]), undefined)
 })
 
@@ -332,9 +414,30 @@ function basicBuy(over: { to?: string; value?: string; chain?: number; id?: stri
     zone: '0x0000000000000000000000000000000000000000',
     offer: [{ itemType: 2, token: MILADY, identifierOrCriteria: id, startAmount: '1', endAmount: '1' }],
     consideration: [
-      { itemType: 0, token: '0x0000000000000000000000000000000000000000', identifierOrCriteria: '0', startAmount: String(PRICE - OS_FEE - ROYALTY), endAmount: String(PRICE - OS_FEE - ROYALTY), recipient: SELLER },
-      { itemType: 0, token: '0x0000000000000000000000000000000000000000', identifierOrCriteria: '0', startAmount: String(OS_FEE), endAmount: String(OS_FEE), recipient: OPENSEA_FEE_RECIPIENT },
-      { itemType: 0, token: '0x0000000000000000000000000000000000000000', identifierOrCriteria: '0', startAmount: String(ROYALTY), endAmount: String(ROYALTY), recipient: CREATOR },
+      {
+        itemType: 0,
+        token: '0x0000000000000000000000000000000000000000',
+        identifierOrCriteria: '0',
+        startAmount: String(PRICE - OS_FEE - ROYALTY),
+        endAmount: String(PRICE - OS_FEE - ROYALTY),
+        recipient: SELLER,
+      },
+      {
+        itemType: 0,
+        token: '0x0000000000000000000000000000000000000000',
+        identifierOrCriteria: '0',
+        startAmount: String(OS_FEE),
+        endAmount: String(OS_FEE),
+        recipient: OPENSEA_FEE_RECIPIENT,
+      },
+      {
+        itemType: 0,
+        token: '0x0000000000000000000000000000000000000000',
+        identifierOrCriteria: '0',
+        startAmount: String(ROYALTY),
+        endAmount: String(ROYALTY),
+        recipient: CREATOR,
+      },
     ],
     orderType: 2,
     startTime: '1790000000',
@@ -345,43 +448,49 @@ function basicBuy(over: { to?: string; value?: string; chain?: number; id?: stri
     totalOriginalConsiderationItems: 3,
     counter: 0,
   }
-  return JSON.parse(quoteBigInts(JSON.stringify({
-    protocol: 'seaport1.6',
-    fulfillment_data: {
-      orders: [{ parameters: params, signature: `0x${'11'.repeat(64)}` }],
-      transaction: {
-        function: over.fn ?? 'fulfillBasicOrder_efficient_6GL6yc((address,uint256,uint256,address,address,address,uint256,uint256,uint8,uint256,uint256,bytes32,uint256,bytes32,bytes32,uint256,(uint256,address)[],bytes))',
-        chain: over.chain ?? 1,
-        to: over.to ?? SEAPORT,
-        value: over.value ?? String(PRICE),
-        input_data: {
-          parameters: {
-            considerationToken: '0x0000000000000000000000000000000000000000',
-            considerationIdentifier: 0,
-            considerationAmount: String(PRICE - OS_FEE - ROYALTY),
-            offerer: SELLER,
-            zone: '0x0000000000000000000000000000000000000000',
-            offerToken: MILADY,
-            offerIdentifier: Number(id),
-            offerAmount: 1,
-            basicOrderType: 2,
-            startTime: 1790000000,
-            endTime: 1800000000,
-            zoneHash: ZERO32,
-            salt: SALT,
-            offererConduitKey: OS_KEY,
-            fulfillerConduitKey: OS_KEY,
-            totalOriginalAdditionalRecipients: 2,
-            additionalRecipients: [
-              { amount: String(OS_FEE), recipient: OPENSEA_FEE_RECIPIENT },
-              { amount: String(ROYALTY), recipient: CREATOR },
-            ],
-            signature: `0x${'11'.repeat(64)}`,
+  return JSON.parse(
+    quoteBigInts(
+      JSON.stringify({
+        protocol: 'seaport1.6',
+        fulfillment_data: {
+          orders: [{ parameters: params, signature: `0x${'11'.repeat(64)}` }],
+          transaction: {
+            function:
+              over.fn ??
+              'fulfillBasicOrder_efficient_6GL6yc((address,uint256,uint256,address,address,address,uint256,uint256,uint8,uint256,uint256,bytes32,uint256,bytes32,bytes32,uint256,(uint256,address)[],bytes))',
+            chain: over.chain ?? 1,
+            to: over.to ?? SEAPORT,
+            value: over.value ?? String(PRICE),
+            input_data: {
+              parameters: {
+                considerationToken: '0x0000000000000000000000000000000000000000',
+                considerationIdentifier: 0,
+                considerationAmount: String(PRICE - OS_FEE - ROYALTY),
+                offerer: SELLER,
+                zone: '0x0000000000000000000000000000000000000000',
+                offerToken: MILADY,
+                offerIdentifier: Number(id),
+                offerAmount: 1,
+                basicOrderType: 2,
+                startTime: 1790000000,
+                endTime: 1800000000,
+                zoneHash: ZERO32,
+                salt: SALT,
+                offererConduitKey: OS_KEY,
+                fulfillerConduitKey: OS_KEY,
+                totalOriginalAdditionalRecipients: 2,
+                additionalRecipients: [
+                  { amount: String(OS_FEE), recipient: OPENSEA_FEE_RECIPIENT },
+                  { amount: String(ROYALTY), recipient: CREATOR },
+                ],
+                signature: `0x${'11'.repeat(64)}`,
+              },
+            },
           },
         },
-      },
-    },
-  })))
+      }),
+    ),
+  )
 }
 
 const ctx = (over: Record<string, unknown> = {}) => ({
@@ -402,10 +511,17 @@ test('buying a listing: who gets what, and calldata that decodes back to the sam
   if (!plan.ok) return
   assert.equal(plan.total, PRICE)
   assert.equal(plan.currency.native, true)
-  assert.deepEqual(plan.lines.map((l) => l.label), ['To the seller', 'OpenSea fee', 'Creator fee (required)'])
+  assert.deepEqual(
+    plan.lines.map((l) => l.label),
+    ['To the seller', 'OpenSea fee', 'Creator fee (required)'],
+  )
   assert.equal(plan.lines[1]!.amount, OS_FEE)
   assert.equal(plan.conduitKey, OS_KEY)
-  const data = encodeFunctionData({ abi: seaportAbi, functionName: plan.functionName as 'fulfillBasicOrder', args: plan.args as never })
+  const data = encodeFunctionData({
+    abi: seaportAbi,
+    functionName: plan.functionName as 'fulfillBasicOrder',
+    args: plan.args as never,
+  })
   const back = decodeFunctionData({ abi: seaportAbi, data })
   assert.equal(back.functionName, 'fulfillBasicOrder_efficient_6GL6yc')
   const p = (back.args as any)[0]
@@ -419,14 +535,20 @@ test('optional creator fees are never paid: extra ETH or tip recipients are refu
   assert.match(err(planFill(basicBuy({ value: String(PRICE + 1000n) }), ctx())), /only pays what the order requires/)
   // A basic order with a recipient past the signed ones (a tip).
   const tipped = basicBuy({ value: String(PRICE + 1000n) })
-  tipped.fulfillment_data.transaction.input_data.parameters.additionalRecipients.push({ amount: '1000', recipient: CREATOR })
+  tipped.fulfillment_data.transaction.input_data.parameters.additionalRecipients.push({
+    amount: '1000',
+    recipient: CREATOR,
+  })
   assert.match(err(planFill(tipped, ctx())), /optional fee/)
   // An advanced order with a consideration item past the original count.
   const adv = offerAccept()
   const p = adv.fulfillment_data.transaction.input_data.advancedOrder.parameters
   adv.fulfillment_data.transaction.input_data.advancedOrder.parameters = {
     ...p,
-    consideration: [...p.consideration, { itemType: 1, token: WETH, identifierOrCriteria: '0', startAmount: '5', endAmount: '5', recipient: CREATOR }],
+    consideration: [
+      ...p.consideration,
+      { itemType: 1, token: WETH, identifierOrCriteria: '0', startAmount: '5', endAmount: '5', recipient: CREATOR },
+    ],
   }
   assert.match(err(planFill(adv, ctx({ side: 'sell' }))), /optional fee/)
   // Required creator fees in the signed order still show, plainly.
@@ -454,10 +576,19 @@ function offerAccept(recipient = '0x0000000000000000000000000000000000000000') {
   const params = {
     offerer: bidder,
     zone: '0x000056f7000000ece9003ca63978907a00ffd100',
-    offer: [{ itemType: 1, token: WETH, identifierOrCriteria: '0', startAmount: String(gross), endAmount: String(gross) }],
+    offer: [
+      { itemType: 1, token: WETH, identifierOrCriteria: '0', startAmount: String(gross), endAmount: String(gross) },
+    ],
     consideration: [
       { itemType: 4, token: MILADY, identifierOrCriteria: '0', startAmount: '2', endAmount: '2', recipient: bidder },
-      { itemType: 1, token: WETH, identifierOrCriteria: '0', startAmount: String(fee), endAmount: String(fee), recipient: OPENSEA_FEE_RECIPIENT },
+      {
+        itemType: 1,
+        token: WETH,
+        identifierOrCriteria: '0',
+        startAmount: String(fee),
+        endAmount: String(fee),
+        recipient: OPENSEA_FEE_RECIPIENT,
+      },
     ],
     orderType: 3,
     startTime: '1790000000',
@@ -471,7 +602,8 @@ function offerAccept(recipient = '0x0000000000000000000000000000000000000000') {
     fulfillment_data: {
       orders: [{ parameters: params, signature: '0x' }],
       transaction: {
-        function: 'fulfillAdvancedOrder(((address,address,(uint8,address,uint256,uint256,uint256)[],(uint8,address,uint256,uint256,uint256,address)[],uint8,uint256,uint256,bytes32,uint256,bytes32,uint256),uint120,uint120,bytes,bytes),(uint256,uint8,uint256,uint256,bytes32[])[],bytes32,address)',
+        function:
+          'fulfillAdvancedOrder(((address,address,(uint8,address,uint256,uint256,uint256)[],(uint8,address,uint256,uint256,uint256,address)[],uint8,uint256,uint256,bytes32,uint256,bytes32,uint256),uint120,uint120,bytes,bytes),(uint256,uint8,uint256,uint256,bytes32[])[],bytes32,address)',
         chain: 1,
         to: SEAPORT,
         value: '0',
@@ -491,7 +623,10 @@ test('accepting an offer: one unit of a 2-unit offer, minus the OpenSea fee', ()
   assert.equal(plan.ok, true)
   if (!plan.ok) return
   assert.equal(plan.total, 650000000000000000n - 6500000000000000n)
-  assert.deepEqual(plan.lines.map((l) => l.label), ['Offer', 'OpenSea fee'])
+  assert.deepEqual(
+    plan.lines.map((l) => l.label),
+    ['Offer', 'OpenSea fee'],
+  )
   assert.equal(plan.currency.token, WETH)
   const data = encodeFunctionData({ abi: seaportAbi, functionName: 'fulfillAdvancedOrder', args: plan.args as never })
   const back = decodeFunctionData({ abi: seaportAbi, data }).args as any
@@ -504,15 +639,19 @@ test('accepting an offer: one unit of a 2-unit offer, minus the OpenSea fee', ()
 test('seaportArgs maps OpenSea names (orders → advancedOrders) and unwraps { value }', () => {
   const fn = seaportAbi.find((f) => f.name === 'fulfillAvailableAdvancedOrders')!
   const order = offerAccept().fulfillment_data.transaction.input_data.advancedOrder
-  const args = seaportArgs(fn, {
-    orders: [order],
-    criteriaResolvers: [],
-    offerFulfillments: [[{ orderIndex: 0, itemIndex: 0 }]],
-    considerationFulfillments: [],
-    fulfillerConduitKey: OS_KEY,
-    recipient: { value: ME, typeAsString: 'address' },
-    maximumFulfilled: '1',
-  }, INPUT_ALIASES)
+  const args = seaportArgs(
+    fn,
+    {
+      orders: [order],
+      criteriaResolvers: [],
+      offerFulfillments: [[{ orderIndex: 0, itemIndex: 0 }]],
+      considerationFulfillments: [],
+      fulfillerConduitKey: OS_KEY,
+      recipient: { value: ME, typeAsString: 'address' },
+      maximumFulfilled: '1',
+    },
+    INPUT_ALIASES,
+  )
   assert.equal(args[5], ME)
   assert.equal((args[0] as any[])[0].numerator, 1n)
   assert.equal((args[2] as any[][])[0]![0].itemIndex, 0n)
