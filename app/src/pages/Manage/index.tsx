@@ -151,7 +151,11 @@ export default function ManagePage() {
   // Deep link: ?collection=0x… (legacy behaviour).
   useEffect(() => {
     const p = params.get('collection')
-    if (p && isAddress(p)) dispatch(updateManagedCollection({ value: getAddress(p) }))
+    if (p && isAddress(p)) {
+      dispatch(updateManagedCollection({ value: getAddress(p) }))
+      // The session's target would win otherwise, and the link would open whatever was open before.
+      if (target && target.address.toLowerCase() !== p.toLowerCase()) setManageTarget(undefined)
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params])
 
@@ -177,9 +181,13 @@ export default function ManagePage() {
   const detected: LaunchKind | undefined = (() => {
     if (target && target.kind !== 'unknown') return target.kind
     if (!reads.data) return undefined
+    // A failed read isn't an answer: calling that legacy would pin the collection as what it may not be. No registry on
+    // this network is one, since nothing from Launch can be here.
+    if (a.registry && reads.data[0]?.status !== 'success') return undefined
     const k = kindFromFactory(factory && factory !== zeroAddress ? factory : undefined, a)
     return k === 'unknown' ? 'legacy' : k
   })()
+  const readFailed = !detected && !reads.isFetching && (reads.isError || !!reads.data)
   const isOwner = !!owner && !!wallet && owner.toLowerCase() === wallet.toLowerCase()
   const onWrongChain = isConnected && walletChainId !== chainId
 
@@ -359,7 +367,14 @@ export default function ManagePage() {
                 </StatusBox>
               )}
               <Panel style={{ padding: space[2] }}>
-                {!detected ? (
+                {readFailed ? (
+                  <span style={{ fontSize: text.sm }}>
+                    Couldn&apos;t read this collection.{' '}
+                    <SmallButton type="button" onClick={() => reads.refetch()}>
+                      Check again
+                    </SmallButton>
+                  </span>
+                ) : !detected ? (
                   <span style={{ fontSize: text.sm }}>Loading…</span>
                 ) : detected === 'legacy' ? (
                   <LegacyManage key={collection} collection={collection} onChange={clear} />

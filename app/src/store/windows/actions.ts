@@ -12,13 +12,8 @@ export const updateWindowSize = createAction<{ value: PageKey; size: { width: nu
 )
 export const toggleFullscreen = createAction<{ value: PageKey }>('windows/toggleFullscreen')
 export const setToFront = createAction<{ value: PageKey }>('windows/setToFront')
+/** Only ever puts the window away. `setToFront` brings it back. */
 export const minimizeWindow = createAction<{ value: PageKey }>('windows/minimizeWindow')
 export const setAlwaysOnTop = createAction<{ value: PageKey; on: boolean }>('windows/setAlwaysOnTop')
-export const createUploadOrder = createAction<{
-  requestFrom: string
-  timestamp: number
-  label?: string
-  value?: string
-}>('windows/createUploadOrder')
 export const finalizeUploadOrder = createAction<{ requestFrom: string; result: string }>('windows/finalizeUploadOrder')
 export const deleteUploadOrder = createAction<{ requestFrom: string }>('windows/deleteUploadOrder')

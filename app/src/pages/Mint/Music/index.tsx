@@ -4,8 +4,10 @@ import { useEffect, useRef, useState } from 'react'
 import styled from 'styled-components/macro'
 import type { Hash } from 'viem'
 import { formatEther, isAddress, zeroHash } from 'viem'
-import { useAccount, useWaitForTransactionReceipt, useWriteContract } from 'wagmi'
+import { useAccount, useWriteContract } from 'wagmi'
 
+import { TX_REVERTED_WORDS, TX_CANCELLED_WORDS, TX_UNCONFIRMED_WORDS } from '@/miyamints/txOutcome'
+import { useTxOutcome } from '@/miyamints/useTxOutcome'
 import { ConnectedButton } from '@/components/Button'
 import { Skeleton, StatusBox } from '@/components/Retro'
 import { explorerUrl } from '@/config/wagmi'
@@ -194,24 +196,35 @@ function Cover({ uri, alt }: { uri?: string; alt: string }) {
 
 function MintEdition({ item }: { item: MusicItem }) {
   const write = useWriteContract()
-  const receipt = useWaitForTransactionReceipt({
-    hash: write.data as Hash | undefined,
-    chainId: item.chainId as never,
-    query: { enabled: !!write.data },
-  })
+  const { outcome } = useTxOutcome(item.chainId, write.data as Hash | undefined)
+  const nav = useHandheld()
   const ed = item.edition
+  const busy = write.isPending || outcome === 'waiting'
+  const holding = busy || outcome === 'unknown'
+  useEffect(() => (holding ? nav.hold?.() : undefined), [holding])
+  // Wakes up when the edition opens, so its button doesn't stay on "Not open yet".
+  const [now, setNow] = useState(() => Date.now())
+  const opensAt = Number(ed?.openTime ?? 0n) * 1000
+  useEffect(() => {
+    if (opensAt <= now) return undefined
+    const t = setTimeout(() => setNow(Date.now()), Math.min(opensAt - now, 60 * 60_000))
+    return () => clearTimeout(t)
+  }, [opensAt, now])
   if (!ed) return null
   const soldOut = ed.supply > 0n && ed.minted >= ed.supply
-  const notOpen = ed.openTime > 0n && ed.openTime * 1000n > BigInt(Date.now())
-  const busy = write.isPending || (!!write.data && receipt.isLoading)
-  const err = describeError(write.error || receipt.error)
+  const notOpen = opensAt > now
+  const minted = outcome === 'success'
+  // Sent, but its receipt couldn't be read: it may still land, so the same mint isn't offered again.
+  const unconfirmed = outcome === 'unknown'
+  const err = describeError(write.error)
   return (
     <>
       <ConnectedButton
         withChain={[item.chainId]}
-        disabled={soldOut || notOpen || busy || receipt.isSuccess}
+        disabled={busy || minted || (!unconfirmed && (soldOut || notOpen))}
         style={{ width: '100%', minWidth: 0 }}
         onClick={() =>
+          unconfirmed ? write.reset() :
           write.writeContract({
             address: item.collection,
             abi: erc1155InstanceAbi,
@@ -223,19 +236,28 @@ function MintEdition({ item }: { item: MusicItem }) {
           })
         }
       >
-        {soldOut
+        {busy
+          ? 'Minting…'
+          : minted
+          ? 'Minted!'
+          : unconfirmed
+          ? 'Start over'
+          : soldOut
           ? 'Sold out'
           : notOpen
           ? 'Not open yet'
-          : busy
-          ? 'Minting…'
-          : receipt.isSuccess
-          ? 'Minted!'
           : `Mint · ${formatEther(ed.price)} ETH`}
       </ConnectedButton>
-      {(write.error || receipt.error) && !err.cancelled && (
+      {outcome === 'cancelled' && (
+        <StatusBox tone="info" role="status" style={{ fontSize: text.xs }}>
+          <span>{TX_CANCELLED_WORDS}</span>
+        </StatusBox>
+      )}
+      {(outcome === 'reverted' || unconfirmed || (write.error && !err.cancelled)) && (
         <StatusBox tone="error" role="alert" style={{ fontSize: text.xs }}>
-          <span>{err.message}</span>
+          <span>
+            {outcome === 'reverted' ? TX_REVERTED_WORDS : unconfirmed ? TX_UNCONFIRMED_WORDS : err.message}
+          </span>
         </StatusBox>
       )}
     </>
@@ -393,7 +415,7 @@ export default function MusicDrops() {
         </Lcd>
       }
       a={action}
-      b={{ label: 'Menu', onClick: nav.openMenu }}
+      b={{ label: 'Menu', disabled: nav.held, onClick: nav.openMenu }}
       start={action}
       dpad={{
         up: () => list.current?.scrollBy({ top: -120, behavior: 'smooth' }),

@@ -252,6 +252,9 @@ export default function FillReview({
   const allowance = allowR?.status === 'success' ? (allowR.result as bigint) : undefined
   const needs20 = !!erc20 && allowance !== undefined && ok !== undefined && allowance < ok.fromYou
   const tokenChecking = !!erc20 && !!ok && ok.fromYou > 0n && allowance === undefined && tokenReads.isLoading
+  const reading = conduit.isFetching || tokenReads.isFetching || nftApprovedAll.isFetching || nftApprovedOne.isFetching
+  // A read that failed stays failed: without this the button waits on "Checking…" for good.
+  const conduitFailed = conduit.isError || (!!conduit.data && !conduit.data[1])
   const nftState =
     side === 'sell' && ok
       ? nftApprovalState({
@@ -260,8 +263,17 @@ export default function FillReview({
           approvedForAll: nftApprovedAll.data,
           approvedAddress: nftApprovedOne.data,
           approvedKnown: nftApprovedOne.isFetched,
+          readFailed: nftApprovedAll.isError,
         })
       : 'ready'
+  const tokenFailed = !!erc20 && !!ok && ok.fromYou > 0n && allowance === undefined && !tokenChecking
+  const checkFailed =
+    !!ok && (nftState === 'failed' || tokenFailed || (!usesSeaportItself(ok.conduitKey) && conduitFailed))
+  const checkAgain = () => {
+    if (conduit.isError) conduit.refetch()
+    if (tokenFailed) tokenReads.refetch()
+    if (nftApprovedAll.isError) nftApprovedAll.refetch()
+  }
   const batches = useCanBatch(chainId)
 
   const fillCall = ok && {
@@ -318,17 +330,22 @@ export default function FillReview({
   const mustAgree = side === 'buy' && ((flagged && !agreedFlagged) || (unverified && !agreedUnverified))
 
   const action = (() => {
-    if (!isConnected) return { label: 'Connect wallet', onClick: () => openConnectModal?.() }
-    if (wrongChain)
-      return { label: switching ? 'Switching…' : `Switch to ${chain.name}`, onClick: () => switchChain({ chainId }) }
     if (tx.tx.phase === 'wallet') return { label: 'Confirm in wallet…', disabled: true }
     if (tx.tx.phase === 'pending') return { label: 'Waiting for the network…', disabled: true }
     if (tx.tx.phase === 'done' && tx.tx.id === 'fill')
       return { label: side === 'buy' ? 'Bought' : 'Sold', disabled: true }
+    if (!isConnected) return { label: 'Connect wallet', onClick: () => openConnectModal?.() }
+    if (wrongChain)
+      return { label: switching ? 'Switching…' : `Switch to ${chain.name}`, onClick: () => switchChain({ chainId }) }
     if (failure === 'gone') return { label: 'Close', onClick: onClose }
     // It may yet land, so it is not offered again until the person has looked.
     if (unconfirmed) return { label: 'Could not confirm yet', disabled: true }
     if (!ok) return { label: data.isLoading ? 'Getting the order…' : 'Cannot fill here', disabled: true }
+    // The approval just landed and the read saying so is on its way: don't offer it again in the gap.
+    if (reading && (checkFailed || (tx.tx.phase === 'done' && tx.tx.id === 'approve')))
+      return { label: 'Checking…', disabled: true }
+    if (checkFailed)
+      return { label: 'Check again', step: 'We could not read the approvals. Nothing has moved.', onClick: checkAgain }
     if (!operator || tokenChecking || nftState === 'checking') return { label: 'Checking…', disabled: true }
     if (short) return { label: `Not enough ${symbol}`, disabled: true }
     if (gasShort) return { label: `Not enough ${native} for the network fee`, disabled: true }
@@ -398,7 +415,7 @@ export default function FillReview({
       <Head>
         <h2>{side === 'buy' ? 'Review your buy' : 'Accept this offer'}</h2>
         <LinkButton type="button" onClick={onClose} disabled={tx.busy}>
-          Cancel
+          {tx.tx.phase === 'done' && tx.tx.id === 'fill' ? 'Close' : 'Cancel'}
         </LinkButton>
       </Head>
       <Stat>

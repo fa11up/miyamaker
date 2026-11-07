@@ -44,7 +44,9 @@ export function useTx(onDone?: (id: string) => void) {
       setTx({ id, phase: 'pending', hash })
       const client = getPublicClient(wagmiConfig, { chainId: call.chainId })
       // No timeout, as in wagmi's own wait: a slow transaction keeps waiting. txOutcome.ts says why it isn't wagmi's.
-      const receipt = await settle(() => client!.waitForTransactionReceipt({ hash: sent, timeout: 0 }))
+      const receipt = await settle((onReplaced) =>
+        client!.waitForTransactionReceipt({ hash: sent, timeout: 0, onReplaced })
+      )
       setTx({ id, phase: 'done', hash, receipt: receipt as TransactionReceipt })
     } catch (e) {
       setTx({ id, phase: 'error', hash, message: describeError(e), error: e })
@@ -92,6 +94,10 @@ export function useTx(onDone?: (id: string) => void) {
     run,
     runBatch,
     busy: tx.phase === 'wallet' || tx.phase === 'pending',
+    /** Sent, but its ending couldn't be read: it may still land, so a screen must not offer the same thing again. */
+    unconfirmed: tx.phase === 'error' && !!(tx.error as { unconfirmed?: boolean } | undefined)?.unconfirmed,
+    /** Replaced by the wallet's cancel: nothing moved, so the same thing may be offered again. */
+    cancelled: tx.phase === 'error' && !!(tx.error as { cancelled?: boolean } | undefined)?.cancelled,
     reset: () => setTx({ phase: 'idle' }),
   }
 }

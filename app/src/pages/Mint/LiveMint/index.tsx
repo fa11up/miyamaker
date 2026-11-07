@@ -8,7 +8,6 @@ import {
   useReadContract,
   useReadContracts,
   useSwitchChain,
-  useWaitForTransactionReceipt,
   useWriteContract,
 } from 'wagmi'
 
@@ -21,6 +20,8 @@ import { formatEthShort, mintableNow, toCard } from '@/pages/Mint/liveMints'
 import type { MachineStatus } from '@/pages/Mint/handheld/MintCart'
 import MintCart from '@/pages/Mint/handheld/MintCart'
 import { statusLamp } from '@/pages/Mint/handheld/status'
+import { TX_CANCELLED_WORDS, TX_UNCONFIRMED_WORDS } from '@/miyamints/txOutcome'
+import { useTxOutcome } from '@/miyamints/useTxOutcome'
 import MintNeeds from '@/pages/Mint/MintNeeds'
 import { erc721mAbi } from '@/pages/Mint/Miyamini/abi'
 import { describeError } from '@/pages/Mint/Miyamini/useMiyamini'
@@ -52,15 +53,11 @@ function useMint(card: LiveMintCard, phaseId: number | undefined) {
   const { switchChain, isPending: isSwitching } = useSwitchChain()
   const balance = useBalance({ address, chainId, query: { enabled: !!address } })
   const write = useWriteContract()
-  const receipt = useWaitForTransactionReceipt({
-    hash: write.data as Hash | undefined,
-    chainId,
-    query: { enabled: !!write.data },
-  })
+  const { outcome } = useTxOutcome(chainId, write.data as Hash | undefined)
 
   useEffect(() => {
-    if (receipt.isSuccess) balance.refetch()
-  }, [receipt.isSuccess])
+    if (outcome === 'success') balance.refetch()
+  }, [outcome])
 
   const mint = (qty: number, price: bigint, to?: Address) => {
     const value = price * BigInt(qty)
@@ -95,10 +92,15 @@ function useMint(card: LiveMintCard, phaseId: number | undefined) {
     mint,
     hash: write.data,
     isAwaitingWallet: write.isPending,
-    isConfirming: !!write.data && receipt.isLoading,
-    isConfirmed: receipt.isSuccess && receipt.data?.status === 'success',
-    reverted: receipt.isSuccess && receipt.data?.status === 'reverted',
-    error: write.error || receipt.error,
+    isConfirming: outcome === 'waiting',
+    isConfirmed: outcome === 'success',
+    reverted: outcome === 'reverted',
+    /** Replaced by the wallet's cancel: the replacement's receipt says success, and nothing was minted. */
+    cancelled: outcome === 'cancelled',
+    /** It was sent, but its receipt couldn't be read: it may still land, so Mint isn't offered again. */
+    unconfirmed: outcome === 'unknown',
+    reset: write.reset,
+    error: write.error,
   }
 }
 
@@ -146,6 +148,10 @@ export default function LiveMintView({ card }: { card: LiveMintCard }) {
 
   const action = (() => {
     const off = (label: string) => ({ label, disabled: true, onClick: () => {} })
+    // What is under way comes first: the last piece going to someone else doesn't change what this one is doing.
+    if (tx.isAwaitingWallet) return off('Confirm in wallet…')
+    if (tx.isConfirming) return off('Minting…')
+    if (tx.unconfirmed) return { label: 'Start over', disabled: false, onClick: tx.reset }
     if (isLoading) return off('Loading…')
     if (isError) return off('Unavailable')
     if (live.status === 'soldout') return off('Sold out')
@@ -159,8 +165,6 @@ export default function LiveMintView({ card }: { card: LiveMintCard }) {
         disabled: tx.isSwitching,
         onClick: tx.switchChain,
       }
-    if (tx.isAwaitingWallet) return off('Confirm in wallet…')
-    if (tx.isConfirming) return off('Minting…')
     if (mintable === 0) return off('Wallet limit reached')
     if (insufficient) return off('Not enough ETH')
     if (badRecipient) return off('Enter a wallet address')
@@ -187,6 +191,21 @@ export default function LiveMintView({ card }: { card: LiveMintCard }) {
           </>
         ),
       }
+    : tx.unconfirmed
+    ? {
+        tone: 'info',
+        alert: true,
+        body: (
+          <>
+            {TX_UNCONFIRMED_WORDS}{' '}
+            <a href={txUrl} target="_blank" rel="noreferrer">
+              View transaction
+            </a>
+          </>
+        ),
+      }
+    : tx.cancelled
+    ? { tone: 'info', body: TX_CANCELLED_WORDS }
     : tx.reverted || (tx.error && !busy)
     ? {
         tone: err.cancelled ? 'info' : 'error',
@@ -229,6 +248,7 @@ export default function LiveMintView({ card }: { card: LiveMintCard }) {
       quantity={quantity}
       maxQty={maxQty}
       busy={busy}
+      stay={tx.unconfirmed}
       onQuantity={setQuantity}
       extras={
         card.kind === 'drop' && (

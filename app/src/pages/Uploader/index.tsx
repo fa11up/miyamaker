@@ -8,8 +8,8 @@ import TitleBar from '@/components/TitleBar'
 import WindowWrapper from '@/components/WindowWrapper'
 import Pages from '@/constants/pages'
 import { useAppDispatch } from '@/store/hooks'
-import { closeWindow, deleteUploadOrder, finalizeUploadOrder, minimizeWindow } from '@/store/windows/actions'
-import { useFullscreen, useLastUploadRequest } from '@/store/windows/hooks'
+import { closeWindow, minimizeWindow } from '@/store/windows/actions'
+import { useFullscreen } from '@/store/windows/hooks'
 import type { PageKey } from '@/store/windows/reducer'
 import { space } from '@/theme/tokens'
 
@@ -137,8 +137,6 @@ const page = Pages.uploader
 const pageId = page?.id as PageKey
 
 export default function MintPage() {
-  const uploadRequest = useLastUploadRequest()
-
   const [fullscreen, toggleFullscreen] = useFullscreen(pageId)
   const dispatch = useAppDispatch()
   const dropArea = useRef<HTMLDivElement>(null)
@@ -154,13 +152,7 @@ export default function MintPage() {
     if (!value) setCheckingClose(false)
   }, [])
 
-  const closeNow = () => {
-    if (uploadRequest) {
-      dispatch(deleteUploadOrder({ requestFrom: uploadRequest.requestFrom }))
-    }
-
-    dispatch(closeWindow({ value: pageId }))
-  }
+  const closeNow = () => dispatch(closeWindow({ value: pageId }))
 
   // Closing unmounts the window and loses the result, so a running upload asks first.
   const close = () => {
@@ -169,9 +161,6 @@ export default function MintPage() {
   }
 
   const minimize = () => dispatch(minimizeWindow({ value: pageId }))
-
-  const finalize = (result: string) =>
-    dispatch(finalizeUploadOrder({ requestFrom: uploadRequest?.requestFrom || '', result }))
 
   return (
     <WindowWrapper skin="upload">
@@ -200,8 +189,6 @@ export default function MintPage() {
       >
         <Panel>
           <ProgressBarUploader
-            request={uploadRequest}
-            onRequest={(value) => finalize(value)}
             dropArea={dropArea}
             onBusyChange={onBusyChange}
           />

@@ -582,9 +582,18 @@ export default function RadioWindow() {
 
   const [checked, setChecked] = useState(false)
   const clearAskAdd = useCallback(() => setAskAdd(false), [])
+  const loading = useRef(false)
+  const closed = useRef(false)
+  useEffect(() => {
+    closed.current = false
+    return () => {
+      closed.current = true
+    }
+  }, [])
   const loadSource = async (id = defaultSource, thenPlay = false) => {
     const source = sources.find((s) => s.id === id) || sources[0]
-    if (!source) return
+    if (!source || loading.current) return
+    loading.current = true
     setBusy(true)
     setFailed(undefined)
     setStatus({ text: `Loading ${source.label}…` })
@@ -594,11 +603,13 @@ export default function RadioWindow() {
       radio.enqueue(tracks)
       setChecked(id === communitySource.id && !tracks.length)
       setStatus({ text: addedWords(source.label, tracks.length, fresh) })
-      if (thenPlay && tracks.length) radio.play()
+      // Closed while it loaded: the tracks are on the list, but nothing starts by itself.
+      if (thenPlay && tracks.length && !closed.current) radio.play()
     } catch (e) {
       setFailed({ id: source.id, label: source.label })
       setStatus({ text: `Could not load ${source.label}.`, tone: 'error' })
     } finally {
+      loading.current = false
       setBusy(false)
     }
   }
@@ -660,8 +671,10 @@ export default function RadioWindow() {
     }
   }
 
-  const playingGlyph = radio.loading && radio.playing ? 'wait' : radio.playing ? 'play' : current ? 'pause' : 'stop'
   const paused = !!current && !radio.playing && clock.time > 0
+  // Pause is only for a track that stopped partway and can carry on. Loaded, stopped or failed all read as stopped.
+  const playingGlyph =
+    radio.loading && radio.playing ? 'wait' : radio.playing ? 'play' : paused && !radio.error ? 'pause' : 'stop'
   const live = radio.fx && !!current
   const seekMax = duration || 1
   const seekValue = Math.min(shown, seekMax)
@@ -669,6 +682,19 @@ export default function RadioWindow() {
     if (scrub !== undefined) radio.seek(scrub)
     setScrub(undefined)
   }
+
+  // Captured, so letting go off the slider, or the browser taking the pointer back, still lands the seek.
+  const seekHandlers = {
+    onChange: (e: React.ChangeEvent<HTMLInputElement>) => setScrub(Number(e.target.value)),
+    onPointerDown: (e: React.PointerEvent<HTMLInputElement>) => e.currentTarget.setPointerCapture(e.pointerId),
+    onPointerUp: commitSeek,
+    onLostPointerCapture: commitSeek,
+    onKeyUp: commitSeek,
+  }
+
+  // A new track: wherever the old one was being dragged to means nothing, and the slider may have gone disabled.
+  const trackId = current?.id
+  useEffect(() => setScrub(undefined), [trackId])
 
   const message = status?.text || radio.error
   const kbps = useBitrate(current, duration)
@@ -861,9 +887,7 @@ export default function RadioWindow() {
             value={seekValue}
             style={{ width: '100%', height: 14, flex: 'none' }}
             disabled={!current || !duration}
-            onChange={(e) => setScrub(Number(e.target.value))}
-            onPointerUp={commitSeek}
-            onKeyUp={commitSeek}
+            {...seekHandlers}
           />
           <Panel className="list">
             {view === 'pl' ? (
@@ -1229,9 +1253,7 @@ export default function RadioWindow() {
                 value={seekValue}
                 style={at(10, 149, 196, 10)}
                 disabled={!current || !duration}
-                onChange={(e) => setScrub(Number(e.target.value))}
-                onPointerUp={commitSeek}
-                onKeyUp={commitSeek}
+                {...seekHandlers}
               />
 
               <span style={at(30, 163)}>

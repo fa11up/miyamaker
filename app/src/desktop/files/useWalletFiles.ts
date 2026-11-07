@@ -96,6 +96,9 @@ export function useContractChecks(contracts: string[]) {
     enabled: list.length > 0,
     staleTime: 10 * 60_000,
     retry: 1,
+    // A new contract changes the key. What's already known stays known meanwhile, or every folder would fall back to
+    // "checking" and whoever had one open would be thrown out of it.
+    placeholderData: (previous) => previous,
     // Anything Etherscan could not answer yet (it is rate limited) gets asked again.
     refetchInterval: (query) => (list.some((c) => query.state.data?.[c] === undefined) ? 60_000 : false),
     queryFn: async () => {

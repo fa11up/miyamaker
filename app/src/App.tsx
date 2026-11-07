@@ -8,6 +8,7 @@ import merge from 'lodash.merge'
 import { Provider } from 'react-redux'
 import { WagmiProvider } from 'wagmi'
 
+import NewHere from '@/wallet/NewHere'
 import PrivyMount from '@/wallet/PrivyMount'
 import { wagmiConfig } from './config/wagmi'
 import { GRAPHQL_URL } from './constants/indexer'
@@ -63,11 +64,11 @@ export default function App() {
   return (
     <ApolloProvider client={client}>
       <Provider store={store}>
-        <WagmiProvider config={wagmiConfig}>
+        <WagmiProvider config={wagmiConfig} reconnectOnMount={false}>
           <QueryClientProvider client={queryClient}>
             <AccountProvider>
               <ClustersProvider>
-                <RainbowKitProvider theme={readTheme} appInfo={{ appName: 'miyamaker' }}>
+                <RainbowKitProvider theme={readTheme} appInfo={{ appName: 'miyamaker', disclaimer: NewHere }}>
                   <ThemeProvider>
                     <ThemedGlobalStyle />
                     <RadioProvider>

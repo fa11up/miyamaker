@@ -30,7 +30,14 @@ export default function NameRow({
       setTxHash('')
       refetch()
     },
-    onReplaced: () => {
+    // A revert or an unreadable receipt: stop showing "Updating...", or the row is stuck.
+    onError: () => {
+      setTransacting(false)
+      setTxHash('')
+    },
+    onReplaced: (reason) => {
+      // A sped-up copy is the same change: onSuccess comes with its receipt, and refetches.
+      if (reason === 'repriced') return
       setTransacting(false)
       setTxHash('')
     },

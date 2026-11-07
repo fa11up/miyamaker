@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import styled from 'styled-components/macro'
 
+import { useOpenApp } from '@/music/useOpenApp'
 import { bevel, color, MOBILE_BREAKPOINT, space, text } from '@/theme/tokens'
 
 import { DESKTOP_EVENTS, setPrefs, startScreensaverPreview, useDesktopPrefs } from './prefs'
 import { getPet, nextVariant } from './pet/registry'
-import { useOpenApp } from './useOpenApp'
 
 const Menu = styled.div`
   position: fixed;

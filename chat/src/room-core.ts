@@ -5,7 +5,15 @@ import { RateLimiter } from './ratelimit'
 import { sanitizeText } from './sanitize'
 
 /** What we remember about a socket. In the DO this is the hibernation-safe ws attachment. */
-export type ConnMeta = { ip: string; address: string | null; badges: Badge[]; mod: boolean; exp: number }
+export type ConnMeta = {
+  ip: string
+  address: string | null
+  badges: Badge[]
+  mod: boolean
+  exp: number
+  /** The slow-mode clock, kept here too so it survives hibernation. Other sockets of that address don't see it. */
+  lastSent?: { address: string; at: number }
+}
 
 export interface Conn {
   send(data: string): void
@@ -40,8 +48,9 @@ const K_TIMEOUTS = 'timeouts'
 
 /**
  * All chat-room behavior, independent of Cloudflare: the Durable Object (room.ts) just wires
- * sockets and storage into this. In-memory state (rate buckets, slow-mode clocks, the loaded
- * history) is rebuilt after hibernation; durable state (history, slow mode, timeouts) is in storage.
+ * sockets and storage into this. In-memory state (rate buckets, the loaded history) is rebuilt after
+ * hibernation; durable state (history, slow mode, timeouts) is in storage, and each socket's attachment
+ * holds its session and slow-mode clock.
  */
 export class RoomCore {
   private loaded = false
@@ -131,7 +140,8 @@ export class RoomCore {
         return this.sendText(conn, frame.text)
       case 'del': {
         const meta = this.authed(conn)
-        if (!meta) return
+        if (!meta || !meta.address) return
+        if (this.timedOut(conn, meta.address)) return
         if (!meta.mod) return this.err(conn, 'forbidden', 'mods only')
         if (typeof frame.id !== 'string' || !MSG_ID_RE.test(frame.id)) return this.err(conn, 'bad', 'bad id')
         return this.deleteMessage(frame.id)
@@ -143,7 +153,11 @@ export class RoomCore {
 
   private async auth(conn: Conn, token: unknown) {
     const session = await this.deps.verifyToken(token)
-    if (!session) return this.err(conn, 'auth', 'invalid or expired session, sign in again')
+    if (!session) {
+      // Told to sign in again means signed out: the socket must not stay signed in as whoever it was.
+      conn.setMeta({ ...conn.getMeta(), address: null, badges: [], mod: false, exp: 0 })
+      return this.err(conn, 'auth', 'invalid or expired session, sign in again')
+    }
     const badges = await this.deps.badgesFor(session.address)
     const mod = this.deps.isMod(session.address)
     conn.setMeta({ ...conn.getMeta(), address: session.address, badges, mod, exp: session.exp })
@@ -165,6 +179,15 @@ export class RoomCore {
     return meta
   }
 
+  /** True (and an error sent) while the address is timed out. Mods too, or one could lift their own. */
+  private timedOut(conn: Conn, address: string) {
+    const now = this.deps.now()
+    const until = this.timeouts[address]
+    if (!until || until <= now) return false
+    this.err(conn, 'timeout', 'you are timed out', until - now)
+    return true
+  }
+
   private async sendText(conn: Conn, rawText: unknown) {
     const meta = this.authed(conn)
     if (!meta || !meta.address) return
@@ -175,28 +198,31 @@ export class RoomCore {
     if (!clean.ok)
       return this.err(conn, clean.code, clean.code === 'length' ? 'message too long (max 280)' : 'empty message')
 
+    if (this.timedOut(conn, address)) return
+
     const command = parseCommand(clean.text)
     if (command) {
       if (!meta.mod) return this.err(conn, 'forbidden', 'commands are for mods')
       return this.runCommand(conn, command)
     }
 
-    const until = this.timeouts[address]
-    if (until && until > now) return this.err(conn, 'timeout', 'you are timed out', until - now)
-
     if (this.slowMode > 0 && !meta.mod) {
-      const last = this.lastSent.get(address)
+      const last = this.lastSent.get(address) ?? (meta.lastSent?.address === address ? meta.lastSent.at : undefined)
       const wait = last === undefined ? 0 : last + this.slowMode * 1000 - now
       if (wait > 0) return this.err(conn, 'slow', `slow mode: one message every ${this.slowMode}s`, wait)
     }
 
-    const a = this.byAddress.take(address, now)
+    // Checked before either is spent, so a refusal by one limit costs nothing from the other.
+    const a = this.byAddress.check(address, now)
     if (!a.ok) return this.err(conn, 'rate', 'slow down', a.retryAfterMs)
-    const ip = this.byIp.take(meta.ip, now)
+    const ip = this.byIp.check(meta.ip, now)
     if (!ip.ok) return this.err(conn, 'rate', 'slow down', ip.retryAfterMs)
+    this.byAddress.take(address, now)
+    this.byIp.take(meta.ip, now)
 
     this.lastSent.set(address, now)
     if (this.lastSent.size > 10_000) this.lastSent.clear()
+    conn.setMeta({ ...meta, lastSent: { address, at: now } })
 
     const msg: Msg = { id: this.deps.newId(), at: now, from: address, badges: meta.badges, text: clean.text }
     this.history.push(msg)

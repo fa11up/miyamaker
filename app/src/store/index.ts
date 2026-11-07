@@ -6,6 +6,8 @@ import Pages from '@/constants/pages'
 
 import experience from './experience/reducer'
 import windows from './windows/reducer'
+import type { WindowLists } from './windows/stack'
+import { repaired } from './windows/stack'
 import auction from './auction/reducer'
 import collections from './collections/reducer'
 
@@ -20,6 +22,8 @@ if (savedWindows) {
     const list = savedWindows[key]
     if (Array.isArray(list)) savedWindows[key] = list.filter((id) => id in Pages)
   }
+
+  Object.assign(savedWindows, repaired(savedWindows as Partial<WindowLists>))
 }
 
 const store = configureStore({

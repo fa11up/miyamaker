@@ -15,7 +15,7 @@ const walk = (dir: string): string[] =>
 
 /** The OS's own parts, and the one hook that hands a Start-menu press to Manager. */
 const SHELL =
-  /(components\/(TaskBar|RadioTray)|desktop\/(ContextMenu|useOpenApp)|music\/useOpenApp|miyamints\/useOpenManage)/
+  /(components\/(TaskBar|RadioTray)|pages\/OperatingSystem\/index|desktop\/ContextMenu|music\/useOpenApp|miyamints\/useOpenManage)/
 
 test('nothing inside an app can open another window', () => {
   const offenders = walk('src')

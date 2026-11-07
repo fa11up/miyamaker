@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useState } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate, useNavigationType } from 'react-router-dom'
 
 import TitleBar from '@/components/TitleBar'
@@ -33,6 +33,9 @@ export default function MiyanetPage() {
     if (onBuild) setView('build')
     else if (location.pathname === page?.path && navigationType === 'POP') setView('portal')
   }, [location.pathname, navigationType])
+  // The portal stays mounted once shown: a burn sent from its claim keeps its status while Build is open.
+  const portalShown = useRef(false)
+  if (view === 'portal') portalShown.current = true
   const home = () => {
     setView('portal')
     navigate(page?.path ?? '/about')
@@ -58,12 +61,15 @@ export default function MiyanetPage() {
       >
         {page?.label}
       </TitleBar>
-      {view === 'build' ? (
+      {view === 'build' && (
         <Suspense fallback={null}>
           <Build onHome={home} />
         </Suspense>
-      ) : (
-        <Home />
+      )}
+      {portalShown.current && (
+        <div style={{ display: view === 'portal' ? 'contents' : 'none' }}>
+          <Home />
+        </div>
       )}
     </WindowWrapper>
   )

@@ -145,7 +145,8 @@ export function summarizeSales(rows: readonly MarketSale[], nowSeconds: number) 
 
 export type MarketCache = {
   get: (key: string) => Promise<{ at: number; body: unknown } | undefined>
-  put: (key: string, value: { at: number; body: unknown }) => Promise<void>
+  /** `ttlSeconds` is how long the entry may be kept; 15 minutes (STALE_LIMIT_MS) when left out. */
+  put: (key: string, value: { at: number; body: unknown }, ttlSeconds?: number) => Promise<void>
 }
 
 export type MarketDeps = {
@@ -229,23 +230,28 @@ export function edgeCache(cache: Cache | undefined): MarketCache {
       const hit = await cache?.match(req(key))
       return hit ? ((await hit.json()) as { at: number; body: unknown }) : undefined
     },
-    put: async (key, value) => {
+    put: async (key, value, ttlSeconds = STALE_LIMIT_MS / 1000) => {
       await cache?.put(
         req(key),
         new Response(JSON.stringify(value), {
-          headers: { 'content-type': 'application/json', 'cache-control': `public, max-age=${STALE_LIMIT_MS / 1000}` },
+          headers: { 'content-type': 'application/json', 'cache-control': `public, max-age=${ttlSeconds}` },
         })
       )
     },
   }
 }
 
-export function memoryCache(): MarketCache {
-  const m = new Map<string, { at: number; body: unknown }>()
+export function memoryCache(clock: () => number = Date.now): MarketCache {
+  const m = new Map<string, { value: { at: number; body: unknown }; until: number }>()
   return {
-    get: async (key) => m.get(key),
-    put: async (key, value) => {
-      m.set(key, value)
+    get: async (key) => {
+      const hit = m.get(key)
+      if (hit && hit.until > clock()) return hit.value
+      m.delete(key)
+      return undefined
+    },
+    put: async (key, value, ttlSeconds = STALE_LIMIT_MS / 1000) => {
+      m.set(key, { value, until: clock() + ttlSeconds * 1000 })
     },
   }
 }

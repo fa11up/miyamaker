@@ -13,17 +13,19 @@ const balanceOfAbi = parseAbi(['function balanceOf(address owner) view returns (
 
 export type HoldingReader = (address: string) => Promise<{ miyamini: boolean; infer: boolean }>
 
+/** Both balances, or it throws: "could not read" must reach the resolver's short-lived failure path, not look like "holds none". */
+export async function readHoldings(read: (token: Address) => Promise<bigint>) {
+  const [mini, infer] = await Promise.all([read(MIYAMINI), read(INFER)])
+  return { miyamini: mini > 0n, infer: infer > 0n }
+}
+
 export function viemHoldingReader(rpcUrl: string): HoldingReader {
   let client: PublicClient | undefined
   return async (address) => {
     client ??= createPublicClient({ chain: mainnet, transport: http(rpcUrl, { timeout: 5_000 }) }) as PublicClient
     const read = (token: Address) =>
       client!.readContract({ address: token, abi: balanceOfAbi, functionName: 'balanceOf', args: [address as Address] })
-    const [mini, infer] = await Promise.allSettled([read(MIYAMINI), read(INFER)])
-    return {
-      miyamini: mini.status === 'fulfilled' && mini.value > 0n,
-      infer: infer.status === 'fulfilled' && infer.value > 0n,
-    }
+    return readHoldings(read)
   }
 }
 

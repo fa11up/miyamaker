@@ -95,7 +95,8 @@ export async function handleContractCheck(request: Request, deps: ContractCheckD
         console.warn(`contract check: ${words(answer).slice(0, 120)}`)
       } else {
         verified[address] = verdict
-        await deps.cache.put(`contract-verified:v1:${address}`, { at: now, body: verdict }).catch(() => undefined)
+        const keep = (verdict ? VERIFIED_KEEP_MS : UNVERIFIED_KEEP_MS) / 1000
+        await deps.cache.put(`contract-verified:v1:${address}`, { at: now, body: verdict }, keep).catch(() => undefined)
       }
       /* eslint-enable no-await-in-loop */
     }

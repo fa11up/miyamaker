@@ -3,6 +3,7 @@ import type { Address, Hash } from 'viem'
 import { useAccount, useCapabilities } from 'wagmi'
 
 import { wagmiConfig } from '@/config/wagmi'
+import { TxEndError } from '@/miyamints/txOutcome'
 
 import { batchRefused, type BatchStep, canBatch, toCall } from './batchCalls'
 
@@ -26,7 +27,12 @@ export function useCanBatch(chainId: number | undefined) {
  */
 export async function tryBatch(
   steps: BatchStep[],
-  { account, chainId, onAsk, onSent }: { account: Address; chainId: number; onAsk?: () => void; onSent?: () => void }
+  {
+    account,
+    chainId,
+    onAsk,
+    onSent,
+  }: { account: Address; chainId: number; onAsk?: () => void; onSent?: (id: string) => void }
 ) {
   if (refused.has(account.toLowerCase())) return undefined
   const capabilities = await getCapabilities(wagmiConfig, { account, chainId: chainId as never }).catch(() => undefined)
@@ -53,8 +59,22 @@ export async function tryBatch(
     return undefined
   }
 
-  onSent?.()
-  const result = await waitForCallsStatus(wagmiConfig, { id, timeout: 180_000 })
+  onSent?.(id)
+  return waitForBatch(id)
+}
+
+/**
+ * Waits for a batch already sent. Only a batch the wallet reports as failed counts as failed: running out of time or losing
+ * the connection says nothing, since it may yet land, so that throws "unconfirmed" and nothing should send it again.
+ */
+export async function waitForBatch(id: string) {
+  let result
+  try {
+    result = await waitForCallsStatus(wagmiConfig, { id, timeout: 180_000 })
+  } catch {
+    throw new TxEndError('unconfirmed')
+  }
+
   if (result.status !== 'success') {
     throw new Error('The batch did not go through. It is all or nothing, so none of its steps were applied.')
   }

@@ -21,6 +21,8 @@ export function useStudioPlayer(src: string | undefined, { analyse }: { analyse:
   const [time, setTime] = useState(0)
   const [duration, setDuration] = useState(0)
   const [error, setError] = useState('')
+  // The file itself wouldn't load, so pressing play again can't help. A blocked play is another matter: it can.
+  const [broken, setBroken] = useState(false)
 
   // One element per source: an element wired into the graph stays wired, so a new file gets a fresh one.
   useEffect(() => {
@@ -28,6 +30,7 @@ export function useStudioPlayer(src: string | undefined, { analyse }: { analyse:
     setTime(0)
     setDuration(0)
     setError('')
+    setBroken(false)
     if (!src) return undefined
     const el = new Audio()
     el.preload = 'metadata'
@@ -35,12 +38,18 @@ export function useStudioPlayer(src: string | undefined, { analyse }: { analyse:
     elRef.current = el
     let live = true
     const on = (name: string, fn: () => void) => el.addEventListener(name, () => live && fn())
-    on('play', () => setPlaying(true))
+    on('play', () => {
+      setPlaying(true)
+      setError('')
+    })
     on('pause', () => setPlaying(false))
     on('ended', () => setPlaying(false))
     on('timeupdate', () => setTime(el.currentTime))
     on('loadedmetadata', () => Number.isFinite(el.duration) && setDuration(el.duration))
-    on('error', () => setError('This track could not be played here.'))
+    on('error', () => {
+      setBroken(true)
+      setError('This track could not be played here.')
+    })
     return () => {
       live = false
       el.pause()
@@ -86,7 +95,11 @@ export function useStudioPlayer(src: string | undefined, { analyse }: { analyse:
     if (!el) return
     wire(el)
     if (ctxRef.current?.state === 'suspended') ctxRef.current.resume().catch(() => undefined)
-    el.play().catch(() => setError('The browser blocked playback. Press play again.'))
+    setError('')
+    el.play().catch((e) => {
+      if ((e as Error).name === 'NotAllowedError') setError('The browser blocked playback. Press play again.')
+      else if ((e as Error).name !== 'AbortError') setError('This track could not be played here.')
+    })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [analyse])
 
@@ -102,7 +115,7 @@ export function useStudioPlayer(src: string | undefined, { analyse }: { analyse:
   const getAnalyser = useCallback(() => analyserRef.current, [])
   const getTime = useCallback(() => elRef.current?.currentTime ?? 0, [])
 
-  return { playing, time, duration, error, play, pause, toggle, seek, getAnalyser, getTime }
+  return { playing, time, duration, error, broken, play, pause, toggle, seek, getAnalyser, getTime }
 }
 
 export type StudioPlayer = ReturnType<typeof useStudioPlayer>

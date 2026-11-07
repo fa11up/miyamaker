@@ -11,7 +11,7 @@ import { abi } from './constants'
 const TOKEN_URI_ABI = parseAbi(['function tokenURI(uint256 tokenId) view returns (string)'])
 
 export function useAllTokenIds({ nft, address }: { nft: Address; address: Address }) {
-  const { data, isPending, isError } = useReadContract({
+  const { data, isPending, isError, refetch } = useReadContract({
     address,
     chainId: AUCTION_CHAIN_ID,
     query: { enabled: !!address },
@@ -42,5 +42,6 @@ export function useAllTokenIds({ nft, address }: { nft: Address; address: Addres
     tokenURIs,
     isLoading: isPending && !isError,
     isError,
+    refetch,
   }
 }

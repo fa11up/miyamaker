@@ -391,6 +391,8 @@ export default function MyFiles() {
     setOpen([])
     setViewing(undefined)
     setNotice('')
+    setFolderKey(undefined)
+    setSelected(undefined)
   }, [address])
 
   const allNfts = nfts.data?.nfts
@@ -642,10 +644,10 @@ export default function MyFiles() {
           <div className="status">
             {!isConnected
               ? 'Not connected'
-              : selected && !touchOnly()
-                ? 'Double-click to open'
-                : nfts.isFetching
-                  ? 'Reading wallet…'
+              : nfts.isFetching
+                ? 'Reading wallet…'
+                : selected && !touchOnly()
+                  ? 'Double-click to open'
                   : checking.length
                     ? 'Checking contracts…'
                     : 'Ready'}
@@ -656,7 +658,11 @@ export default function MyFiles() {
           open.map(({ selection, cascade }, i) => (
             <Properties
               key={keyOf(selection)}
-              selection={selection.kind === 'nft' ? { kind: 'nft', nft: latest(selection.nft) } : selection}
+              selection={
+                selection.kind === 'nft'
+                  ? { kind: 'nft', nft: latest(selection.nft) }
+                  : { kind: 'token', doc: tokens.find((t) => t.key === selection.doc.key) ?? selection.doc }
+              }
               owner={address}
               cascade={cascade}
               zIndex={popupDepth + i}

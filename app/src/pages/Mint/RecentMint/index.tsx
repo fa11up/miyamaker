@@ -61,8 +61,6 @@ export default function RecentMint({
   toggleFetchRecentMint: boolean
 }) {
   const [currentCounter, setCurrentCounter] = useState<number>(1)
-  const [isEndPage, setIsEndPage] = useState<boolean>(true)
-
   const { address } = useAccount()
 
   const { loading, error, data, refetch } = useQuery(GET_NFTS_OF_USER, {
@@ -75,15 +73,10 @@ export default function RecentMint({
     skip: !INDEXER_ENABLED,
   })
 
-  useEffect(() => {
-    if (data) {
-      if ((data.Token as NFT[]).length < ITEM_PER_PAGE) {
-        setIsEndPage(true)
-      } else {
-        setIsEndPage(false)
-      }
-    }
-  }, [data])
+  // From the page on screen, not remembered: another wallet or a new mint changes the answer.
+  const isEndPage = !data || (data.Token as NFT[]).length < ITEM_PER_PAGE
+
+  useEffect(() => setCurrentCounter(1), [address, selectedCollection.address])
 
   useEffect(() => {
     if (INDEXER_ENABLED) refetch()

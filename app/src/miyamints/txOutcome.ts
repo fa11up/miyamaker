@@ -9,6 +9,10 @@
 export const TX_REVERTED_WORDS = 'This transaction failed on the network. Nothing moved. You only paid the network fee.'
 export const TX_UNCONFIRMED_WORDS =
   'We could not confirm this yet. It may still go through. Check it before trying again.'
+export const TX_CANCELLED_WORDS = 'You cancelled this in your wallet. Nothing moved. You only paid the network fee.'
+
+/** viem's name for what took a pending transaction's place. A sped-up copy is 'repriced' and counts as the same one. */
+export type TxReplaced = 'cancelled' | 'repriced' | 'replaced'
 
 /** Thrown out of the wait, so `useTx`'s callers can tell the three endings apart. */
 export class TxEndError extends Error {
@@ -16,22 +20,38 @@ export class TxEndError extends Error {
 
   unconfirmed: boolean
 
-  constructor(kind: 'reverted' | 'unconfirmed') {
-    super(kind === 'reverted' ? TX_REVERTED_WORDS : TX_UNCONFIRMED_WORDS)
+  cancelled: boolean
+
+  constructor(kind: 'reverted' | 'unconfirmed' | 'cancelled') {
+    super(
+      kind === 'reverted' ? TX_REVERTED_WORDS : kind === 'cancelled' ? TX_CANCELLED_WORDS : TX_UNCONFIRMED_WORDS,
+    )
     this.reverted = kind === 'reverted'
     this.unconfirmed = kind === 'unconfirmed'
+    this.cancelled = kind === 'cancelled'
   }
 }
 
-/** Waits with the given lookup and throws a TxEndError unless the transaction succeeded. */
-export async function settle<R extends { status?: string }>(wait: () => Promise<R>): Promise<R> {
+/**
+ * Waits with the given lookup and throws a TxEndError unless the transaction succeeded. viem resolves a replaced
+ * transaction with the replacement's receipt, so a wallet's cancel (a self-send, status success) would pass as success
+ * without `onReplaced`. Something else taking its place says nothing about what moved, so that one is unconfirmed.
+ */
+export async function settle<R extends { status?: string }>(
+  wait: (onReplaced: (r: { reason: TxReplaced }) => void) => Promise<R>,
+): Promise<R> {
   let receipt: R
+  let replaced: TxReplaced | undefined
   try {
-    receipt = await wait()
+    receipt = await wait((r) => {
+      replaced = r.reason
+    })
   } catch {
     throw new TxEndError('unconfirmed')
   }
 
+  if (replaced === 'cancelled') throw new TxEndError('cancelled')
+  if (replaced === 'replaced') throw new TxEndError('unconfirmed')
   if (receipt.status !== 'success') throw new TxEndError('reverted')
   return receipt
 }

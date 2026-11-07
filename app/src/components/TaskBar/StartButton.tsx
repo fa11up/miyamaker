@@ -14,6 +14,7 @@ import { createPortal } from 'react-dom'
 import styled, { keyframes } from 'styled-components/macro'
 
 import LaunchList from '@/components/LaunchKit/LaunchList'
+import { preloadApp } from '@/constants/appLoaders'
 import { PROGRAM_GROUPS } from '@/constants/programs'
 import { setPrefs, startScreensaverPreview, useDesktopPrefs } from '@/desktop/prefs'
 import { keyOf } from '@/miyamints/collections'
@@ -548,7 +549,15 @@ function StartMenu({ connected, displayName, chainName, onClose, onConnect, onWa
                 </Heading>
                 <Group>
                   {group.apps.map((app) => (
-                    <Program key={app.id} type="button" role="menuitem" onClick={go(() => openApp(app.id))}>
+                    <Program
+                      key={app.id}
+                      type="button"
+                      role="menuitem"
+                      onPointerEnter={() => preloadApp(app.id)}
+                      onPointerDown={() => preloadApp(app.id)}
+                      onFocus={() => preloadApp(app.id)}
+                      onClick={go(() => openApp(app.id))}
+                    >
                       <ProgramIcon src={app.src} alt="" />
                       {app.label}
                     </Program>
@@ -564,7 +573,6 @@ function StartMenu({ connected, displayName, chainName, onClose, onConnect, onWa
             <MenuItem
               type="button"
               role="menuitem"
-              // Minimizing is a toggle: only what's showing, or the ones already put away would come back.
               onClick={go(() =>
                 windows
                   .filter((id) => !minimized.includes(id))
@@ -638,26 +646,13 @@ export default function StartButton() {
       {({ account, chain, openAccountModal, openChainModal, openConnectModal, mounted }) => {
         const ready = mounted
         const connected = !!(ready && account && chain)
-
-        if (connected && chain?.unsupported) {
-          return (
-            <div style={{ height: '100%' }}>
-              <HighlightButton
-                onClick={openChainModal}
-                className="free-height free-width"
-                style={{ height: '100%', paddingLeft: 10, paddingRight: 10 }}
-              >
-                <span style={{ marginTop: -1 }}>Wrong network</span>
-              </HighlightButton>
-            </div>
-          )
-        }
+        const wrongNetwork = connected && !!chain?.unsupported
 
         return (
           <div
             {...(!ready
               ? { 'aria-hidden': true, style: { opacity: 0, pointerEvents: 'none', userSelect: 'none' } }
-              : { style: { height: '100%' } })}
+              : { style: { height: '100%', display: 'flex' } })}
           >
             <HighlightButton
               data-start-button
@@ -670,11 +665,20 @@ export default function StartButton() {
             >
               <span style={{ marginTop: -1 }}>🖤 Start</span>
             </HighlightButton>
+            {wrongNetwork && (
+              <HighlightButton
+                onClick={openChainModal}
+                className="free-height free-width"
+                style={{ height: '100%', paddingLeft: 10, paddingRight: 10 }}
+              >
+                <span style={{ marginTop: -1 }}>Wrong network</span>
+              </HighlightButton>
+            )}
             {open && (
               <StartMenu
                 connected={connected}
                 displayName={account?.displayName}
-                chainName={chain?.name}
+                chainName={wrongNetwork ? 'Wrong network' : chain?.name}
                 onClose={() => setOpen(false)}
                 onConnect={() => openConnectModal()}
                 onWallet={() => openAccountModal()}

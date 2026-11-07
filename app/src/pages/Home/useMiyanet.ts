@@ -6,7 +6,6 @@ import {
   useBlockNumber,
   useReadContracts,
   useSwitchChain,
-  useWaitForTransactionReceipt,
   useWriteContract,
 } from 'wagmi'
 
@@ -23,6 +22,7 @@ import {
 } from '@/constants/miyanet'
 import { useTx } from '@/miyamints/useTx'
 import { useCanBatch } from '@/utils/batch'
+import { useTxOutcome } from '@/miyamints/useTxOutcome'
 
 const redeemer = { address: LEGACY_REDEEMER, abi: legacyRedeemerAbi, chainId: MIYANET_CHAIN_ID } as const
 const miya = { address: MIYA, abi: erc20Abi, chainId: MIYANET_CHAIN_ID } as const
@@ -113,6 +113,7 @@ export function useWalletPosition(which: Legacy = 'miya') {
     redeemNow: quote?.[0],
     redeemLater: quote?.[1],
     isLoading: balances.isLoading,
+    isFetching: balances.isFetching,
     refetch: () => {
       balances.refetch()
       split.refetch()
@@ -128,47 +129,52 @@ export type MiyanetAction = 'approve' | 'redeem' | 'claim' | 'advanceClock'
  */
 export function useMiyanetTx(which: Legacy, onConfirmed: () => void) {
   const legacy = legacyToken(which)
-  const { chainId, isConnected } = useAccount()
+  const { address, chainId, isConnected } = useAccount()
   const { switchChain, isPending: isSwitching } = useSwitchChain()
   const write = useWriteContract()
   const canBatch = useCanBatch(MIYANET_CHAIN_ID)
   const batch = useTx(() => onConfirmed())
   const batchPicked = batch.tx.phase !== 'idle'
-  const receipt = useWaitForTransactionReceipt({
-    hash: write.data as Hash | undefined,
-    chainId: MIYANET_CHAIN_ID,
-    query: { enabled: !!write.data },
-  })
+  const { outcome } = useTxOutcome(MIYANET_CHAIN_ID, write.data as Hash | undefined)
   const lastAction = (
     batchPicked ? batch.tx.id : write.variables?.functionName === 'approve' ? 'approve' : write.variables?.functionName
   ) as MiyanetAction | undefined
 
   useEffect(() => {
-    if (receipt.isSuccess) onConfirmed()
-  }, [receipt.isSuccess])
+    if (outcome === 'success' || outcome === 'reverted') onConfirmed()
+  }, [outcome])
+
+  // One action at a time: each starts clean, so an earlier one's "done" or error can't read as this one's.
+  const send = (call: () => void) => {
+    batch.reset()
+    call()
+  }
 
   return {
+    address,
     isConnected,
     wrongChain: isConnected && chainId !== MIYANET_CHAIN_ID,
     switchToMainnet: () => switchChain({ chainId: MIYANET_CHAIN_ID }),
     isSwitching,
     approve: (amount: bigint) =>
-      write.writeContract({ ...legacy, functionName: 'approve', args: [LEGACY_REDEEMER, amount] }),
+      send(() => write.writeContract({ ...legacy, functionName: 'approve', args: [LEGACY_REDEEMER, amount] })),
     redeem: (amount: bigint) =>
-      write.writeContract({ ...redeemer, functionName: 'redeem', args: [legacy.address, amount] }),
+      send(() => write.writeContract({ ...redeemer, functionName: 'redeem', args: [legacy.address, amount] })),
     canBatch,
     /** Approve and burn as one signature. */
-    approveAndRedeem: (amount: bigint) =>
-      batch.runBatch(
+    approveAndRedeem: (amount: bigint) => {
+      write.reset()
+      return batch.runBatch(
         'redeem',
         [
           { ...legacy, functionName: 'approve', args: [LEGACY_REDEEMER, amount], chainId: MIYANET_CHAIN_ID },
           { ...redeemer, functionName: 'redeem', args: [legacy.address, amount], chainId: MIYANET_CHAIN_ID },
         ],
         'approve'
-      ),
-    claim: () => write.writeContract({ ...redeemer, functionName: 'claim' }),
-    advanceClock: () => write.writeContract({ ...redeemer, functionName: 'advanceClock', args: [MXXN, 1n] }),
+      )
+    },
+    claim: () => send(() => write.writeContract({ ...redeemer, functionName: 'claim' })),
+    advanceClock: () => send(() => write.writeContract({ ...redeemer, functionName: 'advanceClock', args: [MXXN, 1n] })),
     reset: () => {
       write.reset()
       batch.reset()
@@ -176,9 +182,13 @@ export function useMiyanetTx(which: Legacy, onConfirmed: () => void) {
     lastAction,
     hash: write.data ?? batch.tx.hash,
     isAwaitingWallet: write.isPending || batch.tx.phase === 'wallet',
-    isConfirming: (!!write.data && receipt.isLoading) || batch.tx.phase === 'pending',
-    isConfirmed: (receipt.isSuccess && receipt.data?.status === 'success') || batch.tx.phase === 'done',
-    reverted: receipt.isSuccess && receipt.data?.status === 'reverted',
-    error: write.error || receipt.error || (batch.tx.phase === 'error' ? new Error(batch.tx.message) : null),
+    isConfirming: outcome === 'waiting' || batch.tx.phase === 'pending',
+    isConfirmed: outcome === 'success' || batch.tx.phase === 'done',
+    reverted: outcome === 'reverted',
+    /** Replaced by the wallet's cancel: the replacement's receipt says success, and nothing was burned. */
+    cancelled: outcome === 'cancelled',
+    /** Sent, but its ending couldn't be read: it may still land, so nothing is offered again until someone starts over. */
+    unconfirmed: outcome === 'unknown' || batch.unconfirmed,
+    error: write.error || (batch.tx.phase === 'error' && !batch.unconfirmed ? new Error(batch.tx.message) : null),
   }
 }

@@ -208,8 +208,11 @@ export default function Holo({
     const onKey = (e: KeyboardEvent) => {
       const zoomKey = e.key === '+' || e.key === '=' ? 1.4 : e.key === '-' ? 1 / 1.4 : 0
       if (e.key === 'Escape') closing.current()
-      else if (e.key === 'ArrowLeft') stepping.current?.(-1)
-      else if (e.key === 'ArrowRight') stepping.current?.(1)
+      else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+        // The next piece starts whole, as the buttons do.
+        if (stepping.current) setView(FIT)
+        stepping.current?.(e.key === 'ArrowLeft' ? -1 : 1)
+      }
       else if (zoomKey) setView((v) => zoomAt(v, zoomKey, target.w / 2, target.h / 2, target.w))
       else return
       e.preventDefault()

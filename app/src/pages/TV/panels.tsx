@@ -1,6 +1,6 @@
 import { useConnectModal } from '@rainbow-me/rainbowkit'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import styled from 'styled-components/macro'
 import { useAccount, useSignMessage } from 'wagmi'
 
@@ -722,13 +722,25 @@ export function PublicPanel({ tapeId, onPick }: { tapeId?: string; onPick: (vide
   const list = useQuery({ queryKey: ['public-access'], queryFn: fetchTapes, refetchInterval: 60_000, retry: 1 })
   const [link, setLink] = useState('')
   const [busy, setBusy] = useState(false)
+  const [waitingOnWallet, setWaitingOnWallet] = useState(false)
+  const stopWaiting = useRef<() => void>()
   const [note, setNote] = useState<string>()
 
   const me = address?.toLowerCase()
   const isAdmin = !!me && !!list.data?.admins.includes(me)
   const tapes = airList(list.data?.tapes)
   const pending = list.data?.pending ?? []
-  const sign = (message: string) => signMessageAsync({ message })
+  // A wallet that never answers would hold everything here for good, so the wait can be called off. The rejection reads
+  // as a cancel, and whatever the wallet says later goes nowhere.
+  const sign = (message: string) =>
+    new Promise<string>((resolve, reject) => {
+      setWaitingOnWallet(true)
+      stopWaiting.current = () => reject(new Error('user rejected'))
+      signMessageAsync({ message }).then(resolve, reject)
+    }).finally(() => {
+      stopWaiting.current = undefined
+      setWaitingOnWallet(false)
+    })
 
   const act = async (work: () => Promise<unknown>, done: string) => {
     setBusy(true)
@@ -815,8 +827,13 @@ export function PublicPanel({ tapeId, onPick }: { tapeId?: string; onPick: (vide
             }, 'Sent in. It airs once the station has looked at it.')
           }}
         >
-          {busy ? 'Check your wallet…' : 'Send it in'}
+          {waitingOnWallet ? 'Check your wallet…' : busy ? 'Sending…' : 'Send it in'}
         </button>
+        {waitingOnWallet && (
+          <button type="button" onClick={() => stopWaiting.current?.()}>
+            Cancel
+          </button>
+        )}
       </SpreadRow>
       {link && !videoId && <p>That doesn’t look like a YouTube video link.</p>}
       {note && <p role="status">{note}</p>}

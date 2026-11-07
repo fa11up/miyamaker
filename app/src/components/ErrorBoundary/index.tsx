@@ -1,6 +1,8 @@
 import type { ErrorInfo, ReactNode } from 'react'
 import { Component } from 'react'
 
+import { isChunkLoadError } from './chunkError'
+
 type FallbackProps = { error: Error; reset: () => void }
 
 /**
@@ -76,7 +78,12 @@ export function RootErrorFallback({ error, reset }: FallbackProps) {
             <button type="button" onClick={reloadPage} style={{ minHeight: '36px', padding: '0 16px' }}>
               Reload
             </button>
-            <button type="button" autoFocus onClick={reset} style={{ minHeight: '36px', padding: '0 16px' }}>
+            <button
+              type="button"
+              autoFocus
+              onClick={isChunkLoadError(error.message) ? reloadPage : reset}
+              style={{ minHeight: '36px', padding: '0 16px' }}
+            >
               Try again
             </button>
           </div>

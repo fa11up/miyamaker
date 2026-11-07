@@ -119,19 +119,30 @@ export default function NftImage({
   const candidates = useMemo(() => imageCandidates(src), [src])
   const [attempt, setAttempt] = useState(0)
   const [ready, setReady] = useState(false)
+  const [thumbFailed, setThumbFailed] = useState(false)
   useEffect(() => {
     setAttempt(0)
     setReady(false)
+    setThumbFailed(false)
   }, [src])
 
-  const thumbOnly = variant === 'thumb' && !!thumb
+  const thumbOnly = variant === 'thumb' && !!thumb && !thumbFailed
   const current = thumbOnly ? thumb : candidates[attempt]
   const failed = !current && attempt >= candidates.length
   const isIpfs = !!ipfsPath(current)
 
   return (
     <Box $fit={fit} className={className} data-ready={ready} style={{ aspectRatio: aspect, ...style }}>
-      {!thumbOnly && thumb && !ready && <img className="placeholder" src={thumb} alt="" aria-hidden decoding="async" />}
+      {!thumbOnly && thumb && !thumbFailed && !ready && (
+        <img
+          className="placeholder"
+          src={thumb}
+          alt=""
+          aria-hidden
+          decoding="async"
+          onError={() => setThumbFailed(true)}
+        />
+      )}
       {current ? (
         <img
           key={current}
@@ -144,7 +155,9 @@ export default function NftImage({
           onLoad={() => setReady(true)}
           onError={() => {
             setReady(false)
-            setAttempt((a) => a + 1)
+            // No thumbnail after all: on to the real image, as if there had never been one.
+            if (thumbOnly) setThumbFailed(true)
+            else setAttempt((a) => a + 1)
           }}
         />
       ) : failed && fallback ? (

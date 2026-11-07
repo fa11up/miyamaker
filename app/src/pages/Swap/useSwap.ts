@@ -5,13 +5,14 @@ import { erc20Abi } from 'viem'
 import { usePublicClient, useReadContract, useSendTransaction, useWriteContract } from 'wagmi'
 
 import { useTx } from '@/miyamints/useTx'
+import { useTxOutcome } from '@/miyamints/useTxOutcome'
 import { useCanBatch } from '@/utils/batch'
 
 import { fetchPrice, fetchQuote, SwapApiError } from './api'
 import type { SwapChainId } from './constants'
 import { isNative, QUOTE_MAX_AGE_MS } from './constants'
 import { ALLOWANCE_HOLDER, quoteProblem } from './quoteGuard'
-import { latestOnly, receiptOutcome } from './swapLogic'
+import { latestOnly } from './swapLogic'
 import type { SwapRequest, ZeroExQuote } from './types'
 
 /** Indicative price, refreshed while the user is looking at it. Call sites debounce the amount. */
@@ -69,20 +70,6 @@ export type QuoteState = { quote: ZeroExQuote; fetchedAt: number; request: SwapR
  * A transaction's receipt, with its status. Not wagmi's useWaitForTransactionReceipt: that throws on a revert, which made
  * a reverted swap look the same as a failed look-up, and a failed look-up says nothing about the swap.
  */
-function useReceipt(chainId: SwapChainId, hash: Hash | undefined) {
-  const client = usePublicClient({ chainId })
-  const q = useQuery({
-    queryKey: ['tx-receipt', chainId, hash],
-    enabled: !!hash && !!client,
-    staleTime: Infinity,
-    refetchOnWindowFocus: false,
-    refetchOnReconnect: false,
-    retry: 3,
-    queryFn: () => client!.waitForTransactionReceipt({ hash: hash!, timeout: 0 }),
-  })
-  return { receipt: q.data, outcome: receiptOutcome(hash, q.data, q.isError) }
-}
-
 /**
  * Review -> (approve) -> swap.
  * - The firm quote is fetched only when the user asks to review. If it is older than 30s when the user presses
@@ -102,6 +89,8 @@ export function useSwapExecution({ chainId, taker }: { chainId: SwapChainId; tak
   const [didReset, setDidReset] = useState(false)
   const [didApprove, setDidApprove] = useState(false)
   const lastApproveWasReset = useRef(false)
+  // The approval whose allowance has been read back. Until then the stale read would offer the same approval again.
+  const [approveReadBack, setApproveReadBack] = useState<Hash>()
   // An older quote that lands late must not arm Swap for an amount no longer on the screen.
   const quotes = useRef(latestOnly()).current
 
@@ -130,16 +119,25 @@ export function useSwapExecution({ chainId, taker }: { chainId: SwapChainId; tak
   const needsAllowanceReset = needsApproval && allowance.data !== undefined && allowance.data > 0n
 
   const approve = useWriteContract()
-  const approveReceipt = useReceipt(chainId, approve.data)
+  const approveReceipt = useTxOutcome(chainId, approve.data)
 
   const send = useSendTransaction()
   const canBatchSwap = useCanBatch(chainId)
+  const [readingBack, setReadingBack] = useState(false)
   const batch = useTx((id) => {
-    if (id === 'approve') allowance.refetch()
+    if (id !== 'approve') return
+    setReadingBack(true)
+    afterApproval().finally(() => setReadingBack(false))
   })
   const batchHash = batch.tx.id === 'swap' ? batch.tx.hash : undefined
+  // A wallet that wouldn't batch goes on with the approval alone: that's in flight then, not the swap.
+  const batchApproving = batch.busy && batch.tx.id === 'approve'
+  const batchSwapping = batch.busy && batch.tx.id !== 'approve'
+  const batchApproveError = batch.tx.phase === 'error' && batch.tx.id === 'approve' ? batch.tx.error : undefined
+  const batchApproveReverted = !!(batchApproveError as { reverted?: boolean } | undefined)?.reverted
+  const batchApproveCancelled = !!(batchApproveError as { cancelled?: boolean } | undefined)?.cancelled
   const swapHash = send.data ?? batchHash
-  const swapReceipt = useReceipt(chainId, swapHash)
+  const swapReceipt = useTxOutcome(chainId, swapHash)
 
   const getQuote = useCallback(async (req: SwapRequest) => {
     const ticket = quotes.begin()
@@ -164,12 +162,29 @@ export function useSwapExecution({ chainId, taker }: { chainId: SwapChainId; tak
     }
   }, [])
 
+  /** A public RPC can answer from before the approval for a moment, so it is read until the new value shows. */
+  const readAllowanceBack = async (expected: bigint | undefined) => {
+    for (let tries = 0; tries < 3; tries += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      const { data } = await allowance.refetch()
+      if (data === expected) return
+      // eslint-disable-next-line no-await-in-loop
+      await new Promise((r) => setTimeout(r, 1500))
+    }
+  }
+
+  const afterApproval = async () => {
+    if (lastApproveWasReset.current) setDidReset(true)
+    else setDidApprove(true)
+    const current = state
+    if (current) getQuote(current.request)
+    await readAllowanceBack(lastApproveWasReset.current ? 0n : current?.request.sellAmount)
+  }
+
   useEffect(() => {
-    if (approveReceipt.outcome === 'success' && state) {
-      if (lastApproveWasReset.current) setDidReset(true)
-      else setDidApprove(true)
-      allowance.refetch()
-      getQuote(state.request)
+    if (approveReceipt.outcome === 'success' && approve.data) {
+      const hash = approve.data
+      afterApproval().finally(() => setApproveReadBack(hash))
     }
   }, [approveReceipt.outcome, approve.data])
 
@@ -189,8 +204,9 @@ export function useSwapExecution({ chainId, taker }: { chainId: SwapChainId; tak
     if (!state) return
     if (Date.now() - state.fetchedAt > QUOTE_MAX_AGE_MS) {
       // Never send a quote the user has not seen: show the refreshed one and wait for another press.
-      setRequoted(true)
-      await getQuote(state.request)
+      const fresh = await getQuote(state.request)
+      // Only when there is a new one to look at. A failed fetch leaves the old quote, and its error says so.
+      setRequoted(!!fresh)
       return
     }
 
@@ -199,6 +215,7 @@ export function useSwapExecution({ chainId, taker }: { chainId: SwapChainId; tak
     setRequoted(false)
     const tx = current.transaction
     if (needsApproval && canBatchSwap && request && spender) {
+      lastApproveWasReset.current = needsAllowanceReset
       const allow = (amount: bigint) => ({
         address: request.sellToken,
         abi: erc20Abi,
@@ -236,6 +253,7 @@ export function useSwapExecution({ chainId, taker }: { chainId: SwapChainId; tak
     setRequoted(false)
     setDidReset(false)
     setDidApprove(false)
+    setApproveReadBack(undefined)
     approve.reset()
     send.reset()
     batch.reset()
@@ -253,24 +271,38 @@ export function useSwapExecution({ chainId, taker }: { chainId: SwapChainId; tak
     canBatch: canBatchSwap,
     requoted,
     approve: doApprove,
-    approveHash: approve.data as Hash | undefined,
-    approving: approve.isPending || approveReceipt.outcome === 'waiting',
-    approveError: approve.error,
-    approveReverted: approveReceipt.outcome === 'reverted',
-    approveUnconfirmed: approveReceipt.outcome === 'unknown',
+    approveHash: (approve.data ?? (batch.tx.id === 'approve' ? batch.tx.hash : undefined)) as Hash | undefined,
+    approving:
+      approve.isPending ||
+      approveReceipt.outcome === 'waiting' ||
+      batchApproving ||
+      readingBack ||
+      (approveReceipt.outcome === 'success' && approveReadBack !== approve.data),
+    /** Whether the approval in flight is the one that sets an old allowance to 0. */
+    approvingReset: lastApproveWasReset.current,
+    approveError:
+      approve.error ||
+      (batchApproveReverted || batchApproveCancelled || batch.unconfirmed ? undefined : batchApproveError),
+    approveReverted: approveReceipt.outcome === 'reverted' || batchApproveReverted,
+    approveCancelled: approveReceipt.outcome === 'cancelled' || batchApproveCancelled,
+    approveUnconfirmed: approveReceipt.outcome === 'unknown' || (batch.unconfirmed && batch.tx.id === 'approve'),
     didReset,
     didApprove,
     swap: doSwap,
     swapHash: swapHash as Hash | undefined,
-    awaitingWallet: send.isPending || batch.tx.phase === 'wallet',
-    confirming: batch.tx.phase === 'pending' || swapReceipt.outcome === 'waiting',
+    awaitingWallet: send.isPending || (batchSwapping && batch.tx.phase === 'wallet'),
+    confirming: (batchSwapping && batch.tx.phase === 'pending') || swapReceipt.outcome === 'waiting',
     // A wallet may report a finished batch without a receipt to look up.
     confirmed:
       swapReceipt.outcome === 'success' || (batch.tx.id === 'swap' && batch.tx.phase === 'done' && !batchHash),
     reverted: swapReceipt.outcome === 'reverted',
+    /** Replaced by the wallet's cancel. The replacement's receipt says success, and this swap never happened. */
+    cancelled: swapReceipt.outcome === 'cancelled',
     /** The swap was sent, but its receipt could not be read: it may still land, so it must not be offered again. */
-    unconfirmed: swapReceipt.outcome === 'unknown',
-    swapError: send.error || (batch.tx.phase === 'error' ? batch.tx.error : undefined),
+    unconfirmed: swapReceipt.outcome === 'unknown' || (batch.unconfirmed && batch.tx.id === 'swap'),
+    swapError:
+      send.error ||
+      (batch.tx.phase === 'error' && batch.tx.id === 'swap' && !batch.unconfirmed ? batch.tx.error : undefined),
     swapReceipt: swapReceipt.receipt,
   }
 }

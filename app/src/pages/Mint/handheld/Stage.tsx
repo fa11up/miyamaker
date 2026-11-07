@@ -123,6 +123,8 @@ export default function Stage({ children }: { children: ReactNode }) {
 
       const quiet = window.matchMedia('(prefers-reduced-motion: reduce)').matches
       const onMove = (e: PointerEvent) => {
+        // A release outside the window never reaches pointerup. The first move back shows no button held.
+        if (e.buttons === 0) dragging.current = false
         pointer.current = {
           x: Math.max(-1, Math.min(1, (e.clientX / window.innerWidth) * 2 - 1)),
           y: Math.max(-1, Math.min(1, (e.clientY / window.innerHeight) * 2 - 1)),
@@ -138,6 +140,8 @@ export default function Stage({ children }: { children: ReactNode }) {
       }
       window.addEventListener('pointerdown', onDown)
       window.addEventListener('pointerup', onUp)
+      window.addEventListener('pointercancel', onUp)
+      window.addEventListener('blur', onUp)
 
       let frame = 0
       let rx = 0
@@ -178,6 +182,8 @@ export default function Stage({ children }: { children: ReactNode }) {
         window.removeEventListener('pointermove', onMove)
         window.removeEventListener('pointerdown', onDown)
         window.removeEventListener('pointerup', onUp)
+        window.removeEventListener('pointercancel', onUp)
+        window.removeEventListener('blur', onUp)
         s.dispose()
         scene.current = undefined
       }

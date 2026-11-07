@@ -559,7 +559,7 @@ export default function Device({
     return () => clearTimeout(t)
   }, [poweringOn])
   const powerOff = () => {
-    if (goingOff) return
+    if (goingOff || nav.held) return
     setSwitchOff(true)
     setGoingOff(true)
     setTimeout(nav.close, window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 120 : 620)
@@ -575,6 +575,11 @@ export default function Device({
   useEffect(() => {
     if (wasSaved.current && !saved) {
       setPressing(false)
+      // Only the Save button saves. Put away from the taskbar, it was only minimized.
+      if (!pressing) {
+        wasSaved.current = saved
+        return undefined
+      }
       setResumed(true)
       const t = setTimeout(() => setResumed(false), 2200)
       wasSaved.current = saved
@@ -588,8 +593,9 @@ export default function Device({
     setTimeout(nav.minimize, 180)
   }
 
-  const left = dpad?.left ?? (nav.swap ? () => nav.swap!(-1) : undefined)
-  const right = dpad?.right ?? (nav.swap ? () => nav.swap!(1) : undefined)
+  // While the picture plays out, the buttons are off: nothing may start with the window about to close.
+  const left = goingOff ? undefined : dpad?.left ?? (nav.swap ? () => nav.swap!(-1) : undefined)
+  const right = goingOff ? undefined : dpad?.right ?? (nav.swap ? () => nav.swap!(1) : undefined)
 
   // Tell the model where the controls are laid out, and when they go down.
   useLayoutEffect(() => {
@@ -642,7 +648,7 @@ export default function Device({
   }
 
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
-    if ((e.target as HTMLElement).closest('input, textarea, select, button, a')) return
+    if (goingOff || (e.target as HTMLElement).closest('input, textarea, select, button, a')) return
     const key: Record<string, (() => void) | undefined> = {
       ArrowUp: dpad?.up,
       ArrowDown: dpad?.down,
@@ -757,7 +763,7 @@ export default function Device({
               data-part="b"
               aria-label={b.label}
               title={b.label}
-              disabled={b.disabled}
+              disabled={b.disabled || goingOff}
               onClick={b.onClick}
             >
               B
@@ -767,7 +773,7 @@ export default function Device({
               data-part="a"
               aria-label={a.label}
               title={a.label}
-              disabled={a.disabled}
+              disabled={a.disabled || goingOff}
               onClick={a.onClick}
             >
               A
@@ -782,6 +788,7 @@ export default function Device({
         className={pressing || saved ? 'in' : undefined}
         aria-label="Save and put away"
         title="Save: put the device away just as it is"
+        disabled={goingOff}
         onClick={save}
       />
       <PowerTrack style={{ left: rightEdge(shape.path, 243) - 2 }} className={switchOff ? 'off' : undefined} data-power>
@@ -790,7 +797,7 @@ export default function Device({
           data-part="power"
           aria-label="Power off"
           title="Power off"
-          disabled={goingOff}
+          disabled={goingOff || nav.held}
           onClick={powerOff}
         />
       </PowerTrack>
@@ -801,7 +808,7 @@ export default function Device({
             data-part="select"
             aria-label={select?.label ?? 'Main menu'}
             style={{ pointerEvents: 'auto' }}
-            disabled={select?.disabled}
+            disabled={select?.disabled || goingOff || (!select && nav.held)}
             onClick={select ? select.onClick : nav.openMenu}
           />
           <span className="flat">SELECT</span>

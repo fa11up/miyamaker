@@ -341,7 +341,7 @@ function Line({ msg, canDelete, onDelete }: { msg: ChatMessage; canDelete: boole
 }
 
 function OurChat({ room, roomLabel }: { room: string; roomLabel: string }) {
-  const { address, session, signIn, signOut, signingIn, error: signInError } = useChatSession(CHAT_URL)
+  const { address, session, signIn, cancelSignIn, signOut, signingIn, error: signInError } = useChatSession(CHAT_URL)
   const { openConnectModal } = useConnectModal()
   const chat = useChatRoom(CHAT_URL, room, session?.token)
   const [draft, setDraft] = useState('')
@@ -364,8 +364,12 @@ function OurChat({ room, roomLabel }: { room: string; roomLabel: string }) {
   }, [chat.error])
 
   // The server refused our token (expired, secret rotated): drop it so the user can sign in again.
+  // Once per refusal: the error stays set after this, and acting on it again would sign out each new session as it arrives.
+  const refusal = useRef(chat.error)
   useEffect(() => {
-    if (chat.error?.code === 'auth' && session) signOut()
+    if (chat.error?.code !== 'auth' || !session || refusal.current === chat.error) return
+    refusal.current = chat.error
+    signOut()
   }, [chat.error, session, signOut])
 
   if (!CHAT_URL) {
@@ -465,7 +469,11 @@ function OurChat({ room, roomLabel }: { room: string; roomLabel: string }) {
         </Composer>
       ) : session ? (
         <StatusBox tone="info" role="status">
-          <span>Signing you in to the room…</span>
+          {/* With the room down this could wait a long time, so there's a way out of it. */}
+          <span>{chat.status === 'open' ? 'Signing you in to the room…' : chatWaitLine(chat.status)}</span>{' '}
+          <button type="button" onClick={signOut}>
+            Cancel
+          </button>
         </StatusBox>
       ) : (
         <>
@@ -478,7 +486,15 @@ function OurChat({ room, roomLabel }: { room: string; roomLabel: string }) {
           >
             {signingIn ? 'Check your wallet…' : address ? 'Sign a free message to chat' : 'Connect wallet to chat'}
           </BigButton>
-          {address && <FreeLine>No gas. No permissions.</FreeLine>}
+          {signingIn ? (
+            <FreeLine>
+              <button type="button" onClick={cancelSignIn}>
+                Cancel
+              </button>
+            </FreeLine>
+          ) : (
+            address && <FreeLine>No gas. No permissions.</FreeLine>
+          )}
         </>
       )}
     </Pane>

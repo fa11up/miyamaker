@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import styled from 'styled-components/macro'
 import { formatEther } from 'viem'
 
+import { TX_CANCELLED_WORDS, TX_UNCONFIRMED_WORDS } from '@/miyamints/txOutcome'
 import { Skeleton } from '@/components/Retro'
 import { explorerUrl } from '@/config/wagmi'
 import { MIYAMINI_CHAIN_ID, MIYAMINI_CONTRACT } from '@/constants/contracts'
@@ -117,6 +118,10 @@ export default function MiyaminiMint() {
   const txUrl = tx.hash ? `${explorerUrl(MIYAMINI_CHAIN_ID)}/tx/${tx.hash}` : undefined
 
   const action = (() => {
+    // What is under way comes first: the last piece going to someone else doesn't change what this one is doing.
+    if (tx.isAwaitingWallet) return { label: 'Confirm in wallet…', disabled: true, onClick: () => {} }
+    if (tx.isConfirming) return { label: 'Minting…', disabled: true, onClick: () => {} }
+    if (tx.unconfirmed) return { label: 'Start over', disabled: false, onClick: tx.reset }
     if (state.isLoading) return { label: 'Loading…', disabled: true, onClick: () => {} }
     if (state.isError) return { label: 'Unavailable', disabled: true, onClick: () => {} }
     if (soldOut) return { label: 'Sold out', disabled: true, onClick: () => {} }
@@ -129,8 +134,6 @@ export default function MiyaminiMint() {
         disabled: tx.isSwitching,
         onClick: tx.switchToMainnet,
       }
-    if (tx.isAwaitingWallet) return { label: 'Confirm in wallet…', disabled: true, onClick: () => {} }
-    if (tx.isConfirming) return { label: 'Minting…', disabled: true, onClick: () => {} }
     if (insufficient) return { label: 'Not enough ETH', disabled: true, onClick: () => {} }
     return {
       label: `Mint ${quantity} for ${formatEth(total)} ETH`,
@@ -153,6 +156,21 @@ export default function MiyaminiMint() {
           </>
         ),
       }
+    : tx.unconfirmed
+    ? {
+        tone: 'info',
+        alert: true,
+        body: (
+          <>
+            {TX_UNCONFIRMED_WORDS}{' '}
+            <a href={txUrl} target="_blank" rel="noreferrer">
+              View transaction
+            </a>
+          </>
+        ),
+      }
+    : tx.cancelled
+    ? { tone: 'info', body: TX_CANCELLED_WORDS }
     : tx.reverted || (tx.error && !busy)
     ? {
         tone: err.cancelled ? 'info' : 'error',
@@ -206,6 +224,7 @@ export default function MiyaminiMint() {
       quantity={quantity}
       maxQty={maxQty}
       busy={busy}
+      stay={tx.unconfirmed}
       onQuantity={setQuantity}
       total={`${formatEth(total)} ETH`}
       balance={tx.isConnected && tx.balance !== undefined ? `${formatEth(tx.balance)} ETH` : undefined}

@@ -1,5 +1,5 @@
 import type { ReactNode, RefObject } from 'react'
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { DraggableData } from 'react-draggable'
 import Draggable from 'react-draggable'
 
@@ -127,6 +127,31 @@ const DraggableWrapper = ({
   )
 }
 
+/** A window's contents with nothing running: canvases as pictures, and players, which can't be cloned, left blank. */
+function pictureOf(window: HTMLElement): HTMLElement[] {
+  const live = Array.from(window.querySelectorAll('canvas'))
+  const copy = window.cloneNode(true) as HTMLElement
+  copy.querySelectorAll('[data-resize]').forEach((grip) => grip.remove())
+  copy.querySelectorAll('canvas').forEach((canvas, i) => {
+    const img = document.createElement('img')
+    img.className = canvas.className
+    img.style.cssText = `${live[i]?.style.cssText ?? ''};width:${live[i]?.offsetWidth}px;height:${live[i]?.offsetHeight}px`
+    try {
+      img.src = live[i]?.toDataURL() ?? ''
+    } catch {
+      // Drawn from another site: stays blank for the moment of a drag.
+    }
+    canvas.replaceWith(img)
+  })
+  copy.querySelectorAll('iframe, video, audio, script').forEach((player) => {
+    const blank = document.createElement('div')
+    blank.className = player.className
+    blank.style.cssText = 'position:absolute;inset:0;background:#000'
+    player.replaceWith(blank)
+  })
+  return Array.from(copy.children) as HTMLElement[]
+}
+
 export default function Windows({
   children,
   baseSize,
@@ -183,16 +208,32 @@ export default function Windows({
   const returnTo = useRef<HTMLElement | null>(null)
   const wasFocused = useRef(false)
   useEffect(() => {
-    if (!initialized) return
+    if (!initialized) return undefined
     const raised = focused && !wasFocused.current
     wasFocused.current = !!focused
-    const node = ref.current
-    if (!raised || !node || node.contains(document.activeElement) || document.querySelector('[data-boot]')) return
-    if (document.activeElement instanceof HTMLElement && document.activeElement !== document.body) {
-      returnTo.current = document.activeElement
+    if (!raised) return undefined
+    const moveIn = () => {
+      const node = ref.current
+      if (!node || node.contains(document.activeElement)) return
+      if (document.activeElement instanceof HTMLElement && document.activeElement !== document.body) {
+        returnTo.current = document.activeElement
+      }
+
+      node.focus({ preventScroll: true })
     }
 
-    node.focus({ preventScroll: true })
+    if (!document.querySelector('[data-boot]')) {
+      moveIn()
+      return undefined
+    }
+
+    // The boot screen takes its keys for itself, so focus follows once it has gone.
+    const waiting = setInterval(() => {
+      if (document.querySelector('[data-boot]')) return
+      clearInterval(waiting)
+      moveIn()
+    }, 100)
+    return () => clearInterval(waiting)
   }, [focused, initialized])
   useEffect(
     () => () => {
@@ -268,39 +309,52 @@ export default function Windows({
   }
 
   const [dummyWindowsArray, setdummyWindowsArray] = useState<{ x: number; y: number; i: number }[]>([])
+  const trailTimer = useRef<ReturnType<typeof setInterval>>()
 
-  const cleanUp = (length: number) => {
-    if (dummyWindowsArray.length > length) {
-      const reducedArr = dummyWindowsArray
-      reducedArr.shift()
-      setdummyWindowsArray([...reducedArr])
-    }
-  }
+  // The trail is a picture of the window, taken when the drag starts. Real copies would run the whole app again, up to a
+  // hundred times over, with its effects, sockets and sound.
+  const trailPicture = useRef<HTMLElement[]>()
+  const fillTrailCopy = useCallback((slot: HTMLDivElement | null) => {
+    if (!slot || !ref.current) return
+    trailPicture.current ??= pictureOf(ref.current)
+    slot.replaceChildren(...trailPicture.current.map((node) => node.cloneNode(true)))
+  }, [])
 
   const moveIt = (x: number, y: number) => {
     setDragPosition({ x, y })
     if (noTrail) return
-    const lastWindow = dummyWindowsArray[dummyWindowsArray.length - 1]
-    if (dummyWindowsArray.length < 100)
-      setdummyWindowsArray((prev) => [...prev, { x: x + 5, y: y + 5, i: lastWindow ? lastWindow.i + 1 : 1 }])
-    cleanUp(500)
+    // A new drag keeps what's left of the last trail and grows it, rather than racing the timer that was clearing it.
+    clearInterval(trailTimer.current)
+    setdummyWindowsArray((prev) =>
+      prev.length < 100 ? [...prev, { x: x + 5, y: y + 5, i: (prev[prev.length - 1]?.i ?? 0) + 1 }] : prev
+    )
   }
 
-  const clearTrial = (timeout?: number) => {
-    const timer = setInterval(() => {
-      cleanUp(0)
-      if (dummyWindowsArray.length === 0) {
-        clearInterval(timer)
+  const trailLeft = useRef(0)
+  trailLeft.current = dummyWindowsArray.length
+  const clearTrial = () => {
+    clearInterval(trailTimer.current)
+    trailTimer.current = setInterval(() => {
+      if (trailLeft.current) {
+        setdummyWindowsArray((prev) => prev.slice(1))
+        return
       }
-    }, timeout || 10)
+
+      clearInterval(trailTimer.current)
+      trailPicture.current = undefined
+    }, 10)
   }
+
+  useEffect(() => () => clearInterval(trailTimer.current), [])
 
   useEffect(() => {
     if (!initialized && position) {
       setInitialized(true)
       // Keep the bottom edge above the taskbar when the window first appears.
       const maxY = available ? Math.max(0, available - height) : position.y
-      setDragPosition({ x: position.x, y: Math.min(position.y, maxY) })
+      // And its title bar on screen, wherever the window was left on a wider desktop.
+      const maxX = Math.max(0, window.innerWidth - width)
+      setDragPosition({ x: Math.min(position.x, maxX), y: Math.min(position.y, maxY) })
     }
   }, [position])
 
@@ -370,12 +424,10 @@ export default function Windows({
                 borderRadius: corner,
               }}
             >
-              {children}
+              <div aria-hidden style={{ display: 'contents' }} ref={fillTrailCopy} />
             </DummyWindow>
           )
         })}
     </>
-  ) : (
-    <div style={{ visibility: 'hidden' }}>{children}</div>
-  )
+  ) : null
 }

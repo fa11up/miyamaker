@@ -22,8 +22,36 @@ export function privyConnector(bridge: PrivyBridge, emitter: Emitter, defaultCha
   }
   const onChain = (chain: string) => emitter.emit('change', { chainId: Number(chain) })
   const onGone = () => emitter.emit('disconnect')
+  const detach = () => {
+    if (!provider) return
+    provider.removeListener('accountsChanged', onAccounts as never)
+    provider.removeListener('chainChanged', onChain as never)
+    provider.removeListener('disconnect', onGone as never)
+    provider = undefined
+  }
 
-  const wallet = () => bridge.wait((s) => (s.authenticated ? s.wallet : undefined), WALLET_MS)
+  // A session can end on Privy's side, and the provider says nothing. wagmi hears it here, or it would stay connected
+  // with every call failing.
+  let unwatch: (() => void) | undefined
+  const watchSession = () => {
+    unwatch?.()
+    unwatch = bridge.watch((s) => {
+      if (!s.ready || s.authenticated) return
+      unwatch?.()
+      unwatch = undefined
+      bridge.remember(false)
+      detach()
+      onGone()
+    })
+  }
+
+  const wallet = async () => {
+    bridge.request()
+    // Logged out answers at once, not after the wait for a wallet.
+    if (!(await bridge.wait((s) => (s.ready ? s.authenticated : undefined), READY_MS)))
+      throw new Error('Not logged in.')
+    return bridge.wait((s) => s.wallet, WALLET_MS)
+  }
   const attach = async () => {
     const next = await (await wallet()).getEthereumProvider()
     if (next !== provider) {
@@ -59,22 +87,22 @@ export function privyConnector(bridge: PrivyBridge, emitter: Emitter, defaultCha
         try {
           await bridge.login()
         } catch (e) {
-          throw new UserRejectedRequestError(e as Error)
+          // Only closing the window is someone declining. Anything else is a failure to say so about.
+          if (/exited_auth_flow/.test((e as Error).message)) throw new UserRejectedRequestError(e as Error)
+          throw e
         }
       }
       const list = await accounts()
       if (chainId && chainId !== (await chain())) await switchTo(chainId)
       bridge.remember(true)
+      watchSession()
       return { accounts: list, chainId: await chain() }
     },
     async disconnect() {
       bridge.remember(false)
-      if (provider) {
-        provider.removeListener('accountsChanged', onAccounts as never)
-        provider.removeListener('chainChanged', onChain as never)
-        provider.removeListener('disconnect', onGone as never)
-        provider = undefined
-      }
+      unwatch?.()
+      unwatch = undefined
+      detach()
       const state = await bridge.wait((s) => s, READY_MS)
       await state.logout()
     },

@@ -112,7 +112,12 @@ export default function AuctionPage() {
   const minimize = () => dispatch(minimizeWindow({ value: pageId }))
 
   const [errorMessage, setErrorMessage] = useState('')
-  const [pageSection, setPageSection] = useState(AUCTION_PAGE_SECTION.COLLECTIONS_SECTION)
+  const [pageSection, setSection] = useState(AUCTION_PAGE_SECTION.COLLECTIONS_SECTION)
+  // A bid's ending is reported on the lot's page, so that page stays until it comes.
+  const [bidBusy, setBidBusy] = useState(false)
+  const setPageSection = (section: string) => {
+    if (!bidBusy) setSection(section)
+  }
 
   // On phones the body scrolls; picking a lot further down brings its detail (at the top) back into view.
   const bodyRef = useRef<HTMLDivElement>(null)
@@ -154,10 +159,11 @@ export default function AuctionPage() {
                 setErrorMessage={setErrorMessage}
                 auctionContract={auctionContract as Address}
                 onBack={() => setPageSection(AUCTION_PAGE_SECTION.COLLECTIONS_SECTION)}
+                onBusy={setBidBusy}
               />
             </ExplorerWrapper>
             <ExplorerWrapper style={{ flex: '2 1 0' }} title={'Lots'}>
-              <ProductsList auctionContract={auctionContract as Address} />
+              <ProductsList auctionContract={auctionContract as Address} locked={bidBusy} />
             </ExplorerWrapper>
           </>
         )

@@ -1,5 +1,5 @@
 import { useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import styled from 'styled-components/macro'
 import { useAccount, useSignMessage } from 'wagmi'
 
@@ -59,6 +59,9 @@ export default function StationAdd({
   store,
   stored,
   storing,
+  doneWords,
+  onDone,
+  onBusy,
 }: {
   /** The step's main action, while editions are not open: the big button, and a word on what it still needs. */
   primary: boolean
@@ -74,6 +77,11 @@ export default function StationAdd({
   stored: { audio?: string; cover?: string }
   /** What the upload in progress is waiting for. */
   storing?: string
+  /** Kept by the page, since this goes away with its tab and must not offer the same track again. */
+  doneWords?: string
+  onDone: (words: string) => void
+  /** Told while this is working, when the tab must not change and closing should ask first. */
+  onBusy: (busy: boolean) => void
 }) {
   const { address } = useAccount()
   const { signMessageAsync } = useSignMessage()
@@ -82,7 +90,16 @@ export default function StationAdd({
   const [rights, setRights] = useState(false)
   const [note, setNote] = useState<string>()
   const [error, setError] = useState<string>()
-  const [done, setDone] = useState<string>()
+  useEffect(() => onBusy(!!note), [note])
+  // Gone from the screen: no more wallet prompts. Reset on mount for React's double effects in development.
+  const left = useRef(false)
+  useEffect(() => {
+    left.current = false
+    return () => {
+      left.current = true
+      onBusy(false)
+    }
+  }, [])
 
   const name = cleanLine(title, 120)
   const by = cleanLine(artist, 80)
@@ -107,6 +124,7 @@ export default function StationAdd({
       if (!txId) throw new Error('That upload did not land on Arweave. Try again.')
       if (coverFile) setNote('Storing your cover. Check your wallet.')
       const artworkId = coverFile ? arId(await store('cover', coverFile)) : arId(coverUri)
+      if (left.current) return
       setNote('Sign to put it on the station. This one costs nothing.')
       const { track } = await addTrack(
         { txId, artworkId, title: name, artist: by, duration, wallet: address },
@@ -114,7 +132,7 @@ export default function StationAdd({
       )
       radio.enqueue(toTrack(track))
       client.invalidateQueries({ queryKey: ['station'] })
-      setDone(`${track.title} is on the station, and in your radio.`)
+      onDone(`${track.title} is on the station, and in your radio.`)
     } catch (e) {
       setError(plainTxError(e))
     } finally {
@@ -122,10 +140,10 @@ export default function StationAdd({
     }
   }
 
-  if (done)
+  if (doneWords)
     return (
       <StatusBox tone="ok" role="status">
-        <span>{done}</span>
+        <span>{doneWords}</span>
       </StatusBox>
     )
 

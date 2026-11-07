@@ -217,6 +217,8 @@ export default function PoolView({
   const [typedError, setTypedError] = useState<string>()
   const [manualIds, setManualIds] = useState<string[]>([])
   const [revealed, setRevealed] = useState<{ ids: bigint[]; held?: bigint[]; rearmed?: boolean }>()
+  // The wallet whose Allow just landed: the read saying so can lag, and must not offer it again.
+  const [allowedBy, setAllowedBy] = useState<string>()
   // Which pair "Buy / Sell <pool token>" uses on the Tokens tab, and prices the token in. ETH unless chosen.
   const pairs = pairsFor(chainId)
   const [pairSymbol, setPairSymbol] = useState<string>(DEFAULT_PAIR_SYMBOL)
@@ -245,6 +247,7 @@ export default function PoolView({
   const tx = useTx((id) => {
     refresh()
     if (id === 'redeem') setPicked([])
+    if (id === 'approve') setAllowedBy(me)
     if (id === 'deposit-one') setSelling((list) => list.slice(1))
     else if (id.startsWith('deposit')) {
       setSelling([])
@@ -269,11 +272,16 @@ export default function PoolView({
   // A different pool starts clean.
   useEffect(() => {
     setPicked([])
+    setCount(1)
+    setSide('buy')
     setSelling([])
     setManualIds([])
     setQty({})
+    setTyped('')
+    setTypedError(undefined)
     setPages(1)
     setRevealed(undefined)
+    setAllowedBy(undefined)
     tx.reset()
   }, [poolAddress, chainId])
 
@@ -388,7 +396,12 @@ export default function PoolView({
   )
   const checking = selling.length > 0 && ownership.held.some((h) => h === undefined) && ownership.loading
   const sellUnits = selling.reduce((sum, id) => sum + amountFor(id), 0n)
-  const plan = depositPlan(pool.kind, selling.length, approval.approved, directSendOnly(chainId))
+  const plan = depositPlan(
+    pool.kind,
+    selling.length,
+    approval.approved || (!!me && allowedBy === me) || undefined,
+    directSendOnly(chainId),
+  )
 
   const deposit = () => {
     if (!me) return
@@ -443,10 +456,17 @@ export default function PoolView({
       return { label: switching ? 'Switching…' : `Switch to ${chain.name}`, onClick: () => switchChain({ chainId }) }
     if (tx.tx.phase === 'wallet') return { label: 'Confirm in wallet…', disabled: true }
     if (tx.tx.phase === 'pending') return { label: 'Waiting for the network…', disabled: true }
+    // It may still land, and a second commit would spend the pool tokens again.
+    if (tx.unconfirmed) return { label: 'Start over', onClick: tx.reset }
     if (side === 'buy') {
       // An open draw is step 2 of a random buy: finish it before starting another.
       const draw = random ? myCommits.commits[0] : undefined
       if (draw) {
+        // No block read means no count to give: a guess here would sit on the button for good if the read failed.
+        if (block.data === undefined)
+          return block.isError
+            ? { label: 'Check again', step: 'We could not read the latest block.', onClick: () => block.refetch() }
+            : { label: 'Checking the block…', disabled: true }
         const left = blocksToReveal(draw.targetBlock, block.data)
         if (left > 0) return { label: `Reveal in ${left} block${left === 1 ? '' : 's'}…`, disabled: true }
         const older = info.nextRevealId
@@ -622,22 +642,27 @@ export default function PoolView({
             {myCommits.commits.map((c) => {
               const phase = commitPhase(c.targetBlock, block.data)
               const left = blocksToReveal(c.targetBlock, block.data)
+              // Draws settle in order, so anything before the next one to settle is what its button has to do.
+              const older = info.nextRevealId
+              const before = older !== undefined && older !== c.id ? older : undefined
               return (
                 <li key={c.id.toString()}>
                   <span>
                     {nfts(c.amount)}:{' '}
-                    {phase === 'waiting'
-                      ? `ready in ${left} block${left === 1 ? '' : 's'}`
-                      : phase === 'late'
-                        ? 'late: revealing picks a new block'
-                        : 'ready'}
+                    {block.data === undefined
+                      ? 'checking the block'
+                      : phase === 'waiting'
+                        ? `ready in ${left} block${left === 1 ? '' : 's'}`
+                        : phase === 'late'
+                          ? 'late: revealing picks a new block'
+                          : 'ready'}
                   </span>
                   <PushButton
                     type="button"
                     disabled={phase === 'waiting' || busy || wrongChain}
-                    onClick={() => reveal(c)}
+                    onClick={() => (before !== undefined ? settleOlderDraw(before) : reveal(c))}
                   >
-                    Reveal
+                    {before !== undefined ? 'Settle earlier draw' : 'Reveal'}
                   </PushButton>
                 </li>
               )

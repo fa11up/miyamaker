@@ -135,7 +135,9 @@ contract DisputeModule is ReentrancyGuard, IDisputeModule {
 
         MarketTypes.Terms memory t = m.terms();
         uint256 bond = d.bond;
-        bool disputerWon = m.timedOut() || m.finalOutcome() != d.proposedOutcome;
+        // decidedOutcome, not finalOutcome: a decision for a side nobody counted on voids the market, and the dispute
+        // still turns on whether that decision matched the proposal.
+        bool disputerWon = m.timedOut() || m.decidedOutcome() != d.proposedOutcome;
         if (disputerWon) {
             t.token.safeTransfer(d.disputer, bond);
             emit BondSettled(market, true, bond, 0, 0);

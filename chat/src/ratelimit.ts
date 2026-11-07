@@ -12,17 +12,27 @@ export class RateLimiter {
     private readonly maxKeys = 10_000
   ) {}
 
+  private tokens(key: string, now: number) {
+    const prev = this.buckets.get(key)
+    if (!prev) return this.capacity
+    return Math.min(this.capacity, prev.tokens + (Math.max(0, now - prev.at) * this.capacity) / this.windowMs)
+  }
+
+  /** Whether `take` would succeed, taking nothing: for checking several limits before spending any of them. */
+  check(key: string, now: number): { ok: true } | { ok: false; retryAfterMs: number } {
+    const tokens = this.tokens(key, now)
+    // Small epsilon absorbs float error so exact refill boundaries count as refilled.
+    if (tokens >= 1 - 1e-9) return { ok: true }
+    return { ok: false, retryAfterMs: Math.ceil(((1 - tokens) * this.windowMs) / this.capacity) }
+  }
+
   /** Takes one token. `retryAfterMs` is how long until one is available when refused. */
   take(key: string, now: number): { ok: true } | { ok: false; retryAfterMs: number } {
-    const prev = this.buckets.get(key)
-    let tokens = this.capacity
-    if (prev) tokens = Math.min(this.capacity, prev.tokens + (Math.max(0, now - prev.at) * this.capacity) / this.windowMs)
-    // Small epsilon absorbs float error so exact refill boundaries count as refilled.
-    if (tokens < 1 - 1e-9) {
-      // A refused attempt leaves the bucket untouched, so hammering never extends the wait.
-      return { ok: false, retryAfterMs: Math.ceil(((1 - tokens) * this.windowMs) / this.capacity) }
-    }
-    if (!prev && this.buckets.size >= this.maxKeys) this.prune(now)
+    // A refused attempt leaves the bucket untouched, so hammering never extends the wait.
+    const allowed = this.check(key, now)
+    if (!allowed.ok) return allowed
+    const tokens = this.tokens(key, now)
+    if (!this.buckets.has(key) && this.buckets.size >= this.maxKeys) this.prune(now)
     this.buckets.set(key, { tokens: tokens - 1, at: now })
     return { ok: true }
   }

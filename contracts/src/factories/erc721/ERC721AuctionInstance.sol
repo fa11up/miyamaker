@@ -50,6 +50,9 @@ error RenounceDisabled();
 contract ERC721AuctionInstance is ERC721, Ownable, ReentrancyGuard, IInstanceLifecycle {
     uint256 private constant WINNER_MINT_GAS = 500_000;
     uint256 private constant SETTLE_RESERVE_GAS = 400_000;
+    /// @notice How long after a no-bid auction ends only the owner may close it. After this anyone may, so a queued
+    ///         piece can't wait on the owner forever. The owner gets this long to choose when the next piece starts.
+    uint256 public constant UNSOLD_CLOSE_GRACE = 7 days;
 
     // ┌─────────────────────────┐
     // │         Types           │
@@ -333,14 +336,16 @@ contract ERC721AuctionInstance is ERC721, Ownable, ReentrancyGuard, IInstanceLif
 
         // Parked cuts go with this one, so small ones add up past the vault's minimum.
         uint256 cut = s.vaultCut + pendingVaultCut;
-        pendingVaultCut = 0;
-        try vault.receiveContribution{value: cut}(
-            Currency.wrap(address(0)),
-            cut,
-            address(this)
-        ) {} catch {
-            pendingVaultCut = cut;
-            emit VaultContributionFailed(address(vault), cut);
+        if (cut != 0) {
+            pendingVaultCut = 0;
+            try vault.receiveContribution{value: cut}(
+                Currency.wrap(address(0)),
+                cut,
+                address(this)
+            ) {} catch {
+                pendingVaultCut = cut;
+                emit VaultContributionFailed(address(vault), cut);
+            }
         }
         SmartTransferLib.smartTransferETH(owner(), s.remainder, weth);
 
@@ -375,18 +380,22 @@ contract ERC721AuctionInstance is ERC721, Ownable, ReentrancyGuard, IInstanceLif
 
     /**
      * @notice Reclaim an unsold piece (auction expired with no bids)
-     * @dev NFT is never minted. Creator deposit is forfeited to protocol treasury.
-     *      Line advances to next queued piece.
+     * @dev NFT is never minted. Creator deposit is forfeited to protocol treasury, whoever calls: bidding is over, so
+     *      that is the only place it can go. Line advances to next queued piece.
+     *      Owner only until UNSOLD_CLOSE_GRACE after the end, then anyone.
      * @param tokenId The token ID to reclaim
      */
     // slither-disable-next-line timestamp
-    function reclaimUnsold(uint24 tokenId) external onlyOwner nonReentrant {
+    function reclaimUnsold(uint24 tokenId) external nonReentrant {
         Auction storage auction = auctions[tokenId];
         if (auction.tokenId == 0) revert AuctionDoesNotExist();
         if (auction.startTime == 0) revert AuctionNotStarted();
         if (auction.settled) revert AuctionAlreadySettled();
         if (block.timestamp < auction.endTime) revert AuctionNotEnded();
         if (auction.highBidder != address(0)) revert HasBids();
+        if (msg.sender != owner() && block.timestamp < uint256(auction.endTime) + UNSOLD_CLOSE_GRACE) {
+            revert Unauthorized();
+        }
 
         auction.settled = true;
 
@@ -434,12 +443,15 @@ contract ERC721AuctionInstance is ERC721, Ownable, ReentrancyGuard, IInstanceLif
     }
 
     /// @notice Retry sending any previously failed vault cuts.
-    /// @dev Permissionless — anyone can call once the vault is healthy again.
-    function flushPendingVaultCut() external nonReentrant {
+    /// @dev Permissionless — anyone can call once the vault is healthy again. A parked cut under the vault's minimum
+    ///      can be topped up with msg.value: all of it goes to the vault, credited to this collection like the cut, and
+    ///      a total still under the minimum reverts, which returns the ETH.
+    function flushPendingVaultCut() external payable nonReentrant {
         uint256 pending = pendingVaultCut;
         if (pending == 0) revert NoFeesToClaim();
         pendingVaultCut = 0;
-        vault.receiveContribution{value: pending}(Currency.wrap(address(0)), pending, address(this));
+        uint256 amount = pending + msg.value;
+        vault.receiveContribution{value: amount}(Currency.wrap(address(0)), amount, address(this));
     }
 
     /// @notice Claim accumulated fees from this instance's vault (fixed at launch) and forward them to the owner.
@@ -477,16 +489,17 @@ contract ERC721AuctionInstance is ERC721, Ownable, ReentrancyGuard, IInstanceLif
     // └─────────────────────────┘
 
     /**
-     * @notice Get the currently active auction for a line
+     * @notice Get the auction taking bids on a line
+     * @dev A piece that has ended but isn't closed returns 0: read it with lineQueues(line, lineQueueHead(line)).
      * @param line Line index (0-based)
-     * @return tokenId Active token ID (0 if no active auction)
+     * @return tokenId Active token ID (0 if no auction is taking bids)
      */
     function getActiveAuction(uint8 line) external view returns (uint24 tokenId) {
         if (line >= lines) revert InvalidLine();
         uint256 head = lineQueueHead[line];
         if (head >= lineQueues[line].length) return 0;
         uint24 id = lineQueues[line][head];
-        if (auctions[id].settled) return 0;
+        if (block.timestamp >= auctions[id].endTime) return 0;
         return id;
     }
 

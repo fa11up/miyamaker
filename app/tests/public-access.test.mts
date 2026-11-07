@@ -59,7 +59,7 @@ const setup = (extra: Partial<PublicAccessDeps> = {}) => {
       at: NOW,
       signature: reviewMessage({ videoId, decision, wallet, at: NOW }),
     })
-  return { call, submit, review }
+  return { call, submit, review, store: deps.store! }
 }
 
 test('reads the id out of the usual YouTube links, and nothing else', () => {
@@ -88,13 +88,80 @@ test('a tape waits for review, and only an admin can put it on air', async () =>
   assert.equal(list.pending.length, 0)
 })
 
-test('whoever sent it or an admin can remove it, and it stays refused', async () => {
+test('whoever sent it or an admin can remove it; only an admin removal keeps it refused', async () => {
   const { submit, review, call } = setup()
   await submit()
   assert.equal((await review('remove', OTHER)).status, 403)
   assert.equal((await review('remove', ME)).status, 200)
   assert.equal((await call('')).json.pending.length, 0)
+
+  // Anyone can send it again: no wallet can block a video by sending and removing it.
+  assert.equal((await submit(OTHER)).status, 200)
+  assert.equal((await call('')).json.pending[0].submitter, OTHER)
+  assert.equal((await review('remove')).status, 200)
+  const refused = await submit()
+  assert.equal(refused.status, 409)
+  assert.match(refused.json.error, /removed/)
+})
+
+test('an admin removing their own submission is still a block', async () => {
+  const { submit, review } = setup()
+  await submit(ADMIN)
+  assert.equal((await review('remove', ADMIN)).status, 200)
   assert.equal((await submit()).status, 409)
+})
+
+test('a tape taken back and sent again goes through review again, and keeps its place', async () => {
+  const { submit, review, call, store } = setup()
+  await store.insert({ videoId: 'abcdefghij0', title: 't', author: 'a', submitter: OTHER, submittedAt: NOW - 1 })
+  await store.insert({ videoId: ID, title: 't', author: 'a', submitter: ME, submittedAt: NOW - 2 })
+  await store.approve(ID, NOW - 1)
+  assert.equal((await call('')).json.tapes.length, 1)
+  await review('remove', ME)
+  assert.equal((await submit()).status, 200)
+  const list = (await call('')).json
+  assert.equal(list.tapes.length, 0, 'not back on air by itself')
+  assert.deepEqual(
+    list.pending.map((t: { videoId: string }) => t.videoId),
+    ['abcdefghij0', ID]
+  )
+})
+
+test('only an admin can restore, only a block, and it comes back where it was', async () => {
+  const { submit, review, call } = setup()
+  await submit()
+  await review('approve')
+  await review('remove')
+  assert.equal((await review('restore', ME)).status, 403)
+  assert.equal((await review('restore')).status, 200)
+  assert.equal((await call('')).json.tapes[0].videoId, ID)
+  assert.equal((await review('restore')).status, 404, 'nothing to restore')
+
+  const taken = setup()
+  await taken.submit()
+  await taken.review('remove', ME)
+  assert.equal((await taken.review('restore')).status, 404, 'taken back by its sender, so not put back on air')
+  assert.equal((await taken.submit()).status, 200)
+})
+
+test('new submissions push nothing off the air or out of the queue', async () => {
+  const { call, store } = setup()
+  const tape = (i: number) => ({
+    videoId: String(i).padStart(11, 'x'),
+    title: 't',
+    author: 'a',
+    submitter: ME,
+    submittedAt: NOW + i,
+  })
+  await store.insert(tape(0))
+  await store.approve(tape(0).videoId, NOW)
+  await store.insert(tape(1))
+  for (let i = 2; i < 150; i += 1) await store.insert(tape(i))
+  const list = (await call('')).json
+  assert.equal(list.tapes[0].videoId, tape(0).videoId, 'the old approved tape is still on air')
+  assert.equal(list.pending.length, 100)
+  assert.equal(list.pending[99].videoId, tape(1).videoId, 'the longest waiting is still in the queue')
+  assert.ok(list.pending[0].submittedAt > list.pending[99].submittedAt, 'newest first, as the page shows it')
 })
 
 test('refuses bad signatures, stale ones, duplicates and what YouTube will not embed', async () => {

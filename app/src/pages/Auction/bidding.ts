@@ -24,6 +24,13 @@ export function lotPhase({ status, startTime, endTime, settled }: LotRead, nowMs
   return startTime * 1000 > nowMs ? 'upcoming' : 'live'
 }
 
+/**
+ * What a read of the lot can say. A last good answer stands through a failed poll: it is still the best anyone knows,
+ * the screen shows its age, and the contract refuses a bid that has gone stale. Only no answer at all counts as failed.
+ */
+export const lotReadStatus = (hasAnswer: boolean, failed: boolean): LotRead['status'] =>
+  hasAnswer ? 'ready' : failed ? 'failed' : 'loading'
+
 /** Parses a user-typed ETH amount; undefined for '' or anything parseEther rejects (never throws). */
 export function parseBidAmount(bidAmount: string): bigint | undefined {
   if (!/^(\d+\.?\d*|\.\d+)$/.test(bidAmount)) return undefined

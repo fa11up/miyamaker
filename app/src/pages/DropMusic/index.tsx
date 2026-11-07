@@ -472,7 +472,11 @@ export default function DropMusicWindow() {
 
   const set = (k: keyof Form) => (e: { target: { value: string } }) => setForm((f) => ({ ...f, [k]: e.target.value }))
 
+  // Putting a track on the station runs from the Release tab, which holds its progress: it stays until that's done.
+  const [stationBusy, setStationBusy] = useState(false)
+  const [stationDone, setStationDone] = useState<{ key?: string; words: string }>()
   const go = (next: Section) => {
+    if (stationBusy) return
     const from = SECTIONS.findIndex((s) => s.id === section)
     const to = SECTIONS.findIndex((s) => s.id === next)
     setDir(to >= from ? 1 : -1)
@@ -501,8 +505,16 @@ export default function DropMusicWindow() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form.title, form.artist, form.description, form.genre, form.bpm, form.linkFormat])
 
+  // A different source means different files: what went up from the old one mustn't be released.
+  const changeMode = (next: 'upload' | 'links') => {
+    if (next === mode) return
+    drop.invalidate('audio')
+    drop.invalidate('cover')
+    setMode(next)
+  }
+
   const pickAudio = async (file: File | undefined) => {
-    if (!file) return
+    if (!file || drop.running || drop.committed || stationBusy) return
     drop.invalidate('audio')
     const check = validateAudioFile(file)
     const url = URL.createObjectURL(file)
@@ -521,7 +533,7 @@ export default function DropMusicWindow() {
   }
 
   const pickCover = (file: File | undefined) => {
-    if (!file) return
+    if (!file || drop.running || drop.committed || stationBusy) return
     drop.invalidate('cover')
     const check = validateImageFile(file)
     setCover({ file, check, url: URL.createObjectURL(file) })
@@ -530,6 +542,7 @@ export default function DropMusicWindow() {
 
   /** Files dropped on the stage: pictures dress the jewel case, anything else is treated as the track. */
   const dropOnStage = (file: File) => {
+    if (stationBusy) return
     if (/^image\//.test(file.type)) {
       setMode('upload')
       pickCover(file)
@@ -539,8 +552,19 @@ export default function DropMusicWindow() {
     }
   }
 
+  // Editing the link makes any read on its way about the old one.
+  const linkRead = useRef(0)
+  useEffect(() => {
+    linkRead.current += 1
+    setLinkError('')
+    setLinkDuration(undefined)
+  }, [form.audioUri])
+
   // Links mode: read the duration from the linked file (only allowed schemes, resolved via the gateway).
   const checkLink = async () => {
+    linkRead.current += 1
+    const ticket = linkRead.current
+    const isCurrent = () => ticket === linkRead.current
     setLinkError('')
     setLinkDuration(undefined)
     const uri = safeUri(form.audioUri)
@@ -554,19 +578,22 @@ export default function DropMusicWindow() {
     el.src = resolveUri(uri)
     await new Promise<void>((done) => {
       const t = setTimeout(() => {
-        setLinkError('Timed out reading the link.')
+        if (isCurrent()) setLinkError('Timed out reading the link.')
         done()
       }, 15_000)
       el.onloadedmetadata = () => {
         clearTimeout(t)
-        if (Number.isFinite(el.duration) && el.duration > 0) setLinkDuration(el.duration)
-        else setLinkError('Could not read the track length.')
+        if (isCurrent()) {
+          if (Number.isFinite(el.duration) && el.duration > 0) setLinkDuration(el.duration)
+          else setLinkError('Could not read the track length.')
+        }
+
         done()
       }
 
       el.onerror = () => {
         clearTimeout(t)
-        setLinkError('Could not load that audio link.')
+        if (isCurrent()) setLinkError('Could not load that audio link.')
         done()
       }
     })
@@ -756,7 +783,10 @@ export default function DropMusicWindow() {
 
   // On arriving at Release, and when the settings change there. Launch does the same at Review.
   useEffect(() => {
-    if (section === 'release' && music.ready && valid && !drop.launched.instance) dryRun()
+    if (!(section === 'release' && music.ready && valid && !drop.launched.instance)) return undefined
+    // Typing shouldn't send a request a key. A wait here is fine: pressing Release runs the check again regardless.
+    const t = setTimeout(dryRun, 400)
+    return () => clearTimeout(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [section, music.ready, valid, collectionName, form.alignment, drop.launched.instance])
 
@@ -781,7 +811,7 @@ export default function DropMusicWindow() {
       ))
   const guard = useCloseGuard({
     draft: hasDraft,
-    running: drop.running,
+    running: drop.running || stationBusy,
     close: () => dispatch(closeWindow({ value: pageId })),
   })
 
@@ -795,6 +825,7 @@ export default function DropMusicWindow() {
     return { label: drop.error ? 'Retry release' : 'Release music', disabled: !valid || blocked, onClick: submit }
   })()
 
+  const stationKey = mode === 'upload' ? audio?.url : form.audioUri
   const [layoutRef, { width }] = useElementSize()
   const narrow = width > 0 && width <= 600
   const wide = width >= 980
@@ -877,7 +908,7 @@ export default function DropMusicWindow() {
   const footer = (
     <Footer $still={reduced}>
       {prevSection ? (
-        <SmallButton type="button" onClick={() => go(prevSection.id)}>
+        <SmallButton type="button" disabled={stationBusy} onClick={() => go(prevSection.id)}>
           ← {prevSection.label}
         </SmallButton>
       ) : (
@@ -923,7 +954,7 @@ export default function DropMusicWindow() {
       >
         {guard.dialog}
         {boot !== 'done' && <StudioBoot onReveal={() => setBoot('reveal')} onDone={() => setBoot('done')} />}
-        <Wrap style={boot === 'done' ? undefined : { opacity: boot === 'reveal' ? 1 : 0, transition: 'opacity 0.3s linear' }}>
+        <Wrap style={boot === 'done' ? undefined : { opacity: boot === 'reveal' ? 1 : 0, visibility: boot === 'reveal' ? 'visible' : 'hidden', transition: 'opacity 0.3s linear' }}>
           <Head>
             <div>
               <ChromeTitle>Drop Music</ChromeTitle>
@@ -949,7 +980,8 @@ export default function DropMusicWindow() {
               status={status}
               statusLabel={statusLabel}
               marquee={marquee}
-              reduced={reduced}
+              // Nothing runs behind the boot, or it fights the boot for frames.
+              reduced={reduced || boot !== 'done'}
               coverUrl={coverUrl}
               title={form.title.trim()}
               artist={form.artist.trim()}
@@ -985,6 +1017,7 @@ export default function DropMusicWindow() {
                   aria-controls={`dm-panel-${s.id}`}
                   aria-selected={section === s.id}
                   tabIndex={section === s.id ? 0 : -1}
+                  disabled={stationBusy}
                   $led={led(s.id)}
                   onClick={() => go(s.id)}
                   onKeyDown={(e) => onTabKey(e, i)}
@@ -1011,6 +1044,7 @@ export default function DropMusicWindow() {
               id={`dm-panel-${section}`}
               aria-labelledby={`dm-tab-${section}`}
             >
+              <fieldset disabled={drop.committed && !done} style={{ display: 'contents' }}>
               {section === 'track' && (
                 <>
                   <div
@@ -1024,10 +1058,10 @@ export default function DropMusicWindow() {
                   >
                     <Eyebrow>Your track</Eyebrow>
                     <Toggle role="group" aria-label="Source of files">
-                      <SmallButton type="button" aria-pressed={mode === 'upload'} onClick={() => setMode('upload')}>
+                      <SmallButton type="button" aria-pressed={mode === 'upload'} onClick={() => changeMode('upload')}>
                         Upload files
                       </SmallButton>
-                      <SmallButton type="button" aria-pressed={mode === 'links'} onClick={() => setMode('links')}>
+                      <SmallButton type="button" aria-pressed={mode === 'links'} onClick={() => changeMode('links')}>
                         Use links
                       </SmallButton>
                     </Toggle>
@@ -1080,7 +1114,8 @@ export default function DropMusicWindow() {
                           value={form.audioUri}
                           placeholder="ar://… or ipfs://…/track.mp3"
                           onChange={(e) => {
-                            drop.invalidate('metadata')
+                            // The release must use this link, not whatever went up before it.
+                            drop.invalidate('audio')
                             setLinkDuration(undefined)
                             set('audioUri')(e)
                           }}
@@ -1145,7 +1180,14 @@ export default function DropMusicWindow() {
                   ) : (
                     <Field>
                       Cover link
-                      <input value={form.coverUri} placeholder="ar://… or ipfs://…" onChange={set('coverUri')} />
+                      <input
+                        value={form.coverUri}
+                        placeholder="ar://… or ipfs://…"
+                        onChange={(e) => {
+                          drop.invalidate('cover')
+                          set('coverUri')(e)
+                        }}
+                      />
                       <Err>{show(metaErrors.image)}</Err>
                     </Field>
                   )}
@@ -1444,7 +1486,7 @@ export default function DropMusicWindow() {
                   )}
 
                   <StationAdd
-                    key={mode === 'upload' ? audio?.url : form.audioUri}
+                    key={stationKey}
                     primary={!music.ready && !music.wrongChain}
                     title={form.title}
                     artist={form.artist}
@@ -1456,11 +1498,15 @@ export default function DropMusicWindow() {
                     store={drop.store}
                     stored={drop.uploaded}
                     storing={drop.note}
+                    doneWords={stationDone?.key === stationKey ? stationDone?.words : undefined}
+                    onDone={(words) => setStationDone({ key: stationKey, words })}
+                    onBusy={setStationBusy}
                   />
 
                   {footer}
                 </>
               )}
+              </fieldset>
             </StepPanel>
           </Session>
 

@@ -71,6 +71,9 @@ test('a receipt says what happened, and a failed look-up says nothing about the 
   assert.equal(receiptOutcome(HASH, { status: 'success' }, false), 'success')
   assert.equal(receiptOutcome(HASH, { status: 'reverted' }, false), 'reverted')
   assert.equal(receiptOutcome(HASH, undefined, true), 'unknown', 'never told "your tokens did not move"')
+  assert.equal(receiptOutcome(HASH, { status: 'success' }, false, 'cancelled'), 'cancelled')
+  assert.equal(receiptOutcome(HASH, { status: 'success' }, false, 'repriced'), 'success')
+  assert.equal(receiptOutcome(HASH, { status: 'success' }, false, 'replaced'), 'unknown')
 })
 
 test('step counts follow what really happened', () => {

@@ -1,12 +1,15 @@
 /**
  * The radio's community station: anyone adds a track they uploaded to Arweave and it plays for everyone at once. The
- * station's admins (STATION_ADMINS) or the uploader can take it off; a removed track stays refused.
+ * station's admins (STATION_ADMINS) or whoever added it can take it off. Taking your own off leaves it free to be added
+ * again, by anyone: otherwise any wallet could block any track for good by adding and removing it. A track the station
+ * removes stays refused until the station restores it.
  *
- *   GET  /api/station         { tracks, admins }
+ *   GET  /api/station         { tracks, admins, nextBefore? }   newest first; ?before=<nextBefore> gets the next page
  *   POST /api/station/add     { txId, title, artist, artworkId?, duration?, wallet, at, signature }
  *   POST /api/station/remove  { txId, wallet, at, signature }
+ *   POST /api/station/restore { txId, wallet, at, signature }   admins only
  *
- * A write is a wallet signature over the exact words in addMessage / removeMessage, fresh within 10 minutes. No sessions.
+ * A write is a wallet signature over the exact words in addMessage / removeMessage / restoreMessage, fresh within 10 minutes. No sessions.
  * The Arweave file is checked to really be audio before it is listed. The file itself is permanent; only the listing
  * can go. Storage, the signature check and the gateway check are passed in, so `node --test` can run all of it
  * (tests/station.test.mts); the page imports the message builders so both sides sign the same words.
@@ -17,8 +20,10 @@ const MAX_AGE_MS = 10 * 60_000
 const DAY_MS = 86_400_000
 export const MAX_PER_WALLET_PER_DAY = 10
 export const MAX_PER_DAY = 200
-export const LIST_LIMIT = 200
+/** One page. Five of the busiest possible days, so tracks only reach a second page once the station is very full. */
+export const LIST_LIMIT = 1000
 const TX_ID = /^[A-Za-z0-9_-]{43,44}$/
+const CURSOR = /^(\d+)_([A-Za-z0-9_-]{43,44})$/
 const WALLET = /^0x[0-9a-fA-F]{40}$/
 
 export type StationRow = {
@@ -30,15 +35,22 @@ export type StationRow = {
   uploader: string
   addedAt: number
   removedAt?: number
+  removedBy?: string
 }
 
+/** Where a page of the listing starts: the rows after this one, newest first. */
+export type StationCursor = { addedAt: number; txId: string }
+
 export interface StationStore {
-  list(limit: number): Promise<StationRow[]>
+  list(limit: number, before?: StationCursor): Promise<StationRow[]>
   /** Removed rows too. */
   get(txId: string): Promise<StationRow | undefined>
   /** False when the id already exists. */
   insert(row: StationRow): Promise<boolean>
+  /** Puts `row` over one removed at `removedAt`. False when the row has changed since. */
+  readd(row: StationRow, removedAt: number): Promise<boolean>
   remove(txId: string, by: string, at: number): Promise<void>
+  restore(txId: string): Promise<void>
   countSince(since: number, uploader?: string): Promise<number>
 }
 
@@ -77,6 +89,18 @@ export const removeMessage = (f: { txId: string; wallet: string; at: number }) =
     f.txId
   }\nWallet: ${f.wallet.toLowerCase()}\nTime: ${f.at}\n\nThis costs nothing and sends no transaction.`
 
+export const restoreMessage = (f: { txId: string; wallet: string; at: number }) =>
+  `Restore this track to the miya radio community station.\n\nTrack: ar://${
+    f.txId
+  }\nWallet: ${f.wallet.toLowerCase()}\nTime: ${f.at}\n\nThis costs nothing and sends no transaction.`
+
+/** Removed by the station rather than taken off by the wallet that added it. An unknown remover counts as the station. */
+const isBlocked = (r: StationRow, admins: string[]) => {
+  if (!r.removedAt) return false
+  const by = r.removedBy?.toLowerCase()
+  return by !== r.uploader.toLowerCase() || admins.includes(by)
+}
+
 const reply = (status: number, body: unknown) =>
   new Response(JSON.stringify(body), {
     status,
@@ -95,8 +119,14 @@ export async function handleStationRequest(
   const { store } = deps
 
   if (url.pathname === STATION_PATH && request.method === 'GET') {
-    const rows = await store.list(LIST_LIMIT)
-    return reply(200, { tracks: rows, admins })
+    const cursor = url.searchParams.get('before')
+    const at = cursor === null ? undefined : CURSOR.exec(cursor)
+    if (at === null) return fail(400, 'Bad request.')
+    const rows = await store.list(LIST_LIMIT + 1, at && { addedAt: Number(at[1]), txId: at[2]! })
+    const tracks = rows.slice(0, LIST_LIMIT)
+    const last = tracks[tracks.length - 1]
+    const nextBefore = rows.length > LIST_LIMIT && last ? `${last.addedAt}_${last.txId}` : undefined
+    return reply(200, { tracks, admins, nextBefore })
   }
 
   if (request.method !== 'POST') return fail(405, 'Not allowed.')
@@ -130,6 +160,16 @@ export async function handleStationRequest(
     return reply(200, { ok: true })
   }
 
+  if (url.pathname === `${STATION_PATH}/restore`) {
+    if (!(await deps.verify(wallet, restoreMessage({ txId, wallet, at }), signature)))
+      return fail(401, 'The signature does not match the wallet.')
+    if (!admins.includes(me)) return fail(403, 'Only the station can restore a track.')
+    const row = await store.get(txId)
+    if (!row || !isBlocked(row, admins)) return fail(404, 'That track has not been blocked.')
+    await store.restore(txId)
+    return reply(200, { ok: true })
+  }
+
   if (url.pathname !== `${STATION_PATH}/add`) return fail(404, 'Not found.')
 
   const title = cleanLine(body.title, 120)
@@ -144,8 +184,9 @@ export async function handleStationRequest(
     return fail(401, 'The signature does not match the wallet.')
 
   const existing = await store.get(txId)
-  if (existing?.removedAt) return fail(409, 'This track was removed from the station and cannot be added again.')
-  if (existing) return fail(409, 'This track is already on the station.')
+  if (existing && isBlocked(existing, admins))
+    return fail(409, 'This track was removed from the station and cannot be added again.')
+  if (existing && !existing.removedAt) return fail(409, 'This track is already on the station.')
   if ((await store.countSince(now - DAY_MS, me)) >= MAX_PER_WALLET_PER_DAY)
     return fail(429, `A wallet can add ${MAX_PER_WALLET_PER_DAY} tracks a day. Come back tomorrow.`)
   if ((await store.countSince(now - DAY_MS)) >= MAX_PER_DAY)
@@ -164,9 +205,11 @@ export async function handleStationRequest(
     artworkId,
     duration: Number.isFinite(duration) && duration > 0 && duration < 86_400 ? duration : undefined,
     uploader: me,
-    addedAt: now,
+    // Adding your own back keeps its place, so taking off and re-adding is no way to the top of the list.
+    addedAt: existing?.uploader === me ? existing.addedAt : now,
   }
-  if (!(await store.insert(row))) return fail(409, 'This track is already on the station.')
+  const saved = existing?.removedAt ? await store.readd(row, existing.removedAt) : await store.insert(row)
+  if (!saved) return fail(409, 'This track is already on the station.')
   return reply(200, { track: row })
 }
 
@@ -189,16 +232,23 @@ const fromDb = (r: Record<string, unknown>): StationRow => ({
   uploader: String(r.uploader),
   addedAt: Number(r.added_at),
   removedAt: r.removed_at ? Number(r.removed_at) : undefined,
+  removedBy: r.removed_by ? String(r.removed_by) : undefined,
 })
 
 /** The Worker's store: Cloudflare D1, the `DB` binding (migrations/). */
 export const d1Store = (db: D1Like): StationStore => ({
-  list: async (limit) =>
+  list: async (limit, before) =>
     (
-      await db
-        .prepare('SELECT * FROM station_tracks WHERE removed_at IS NULL ORDER BY added_at DESC LIMIT ?')
-        .bind(limit)
-        .all()
+      await (before
+        ? db
+            .prepare(
+              'SELECT * FROM station_tracks WHERE removed_at IS NULL AND (added_at < ? OR (added_at = ? AND tx_id < ?)) ORDER BY added_at DESC, tx_id DESC LIMIT ?'
+            )
+            .bind(before.addedAt, before.addedAt, before.txId, limit)
+        : db
+            .prepare('SELECT * FROM station_tracks WHERE removed_at IS NULL ORDER BY added_at DESC, tx_id DESC LIMIT ?')
+            .bind(limit)
+      ).all()
     ).results.map(fromDb),
   get: async (txId) => {
     const r = await db.prepare('SELECT * FROM station_tracks WHERE tx_id = ?').bind(txId).first()
@@ -213,10 +263,25 @@ export const d1Store = (db: D1Like): StationStore => ({
         .bind(t.txId, t.title, t.artist, t.artworkId ?? null, t.duration ?? null, t.uploader, t.addedAt)
         .run()
     ).meta.changes > 0,
+  readd: async (t, removedAt) =>
+    (
+      await db
+        .prepare(
+          'UPDATE station_tracks SET title = ?, artist = ?, artwork_id = ?, duration = ?, uploader = ?, added_at = ?, removed_at = NULL, removed_by = NULL WHERE tx_id = ? AND removed_at = ?'
+        )
+        .bind(t.title, t.artist, t.artworkId ?? null, t.duration ?? null, t.uploader, t.addedAt, t.txId, removedAt)
+        .run()
+    ).meta.changes > 0,
   remove: async (txId, by, at) => {
     await db
       .prepare('UPDATE station_tracks SET removed_at = ?, removed_by = ? WHERE tx_id = ?')
       .bind(at, by, txId)
+      .run()
+  },
+  restore: async (txId) => {
+    await db
+      .prepare('UPDATE station_tracks SET removed_at = NULL, removed_by = NULL WHERE tx_id = ?')
+      .bind(txId)
       .run()
   },
   countSince: async (since, uploader) => {
@@ -234,10 +299,13 @@ export const d1Store = (db: D1Like): StationStore => ({
 export function memoryStore(): StationStore {
   const rows = new Map<string, StationRow>()
   return {
-    list: async (limit) =>
+    list: async (limit, before) =>
       [...rows.values()]
         .filter((r) => !r.removedAt)
-        .sort((a, b) => b.addedAt - a.addedAt)
+        .sort((a, b) => b.addedAt - a.addedAt || (a.txId < b.txId ? 1 : -1))
+        .filter(
+          (r) => !before || r.addedAt < before.addedAt || (r.addedAt === before.addedAt && r.txId < before.txId)
+        )
         .slice(0, limit),
     get: async (txId) => rows.get(txId),
     insert: async (row) => {
@@ -245,9 +313,18 @@ export function memoryStore(): StationStore {
       rows.set(row.txId, row)
       return true
     },
-    remove: async (txId, _by, at) => {
+    readd: async (row, removedAt) => {
+      if (rows.get(row.txId)?.removedAt !== removedAt) return false
+      rows.set(row.txId, row)
+      return true
+    },
+    remove: async (txId, by, at) => {
       const r = rows.get(txId)
-      if (r) rows.set(txId, { ...r, removedAt: at })
+      if (r) rows.set(txId, { ...r, removedAt: at, removedBy: by })
+    },
+    restore: async (txId) => {
+      const r = rows.get(txId)
+      if (r) rows.set(txId, { ...r, removedAt: undefined, removedBy: undefined })
     },
     countSince: async (since, uploader) =>
       [...rows.values()].filter((r) => r.addedAt >= since && (!uploader || r.uploader === uploader)).length,

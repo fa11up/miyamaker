@@ -72,19 +72,33 @@ const when = (at?: number) => (at ? new Date(at).toLocaleDateString() : '')
 function PlayButton({ src, name }: { src: string; name: string }) {
   const audio = useRef<HTMLAudioElement>()
   const [playing, setPlaying] = useState(false)
+  const [failed, setFailed] = useState(false)
   useEffect(() => () => audio.current?.pause(), [])
   const toggle = () => {
     if (!audio.current) {
       audio.current = new Audio(src)
       audio.current.onended = () => setPlaying(false)
+      audio.current.onerror = () => {
+        // Dropped, so the next press fetches it again.
+        audio.current = undefined
+        setPlaying(false)
+        setFailed(true)
+      }
     }
+    setFailed(false)
     if (playing) audio.current.pause()
     else audio.current.play().catch(() => setPlaying(false))
     setPlaying(!playing)
   }
+  const verb = failed ? 'Could not play, try again:' : playing ? 'Pause' : 'Play'
   return (
-    <SmallButton type="button" aria-label={`${playing ? 'Pause' : 'Play'} ${name}`} onClick={toggle}>
-      {playing ? '❚❚' : '▶'}
+    <SmallButton
+      type="button"
+      aria-label={`${verb} ${name}`}
+      title={failed ? 'Could not play this file' : undefined}
+      onClick={toggle}
+    >
+      {failed ? '!' : playing ? '❚❚' : '▶'}
     </SmallButton>
   )
 }

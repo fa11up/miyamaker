@@ -3,13 +3,15 @@
  * then the most-watched suitable English streams, up to three, biggest first. Answered through GET /api/tv/live.
  *
  * Kick's official API needs app credentials, so these are the public endpoints its own site uses. They can change or
- * refuse without notice: a failed check keeps the last answer, and with no answer at all the page says it could not check
- * rather than guess at who is on.
+ * refuse without notice: a check that gets no real answer keeps the last good list for a while (KICK_STALE_LIMIT_MS, from
+ * when that list was really checked) and says it could not check, so the page never mistakes that for nobody being on.
  */
 import type { MarketCache } from './market'
 
-const CACHE_KEY = 'tv-kick:v1'
+const CACHE_KEY = 'tv-kick:v2'
 export const KICK_RECHECK_MS = 3 * 60_000
+/** How long a list may stand without Kick confirming it. Dead streams must not be offered for longer. */
+export const KICK_STALE_LIMIT_MS = 15 * 60_000
 export const KICK_STREAMS = 3
 const TOP_URL = 'https://kick.com/stream/livestreams/en?page=1&limit=48&subcategory=&sort=desc'
 const SLUG = /^[A-Za-z0-9_-]{1,64}$/
@@ -18,6 +20,9 @@ const UNSUITABLE = /slots|casino|gambl|betting|crypto|trading/i
 
 export type KickStream = { slug: string; label: string; viewers: number }
 export type KickReader = (url: string) => Promise<unknown>
+/** `checked` false: Kick gave no full answer, so `streams` is a best guess and an empty list does not mean nobody is on. */
+export type KickAnswer = { streams: KickStream[]; checked: boolean }
+type Saved = KickAnswer & { goodAt: number }
 
 export const kickReader: KickReader = async (url) => {
   const res = await fetch(url, {
@@ -60,34 +65,69 @@ export function chooseStreams(listedLive: KickStream[], top: KickStream[]): Kick
   return [...listedLive.slice(0, KICK_STREAMS), ...rest].slice(0, KICK_STREAMS).sort((a, b) => b.viewers - a.viewers)
 }
 
-async function lookUp(read: KickReader): Promise<KickStream[]> {
+type Lookup = {
+  listedLive: KickStream[]
+  /** Listed creators Kick really said are off. */
+  listedOff: string[]
+  /** Kick's most-watched list; undefined when it failed or came back with no rows, which a site this size never has. */
+  top?: KickStream[]
+}
+
+const NO_ANSWER: Lookup = { listedLive: [], listedOff: [] }
+
+async function lookUp(read: KickReader): Promise<Lookup> {
   const [top, ...listed] = await Promise.allSettled([
     read(TOP_URL),
     ...LISTED_KICK.map((slug) => read(`https://kick.com/api/v2/channels/${slug}`)),
   ])
-  const listedLive = listed.flatMap((r, i) => {
+  const found: Lookup = { listedLive: [], listedOff: [] }
+  listed.forEach((r, i) => {
     const c: any = r.status === 'fulfilled' ? r.value : undefined
-    if (!c?.livestream?.is_live) return []
-    const stream = asStream(LISTED_KICK[i], c?.user?.username, c.livestream.viewer_count)
-    return stream ? [stream] : []
+    if (!c || typeof c !== 'object' || !('livestream' in c)) return
+    const stream = c.livestream?.is_live ? asStream(LISTED_KICK[i], c.user?.username, c.livestream.viewer_count) : undefined
+    if (stream) found.listedLive.push(stream)
+    else found.listedOff.push(LISTED_KICK[i]!)
   })
-  return chooseStreams(listedLive, top!.status === 'fulfilled' ? suitableStreams(top!.value) : [])
+  const answer: any = top!.status === 'fulfilled' ? top!.value : undefined
+  if (Array.isArray(answer?.data) && answer.data.length) found.top = suitableStreams(answer)
+  return found
 }
 
-/** The streams to offer: cached for everyone, and the last good answer stands when Kick has nothing to say. */
-export async function kickOnAir(deps: { read?: KickReader; cache: MarketCache; now: number }): Promise<KickStream[]> {
-  if (!deps.read) return []
-  const cached = (await deps.cache.get(CACHE_KEY)) as { at: number; body: KickStream[] } | undefined
-  if (cached && deps.now - cached.at < KICK_RECHECK_MS) return cached.body
-  const known = cached?.body ?? []
-  let streams = known
-  try {
-    const found = await lookUp(deps.read)
-    if (found.length) streams = found
-    else console.warn('tv kick: no streams found')
-  } catch (e) {
-    console.warn(`tv kick: ${(e as Error).message}`)
+/** What a check amounts to. Only a full answer counts as checked and resets the age of the list. */
+function settle(found: Lookup, last: Saved | undefined, now: number): Saved {
+  const { listedLive, listedOff, top } = found
+  const streams = top ? chooseStreams(listedLive, top) : []
+  // Nobody suitable only means nobody on when every listed creator answered as well.
+  if (top && (streams.length || listedLive.length + listedOff.length === LISTED_KICK.length))
+    return { streams, checked: true, goodAt: now }
+
+  // Part of an answer tops up the last good list, while that is young enough, rather than replacing it.
+  const young = last && now - last.goodAt < KICK_STALE_LIMIT_MS ? last.streams : []
+  const off = new Set(listedOff)
+  return {
+    streams: chooseStreams(
+      listedLive,
+      young.filter((s) => !off.has(s.slug.toLowerCase()))
+    ),
+    checked: false,
+    goodAt: last?.goodAt ?? 0,
   }
-  await deps.cache.put(CACHE_KEY, { at: deps.now, body: streams })
-  return streams
+}
+
+/** The streams to offer: cached for everyone, and whether Kick really answered for them. */
+export async function kickOnAir(deps: { read?: KickReader; cache: MarketCache; now: number }): Promise<KickAnswer> {
+  if (!deps.read) return { streams: [], checked: false }
+  const cached = (await deps.cache.get(CACHE_KEY).catch(() => null)) as { at: number; body: Saved } | undefined | null
+  // With no cache every viewer's request would become four calls to Kick, so say we could not check instead.
+  if (cached === null) return { streams: [], checked: false }
+  if (cached && deps.now - cached.at < KICK_RECHECK_MS)
+    return { streams: cached.body.streams, checked: cached.body.checked }
+  const found = await lookUp(deps.read).catch((e: Error) => {
+    console.warn(`tv kick: ${e.message}`)
+    return NO_ANSWER
+  })
+  const saved = settle(found, cached?.body, deps.now)
+  if (!saved.checked) console.warn('tv kick: no full answer')
+  await deps.cache.put(CACHE_KEY, { at: deps.now, body: saved }, KICK_STALE_LIMIT_MS / 1000).catch(() => undefined)
+  return { streams: saved.streams, checked: saved.checked }
 }
