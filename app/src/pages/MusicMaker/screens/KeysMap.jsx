@@ -76,6 +76,8 @@ export function KeysMap({ onClose }) {
         <p>Plays the selected pad as notes. Z is C of octave {oct}. Q and comma are the next C. I is the C above that. A and Caps Lock stop the note.</p>
         <Board mode="keys" />
         <p>Green keys are notes. Pink keys are note off. Numpad / and *, or Ctrl+[ and Ctrl+], shift the octave.</p>
+        <h3>Controllers</h3>
+        <p>Click MIDI and allow the browser. A Launchpad plays all 64 instruments in Pad mode. In Keys mode that same grid is chromatic, with C3 on the bottom-left pad. MPC and MPD pads start at note 36 and cover all 64. An MPK plays instruments from its pads, and its keys play the selected pad. Keys mode turns every incoming note into the selected pad. The typing keyboard keeps working when a browser has no MIDI.</p>
       </div>
     </Dialog>
   )

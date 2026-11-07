@@ -1,3 +1,4 @@
+import { formatLp, formatSl } from './audio/grain.js'
 import { PAD_KEYS } from './keys.js'
 import { FACTORY, KIT_LAYOUT } from './audio/presets.js'
 import { defaultNumpadFx, normalizeNumpadFx } from './audio/numpadFx.js'
@@ -10,6 +11,13 @@ export const FX_TYPES = ['none', 'filter', 'drive', 'delay', 'reverb', 'chorus',
 export const LANES = 16
 export const TRACK_FIELDS = 4
 export const TRACK_VEL = 128 / 255
+
+/** NOTE INST VEL MOVE, plus SL and LP when the grain columns are open. */
+export function trackerFields() {
+  return TRACK_FIELDS + (model.tracker.grains ? 2 : 0)
+}
+
+export { formatLp, formatSl }
 
 const SAVE_KEY = 'miya-music-maker-v1'
 
@@ -47,7 +55,7 @@ export const model = {
   browser: false,
   help: false,
   about: false,
-  tracker: { row: 0, col: 0, focus: false, hex: '', sign: 1, edit: false, step: 1, follow: true },
+  tracker: { row: 0, col: 0, focus: false, hex: '', sign: 1, edit: false, step: 1, follow: true, grains: false },
   library: null,
   wallet: '',
   fileWindow: '',
@@ -193,6 +201,13 @@ function normalizeEvent(ev) {
     nudge: Math.max(-50, Math.min(50, Math.round(ev.nudge || 0))),
   }
   if (ev.off) out.off = true
+  else {
+    if (Number.isFinite(ev.sl)) out.sl = Math.max(0, Math.min(65535, ev.sl | 0))
+    if (Number.isFinite(ev.len) && Number.isFinite(ev.move)) {
+      out.len = Math.max(0, Math.min(65535, ev.len | 0))
+      out.move = Math.max(-32768, Math.min(32767, ev.move | 0))
+    }
+  }
   return out
 }
 
@@ -495,7 +510,7 @@ function editStep() {
 }
 
 function armedLane() {
-  return Math.max(0, Math.min(LANES - 1, Math.floor((model.tracker.col || 0) / TRACK_FIELDS)))
+  return Math.max(0, Math.min(LANES - 1, Math.floor((model.tracker.col || 0) / trackerFields())))
 }
 
 /** One undo step for a chord or a short run of tracker edits. */
@@ -562,6 +577,14 @@ export function commitTrackerNote({ pad = 0, vel = TRACK_VEL, pitch = 0, off = f
       pitch: pitch || 0,
       nudge: Math.max(-50, Math.min(50, Math.round(nudge || 0))),
     }
+  const prev = currentPattern().steps[writeRow]?.[lane]
+  if (!off && prev && !prev.off) {
+    if (prev.sl != null) ev.sl = prev.sl
+    if (prev.len != null && prev.move != null) {
+      ev.len = prev.len
+      ev.move = prev.move
+    }
+  }
   batch(() => {
     if (live) model.tracker.row = writeRow
     else if (advance) stepCursor(writeRow)
@@ -578,10 +601,43 @@ export function patchTrackerEvent(row, lane, patch) {
     if (!ev) return
     if (patch.vel != null) ev.vel = Math.max(0, Math.min(1, patch.vel))
     if (patch.nudge != null) ev.nudge = Math.max(-50, Math.min(50, Math.round(patch.nudge)))
+    if (patch.sl != null) ev.sl = Math.max(0, Math.min(65535, patch.sl | 0))
+    if (patch.len != null && patch.move != null) {
+      ev.len = Math.max(0, Math.min(65535, patch.len | 0))
+      ev.move = Math.max(-32768, Math.min(32767, patch.move | 0))
+    }
     model.tracker.hex = ''
     stepCursor(row)
     touch(true)
   })
+}
+
+/** Blank one grain column. The note stays, and hiding the column does not drop it. */
+export function clearTrackerGrain(row, lane, field) {
+  batch(() => {
+    const ev = currentPattern().steps[row]?.[lane]
+    if (!ev) return
+    if (field === 4) delete ev.sl
+    else {
+      delete ev.move
+      delete ev.len
+    }
+    model.tracker.hex = ''
+    touch(true)
+  })
+}
+
+/** Show or hide SL and LP. The cursor stays on the same lane. Values stay on the events. */
+export function setGrainCols(on) {
+  const was = trackerFields()
+  const col = model.tracker.col | 0
+  const lane = Math.floor(col / was)
+  const field = col % was
+  model.tracker.grains = !!on
+  const next = trackerFields()
+  model.tracker.col = lane * next + Math.min(field, next - 1)
+  model.tracker.hex = ''
+  touch(true)
 }
 
 export function clearTrackerLane(row, lane) {
@@ -740,6 +796,7 @@ export function save() {
     pattern: model.pattern,
     recNatural: !!model.recNatural,
     editStep: editStep(),
+    grainCols: !!model.tracker.grains,
     settings: model.settings,
     octave: model.octave,
     keyMap: model.keyMap === 'renoise' ? 'renoise' : 'koala',
@@ -927,6 +984,7 @@ export function boot() {
       migrateSequences(data.sequences, data.seqBank, data.seqSlot)
     }
     if (Number.isFinite(data.editStep)) model.tracker.step = Math.max(0, Math.min(16, data.editStep | 0))
+    model.tracker.grains = !!data.grainCols
     if (model.screen === 'track') {
       model.tracker.focus = true
       model.tracker.edit = true

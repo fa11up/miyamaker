@@ -827,6 +827,13 @@ h1, h2, h3, h4, p { margin: 0; }
 .mode-toggle .btn { min-width: 72px; }
 .mode-toggle .keys-map-btn { min-width: 26px; width: 26px; padding: 0; }
 
+.midi-btn {
+  max-width: 16em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .screen-tabs, .bank-row, .transport-group {
   display: flex;
   gap: 3px;
@@ -1606,6 +1613,8 @@ input[type='range']::-webkit-slider-thumb {
   vertical-align: bottom;
 }
 .tracker td.vel, .tracker td.move { min-width: 2.4em; }
+.tracker td.sl, .tracker th.sl { min-width: 3.6em; }
+.tracker td.lp, .tracker th.lp { min-width: 6.6em; }
 .tracker td.st,
 .tracker tr.beat td.st,
 .tracker tr.bar td.st,

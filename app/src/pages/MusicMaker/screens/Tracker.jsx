@@ -1,27 +1,46 @@
-import { Fragment, useEffect } from 'react'
+import { Fragment, useEffect, useState } from 'react'
+import { signed16 } from '../audio/grain.js'
 import { noteName } from '../keys.js'
 import {
   LANES,
-  TRACK_FIELDS,
   TRACK_VEL,
+  clearTrackerGrain,
   clearTrackerLane,
   commitTrackerNote,
   currentPattern,
+  formatLp,
   formatNudge,
+  formatSl,
   hexByte,
   model,
   patchTrackerEvent,
+  setGrainCols,
   stepCount,
   touch,
+  trackerFields,
 } from '../model.js'
 import { useModel } from '../useModel.js'
 import { PatternBar } from './PatternBar.jsx'
 
+const HEADS = ['NOTE', 'INST', 'VEL', 'MOVE', 'SL', 'LP']
+
 export function Tracker() {
   useModel()
+  const [menu, setMenu] = useState(null)
   const seq = currentPattern()
   const rows = stepCount(seq)
   const t = model.tracker
+  const fields = trackerFields()
+  useEffect(() => {
+    if (!menu) return undefined
+    const down = (event) => {
+      const path = event.composedPath?.() || []
+      if (path.some((node) => node.classList?.contains?.('ctx-menu'))) return
+      setMenu(null)
+    }
+    window.addEventListener('pointerdown', down)
+    return () => window.removeEventListener('pointerdown', down)
+  }, [menu])
   useEffect(() => {
     if (!model.playing || !t.follow) return
     if (t.row === model.playhead) return
@@ -33,7 +52,7 @@ export function Tracker() {
     if (!t.focus) return
     document.querySelector('.tracker td.cursor')?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
   }, [t.focus, t.row, t.col, model.pattern])
-  const focusLane = Math.floor((t.col || 0) / TRACK_FIELDS)
+  const focusLane = Math.floor((t.col || 0) / fields)
   const focusEv = seq.steps[t.row]?.[focusLane]
   return (
     <div className="screen tracker-screen">
@@ -69,7 +88,7 @@ export function Tracker() {
         <p className="track-status">
           {t.edit ? 'REC' : 'PLAY'} · Track {trackNo(focusLane)} · {laneInstrument(seq, focusLane)} · step {hexByte(t.row)}
           {focusEv
-            ? ` · ${focusEv.off ? 'OFF' : noteName(focusEv.pitch)} · ${model.pads[focusEv.pad]?.name || 'Empty'} · vel ${hexByte(Math.round((focusEv.vel ?? 0) * 255))} · move ${formatNudge(focusEv.nudge)}`
+            ? ` · ${focusEv.off ? 'OFF' : noteName(focusEv.pitch)} · ${model.pads[focusEv.pad]?.name || 'Empty'} · vel ${hexByte(Math.round((focusEv.vel ?? 0) * 255))} · move ${formatNudge(focusEv.nudge)}${grainStatus(focusEv)}`
             : ' · empty'}
         </p>
       </div>
@@ -81,11 +100,11 @@ export function Tracker() {
         }}
       >
         <table>
-          <thead>
+          <thead onContextMenu={openCols}>
             <tr>
               <th className="st" rowSpan={2}>STEP</th>
               {Array.from({ length: LANES }, (_, lane) => (
-                <th key={lane} colSpan={TRACK_FIELDS} className="track">
+                <th key={lane} colSpan={fields} className="track">
                   <span className="track-title">
                     <b>{trackNo(lane)}</b>
                     <span>{laneInstrument(seq, lane)}</span>
@@ -96,10 +115,15 @@ export function Tracker() {
             <tr>
               {Array.from({ length: LANES }, (_, lane) => (
                 <Fragment key={lane}>
-                  <th className="sub edge">NOTE</th>
-                  <th className="sub">INST</th>
-                  <th className="sub">VEL</th>
-                  <th className="sub">MOVE</th>
+                  {HEADS.slice(0, fields).map((label, field) => (
+                    <th
+                      key={label}
+                      className={`sub${field === 0 ? ' edge' : ''}${field === 4 ? ' sl' : ''}${field === 5 ? ' lp' : ''}`}
+                      title={field === 4 ? 'Play offset. 0000 is the start, 8000 the middle, FFFF the last step.' : field === 5 ? 'Move then length. 00000100 holds a grain. 01000100 walks forward. FFFF0100 crawls backward.' : undefined}
+                    >
+                      {label}
+                    </th>
+                  ))}
                 </Fragment>
               ))}
             </tr>
@@ -111,13 +135,13 @@ export function Tracker() {
               return (
                 <tr key={row} className={rowClass(row, play)}>
                   <td className="st">{hexByte(row)}</td>
-                  {Array.from({ length: LANES * TRACK_FIELDS }, (_, col) => {
-                    const lane = Math.floor(col / TRACK_FIELDS)
-                    const field = col % TRACK_FIELDS
+                  {Array.from({ length: LANES * fields }, (_, col) => {
+                    const lane = Math.floor(col / fields)
+                    const field = col % fields
                     const ev = events[lane]
                     const active = t.focus && t.row === row && t.col === col
                     const cls = [
-                      field === 0 ? 'note edge' : field === 1 ? 'inst' : field === 2 ? 'vel' : 'move',
+                      field === 0 ? 'note edge' : field === 1 ? 'inst' : field === 2 ? 'vel' : field === 3 ? 'move' : field === 4 ? 'sl' : 'lp',
                       active ? 'cursor' : '',
                       active && t.edit ? 'armed' : '',
                     ].filter(Boolean).join(' ')
@@ -144,8 +168,28 @@ export function Tracker() {
           </tbody>
         </table>
       </div>
+      {menu && (
+        <div className="ctx-menu" style={{ left: menu.x, top: menu.y, minWidth: 220 }} role="menu">
+          <button
+            type="button"
+            onClick={() => {
+              setMenu(null)
+              setGrainCols(!model.tracker.grains)
+            }}
+          >
+            Show/hide SL/LP columns
+          </button>
+        </div>
+      )}
     </div>
   )
+
+  function openCols(event) {
+    event.preventDefault()
+    const frame = event.currentTarget.closest('.mmm')
+    const rect = frame ? frame.getBoundingClientRect() : { left: 0, top: 0 }
+    setMenu({ x: event.clientX - rect.left, y: event.clientY - rect.top })
+  }
 }
 
 function trackNo(lane) {
@@ -168,16 +212,32 @@ function laneInstrument(seq, lane) {
   return '—'
 }
 
+function grainStatus(ev) {
+  if (!ev || ev.off || (ev.sl == null && ev.len == null)) return ''
+  return ` · SL ${formatSl(ev.sl)} · LP ${formatLp(ev.move, ev.len)}`
+}
+
+function blankCell(field) {
+  if (field === 0) return '---'
+  if (field === 4) return '----'
+  if (field === 5) return '--------'
+  return '--'
+}
+
 function cellText(ev, field, active, t) {
+  const width = field === 4 ? 4 : field === 5 ? 8 : 2
   if (active && t.hex && field !== 0) {
     if (field === 3) return `${(t.sign || 1) < 0 ? '-' : '+'}${t.hex}`
+    if (field >= 4) return (t.hex.toUpperCase() + '-'.repeat(width)).slice(0, width)
     return t.hex.toUpperCase()
   }
-  if (!ev) return field === 0 ? '---' : '--'
+  if (!ev) return blankCell(field)
   if (field === 0) return ev.off ? 'OFF' : noteName(ev.pitch)
   if (field === 1) return hexByte(ev.pad)
   if (field === 2) return hexByte(Math.round((ev.vel ?? 0) * 255))
-  return formatNudge(ev.nudge)
+  if (field === 3) return formatNudge(ev.nudge)
+  if (field === 4) return formatSl(ev.sl)
+  return formatLp(ev.move, ev.len)
 }
 
 export function handleTrackerKey(e) {
@@ -185,7 +245,8 @@ export function handleTrackerKey(e) {
   if (t.col == null) t.col = 0
   const seq = currentPattern()
   const rows = stepCount(seq)
-  const cols = LANES * TRACK_FIELDS
+  const fields = trackerFields()
+  const cols = LANES * fields
   const key = e.key
   if (key === 'Escape') {
     t.edit = !t.edit
@@ -195,9 +256,9 @@ export function handleTrackerKey(e) {
     return true
   }
   if (key === 'Tab') {
-    const lane = Math.floor(t.col / TRACK_FIELDS)
+    const lane = Math.floor(t.col / fields)
     const next = (lane + (e.shiftKey ? -1 : 1) + LANES) % LANES
-    t.col = next * TRACK_FIELDS
+    t.col = next * fields
     t.hex = ''
     touch(false)
     return true
@@ -226,13 +287,32 @@ export function handleTrackerKey(e) {
     touch(false)
     return true
   }
-  const lane = Math.floor(t.col / TRACK_FIELDS)
-  const field = t.col % TRACK_FIELDS
+  const lane = Math.floor(t.col / fields)
+  const field = t.col % fields
   const cell = seq.steps[t.row]
   if (!cell) return false
   if (key === 'Delete' || key === 'Backspace') {
-    clearTrackerLane(t.row, lane)
+    if (field === 4 || field === 5) clearTrackerGrain(t.row, lane, field)
+    else clearTrackerLane(t.row, lane)
     return true
+  }
+  if (field === 4 || field === 5) {
+    const width = field === 4 ? 4 : 8
+    if (/^[0-9a-fA-F]$/.test(key)) {
+      t.hex = (t.hex + key).slice(-width)
+      if (t.hex.length >= width && cell[lane] && !cell[lane].off) {
+        if (field === 4) patchTrackerEvent(t.row, lane, { sl: parseInt(t.hex, 16) })
+        else {
+          patchTrackerEvent(t.row, lane, {
+            move: signed16(parseInt(t.hex.slice(0, 4), 16)),
+            len: parseInt(t.hex.slice(4), 16),
+          })
+        }
+      } else touch(false)
+      return true
+    }
+    if (key.length === 1) return true
+    return false
   }
   if (field === 0) {
     if (key === ' ') return false

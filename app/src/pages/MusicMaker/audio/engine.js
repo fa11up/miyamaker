@@ -1,3 +1,5 @@
+import { sampleWindow, stitchGrains } from './grain.js'
+import { midiAction, midiLayout } from './midi.js'
 import { limitStereo } from './limiter.js'
 import { encodeWav, trimSilence } from './wav.js'
 import { evenPoints, evenSlices } from './slice.js'
@@ -8,7 +10,7 @@ import { allowedMediaUrl } from '../media/allow.js'
 import { VIDEO_AUDIO_PATH, videoPage } from '../media/videoaudio.js'
 import { beginUndo, endUndo, stashUndo } from '../history.js'
 import { importKitFile, importSongFile } from './song.js'
-import { BUS_COUNT, TRACK_VEL, audioBank, model, currentSequence, stepCount, writeEvent, commitTrackerNote, setUndoBatch, touch, rememberSample, fitLoop, idbSet } from '../model.js'
+import { BUS_COUNT, TRACK_VEL, audioBank, model, currentSequence, stepCount, writeEvent, commitTrackerNote, setUndoBatch, touch, rememberSample, fitLoop, idbSet, selectPad } from '../model.js'
 
 setUndoBatch({ begin: beginUndo, end: endUndo })
 
@@ -705,7 +707,10 @@ function silence(v, when, seconds = 0.012) {
       g.value = 0
     } catch { /* ended */ }
   }
-  try { v.src.stop(end + 0.02) } catch { /* one-shots already scheduled their stop; the gate is what goes quiet */ }
+  const sources = v.srcs?.length ? v.srcs.map((item) => item.node) : (v.src ? [v.src] : [])
+  for (const src of sources) {
+    try { src.stop(end + 0.02) } catch { /* one-shots already scheduled their stop; the gate is what goes quiet */ }
+  }
   stopExtras(v, end)
 }
 
@@ -768,10 +773,20 @@ export function playPad(index, velocity = TRACK_VEL, when = 0, opts = {}) {
   if (!entry || !entry.pcm) return
   const t = when || ctx.currentTime
   if (groupId(pad.choke)) choke(pad.choke, t)
-  const src = ctx.createBufferSource()
-  src.buffer = makeBuffer(ctx, entry, pad.reverse)
+  const buffer = makeBuffer(ctx, entry, pad.reverse)
   const semi = (pad.pitch || 0) + (opts.pitch || 0) + (pad.fine || 0) / 100
-  src.playbackRate.value = Math.pow(2, semi / 12)
+  const rate = Math.pow(2, semi / 12)
+  const spec = sampleWindow(buffer.length, pad, opts)
+  const grainLoop = !!spec?.loop
+  const input = ctx.createGain()
+  input.gain.value = 1
+  let src = null
+  if (!grainLoop) {
+    src = ctx.createBufferSource()
+    src.buffer = buffer
+    src.playbackRate.value = rate
+    src.connect(input)
+  }
 
   const filter = ctx.createBiquadFilter()
   filter.type = pad.filter.type || 'lowpass'
@@ -786,19 +801,25 @@ export function playPad(index, velocity = TRACK_VEL, when = 0, opts = {}) {
   const endF = clamp(pad.trimEnd, startF + 0.01, 1)
   let loopF = typeof pad.loopPoint === 'number' ? pad.loopPoint : (startF + endF) / 2
   loopF = clamp(loopF, startF, endF - 0.004)
-  const offset = startF * src.buffer.duration
-  const end = endF * src.buffer.duration
-  let loopAt = loopF * src.buffer.duration
+  const sr = buffer.sampleRate
+  let offset = startF * buffer.duration
+  let end = endF * buffer.duration
+  if (spec && !grainLoop) {
+    offset = spec.start / sr
+    end = Math.min(buffer.duration, (spec.start + spec.lenSamples) / sr)
+    if (end - offset < 1 / sr) end = Math.min(buffer.duration, offset + 1 / sr)
+  }
+  let loopAt = loopF * buffer.duration
   if (end - loopAt < 0.004) loopAt = Math.max(offset, end - 0.004)
-  const region = Math.max(0.01, end - offset)
-  const regionDur = region / src.playbackRate.value
+  const region = Math.max(grainLoop ? 0.03 : 0.01, end - offset)
+  const regionDur = region / rate
   const vel = clamp(velocity, 0, 1) * pad.volume
   const heldLive = !!opts.holdId && !opts.pattern
-  const envTotal = heldLive || pad.mode !== 'oneshot' ? Math.max(regionDur, 32) : regionDur
+  const envTotal = grainLoop ? 3600 : (heldLive || pad.mode !== 'oneshot' ? Math.max(regionDur, 32) : regionDur)
   const stops = []
   const fx = pad.fx || {}
 
-  let node = ampModel(src, pad, fxEnv(pad, 'amp'), t, envTotal)
+  let node = ampModel(input, pad, fxEnv(pad, 'amp'), t, envTotal)
   if (fx.drive > 0.01) {
     const d = shaper(ctx, 'drive', fx.drive)
     node.connect(d)
@@ -821,32 +842,36 @@ export function playPad(index, velocity = TRACK_VEL, when = 0, opts = {}) {
   scheduleFilter(filter, pad, t)
   scheduleAmp(amp, pad.amp, vel, t, envTotal)
 
-  if (heldLive) {
-    src.loop = true
-    src.loopStart = loopAt
-    src.loopEnd = end
-    src.start(t, offset)
-  } else if (pad.mode === 'loop') {
-    src.loop = true
-    src.loopStart = offset
-    src.loopEnd = end
-    src.start(t, offset)
-  } else if (pad.mode === 'gate') {
-    src.start(t, offset)
-  } else {
-    src.start(t, offset, region)
-    src.stop(t + regionDur + 0.02)
+  if (!grainLoop) {
+    if (heldLive) {
+      src.loop = true
+      src.loopStart = loopAt
+      src.loopEnd = end
+      src.start(t, offset)
+    } else if (pad.mode === 'loop') {
+      src.loop = true
+      src.loopStart = offset
+      src.loopEnd = end
+      src.start(t, offset)
+    } else if (pad.mode === 'gate') {
+      src.start(t, offset)
+    } else {
+      src.start(t, offset, region)
+      src.stop(t + regionDur + 0.02)
+    }
   }
 
   const voice = {
     src,
+    srcs: [],
+    input,
     amp,
     gate,
     filter,
     choke: groupId(pad.choke),
     pad: index,
     dead: false,
-    quietAt: heldLive || pad.mode !== 'oneshot' ? null : t + regionDur + 0.03,
+    quietAt: grainLoop || heldLive || pad.mode !== 'oneshot' ? null : t + regionDur + 0.03,
     startAt: t,
     pattern: !!opts.pattern,
     lane: opts.pattern ? (opts.lane ?? null) : null,
@@ -854,6 +879,13 @@ export function playPad(index, velocity = TRACK_VEL, when = 0, opts = {}) {
     introUntil: t + regionDur,
     peak: Math.max(0.0001, vel * clamp(pad.amp.s ?? 1, 0, 1)),
     stops,
+    grain: grainLoop,
+    pcm: grainLoop ? buffer.getChannelData(0) : null,
+    spec: grainLoop ? spec : null,
+    rate,
+    sr,
+    pos: spec ? spec.start : 0,
+    nextAt: t,
   }
   voices.push(voice)
   if (voices.length > 64) {
@@ -862,11 +894,14 @@ export function playPad(index, velocity = TRACK_VEL, when = 0, opts = {}) {
   }
   if (opts.pattern) patternVoices.push(voice)
   if (opts.holdId) held.set(opts.holdId, voice)
-  src.onended = () => {
-    voice.dead = true
-    if (voice.quietAt == null) voice.quietAt = ctx.currentTime
-    stopExtras(voice, ctx.currentTime)
+  if (src) {
+    src.onended = () => {
+      voice.dead = true
+      if (voice.quietAt == null) voice.quietAt = ctx.currentTime
+      stopExtras(voice, ctx.currentTime)
+    }
   }
+  if (grainLoop) pumpGrains()
   flash(index)
   if (!opts.fromSeq && !opts.pattern) captureHit(index, velocity, opts.pitch, t)
 }
@@ -965,7 +1000,15 @@ function fireStep(step, time) {
     const when = time + nudge
     silenceLane(lane, when)
     if (ev.off) return
-    playPad(ev.pad, ev.vel ?? 0.9, when, { pitch: ev.pitch || 0, fromSeq: true, pattern: true, lane })
+    playPad(ev.pad, ev.vel ?? 0.9, when, {
+      pitch: ev.pitch || 0,
+      fromSeq: true,
+      pattern: true,
+      lane,
+      sl: ev.sl,
+      move: ev.move,
+      len: ev.len,
+    })
   })
   if (model.metro && step % 4 === 0) click(time, step % 16 === 0)
   model.playhead = step
@@ -979,8 +1022,38 @@ function advanceSong() {
   model.pattern = order[model.songCursor] | 0
 }
 
+function pumpGrains() {
+  if (!ctx) return
+  const horizon = ctx.currentTime + 0.2
+  for (const v of voices) {
+    if (!v.grain || v.dead || !v.pcm) continue
+    v.srcs = v.srcs.filter((item) => item.until > ctx.currentTime - 0.05)
+    let guard = 0
+    while (v.nextAt < horizon && guard < 8) {
+      const minSamples = Math.max(v.spec.lenSamples, Math.round(0.03 * v.sr))
+      const chunk = stitchGrains(v.pcm, v.pos, v.spec.lenSamples, v.spec.moveSamples, v.spec.backward, minSamples, true)
+      if (!chunk.pcm.length) break
+      const audio = ctx.createBuffer(1, chunk.pcm.length, v.sr)
+      audio.getChannelData(0).set(chunk.pcm)
+      const node = ctx.createBufferSource()
+      node.buffer = audio
+      node.playbackRate.value = v.rate
+      node.connect(v.input)
+      const when = Math.max(v.nextAt, ctx.currentTime)
+      node.start(when)
+      const dur = (chunk.pcm.length / v.sr) / Math.max(0.001, v.rate)
+      v.nextAt = when + dur
+      v.pos = chunk.pos
+      v.src = node
+      v.srcs.push({ node, until: v.nextAt })
+      guard += 1
+    }
+  }
+}
+
 function scheduler() {
   if (!ctx || !model.playing) return
+  pumpGrains()
   const horizon = ctx.currentTime + 0.12
   const base = 60 / model.bpm / 4
   while (nextTime < horizon) {
@@ -1091,6 +1164,40 @@ export function releaseKeyboardNotes() {
   }
 }
 
+function laneHold(seq, step, lane, base) {
+  const n = stepCount(seq)
+  for (let i = 1; i < n - step; i++) {
+    if (seq.steps[step + i]?.[lane]) return i * base
+  }
+  return Math.max(base, (n - step) * base)
+}
+
+function scheduleGrains(context, dest, pcm, sr, rate, spec, t0, hold) {
+  let pos = spec.start
+  let at = t0
+  const endAt = t0 + Math.max(0.01, hold)
+  let guard = 0
+  while (at < endAt - 0.0004 && guard < 400) {
+    const minSamples = Math.max(spec.lenSamples, Math.round(0.03 * sr))
+    const chunk = stitchGrains(pcm, pos, spec.lenSamples, spec.moveSamples, spec.backward, minSamples, true)
+    if (!chunk.pcm.length) break
+    const audio = context.createBuffer(1, chunk.pcm.length, sr)
+    audio.getChannelData(0).set(chunk.pcm)
+    const node = context.createBufferSource()
+    node.buffer = audio
+    node.playbackRate.value = rate
+    node.connect(dest)
+    const dur = (chunk.pcm.length / sr) / Math.max(0.001, rate)
+    node.start(Math.max(0, at))
+    if (at + dur > endAt) {
+      try { node.stop(Math.max(0, endAt)) } catch { /* past the hold */ }
+    }
+    at += dur
+    pos = chunk.pos
+    guard += 1
+  }
+}
+
 export async function renderBounce() {
   await resume()
   const seq = currentSequence()
@@ -1112,7 +1219,7 @@ export async function renderBounce() {
   let time = 0.05
   for (let step = 0; step < stepCount(seq); step++) {
     const when = time + (step % 2 === 1 ? base * model.swing : 0)
-    ;(seq.steps[step] || []).forEach((ev) => {
+    ;(seq.steps[step] || []).forEach((ev, lane) => {
       if (!ev) return
       const pad = model.pads[ev.pad]
       const nudge = (clamp(ev.nudge || 0, -50, 50) / 100) * base
@@ -1123,17 +1230,30 @@ export async function renderBounce() {
       if (pad.reverse) {
         for (let i = 0; i < entry.pcm.length; i++) ch[i] = entry.pcm[entry.pcm.length - 1 - i]
       } else ch.set(entry.pcm)
-      const src = off.createBufferSource()
-      src.buffer = buffer
+      const spec = sampleWindow(buffer.length, pad, ev)
       const semi = (pad.pitch || 0) + (ev.pitch || 0) + (pad.fine || 0) / 100
-      src.playbackRate.value = Math.pow(2, semi / 12)
+      const rate = Math.pow(2, semi / 12)
       const amp = off.createGain()
       amp.gain.value = (ev.vel ?? 0.9) * pad.volume
-      src.connect(amp)
       amp.connect(gains[pad.bus] || dest)
-      const offset = clamp(pad.trimStart, 0, 0.99) * buffer.duration
-      const end = clamp(pad.trimEnd, pad.trimStart + 0.01, 1) * buffer.duration
-      src.start(Math.max(0, when + nudge), offset, Math.max(0.01, end - offset))
+      const at = Math.max(0, when + nudge)
+      if (spec?.loop) {
+        scheduleGrains(off, amp, ch, buffer.sampleRate, rate, spec, at, laneHold(seq, step, lane, base))
+        return
+      }
+      const src = off.createBufferSource()
+      src.buffer = buffer
+      src.playbackRate.value = rate
+      src.connect(amp)
+      if (spec) {
+        const offset = spec.start / buffer.sampleRate
+        const region = Math.max(1 / buffer.sampleRate, Math.min(spec.lenSamples / buffer.sampleRate, buffer.duration - offset))
+        src.start(at, offset, region)
+      } else {
+        const offset = clamp(pad.trimStart, 0, 0.99) * buffer.duration
+        const end = clamp(pad.trimEnd, pad.trimStart + 0.01, 1) * buffer.duration
+        src.start(at, offset, Math.max(0.01, end - offset))
+      }
     })
     time += base
   }
@@ -1154,48 +1274,87 @@ export async function bounceWav() {
 }
 
 let midiAccess = null
-const midiState = { inputs: [], last: '' }
+let midiPromise = null
+const midiState = { supported: null, ready: false, denied: false, inputs: [], last: '' }
 
 export function getMidiState() {
   return midiState
 }
 
-export async function enableMidi() {
-  if (!navigator.requestMIDIAccess) {
-    midiState.last = 'Web MIDI is not available in this browser'
-    touch(false)
-    return
-  }
-  midiAccess = await navigator.requestMIDIAccess({ sysex: false })
-  const refresh = () => {
-    midiState.inputs = [...midiAccess.inputs.values()].map((i) => i.name)
-    midiAccess.inputs.forEach((input) => {
-      input.onmidimessage = onMidi
-    })
-    touch(false)
-  }
-  midiAccess.onstatechange = refresh
-  refresh()
-  midiState.last = midiState.inputs.length ? midiState.inputs.join(', ') : 'No MIDI input yet'
+function refreshMidiPorts() {
+  if (!midiAccess) return
+  midiState.inputs = [...midiAccess.inputs.values()].map((input) => {
+    input.onmidimessage = onMidi
+    return { id: input.id, name: input.name || 'MIDI in', layout: midiLayout(input.name || '') }
+  })
+  midiState.ready = true
+  midiState.supported = true
+  midiState.last = midiState.inputs.length ? midiState.inputs.map((input) => input.name).join(', ') : 'No MIDI input yet'
   touch(false)
 }
 
-export function onMidi(event) {
-  const [status, data1, data2] = event.data
-  const cmd = status & 0xf0
-  if (cmd === 0x90 && data2 > 0) {
-    const vel = model.settings.velocity ? data2 / 127 : 1
-    if (model.keyboard) {
-      const semi = data1 - 60
-      playPad(model.selected, vel, 0, { pitch: semi, holdId: `midi:${data1}` })
-    } else {
-      const index = data1 - (model.settings.midiOffset || 36)
-      if (index >= 0 && index < 64) playPad(index, vel, 0, { holdId: `midi:${data1}` })
-    }
-    midiState.last = `note ${data1} vel ${data2}`
-  } else if (cmd === 0x80 || (cmd === 0x90 && data2 === 0)) {
-    releaseHeld(`midi:${data1}`)
+export function enableMidi() {
+  if (typeof navigator === 'undefined' || !navigator.requestMIDIAccess) {
+    midiState.supported = false
+    midiState.ready = true
+    midiState.denied = false
+    midiState.last = 'Web MIDI is not available in this browser'
+    touch(false)
+    return Promise.resolve(midiState)
   }
+  if (midiAccess) {
+    refreshMidiPorts()
+    return Promise.resolve(midiState)
+  }
+  if (midiPromise) return midiPromise
+  midiPromise = navigator.requestMIDIAccess({ sysex: false }).then((access) => {
+    midiAccess = access
+    midiState.denied = false
+    access.onstatechange = refreshMidiPorts
+    refreshMidiPorts()
+    return midiState
+  }).catch(() => {
+    midiPromise = null
+    midiState.supported = true
+    midiState.ready = true
+    midiState.denied = true
+    midiState.last = 'MIDI permission was blocked'
+    touch(false)
+    return midiState
+  })
+  return midiPromise
+}
+
+export function onMidi(event) {
+  const data = event?.data
+  if (!data || data.length < 2) return
+  const status = data[0]
+  const note = data[1]
+  const velocityByte = data.length > 2 ? data[2] : 0
+  const cmd = status & 0xf0
+  if (cmd !== 0x80 && cmd !== 0x90) return
+  const port = event.target
+  const portId = port?.id || port?.name || 'midi'
+  const holdId = `midi:${portId}:${note}`
+  if (cmd === 0x80 || velocityByte === 0) {
+    releaseHeld(holdId)
+    return
+  }
+  const action = midiAction({
+    note,
+    layout: midiLayout(port?.name || ''),
+    keys: !!model.keyboard,
+    offset: model.settings.midiOffset || 36,
+  })
+  if (!action) return
+  const vel = model.settings.velocity ? velocityByte / 127 : 1
+  if ('pad' in action) {
+    if (model.selected !== action.pad || model.selection.length) selectPad(action.pad)
+    playPad(action.pad, vel, 0, { holdId })
+  } else {
+    playPad(model.selected, vel, 0, { pitch: action.pitch, holdId })
+  }
+  midiState.last = `${port?.name || 'MIDI'} note ${note}`
 }
 
 export async function recordMic() {

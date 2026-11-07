@@ -15,10 +15,11 @@ import {
   setSeqBank,
   setSeqSlot,
   touch,
-  TRACK_FIELDS,
+  trackerFields,
   TRACK_VEL,
 } from './model.js'
-import { holdNumpadFx, importFile, noteOff, noteOn, pushNumpadFx, recordTrackerOff, releaseKeyboardNotes, releaseNumpadFx, syncMasterComp, syncMixer, toggleMetro, togglePlay, toggleRecord } from './audio/engine.js'
+import { enableMidi, getMidiState, holdNumpadFx, importFile, noteOff, noteOn, pushNumpadFx, recordTrackerOff, releaseKeyboardNotes, releaseNumpadFx, syncMasterComp, syncMixer, toggleMetro, togglePlay, toggleRecord } from './audio/engine.js'
+import { midiSummary } from './audio/midi.js'
 import { undo } from './history.js'
 import { useModel } from './useModel.js'
 import { Dialog } from './widgets.jsx'
@@ -38,6 +39,13 @@ import { NewMenu, SaveMenu } from './screens/SongMenus.jsx'
 export function MiyaMusicMaker() {
   useModel()
   useEffect(() => listenForFiles(buildPublish), [])
+  useEffect(() => {
+    const down = () => {
+      enableMidi().catch(() => {})
+    }
+    window.addEventListener('pointerdown', down, { once: true })
+    return () => window.removeEventListener('pointerdown', down)
+  }, [])
   useEffect(() => {
     const down = (e) => onKey(e)
     const up = (e) => {
@@ -103,7 +111,7 @@ export function MiyaMusicMaker() {
               ))}
             </tbody>
           </table>
-          <p className="hint">Pad plays the bank, including the A B C D pages on [ ] and the arrow keys. Keys plays the selected pad. Shift and a numpad digit holds a master FX slot.</p>
+          <p className="hint">Pad plays the bank, including the A B C D pages on [ ] and the arrow keys. Keys plays the selected pad. Click MIDI for a Launchpad, MPC, MPD, MPK, or any other controller. Shift and a numpad digit holds a master FX slot.</p>
         </Dialog>
       )}
         </div>
@@ -113,6 +121,8 @@ export function MiyaMusicMaker() {
 }
 
 function Transport() {
+  const midi = midiSummary(getMidiState())
+  const midiLive = getMidiState().inputs.length > 0
   return (
     <div className="transport">
       <div className="transport-row">
@@ -196,6 +206,14 @@ function Transport() {
             <span className="keys-mark" aria-hidden="true" />
           </button>
         </div>
+        <button
+          type="button"
+          className={`btn free-width midi-btn ${midiLive ? 'on' : ''}`}
+          title={midi.title}
+          onClick={() => enableMidi().catch(() => {})}
+        >
+          {midi.short}
+        </button>
       </div>
       <div className="transport-row">
         <div className="screen-tabs">
@@ -248,7 +266,7 @@ function renoiseLive() {
 }
 
 function onTrackerNote(e) {
-  if ((model.tracker.col | 0) % TRACK_FIELDS !== 0) return false
+  if ((model.tracker.col | 0) % trackerFields() !== 0) return false
   const key = e.key
   const low = key.length === 1 ? key.toLowerCase() : key
   if (low === 'a' || key === 'CapsLock') {
