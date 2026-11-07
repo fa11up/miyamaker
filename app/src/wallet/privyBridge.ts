@@ -26,14 +26,21 @@ export type PrivyBridge = {
   login: () => Promise<void>
   remembered: () => boolean
   remember: (on: boolean) => void
+  /** Told each time Privy's state changes. Returns how to stop. */
+  watch: (f: (state: PrivyState) => void) => () => void
 }
 
 const REMEMBER = 'miya.privy'
+/** Longer than anyone takes over an email code. Past this, whatever happened, the wallet dialog has to come back. */
+const LOGIN_MS = 5 * 60_000
 const listeners = new Set<() => void>()
 let state: PrivyState | undefined
 let wanted = false
 let loginDone: { resolve: () => void; reject: (e: Error) => void } | undefined
+let loginTimer: ReturnType<typeof setTimeout> | undefined
+let loginFailure: Error | undefined
 let broken: Error | undefined
+let attempt = 0
 
 const changed = () => [...listeners].forEach((f) => f())
 
@@ -45,6 +52,14 @@ export const returningFromLogin = () => typeof window !== 'undefined' && /[?&]pr
 
 /** For the mount: whether Privy has been asked for yet. */
 export const privyWanted = () => wanted
+/** Goes up each time Privy is started over after failing. */
+export const privyAttempt = () => attempt
+/** A login that failed with nobody waiting on it: back from Google or X, the page that asked is long gone. */
+export const privyLoginFailure = () => loginFailure
+export const clearPrivyLoginFailure = () => {
+  loginFailure = undefined
+  changed()
+}
 export const onPrivyChange = (f: () => void) => {
   listeners.add(f)
   return () => {
@@ -59,6 +74,11 @@ export function reportPrivy(next: PrivyState) {
 }
 export function reportLogin(error?: Error) {
   loginShowing(false)
+  clearTimeout(loginTimer)
+  if (error && !loginDone && !/exited_auth_flow/.test(error.message)) {
+    loginFailure = error
+    changed()
+  }
   if (error) loginDone?.reject(error)
   else loginDone?.resolve()
   loginDone = undefined
@@ -72,7 +92,12 @@ export function reportBroken(error: Error) {
 
 export const privyBridge: PrivyBridge = {
   request() {
-    broken = undefined
+    // Asking again after a failure starts Privy over.
+    if (broken) {
+      broken = undefined
+      attempt += 1
+      changed()
+    }
     if (!wanted) {
       wanted = true
       changed()
@@ -101,8 +126,12 @@ export const privyBridge: PrivyBridge = {
   },
   login() {
     return new Promise((resolve, reject) => {
+      // A second press replaces the first, which must not wait forever for an answer it won't get.
+      loginDone?.reject(new Error('exited_auth_flow'))
       loginDone = { resolve, reject }
       loginShowing(true)
+      clearTimeout(loginTimer)
+      loginTimer = setTimeout(() => reportLogin(new Error('Login took too long. Try again.')), LOGIN_MS)
       state?.openLogin()
     })
   },
@@ -120,5 +149,10 @@ export const privyBridge: PrivyBridge = {
     } catch {
       // Only means signing in again next time.
     }
+  },
+  watch(f) {
+    return onPrivyChange(() => {
+      if (state) f(state)
+    })
   },
 }

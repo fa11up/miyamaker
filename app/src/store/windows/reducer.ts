@@ -5,7 +5,6 @@ import { globalNavigate } from '@/GlobalHistory'
 
 import {
   closeWindow,
-  createUploadOrder,
   deleteUploadOrder,
   finalizeUploadOrder,
   minimizeWindow,
@@ -16,6 +15,7 @@ import {
   updateWindowPosition,
   updateWindowSize,
 } from './actions'
+import { closed, minimized, raised } from './stack'
 
 export type PageKey = Extract<keyof typeof Pages, string>
 
@@ -55,43 +55,21 @@ export default createReducer(initialState, (builder) =>
       state.position[page] = position
       state.active.push(page)
       state.zIndex.push(page)
+      state.minimized = state.minimized.filter((id) => id !== page)
       const { path } = Pages[page]!
       navigateToPage(path)
     })
     .addCase(closeWindow, (state, action) => {
       const { value } = action.payload
-      state.active = state.active.filter((page) => page !== value)
-      state.zIndex = state.zIndex.filter((id) => id !== value)
-      state.fullScreen = state.fullScreen.filter((id) => id !== value)
+      Object.assign(state, closed(state, value))
       delete state.position[value]
 
       const path = Pages[state.zIndex[state.zIndex.length - 1] || '']?.path
       globalNavigate(path || '/')
     })
-    .addCase(createUploadOrder, (state, action) => {
-      if (state.active.includes('uploader')) return
-      const { requestFrom, label, timestamp } = action.payload
-      if (state.position[requestFrom]) {
-        state.position.uploader = state.position[requestFrom]!
-      } else {
-        state.position.uploader = { x: 0, y: 0 }
-      }
-
-      state.active.push('uploader')
-      state.zIndex.push('uploader')
-      if (state.fullScreen.includes('requestFrom')) {
-        state.fullScreen.push('uploader')
-      }
-
-      state.uploadRequests[requestFrom] = { requestFrom, label, timestamp }
-      const { path } = Pages.uploader!
-      globalNavigate(path)
-    })
     .addCase(finalizeUploadOrder, (state, action) => {
       const { requestFrom, result } = action.payload
-      state.active = state.active.filter((page) => page !== 'uploader')
-      state.zIndex = state.zIndex.filter((id) => id !== 'uploader')
-      state.fullScreen = state.fullScreen.filter((id) => id !== 'uploader')
+      Object.assign(state, closed(state, 'uploader'))
       delete state.position.uploader
       if (state.uploadRequests[requestFrom]) {
         state.uploadRequests[requestFrom]!.result = result
@@ -127,22 +105,17 @@ export default createReducer(initialState, (builder) =>
     })
     .addCase(setToFront, (state, action) => {
       const { value: page } = action.payload
-      if (state.minimized.includes(page)) {
-        state.minimized = state.minimized.filter((id) => id !== page)
-      }
-
-      state.zIndex = state.zIndex.filter((id) => id !== page)
-      state.zIndex.push(page)
+      // A click that closed a window bubbles up to raise it too: it has to stay closed.
+      if (!state.active.includes(page)) return
+      Object.assign(state, raised(state, page))
 
       const { path } = Pages[page]!
       navigateToPage(path)
     })
     .addCase(minimizeWindow, (state, action) => {
       const { value: page } = action.payload
-      state.zIndex = state.zIndex.filter((id) => id !== page)
-      state.minimized = state.minimized.includes(page)
-        ? state.minimized.filter((id) => id !== page)
-        : [...state.minimized, page]
+      if (!state.active.includes(page) || state.minimized.includes(page)) return
+      Object.assign(state, minimized(state, page))
 
       const path = Pages[state.zIndex[state.zIndex.length - 1] || '']?.path
       globalNavigate(path || '/')

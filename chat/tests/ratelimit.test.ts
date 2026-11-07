@@ -11,6 +11,16 @@ describe('RateLimiter (token bucket)', () => {
     if (!r.ok) expect(r.retryAfterMs).toBe(2000) // one token per 2s
   })
 
+  it('check answers as take would, and spends nothing', () => {
+    const rl = new RateLimiter(2, 10_000)
+    expect(rl.check('a', 0)).toEqual({ ok: true })
+    rl.take('a', 0)
+    rl.take('a', 0)
+    for (let i = 0; i < 3; i++) expect(rl.check('a', 0)).toEqual({ ok: false, retryAfterMs: 5000 })
+    expect(rl.take('a', 5000).ok).toBe(true)
+    expect(new RateLimiter(2, 10_000).size).toBe(0)
+  })
+
   it('refills continuously', () => {
     const rl = new RateLimiter(5, 10_000)
     for (let i = 0; i < 5; i++) rl.take('a', 0)

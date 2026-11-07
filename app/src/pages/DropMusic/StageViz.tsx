@@ -131,7 +131,8 @@ export default function StageViz({
     const loop = (now: number) => {
       raf = requestAnimationFrame(loop)
       // ~40 fps is plenty for chunky pixels.
-      if (now - last < 24 || document.visibilityState !== 'visible') return
+      // Nor any drawing with the window minimized.
+      if (now - last < 24 || document.visibilityState !== 'visible' || !canvas.offsetWidth) return
       last = now
       draw(now / 1000)
     }

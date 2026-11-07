@@ -9,9 +9,11 @@ import {
 } from '@rainbow-me/rainbowkit/wallets'
 import type { Chain } from 'viem'
 import { mainnet, robinhood, sepolia } from 'viem/chains'
+import type { CreateConnectorFn } from 'wagmi'
 import { createConfig, fallback, http } from 'wagmi'
+import { reconnect } from 'wagmi/actions'
 
-import { passkeyWallet, socialWallet } from '@/wallet/newcomerWallets'
+import { passkeyConnector, socialConnector } from '@/wallet/newcomerWallets'
 
 export { mainnet, robinhood, sepolia }
 
@@ -64,11 +66,7 @@ const browserWallets =
 const connectors = connectorsForWallets(
   [
     {
-      groupName: 'New here?',
-      wallets: [passkeyWallet({ appName }), ...(privyAppId ? [socialWallet] : [])],
-    },
-    {
-      groupName: 'Recommended',
+      groupName: 'Have a wallet?',
       wallets: walletConnectProjectId
         ? [metaMaskWallet, rabbyWallet, coinbaseWallet, ...browserWallets]
         : [rabbyWallet, coinbaseWallet, ...browserWallets],
@@ -79,9 +77,15 @@ const connectors = connectorsForWallets(
   { appName, projectId: walletConnectProjectId || 'miyamaker-no-walletconnect' }
 )
 
+/** Their setup downloads their code, over a megabyte with a socket, for everyone at startup. Now it loads when they're picked. */
+const onDemand = (connector: CreateConnectorFn): CreateConnectorFn => (config) => {
+  const made = connector(config)
+  return made.type === 'walletConnect' || made.type === 'coinbaseWallet' ? { ...made, setup: undefined } : made
+}
+
 export const wagmiConfig = createConfig({
   chains,
-  connectors,
+  connectors: [...connectors, passkeyConnector(appName), ...(privyAppId ? [socialConnector()] : [])].map(onDemand),
   transports: {
     [mainnet.id]: transportFor(mainnet),
     [sepolia.id]: transportFor(sepolia),
@@ -100,4 +104,21 @@ declare module 'wagmi' {
 export function explorerUrl(chainId: number | undefined): string {
   const chain = chains.find((c) => c.id === chainId) || mainnet
   return chain.blockExplorers?.default.url || 'https://etherscan.io'
+}
+
+/**
+ * Picks the session back up after a reload. wagmi's own version asks every wallet for its provider first, which downloads
+ * WalletConnect and Coinbase for everyone, and waits on a Privy login that isn't coming. Only browser wallets, which cost
+ * nothing to ask, and the wallet this person last used are asked here.
+ */
+export async function reconnectWallets() {
+  let last: string | null = null
+  try {
+    last = (await wagmiConfig.storage?.getItem('recentConnectorId')) ?? null
+  } catch {
+    // Then only browser wallets are asked.
+  }
+  return reconnect(wagmiConfig, {
+    connectors: wagmiConfig.connectors.filter((c) => c.type === 'injected' || c.id === last),
+  })
 }

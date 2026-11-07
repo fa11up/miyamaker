@@ -76,6 +76,7 @@ export default function ImagesList({
   total,
   onPrevious,
   onNext,
+  locked = false,
   onView,
 }: {
   image: string
@@ -83,6 +84,8 @@ export default function ImagesList({
   total: number
   onPrevious: () => void
   onNext: () => void
+  /** A bid is out: the lot on show stays until it ends. */
+  locked?: boolean
   onView?: () => void
 }) {
   return (
@@ -97,10 +100,10 @@ export default function ImagesList({
       </ImageWrapper>
       {total > 1 && (
         <ButtonContainer>
-          <NormalButton aria-label="Previous lot" onClick={onPrevious}>
+          <NormalButton aria-label="Previous lot" disabled={locked} onClick={onPrevious}>
             <Icon src={ChevronLeftIcon} alt="" />
           </NormalButton>
-          <NormalButton aria-label="Next lot" onClick={onNext}>
+          <NormalButton aria-label="Next lot" disabled={locked} onClick={onNext}>
             <Icon src={ChevronRightIcon} alt="" />
           </NormalButton>
         </ButtonContainer>

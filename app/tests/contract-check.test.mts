@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { handleContractCheck, readVerdict } from '../api/_lib/contractcheck.ts'
+import { CONTRACT_CHECK_PATH, handleContractCheck, readVerdict } from '../api/_lib/contractcheck.ts'
 import { fileLabel, fileType, scamReason, splitScam } from '../src/desktop/files/scam.ts'
 
 const A = `0x${'a'.repeat(40)}`
@@ -187,4 +187,27 @@ test('the type row says what the indexer said', () => {
   assert.equal(fileType(nft({ tokenType: 'ERC1155' })), 'ERC-1155 token')
   assert.equal(fileType(nft({ tokenType: 'ERC721' })), 'ERC-721 token')
   assert.equal(fileType(nft()), 'NFT')
+})
+
+test('each answer is kept for its own time, not the cache default', async () => {
+  const kept: Record<string, number | undefined> = {}
+  const addresses = [`0x${'1'.repeat(40)}`, `0x${'2'.repeat(40)}`]
+  const res = await handleContractCheck(new Request(`https://x.test${CONTRACT_CHECK_PATH}?a=${addresses.join(',')}`), {
+    key: 'k',
+    etherscan: async (a) =>
+      a === addresses[0] ? { status: '1', result: '[]' } : { status: '0', result: 'Contract source code not verified' },
+    cache: {
+      get: async () => undefined,
+      put: async (key, _value, ttl) => {
+        kept[key.split(':').pop()!] = ttl
+      },
+    },
+    sameOrigin: () => true,
+    clientKey: () => 'k',
+    limiter: () => true,
+    wait: async () => undefined,
+  })
+  assert.equal(res.status, 200)
+  assert.equal(kept[addresses[0]!], 30 * 86_400)
+  assert.equal(kept[addresses[1]!], 6 * 3_600)
 })

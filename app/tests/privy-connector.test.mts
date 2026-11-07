@@ -9,6 +9,7 @@ function fake({ authenticated = false, cancel = false } = {}) {
   const calls: string[] = []
   const events: [string, unknown][] = []
   const handlers: Record<string, (...a: never[]) => void> = {}
+  const watchers = new Set<(s: any) => void>()
   let chain = 1
   const provider = {
     request: async ({ method }: { method: string }) =>
@@ -58,22 +59,44 @@ function fake({ authenticated = false, cancel = false } = {}) {
     },
     remembered: () => calls.includes('remember:true'),
     remember: (on: boolean) => calls.push(`remember:${on}`),
+    watch: (f: (s: typeof state) => void) => {
+      watchers.add(f)
+      return () => watchers.delete(f)
+    },
   }
   const connector = privyConnector(bridge as never, { emit: (e, d) => events.push([e, d]) }, 1)
-  return { connector, calls, events, handlers }
+  const expire = () => {
+    state.authenticated = false
+    state.wallet = undefined
+    ;[...watchers].forEach((f) => f(state))
+  }
+  return { connector, calls, events, handlers, expire, watchers }
 }
 
 test('connecting logs in first, then returns the embedded wallet', async () => {
   const { connector, calls } = fake()
   const got = await connector.connect()
   assert.deepEqual(got, { accounts: [ME], chainId: 1 })
-  assert.deepEqual(calls, ['request', 'login', 'remember:true'])
+  assert.ok(calls.indexOf('request') < calls.indexOf('login'))
+  assert.equal(calls.filter((c) => c === 'login').length, 1)
+  assert.ok(calls.includes('remember:true'))
 })
 
 test('asking the chain before logging in answers at once, without opening a login', async () => {
   const { connector, calls } = fake()
   assert.equal(await connector.getChainId(), 1)
   assert.deepEqual(calls, [])
+})
+
+test('asking for the wallet while logged out fails at once, instead of waiting on a login', async () => {
+  const { connector } = fake()
+  await assert.rejects(connector.getProvider(), /Not logged in/)
+})
+
+test('a reload finds the wallet of someone still logged in', async () => {
+  const { connector, calls } = fake({ authenticated: true })
+  assert.ok(await connector.getProvider())
+  assert.ok(calls.includes('request'), 'Privy has to load to answer')
 })
 
 test('someone already logged in is not asked again', async () => {
@@ -116,4 +139,24 @@ test('a reload only reconnects someone who logged in here before', async () => {
   assert.ok(!first.calls.includes('request'), 'collectors should never download Privy')
   await first.connector.connect()
   assert.equal(await first.connector.isAuthorized(), true)
+})
+
+test('a session ending on Privy\'s side disconnects wagmi and forgets, instead of failing every call', async () => {
+  const { connector, calls, events, handlers, expire, watchers } = fake({ authenticated: true })
+  await connector.connect()
+  expire()
+  assert.deepEqual(events.at(-1), ['disconnect', undefined])
+  assert.ok(calls.includes('remember:false'))
+  assert.equal(handlers.accountsChanged, undefined)
+  assert.equal(watchers.size, 0)
+})
+
+test('disconnecting stops watching the session', async () => {
+  const { connector, events, expire, watchers } = fake({ authenticated: true })
+  await connector.connect()
+  await connector.disconnect()
+  assert.equal(watchers.size, 0)
+  const before = events.length
+  expire()
+  assert.equal(events.length, before)
 })

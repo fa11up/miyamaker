@@ -22,6 +22,7 @@ import {
 } from '@/pages/Auction/bidding'
 import BidContainer from '@/pages/Auction/ProductDetail/BidContainer'
 import ImagesList from '@/pages/Auction/ProductDetail/ImagesList'
+import { useAllTokenIds } from '@/pages/Auction/useAllTokenIds'
 import { useAuctionData } from '@/pages/Auction/useAuctionData'
 import { useFitText } from '@/pages/Auction/useFitText'
 import { useLotGallery } from '@/pages/Auction/useLots'
@@ -175,10 +176,13 @@ export default function ProductDetail({
   setErrorMessage,
   auctionContract,
   onBack,
+  onBusy,
 }: {
   setErrorMessage: (value: string) => void
   auctionContract: Address
   onBack: () => void
+  /** Told while a bid is out, when the lot on show must not change: its ending is reported here. */
+  onBusy?: (busy: boolean) => void
 }) {
   const dispatch = useAppDispatch()
   // Account
@@ -199,8 +203,11 @@ export default function ProductDetail({
   const tokenURIs = useAppSelector((state) => state.auction.currentTokenURIs)
   // Until a lot is chosen the panel shows the first one, so its art, its bid data and any bid all name the same token.
   const tokenId = chosenTokenId === NO_LOT ? tokenIds[0] : chosenTokenId
+  const lotList = useAllTokenIds({ nft: nftContract, address: auctionContract })
 
   const [busy, setBusy] = useState<'wallet' | 'mining'>()
+  useEffect(() => onBusy?.(!!busy), [busy])
+  useEffect(() => () => onBusy?.(false), [])
   const [txHash, setTxHash] = useState('')
   const [bidAmount, setBidAmount] = useState('')
   const [viewing, setViewing] = useState(false)
@@ -221,10 +228,20 @@ export default function ProductDetail({
       live: true,
     })
   const { placeBid } = usePlaceBid({ address: auctionContract, bidAmount })
-  const { name, description, image, attributes } = useToken({ tokenURI: tokenURIs[0] || '', isFetch: !!tokenId })
+  const lotIndex = Math.max(0, tokenIds.indexOf(tokenId as number))
+  const { name, description, image, attributes } = useToken({
+    tokenURI: tokenURIs[lotIndex] || '',
+    isFetch: tokenId !== undefined,
+  })
   const gallery = useLotGallery({ nft: nftContract, tokenIds, tokenURIs, address: auctionContract })
 
-  const phase = lotPhase({ status, startTime, endTime, settled }, now)
+  // With no lot to read, its read never starts: the list says why there is none.
+  const noLot = tokenId === undefined && !lotList.isLoading
+  const phase = noLot
+    ? lotList.isError
+      ? 'failed'
+      : 'missing'
+    : lotPhase({ status, startTime, endTime, settled }, now)
   const facts = lotFacts({ phase, bidder, currentBid, minPrice })
   const minimum = minimumBid({ currentBid, minPrice, bidIncrement })
   const check = checkBid(bidAmount, minimum, balance)
@@ -245,7 +262,6 @@ export default function ProductDetail({
   }
 
   // The arrows step through the lots in list order and wrap round. Metadata is cached, shared with the lot cards.
-  const lotIndex = Math.max(0, tokenIds.indexOf(tokenId as number))
   const lotCount = tokenIds.length
   const previousIndex = (lotIndex - 1 + lotCount) % lotCount
   const nextIndex = (lotIndex + 1) % lotCount
@@ -253,7 +269,8 @@ export default function ProductDetail({
   const nextLot = useToken({ tokenURI: tokenURIs[nextIndex] || '', isFetch: lotCount > 1 })
   const openLot = (index: number, lot: typeof nextLot) => {
     const id = tokenIds[index]
-    if (id === undefined || !lot.image) return
+    // Its picture may not be in yet: the lot opens anyway, and the panel fills in from its own metadata.
+    if (id === undefined || busy) return
     dispatch(
       setCurrentToken({
         tokenId: id,
@@ -279,6 +296,8 @@ export default function ProductDetail({
     query: { enabled: !facts.bidderValue },
   })
 
+  // The lot a bid went to, for its ending: not whichever is on show by then.
+  const bidLot = useRef<string>()
   const bidSettled = () => {
     setBusy(undefined)
     setTxHash('')
@@ -295,7 +314,7 @@ export default function ProductDetail({
         return
       }
       setBidAmount('')
-      setConfirmedLot(lotKey)
+      setConfirmedLot(bidLot.current)
     },
     // wagmi turns a reverted receipt into an error, so a failure here may be a real answer or only a failed wait.
     onError: async (error) => {
@@ -306,9 +325,11 @@ export default function ProductDetail({
     },
     // A sped-up bid is still the same bid, and its own receipt arrives through this wait. A cancelled one is over.
     onReplaced: (reason) => {
-      if (reason !== 'cancelled') return
+      if (reason === 'repriced') return
       bidSettled()
-      setErrorMessage('You cancelled in your wallet. No bid was placed.')
+      setErrorMessage(
+        reason === 'cancelled' ? 'You cancelled in your wallet. No bid was placed.' : BID_UNCONFIRMED
+      )
     },
   })
 
@@ -323,6 +344,7 @@ export default function ProductDetail({
   const handleBid = async () => {
     if (!canSend || !check.valid || busy || phase !== 'live' || tokenId === undefined) return
     setBusy('wallet')
+    bidLot.current = lotKey
     try {
       const result = await placeBid(nftContract, tokenId)
       setTxHash(result.hash)
@@ -367,7 +389,7 @@ export default function ProductDetail({
   return (
     <DetailColumn>
       <BackRow>
-        <NormalButton type="button" onClick={onBack}>
+        <NormalButton type="button" disabled={!!busy} onClick={onBack}>
           ← Collections
         </NormalButton>
       </BackRow>
@@ -379,6 +401,7 @@ export default function ProductDetail({
             total={lotCount}
             onPrevious={() => openLot(previousIndex, previousLot)}
             onNext={() => openLot(nextIndex, nextLot)}
+            locked={!!busy}
             onView={() => setViewing(true)}
           />
           {viewing && gallery.items.length > 0 && (
@@ -459,7 +482,10 @@ export default function ProductDetail({
               bidAmount={bidAmount}
               onBidAmount={handleCheckBidAmount}
               onBid={handleBid}
-              onRetry={() => refetch()}
+              onRetry={() => {
+                if (tokenId !== undefined) refetch()
+                else lotList.refetch()
+              }}
               minimum={minimum}
               check={check}
               busy={busy}

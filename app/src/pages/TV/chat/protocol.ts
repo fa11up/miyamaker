@@ -56,6 +56,16 @@ export const initialRoomState: RoomState = {
   error: undefined,
 }
 
+/**
+ * A new socket isn't anyone until it has signed in again, and what went wrong on the old one is over. A refused
+ * sign-in stays up long enough to be read: being refused is what closed that socket.
+ */
+export const freshSocket = (state: RoomState): RoomState => ({
+  ...state,
+  me: undefined,
+  error: state.error?.code === 'auth' ? state.error : undefined,
+})
+
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null
 
 function isMessage(v: unknown): v is ChatMessage {

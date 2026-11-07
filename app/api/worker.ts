@@ -134,7 +134,7 @@ export default {
             .filter(Boolean),
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           verify: (address, message, signature) =>
-            signatureClient.verifyMessage({ address: address as any, message, signature: signature as any }),
+            signatureClient.verifyMessage({ address: address as any, message, signature: signature as any }).catch(() => false),
           lookup: youtubeLookup,
           sameOrigin,
           clientKey,

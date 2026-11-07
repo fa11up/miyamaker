@@ -290,7 +290,6 @@ export default function CollectionDetail({
   toggleFetchRecentMint: boolean
 }) {
   const [isOpenNotification, setIsOpenNotification] = useState<boolean>(false)
-  const [freeMintAmount, setFreeMintAmount] = useState<number>(1)
   const [payMintAmount, setPayMintAmount] = useState<number>(1)
   const [transacting, setTransacting] = useState<boolean>(false)
   const [txHash, setTxHash] = useState<string>('')
@@ -314,10 +313,28 @@ export default function CollectionDetail({
       setTxHash('')
       setToggleFetchRecentMint(!toggleFetchRecentMint)
     },
-    onReplaced: () => {
+    // A revert or an unreadable receipt: without this the modal can't be closed.
+    onError: () => {
       setTransacting(false)
+      setIsOpenNotification(false)
+      setTxHash('')
+      setErrorMessage('We could not confirm this mint. Check your wallet before trying again.')
+      setErrorName('Mint not confirmed')
+    },
+    // A sped-up copy is the same mint, and onSuccess comes with its receipt. Anything else means it never happened, and
+    // the window below says "Mint success!" for whatever is left open.
+    onReplaced: (reason) => {
+      if (reason === 'repriced') return
+      setTransacting(false)
+      setIsOpenNotification(false)
       setTxHash('')
       setToggleFetchRecentMint(!toggleFetchRecentMint)
+      setErrorMessage(
+        reason === 'cancelled'
+          ? 'You cancelled this in your wallet. Nothing was minted.'
+          : 'We could not confirm this mint. Check your wallet before trying again.'
+      )
+      setErrorName(reason === 'cancelled' ? 'Mint cancelled' : 'Mint not confirmed')
     },
   })
 
@@ -377,25 +394,6 @@ export default function CollectionDetail({
         </ImageDetailContainer>
         <MintDetail>
           <MintWrapper>
-            <MintInputContainer>
-              <Label>Free Mint</Label>
-              <MintPriceDetail>
-                <span>{freeMintAmount}</span>
-                <span>*</span>
-                <span>0</span>
-                <span>=</span>
-                <span style={{ color: '#00ba7c' }}>0 ETH</span>
-              </MintPriceDetail>
-              <MintInputWrapper>
-                <MintInput
-                  type="number"
-                  min={1}
-                  value={freeMintAmount}
-                  onChange={(e) => setFreeMintAmount(Number(e.target.value))}
-                />
-                <Button text={'Launch'} />
-              </MintInputWrapper>
-            </MintInputContainer>
             <MintInputContainer>
               <Label>Pay Mint</Label>
               <MintPriceDetail>

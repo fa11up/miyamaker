@@ -59,7 +59,7 @@ const LOTS_PER_PAGE = 6
 /** Fewer lots than this still get this many column widths, so one or two lots do not become giant cards. */
 const MIN_COLUMNS = 4
 
-export default function ProductsList({ auctionContract }: { auctionContract: Address }) {
+export default function ProductsList({ auctionContract, locked }: { auctionContract: Address; locked?: boolean }) {
   const dispatch = useAppDispatch()
 
   const nftContract = useAppSelector((state) => state.collections.currentNFTContract)
@@ -109,6 +109,7 @@ export default function ProductsList({ auctionContract }: { auctionContract: Add
             key={index}
             hidden={!onPage(index)}
             selected={tokenId === shownLot}
+            locked={locked}
             tokenId={tokenId}
             tokenURI={tokenURIs[index] || ''}
             onView={setViewing}

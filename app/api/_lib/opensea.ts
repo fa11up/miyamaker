@@ -295,7 +295,8 @@ export async function handleOpenSeaRequest(
   if (built.error !== undefined) return json(400, { name: 'INPUT_INVALID', message: built.error })
 
   const key = env.OPENSEA_API_KEY?.trim()
-  // Answered here, never upstream: lets the page skip keyed requests (and their 503s) when no key is set.
+  // Answered here, never upstream: lets the page skip keyed requests (and their 503s) when no key is set. It says a key is
+  // set, not that OpenSea takes it: a refused key shows up as the 503 with reason 'upstream' on the first keyed request.
   if (built.path === STATUS_PATH)
     return json(200, { configured: !!key }, { 'cache-control': 'public, max-age=60, s-maxage=300' })
   if (!key && !built.keyless) return json(503, NOT_CONFIGURED)

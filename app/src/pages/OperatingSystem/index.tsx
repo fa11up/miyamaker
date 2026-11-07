@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-non-null-assertion */
 import { Fragment, useEffect, useMemo, useState } from 'react'
 import { Helmet } from 'react-helmet-async'
+import { useStore } from 'react-redux'
 import { useLocation, useNavigate } from 'react-router-dom'
 import styled from 'styled-components/macro'
 import { useWindowSize } from 'usehooks-ts'
@@ -12,9 +13,11 @@ import Pages from '@/constants/pages'
 import { DESKTOP_ICONS } from '@/constants/programs'
 import { DesktopOverlays, DesktopPetLayer } from '@/desktop'
 import DesktopIconGrid from '@/desktop/icons/DesktopIconGrid'
+import { useOpenApp } from '@/music/useOpenApp'
 import { canonicalPath } from '@/pages/Swap/tradePath'
+import type { AppState } from '@/store'
 import { useAppDispatch, useAppSelector } from '@/store/hooks'
-import { closeWindow, minimizeWindow, openWindow, setToFront } from '@/store/windows/actions'
+import { minimizeWindow, setToFront } from '@/store/windows/actions'
 import { useWindows } from '@/store/windows/hooks'
 import type { PageKey } from '@/store/windows/reducer'
 import { MOBILE_BREAKPOINT } from '@/theme/tokens'
@@ -111,30 +114,14 @@ export default function OperatingSystem() {
 
   /* Redux stuff */
   const dispatch = useAppDispatch()
+  const store = useStore<AppState>()
   const [windows, zindex, fullScreen, minimized] = useWindows()
   const onTop = useAppSelector((state) => state.windows.onTop)
   const firstLoad = useAppSelector((state) => state.experience.firstLoad)
   // The boot screen greets visitors to the desktop itself; a shared link (/mint/...) goes straight to its window.
   const [bootHere] = useState(() => location.pathname === '/')
 
-  const handleOpen = (id: string) => {
-    if (windows.includes(id)) {
-      dispatch(setToFront({ value: id }))
-      return
-    }
-
-    const page = Pages[id]
-    if (!page) return
-    dispatch(
-      openWindow({
-        value: id,
-        position: {
-          x: Math.max(0, width / 2 - page.minSize.width / 2),
-          y: Math.max(0, (height - 34) / 2 - page.minSize.height / 2),
-        },
-      })
-    )
-  }
+  const handleOpen = useOpenApp()
 
   useEffect(() => {
     // Renamed windows: an in-app link to an old path (/swap) lands on the new one (/trade).
@@ -199,7 +186,11 @@ export default function OperatingSystem() {
             noTrail={page.noTrail}
             fixedSize={page.fixedSize}
             corner={page.corner}
-            onClick={() => zindex.indexOf(window) !== zindex.length - 1 && dispatch(setToFront({ value: window }))}
+            onClick={() => {
+              // The press on a minimize button bubbles up to here: what it just put away stays away.
+              const { zIndex, minimized: away } = store.getState().windows
+              if (!away.includes(window) && zIndex[zIndex.length - 1] !== window) dispatch(setToFront({ value: window }))
+            }}
           >
             <DynamicWrapper identifier={window} />
           </Windows>

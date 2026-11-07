@@ -16,6 +16,8 @@ export type NftApprovalFacts = {
   approvedAddress: string | undefined
   /** The getApproved read has finished, whether it answered or not. */
   approvedKnown: boolean
+  /** The isApprovedForAll read failed, so waiting longer won't help: it needs asking again. */
+  readFailed?: boolean
 }
 
 /**
@@ -23,7 +25,8 @@ export type NftApprovalFacts = {
  * existing blanket approval also counts, and is never added. ERC-1155 has no per-token approval, so it needs the
  * blanket one, and the screen says so.
  */
-export function nftApprovalState(f: NftApprovalFacts): 'checking' | 'ready' | 'needs-one' | 'needs-all' {
+export function nftApprovalState(f: NftApprovalFacts): 'checking' | 'failed' | 'ready' | 'needs-one' | 'needs-all' {
+  if (f.approvedForAll === undefined && f.readFailed) return 'failed'
   if (!f.operator || f.approvedForAll === undefined) return 'checking'
   if (f.approvedForAll) return 'ready'
   if (f.kind === 'erc1155') return 'needs-all'

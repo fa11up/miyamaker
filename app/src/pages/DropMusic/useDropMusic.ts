@@ -1,9 +1,12 @@
-import { readContract, simulateContract, waitForTransactionReceipt, writeContract } from '@wagmi/core'
-import { useCallback, useState } from 'react'
+import { getAccount, readContract, simulateContract, writeContract } from '@wagmi/core'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Address, Hash } from 'viem'
 import { parseEventLogs, zeroAddress } from 'viem'
 import { useAccount, useReadContract, useReadContracts } from 'wagmi'
 
+import { TxEndError } from '@/miyamints/txOutcome'
+import { latestOnly } from '@/pages/Swap/swapLogic'
+import { waitForTx } from '@/miyamints/useTxOutcome'
 import { wagmiConfig } from '@/config/wagmi'
 import { plainTxError, TX_CHECK_WORDS } from '@/miyamints/errors'
 import { erc1155FactoryAbi, erc1155InstanceAbi, miyaRegistryAbi } from '@/music/abi'
@@ -11,7 +14,7 @@ import type { MusicMetadata } from '@/music/audio'
 import { musicConfig } from '@/music/config'
 import { editionArgs, GATING_SCOPE_BOTH, makeSalt } from '@/music/drop'
 import { addKnownCollection } from '@/music/known'
-import { tryBatch } from '@/utils/batch'
+import { tryBatch, waitForBatch } from '@/utils/batch'
 import { instanceAddressAbi } from '@/utils/batchCalls'
 import { fundAndUpload } from '@/utils/fundAndUpload'
 import getIrysToken from '@/utils/getIrysToken'
@@ -88,6 +91,10 @@ export function useDropMusic() {
   })
   const [uploaded, setUploaded] = useState<Uploaded>({})
   const [launched, setLaunched] = useState<Launched>({})
+  /** A create-and-add-track batch the wallet has, until it says how it ended. */
+  const [sentBatch, setSentBatch] = useState<{ id: string; predicted: Address }>()
+  /** Uploads under way, so the station and a release never pay for the same file at once. */
+  const uploading = useRef(new Map<string, Promise<string>>())
   const [error, setError] = useState('')
   const [running, setRunning] = useState(false)
   /** What the current upload is waiting for, in the storage service's own steps. */
@@ -96,9 +103,38 @@ export function useDropMusic() {
     state: 'idle',
   })
 
+  const checks = useRef(latestOnly()).current
+
+  // Gone from the screen: no more wallet prompts, as SweepReview. Reset on mount for React's double effects.
+  const left = useRef(false)
+  useEffect(() => {
+    left.current = false
+    return () => {
+      left.current = true
+    }
+  }, [])
+  const stopIfClosed = () => {
+    if (left.current) throw new Error('The window was closed, so this stopped.')
+  }
+  // fundAndUpload says what it is about to ask before each prompt, so throwing here stops it between them.
+  const uploadNote = (words: string) => {
+    stopIfClosed()
+    setNote(words)
+  }
+
   const mark = (id: StepId, state: StepState) => setSteps((s) => ({ ...s, [id]: state }))
 
-  const upload = async (id: StepId, file: File): Promise<string> => {
+  const upload = (id: StepId, file: File): Promise<string> => {
+    stopIfClosed()
+    const key = `${id}:${file.name}:${file.size}:${file.lastModified}`
+    const under = uploading.current.get(key)
+    if (under) return under
+    const started = uploadOnce(id, file).finally(() => uploading.current.delete(key))
+    uploading.current.set(key, started)
+    return started
+  }
+
+  const uploadOnce = async (id: StepId, file: File): Promise<string> => {
     mark(id, 'active')
     const tx = await fundAndUpload(
       file,
@@ -110,7 +146,7 @@ export function useDropMusic() {
       undefined,
       getIrysToken(chain?.id || 1),
       chain,
-      setNote
+      uploadNote,
     )
       .catch((e) => {
         mark(id, 'error')
@@ -127,7 +163,7 @@ export function useDropMusic() {
     factory: Address,
     vault: Address,
     creator: Address,
-    c: { name: string; bps: number; uri: string }
+    c: { name: string; bps: number; uri: string },
   ) => {
     const salt = makeSalt(factory, crypto.getRandomValues(new Uint8Array(11)))
     return {
@@ -163,16 +199,18 @@ export function useDropMusic() {
 
   const simulate = useCallback(
     async (name: string, bps: number) => {
+      // Only the newest check counts: an older one landing late would speak for settings no longer on the screen.
+      const ticket = checks.begin()
       setCheck({ state: 'checking' })
       try {
         await dryRun(name, bps)
-        setCheck({ state: 'ok' })
+        if (checks.isCurrent(ticket)) setCheck({ state: 'ok' })
       } catch (e) {
-        setCheck({ state: 'error', message: plainTxError(e, TX_CHECK_WORDS) })
+        if (checks.isCurrent(ticket)) setCheck({ state: 'error', message: plainTxError(e, TX_CHECK_WORDS) })
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [address, chain]
+    [address, chain],
   )
 
   const run = useCallback(
@@ -234,6 +272,10 @@ export function useDropMusic() {
         }
 
         const chainId = cfg.chainId as ChainId
+        // Paying for storage takes the wallet to Ethereum and back. If it didn't come back, nothing goes to the wrong place.
+        if (getAccount(wagmiConfig).chainId !== chainId) {
+          throw new Error('Your wallet is on another network. Switch it back, then try again. Your uploads are kept.')
+        }
 
         let { instance } = launched
         const editionCall = {
@@ -257,21 +299,35 @@ export function useDropMusic() {
           })
           // Create the collection and add the edition as one signature: its address is fixed by the salt, so the
           // second call can name it in advance. If anything is off, the whole batch reverts.
-          const predicted = await readContract(wagmiConfig, {
-            address: cfg.factory,
-            abi: instanceAddressAbi,
-            functionName: 'computeInstanceAddress',
-            args: [salt, address],
-            chainId,
-          }).catch(() => undefined)
-          const sent =
-            predicted &&
-            (await tryBatch([create, { address: predicted, ...editionCall }], {
-              account: address,
+          const predicted =
+            sentBatch?.predicted ??
+            (await readContract(wagmiConfig, {
+              address: cfg.factory,
+              abi: instanceAddressAbi,
+              functionName: 'computeInstanceAddress',
+              args: [salt, address],
               chainId,
-              onSent: () => mark('edition', 'active'),
-            }))
+            }).catch(() => undefined))
+          stopIfClosed()
+          // A batch already out is waited on, never sent again. Only the wallet saying it failed frees it.
+          const sent = await Promise.resolve(
+            sentBatch
+              ? waitForBatch(sentBatch.id)
+              : predicted &&
+                  tryBatch([create, { address: predicted, ...editionCall }], {
+                    account: address,
+                    chainId,
+                    onSent: (id) => {
+                      setSentBatch({ id, predicted })
+                      mark('edition', 'active')
+                    },
+                  }),
+          ).catch((e) => {
+            if (!(e as TxEndError).unconfirmed) setSentBatch(undefined)
+            throw e
+          })
           if (sent) {
+            setSentBatch(undefined)
             const logs = sent.receipts.flatMap((r) => r.logs ?? []) as never
             instance = parseEventLogs({ abi: erc1155FactoryAbi, eventName: 'InstanceCreated', logs })[0]?.args.instance
             if (!instance) throw new Error('Created, but the new address was not in the receipt. Check the explorer.')
@@ -285,13 +341,23 @@ export function useDropMusic() {
               return
             }
           } else {
-            const { request } = await simulateContract(wagmiConfig, { account: address, chainId, ...create } as never)
-            const hash = await writeContract(wagmiConfig, request as never)
-            setLaunched((l) => ({ ...l, deployHash: hash }))
-            const receipt = await waitForTransactionReceipt(wagmiConfig, { hash, chainId })
-            if (receipt.status !== 'success') {
-              throw new Error('Creating the collection failed. Your uploads are saved, so press Retry release.')
+            // One already sent is waited on, not sent again: a failed lookup says nothing about how it ended.
+            let hash = launched.deployHash
+            if (!hash) {
+              const { request } = await simulateContract(wagmiConfig, { account: address, chainId, ...create } as never)
+              stopIfClosed()
+              const sentHash: Hash = await writeContract(wagmiConfig, request as never)
+              hash = sentHash
+              setLaunched((l) => ({ ...l, deployHash: sentHash }))
             }
+
+            const receipt = await waitForTx(chainId, hash).catch((e) => {
+              if ((e as TxEndError).reverted || (e as TxEndError).cancelled) {
+                setLaunched((l) => ({ ...l, deployHash: undefined }))
+              }
+
+              throw e
+            })
 
             const [created] = parseEventLogs({
               abi: erc1155FactoryAbi,
@@ -307,18 +373,27 @@ export function useDropMusic() {
         }
 
         mark('edition', 'active')
-        const { request } = await simulateContract(wagmiConfig, {
-          account: address,
-          chainId,
-          address: instance,
-          ...editionCall,
-        })
-        const hash = await writeContract(wagmiConfig, request)
-        setLaunched((l) => ({ ...l, editionHash: hash }))
-        const receipt = await waitForTransactionReceipt(wagmiConfig, { hash, chainId })
-        if (receipt.status !== 'success') {
-          throw new Error('Adding the track failed. Your collection is made, so press Finish to try again.')
+        let editionHash = launched.editionHash
+        if (!editionHash) {
+          const { request } = await simulateContract(wagmiConfig, {
+            account: address,
+            chainId,
+            address: instance,
+            ...editionCall,
+          })
+          stopIfClosed()
+          const sentHash = await writeContract(wagmiConfig, request)
+          editionHash = sentHash
+          setLaunched((l) => ({ ...l, editionHash: sentHash }))
         }
+
+        const receipt = await waitForTx(chainId, editionHash).catch((e) => {
+          if ((e as TxEndError).reverted || (e as TxEndError).cancelled) {
+            setLaunched((l) => ({ ...l, editionHash: undefined }))
+          }
+
+          throw e
+        })
 
         const [added] = parseEventLogs({ abi: erc1155InstanceAbi, eventName: 'EditionAdded', logs: receipt.logs })
         setLaunched((l) => ({ ...l, editionId: added?.args.editionId ?? 1n }))
@@ -331,20 +406,24 @@ export function useDropMusic() {
           })
           return next
         })
-        setError(plainTxError(e))
+        setError(e instanceof TxEndError ? e.message : plainTxError(e))
       } finally {
         setRunning(false)
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [address, chain, uploaded, launched]
+    [address, chain, uploaded, launched, sentBatch],
   )
 
   /** Store one file outside a release (the community station). The release reuses it, so nothing is paid twice. */
   const store = async (id: 'audio' | 'cover', file: File) => {
     const known = uploaded[id]
     if (known) return known
-    const uri = await upload(id, file)
+    // A failure here is told where it was asked for, on the station. It isn't a release step that failed.
+    const uri = await upload(id, file).catch((e) => {
+      mark(id, 'idle')
+      throw e
+    })
     setUploaded((u) => ({ ...u, [id]: uri }))
     return uri
   }
@@ -353,7 +432,9 @@ export function useDropMusic() {
     setSteps({ audio: 'idle', cover: 'idle', metadata: 'idle', deploy: 'idle', edition: 'idle' })
     setUploaded({})
     setLaunched({})
+    setSentBatch(undefined)
     setError('')
+    checks.cancel()
     setCheck({ state: 'idle' })
   }
 
@@ -373,5 +454,8 @@ export function useDropMusic() {
     }))
   }
 
-  return { steps, uploaded, launched, error, running, note, check, simulate, run, store, reset, invalidate }
+  /** Something has gone to the chain, so what it was built from can't change any more. */
+  const committed = !!launched.instance || !!launched.deployHash || !!sentBatch
+
+  return { committed, steps, uploaded, launched, error, running, note, check, simulate, run, store, reset, invalidate }
 }

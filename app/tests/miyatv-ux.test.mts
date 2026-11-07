@@ -3,8 +3,8 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
 import { airList, HOUSE_TAPES, nextTapeId, NOT_SENT, TapeRefusal, tapeProblem } from '../api/_lib/publicaccess.ts'
-import { CHANNELS, pinnedSource, plateLink, watchLabel } from '../src/pages/TV/channels.ts'
-import { chatWaitLine, signInProblem } from '../src/pages/TV/chat/protocol.ts'
+import { CHANNELS, kickEmptyWords, pinnedSource, plateLink, watchLabel } from '../src/pages/TV/channels.ts'
+import { chatWaitLine, freshSocket, initialRoomState, signInProblem } from '../src/pages/TV/chat/protocol.ts'
 import {
   FOCUS_SECONDS,
   focusLabel,
@@ -124,4 +124,21 @@ test('numbers are rounded, with units', () => {
   assert.equal(formatDistance(999.94), '999.9 m')
   assert.equal(headingLabel(134.4), 'Southeast · 134°')
   assert.equal(headingLabel(-1), 'North · 359°')
+})
+
+test('an empty Kick channel only claims what the server told it', () => {
+  assert.match(kickEmptyWords(true).line, /Nobody is live/)
+  assert.match(kickEmptyWords(false).line, /Could not check/)
+  // A server that doesn't say yet: true whichever it was.
+  const neither = kickEmptyWords(undefined).line
+  assert.doesNotMatch(neither, /Could not check|Nobody is live/)
+})
+
+test('a new chat socket has signed in as nobody and forgets the last one\'s troubles, but not a refusal', () => {
+  const me = { address: '0xa', badges: [], mod: false }
+  const rate = { code: 'rate' as const, message: 'slow down', at: 1 }
+  const auth = { code: 'auth' as const, message: 'expired', at: 2 }
+  assert.deepEqual(freshSocket({ ...initialRoomState, me, error: rate }), initialRoomState)
+  assert.equal(freshSocket({ ...initialRoomState, me, error: auth }).error, auth)
+  assert.equal(freshSocket({ ...initialRoomState, me, error: auth }).me, undefined)
 })

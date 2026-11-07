@@ -169,6 +169,16 @@ export default function SweepReview({
     }
   }, [])
   useEffect(() => onBusy?.(running), [running])
+  // Another wallet starts clean: those rows and that total were the last one's. Never mid-sweep, which waits to finish.
+  const sweptFor = useRef(me)
+  useEffect(() => {
+    if (running || sweptFor.current === me) return
+    sweptFor.current = me
+    setRuns({})
+    setFinished(false)
+    setStopWords(undefined)
+    setAgreed(false)
+  }, [me, running])
 
   // One at a time: the fulfillment route has its own small rate limit.
   const data = useQuery({
@@ -280,6 +290,9 @@ export default function SweepReview({
       if (refused(e)) {
         setStopWords('You stopped the sweep in your wallet. Nothing was bought.')
         setAll({ state: 'stopped' })
+      } else if ((e as { unconfirmed?: boolean }).unconfirmed) {
+        // The wallet has it and hasn't said how it ended: it may yet land, so it isn't a failure.
+        setAll({ state: 'unconfirmed', note: fillFailureWords('unconfirmed', 'buy').words })
       } else setAll({ state: 'failed', note: noteFor(e) })
     }
 
@@ -316,7 +329,19 @@ export default function SweepReview({
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       send: (_item, request) => writeContract(wagmiConfig, request as any),
       // The public client, as useTx: wagmi's wait throws on a revert, and that hid the transaction from its row.
-      wait: (hash) => client!.waitForTransactionReceipt({ hash: hash as Hash, timeout: 0 }),
+      wait: async (hash) => {
+        let replaced: string | undefined
+        const receipt = await client!.waitForTransactionReceipt({
+          hash: hash as Hash,
+          timeout: 0,
+          onReplaced: (r) => {
+            replaced = r.reason
+          },
+        })
+        if (replaced === 'cancelled') return { status: 'cancelled' }
+        if (replaced === 'replaced') throw new Error('replaced')
+        return receipt
+      },
       isStopped: () => left.current,
       isRefusal: refused,
       simulationFailed: ({ listing }, e) => simulationFailed(listing, e),

@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import styled, { keyframes } from 'styled-components/macro'
 
 import { useRadio } from '@/context/RadioProvider'
+import { setPlaying } from '@/desktop/screensaver/playing'
 import { fetchStation, toTrack } from '@/music/community'
 import { Glyph } from '@/pages/Radio/Glyph'
 import { font, text } from '@/theme/tokens'
@@ -231,6 +232,14 @@ export function RadioShow({ reducedMotion }: { reducedMotion: boolean }) {
     return () => clearInterval(change)
   }, [auto, radio.playing, mode])
 
+  const gone = useRef(false)
+  useEffect(() => {
+    gone.current = false
+    return () => {
+      gone.current = true
+    }
+  }, [])
+
   const stepMode = (by: number) => {
     setAuto(false)
     setMode((m) => (m + by + VIZ_MODES.length) % VIZ_MODES.length)
@@ -240,6 +249,8 @@ export function RadioShow({ reducedMotion }: { reducedMotion: boolean }) {
     setNote(undefined)
     try {
       const tracks = (await fetchStation()).tracks.map(toTrack)
+      // Changed channel while it answered: nothing should start over what's on now.
+      if (gone.current) return
       if (!tracks[0]) {
         setNote('Nothing on the station yet.')
         return
@@ -248,6 +259,7 @@ export function RadioShow({ reducedMotion }: { reducedMotion: boolean }) {
       radio.enqueue(tracks)
       radio.playNow(tracks[0])
     } catch {
+      if (gone.current) return
       setNote('Could not reach the station. Try again in a minute.')
     }
   }
@@ -589,6 +601,9 @@ const FilmSpot = styled(Stage)`
   }
 `
 
+/** A commercial whose picture hasn't moved for this long isn't coming back: on with the show. */
+const STALLED_SECONDS = 8
+
 function VideoSpot({
   spot,
   volume,
@@ -624,6 +639,21 @@ function VideoSpot({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // Skip counts playing time, so a video that stalls would never offer it.
+  useEffect(() => {
+    let at = -1
+    let still = 0
+    const watch = setInterval(() => {
+      const time = film.current?.currentTime ?? 0
+      still = time === at ? still + 1 : 0
+      at = time
+      if (still >= STALLED_SECONDS) onDone()
+    }, 1000)
+    return () => clearInterval(watch)
+  }, [onDone])
+
+  useEffect(() => () => setPlaying('tv-spot', false), [])
+
   const left = SKIP_AFTER_SECONDS - Math.floor(played)
   return (
     <FilmSpot data-testid="commercial">
@@ -634,6 +664,8 @@ function VideoSpot({
         playsInline
         preload="auto"
         onTimeUpdate={(e) => setPlayed(e.currentTarget.currentTime)}
+        onPlay={() => setPlaying('tv-spot', true)}
+        onPause={() => setPlaying('tv-spot', false)}
         onEnded={onDone}
         onError={onDone}
       />

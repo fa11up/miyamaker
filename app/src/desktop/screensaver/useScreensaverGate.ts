@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { DESKTOP_EVENTS } from '../prefs'
 import { idleRemaining, isTextEntry } from './idle'
+import { anythingPlaying } from './playing'
 
 const ACTIVITY_EVENTS = ['pointerdown', 'pointermove', 'keydown', 'wheel', 'touchstart', 'scroll'] as const
 
@@ -14,7 +15,7 @@ function modalOpen() {
 /**
  * Decides when the screensaver runs. Activity anywhere resets the timer; it never starts while a
  * text field is focused, a dialog/wallet prompt is open, a wallet request is pending (wagmi
- * mutations) or a transaction is being confirmed (wagmi receipt queries).
+ * mutations), a transaction is being confirmed (wagmi receipt queries), or the radio or miyaTV is playing.
  */
 export function useScreensaverGate({ enabled, delayMinutes }: { enabled: boolean; delayMinutes: number }) {
   const [active, setActive] = useState<false | 'idle' | 'preview'>(false)
@@ -41,7 +42,8 @@ export function useScreensaverGate({ enabled, delayMinutes }: { enabled: boolean
         return
       }
 
-      const blocked = busy.current || isTextEntry(document.activeElement as HTMLElement | null) || modalOpen()
+      const blocked =
+        busy.current || anythingPlaying() || isTextEntry(document.activeElement as HTMLElement | null) || modalOpen()
       if (blocked) lastActivity.current = Date.now()
       const remaining = idleRemaining({
         now: Date.now(),

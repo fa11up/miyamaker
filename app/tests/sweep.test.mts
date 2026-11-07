@@ -170,3 +170,11 @@ test('leaving during the check before a prompt stops that prompt too', async () 
   assert.deepEqual(s.prompts, [])
   assert.equal(s.last('a').state, 'stopped')
 })
+
+test("a buy replaced by the wallet's cancel is not bought, and stops the rest", async () => {
+  const s = pretend({ a: { status: 'cancelled' } })
+  await runSweep(['a', 'b'], s.deps)
+  assert.deepEqual(s.prompts, ['a'])
+  assert.deepEqual(s.last('a'), { state: 'stopped', hash: '0xa' })
+  assert.equal(s.last('b').state, 'stopped')
+})

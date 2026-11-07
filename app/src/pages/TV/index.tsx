@@ -568,7 +568,11 @@ export default function TV() {
   const liveQuery = useQuery({
     queryKey: ['tv-live'],
     queryFn: async () =>
-      (await (await fetch(TV_LIVE_PATH)).json()) as { ids: Record<string, string>; kick?: KickStream[] },
+      (await (await fetch(TV_LIVE_PATH)).json()) as {
+        ids: Record<string, string>
+        kick?: KickStream[]
+        kickChecked?: boolean
+      },
     refetchInterval: 3 * 60_000,
     retry: 1,
   })
@@ -632,8 +636,9 @@ export default function TV() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusTurns])
 
-  // Stepping off the radio turns it off, as nothing on the next channel could.
-  const leavingRadio = channel.kind === 'show' && channel.show === 'radio' && radio.playing
+  // Stepping off the radio turns it off, as nothing on the next channel could. Between tracks too: it reads as not
+  // playing while it waits to skip a bad one, and would start up again over the new channel.
+  const leavingRadio = channel.kind === 'show' && channel.show === 'radio'
   const pauseRadio = radio.pause
   const tune = useCallback(
     (next: number) => {
@@ -687,6 +692,8 @@ export default function TV() {
       return
     }
 
+    // Set by hand: this is now the sound someone chose, not the browser's doing.
+    autoMuted.current = false
     setTvVolume(v)
     setTvMuted(v === 0)
     try {
@@ -698,6 +705,7 @@ export default function TV() {
 
   const toggleMute = () => {
     if (isRadio) radio.setVolume(radio.volume > 0 ? 0 : tvVolume || 0.8)
+    else if (tvVolume === 0) setVolume(0.8) // Unmuting at nothing would change nothing.
     else {
       autoMuted.current = false
       setTvMuted((m) => !m)
@@ -852,6 +860,7 @@ export default function TV() {
                       volume={tvVolume}
                       muted={tvMuted}
                       checkingLive={liveQuery.isPending}
+                      kickChecked={liveQuery.isError && !live ? false : live?.kickChecked}
                       onAutoMuted={() => {
                         autoMuted.current = true
                         setTvMuted(true)

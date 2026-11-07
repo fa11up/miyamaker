@@ -45,18 +45,22 @@ export function quoteIsCurrent(quoted: QuoteTerms | undefined, onScreen: QuoteTe
   )
 }
 
-export type ReceiptOutcome = 'none' | 'waiting' | 'success' | 'reverted' | 'unknown'
+export type ReceiptOutcome = 'none' | 'waiting' | 'success' | 'reverted' | 'cancelled' | 'unknown'
 
 /**
  * What a transaction did. A failed look-up is not a failed transaction: the swap may yet land, so that is `unknown`, and
- * only a receipt that says so counts as `reverted`.
+ * only a receipt that says so counts as `reverted`. The receipt of a replaced transaction is the replacement's: a
+ * wallet's cancel reads as success on it, and anything but a sped-up copy says nothing about this one.
  */
 export function receiptOutcome(
   hash: string | undefined,
   receipt: { status?: string } | undefined,
   lookupFailed: boolean,
+  replaced?: 'cancelled' | 'repriced' | 'replaced',
 ): ReceiptOutcome {
   if (!hash) return 'none'
+  if (replaced === 'cancelled') return 'cancelled'
+  if (replaced === 'replaced') return 'unknown'
   if (receipt?.status === 'success') return 'success'
   if (receipt?.status === 'reverted') return 'reverted'
   return lookupFailed || receipt ? 'unknown' : 'waiting'
@@ -66,6 +70,8 @@ export const SWAP_FAILED_WORDS =
   'This swap failed on the network. Your tokens did not move. You only paid the network fee.'
 export const APPROVE_FAILED_WORDS =
   'This approval failed on the network. Your tokens did not move. You only paid the network fee.'
+export const CANCELLED_WORDS =
+  'You cancelled this in your wallet. Your tokens did not move. You only paid the network fee.'
 export const UNCONFIRMED_WORDS = 'We could not confirm this yet. It may still go through. Check it before trying again.'
 export const GENERIC_SWAP_WORDS = 'That did not go through. Nothing has moved. Try again.'
 export const OFFLINE_SWAP_WORDS = 'Swaps are offline right now. Nothing has moved. Try again later.'

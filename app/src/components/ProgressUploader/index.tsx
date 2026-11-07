@@ -16,8 +16,6 @@ import { isJunkFile } from '@/utils/myUploads'
 import { useStorageQuote } from '@/utils/useStorageQuote'
 
 interface ProgressBarUploaderProps {
-  request?: { requestFrom: string; timestamp: number; label?: string; result?: any }
-  onRequest?: (value: string) => void
   /** The element that takes dropped files. Defaults to the uploader itself. */
   dropArea?: RefObject<HTMLElement>
   onBusyChange?: (busy: boolean) => void
@@ -172,7 +170,7 @@ async function readDropped(entry: FileSystemEntry): Promise<File[]> {
 
 type Status = { tone: 'info' | 'ok' | 'error'; words: string; copy?: string }
 
-export const ProgressBarUploader = ({ request, onRequest, dropArea, onBusyChange }: ProgressBarUploaderProps) => {
+export const ProgressBarUploader = ({ dropArea, onBusyChange }: ProgressBarUploaderProps) => {
   const [selectedFile, setSelectedFile] = useState<File | undefined>(undefined)
   const [selectedFolder, setSelectedFolder] = useState<Folder>()
   const [choosing, setChoosing] = useState(false)
@@ -180,6 +178,8 @@ export const ProgressBarUploader = ({ request, onRequest, dropArea, onBusyChange
   const folderInput = useRef<HTMLInputElement>(null)
   const [fileUrl, setFileUrl] = useState<string>('')
   const [txProcessing, setTxProcessing] = useState<boolean>(false)
+  const processing = useRef(false)
+  processing.current = txProcessing
   const [message, setMessage] = useState<Status>()
   const [dragging, setDragging] = useState(false)
   const [copied, setCopied] = useState(false)
@@ -189,7 +189,19 @@ export const ProgressBarUploader = ({ request, onRequest, dropArea, onBusyChange
   const [uploadTxId, setUploadTxId] = useState<string | null>(null)
 
   const { chain, isConnected } = useAccount()
-  const showStatus = (words: string) => setMessage({ tone: 'info', words })
+  // Gone from the screen: no more wallet prompts. fundAndUpload says what it is about to ask before each one, so
+  // throwing here stops it between them. Reset on mount for React's double effects in development.
+  const left = useRef(false)
+  useEffect(() => {
+    left.current = false
+    return () => {
+      left.current = true
+    }
+  }, [])
+  const showStatus = (words: string) => {
+    if (left.current) throw new Error('The window was closed, so this stopped.')
+    setMessage({ tone: 'info', words })
+  }
 
   useEffect(() => onBusyChange?.(txProcessing), [txProcessing, onBusyChange])
 
@@ -204,21 +216,27 @@ export const ProgressBarUploader = ({ request, onRequest, dropArea, onBusyChange
 
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const picked = Array.from(event.target.files || [])
+    // Choosing the same file again should still fire a change.
+    event.target.value = ''
     setChoosing(false)
     if (picked.length > 1) {
       pickFolder(groupFiles(picked))
-      event.target.value = ''
       return
     }
     setMessage(undefined)
     setSelectedFile(undefined)
     setSelectedFolder(undefined)
     setFileUrl('')
-
-    if (event.target.files && event.target.files[0]) {
-      setSelectedFile(event.target.files[0])
-    }
+    if (picked[0]) setSelectedFile(picked[0])
   }
+
+  // Cancelling a file dialog fires no change, and would leave Files and Folder up in place of Browse.
+  useEffect(() => {
+    const inputs = [fileInput.current, folderInput.current]
+    const back = () => setChoosing(false)
+    inputs.forEach((input) => input?.addEventListener('cancel', back))
+    return () => inputs.forEach((input) => input?.removeEventListener('cancel', back))
+  }, [])
 
   const pickFolder = (folder: Folder) => {
     const trouble = folderProblem(folder)
@@ -241,7 +259,7 @@ export const ProgressBarUploader = ({ request, onRequest, dropArea, onBusyChange
   /** Files or a folder when the device can pick a folder; a phone goes straight to files. */
   const browse = () => {
     const folderless = window.matchMedia?.('(hover: none)').matches
-    if (request || folderless) fileInput.current?.click()
+    if (folderless) fileInput.current?.click()
     else setChoosing(true)
   }
 
@@ -264,13 +282,21 @@ export const ProgressBarUploader = ({ request, onRequest, dropArea, onBusyChange
     const entries = Array.from(event.dataTransfer.items)
       .map((item) => item.webkitGetAsEntry?.())
       .filter((entry): entry is FileSystemEntry => !!entry)
-    if (!request && entries.some((entry) => entry.isDirectory)) {
-      const read = (await Promise.all(entries.map(readDropped))).flat()
+    if (entries.some((entry) => entry.isDirectory)) {
+      let read: File[]
+      try {
+        read = (await Promise.all(entries.map(readDropped))).flat()
+      } catch {
+        setMessage({ tone: 'error', words: "Couldn't read that folder. Try it again, or use Browse." })
+        return
+      }
+      // A big folder takes a while, and an upload may have started meanwhile: it must not change under that.
+      if (processing.current) return
       const only = entries.length === 1 ? entries[0] : undefined
       pickFolder(only ? makeFolder(only.name, read) : groupFiles(read))
       return
     }
-    if (!request && loose.length > 1) {
+    if (loose.length > 1) {
       pickFolder(groupFiles(loose))
       return
     }
@@ -346,12 +372,6 @@ export const ProgressBarUploader = ({ request, onRequest, dropArea, onBusyChange
     }
   }
 
-  useEffect(() => {
-    if (request?.label) {
-      showStatus(request.label)
-    }
-  }, [request])
-
   const handleUpload = async () => {
     if (txProcessing || fileUrl) return
     setMessage(undefined)
@@ -387,9 +407,6 @@ export const ProgressBarUploader = ({ request, onRequest, dropArea, onBusyChange
 
     setUploadTxId(res)
     setFileUrl(`${GATEWAY_BASE}${res}`)
-    if (request && onRequest) {
-      onRequest(res)
-    }
 
     /*
     const irys = await getIrys()
@@ -479,9 +496,9 @@ export const ProgressBarUploader = ({ request, onRequest, dropArea, onBusyChange
       </TextContainer>
       <DashedBorderContainer data-dragging={dragging}>
         <DragWords>
-          {dragging ? 'Drop to add' : `Drag and drop files ${request ? '' : 'or a folder '}here`}
+          {dragging ? 'Drop to add' : 'Drag and drop files or a folder here'}
         </DragWords>
-        <input ref={fileInput} type="file" multiple={!request} onChange={handleFileUpload} style={{ display: 'none' }} />
+        <input ref={fileInput} type="file" multiple onChange={handleFileUpload} style={{ display: 'none' }} />
         <input
           ref={folderInput}
           type="file"
@@ -491,8 +508,7 @@ export const ProgressBarUploader = ({ request, onRequest, dropArea, onBusyChange
           onChange={handleFolderUpload}
           style={{ display: 'none' }}
         />
-        {/* A browser's file dialog picks files or a folder, never both, so Browse asks which. Another app asking
-            for one file wants one id back, so it goes straight to files. */}
+        {/* A browser's file dialog picks files or a folder, never both, so Browse asks which. */}
         {choosing ? (
           <>
             <button disabled={txProcessing} onClick={() => fileInput.current?.click()}>

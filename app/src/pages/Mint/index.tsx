@@ -1,6 +1,6 @@
 import BackgroundImage from 'assets/explorer/background/background.png'
 import WarningIcon from 'assets/icon/warning.png'
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate, useNavigationType } from 'react-router-dom'
 import styled from 'styled-components/macro'
 import { useAccount } from 'wagmi'
@@ -106,15 +106,28 @@ export default function MintPage() {
     if (location.pathname !== path) navigate(path)
   }
 
+  // A mint in flight holds its screen, whose outcome would go with it. Coming back would offer it again.
+  const [holds, setHolds] = useState(0)
+  const held = holds > 0
+  const hold = useCallback(() => {
+    setHolds((n) => n + 1)
+    return () => setHolds((n) => n - 1)
+  }, [])
+
   // Back/forward (and links into a sub-path) drive the view. A plain push to /mint is the OS re-focusing the window,
-  // which must not throw away the collection being viewed, so only POP navigations return home.
+  // which must not throw away the collection being viewed, so only POP navigations return home. During a mint it
+  // takes effect when that ends.
+  const syncedPath = useRef<string>()
   useEffect(() => {
+    const here = `${navigationType} ${location.pathname}`
+    if (held || syncedPath.current === here) return
+    syncedPath.current = here
     const slug = slugFromPath(location.pathname)
     if (!location.pathname.startsWith('/mint')) return
     if (!slug && navigationType !== 'POP') return
     setLiveSlug(slug)
     setPageSection(sectionForSlug(slug))
-  }, [location.pathname, navigationType])
+  }, [location.pathname, navigationType, held])
 
   const goHome = () => go(EXPLORER_PAGE_SECTION.HOME_SECTION)
   const openCard = (card: LiveMintCard) => {
@@ -164,10 +177,13 @@ export default function MintPage() {
     carts.findIndex((c) => c.slug === liveSlug)
   )
   const nav: HandheldNav = {
-    swap: booted && carts.length > 1 ? (step) => carts[wrapIndex(carts.length, inNow, step)]?.open() : undefined,
-    openMenu: booted && pageSection !== EXPLORER_PAGE_SECTION.GAMES_SECTION ? toMenu : () => {},
+    swap:
+      booted && !held && carts.length > 1 ? (step) => carts[wrapIndex(carts.length, inNow, step)]?.open() : undefined,
+    openMenu: booted && !held && pageSection !== EXPLORER_PAGE_SECTION.GAMES_SECTION ? toMenu : () => {},
     close,
     minimize,
+    held,
+    hold,
   }
 
   const menu = (

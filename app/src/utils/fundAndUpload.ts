@@ -5,6 +5,8 @@ import getIrys from './getIrys'
 import { pathInFolder } from './myUploads'
 import type { UploadStage } from './uploadError'
 import { uploadErrorWords } from './uploadError'
+import type { IrysPayment } from './irysPayment'
+import { uncounted } from './irysPayment'
 
 type Tag = {
   name: string
@@ -30,22 +32,53 @@ function uploadError(e: unknown, stage: UploadStage): Error {
   return new Error(uploadErrorWords(e, stage))
 }
 
+const paymentKey = (irys: WebIrys) => `miya.irys-payment:${irys.token}:${irys.address}`
+
+function readPayment(irys: WebIrys): IrysPayment | undefined {
+  try {
+    return JSON.parse(window.localStorage.getItem(paymentKey(irys)) ?? 'null') ?? undefined
+  } catch {
+    return undefined
+  }
+}
+
+function writePayment(irys: WebIrys, payment: IrysPayment | undefined) {
+  try {
+    if (payment) window.localStorage.setItem(paymentKey(irys), JSON.stringify(payment))
+    else window.localStorage.removeItem(paymentKey(irys))
+  } catch {
+    // Only loses the memory of a payment on its way.
+  }
+}
+
 /**
  * Make sure Irys holds enough of this wallet's money for `size` bytes. On Ethereum a payment takes minutes to be
- * credited, so after paying this waits for it rather than uploading into a "not enough funds". What was paid stays
- * on the wallet's Irys balance, so trying again after a timeout does not pay again.
+ * credited, so after paying this waits for it rather than uploading into a "not enough funds". A payment still on its way
+ * is remembered, across retries and reloads, because the balance doesn't show it: only what it doesn't cover is paid.
  */
 async function ensureFunded(irys: WebIrys, size: number, setStage: (stage: UploadStage) => void, status?: UploadStatus) {
   if (size <= FREE_BYTES) return
   const price = await irys.getPrice(size)
   const balance = await irys.getLoadedBalance()
   if (balance.isGreaterThan(price)) {
+    writePayment(irys, undefined)
     setStage('paid')
     return
   }
-  status?.('Pay for storage in your wallet (once, on Ethereum).')
-  setStage('paying')
-  await irys.fund(price.multipliedBy(PRICE_MARGIN).minus(balance).integerValue())
+
+  const onItsWay = uncounted(readPayment(irys), balance.toFixed(0), Date.now())
+  const toPay = price.multipliedBy(PRICE_MARGIN).minus(balance).minus(onItsWay).integerValue()
+  if (toPay.isGreaterThan(0)) {
+    status?.('Pay for storage in your wallet (once, on Ethereum).')
+    setStage('paying')
+    await irys.fund(toPay)
+    writePayment(irys, {
+      amount: toPay.plus(onItsWay).toFixed(0),
+      before: balance.toFixed(0),
+      at: Date.now(),
+    })
+  }
+
   setStage('paid')
   status?.('Waiting for the storage service to count your payment. This can take a few minutes.')
   const deadline = Date.now() + CREDIT_WAIT_MS
@@ -57,6 +90,8 @@ async function ensureFunded(irys: WebIrys, size: number, setStage: (stage: Uploa
       setTimeout(resolve, CREDIT_POLL_MS)
     })
   }
+
+  writePayment(irys, undefined)
 }
 
 /** Room for what a bundle adds to its files: each item's header and the folder's manifest. */

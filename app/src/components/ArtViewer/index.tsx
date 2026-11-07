@@ -598,7 +598,8 @@ export default function ArtViewer({
               />
             )}
             <Art
-              key={src}
+              // By place too: the next piece can share a picture, and only a new element loads again.
+              key={`${index}:${src}`}
               ref={artRef}
               src={src}
               alt={item.name}

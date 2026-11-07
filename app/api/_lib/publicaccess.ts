@@ -4,7 +4,11 @@
  *
  *   GET  /api/public-access          { tapes, pending, admins }
  *   POST /api/public-access/submit   { videoId, wallet, at, signature }
- *   POST /api/public-access/review   { videoId, decision: 'approve' | 'remove', wallet, at, signature }
+ *   POST /api/public-access/review   { videoId, decision: 'approve' | 'remove' | 'restore', wallet, at, signature }
+ *
+ * Whoever sent a video can take it back and it may be sent in again by anyone: taking back your own video says nothing
+ * about the video, and anyone could otherwise block any video for good. When the station removes it, it stays refused until
+ * the station restores it ('restore': back where it was, on air or waiting).
  *
  * A write is a wallet signature over the exact words below, fresh within 10 minutes. YouTube's oEmbed check supplies the
  * title and refuses videos that are missing or cannot be embedded. Storage, signature check and lookup are passed in, so
@@ -28,7 +32,9 @@ const MAX_AGE_MS = 10 * 60_000
 const DAY_MS = 86_400_000
 export const MAX_PER_WALLET_PER_DAY = 5
 export const MAX_PER_DAY = 50
-const LIST_LIMIT = 100
+/** Each list has its own limit, so a flood of new submissions cannot push anything off the air or out of the queue. */
+const AIR_LIMIT = 200
+const QUEUE_LIMIT = 100
 const VIDEO_ID = /^[A-Za-z0-9_-]{11}$/
 const WALLET = /^0x[0-9a-fA-F]{40}$/
 
@@ -40,6 +46,7 @@ export type Tape = {
   submittedAt: number
   approvedAt?: number
   removedAt?: number
+  removedBy?: string
 }
 
 /** The station's own tapes, from youtube.com/@miyamaker. Always on air, first in the line-up, and not in the database. */
@@ -73,13 +80,19 @@ export function nextTapeId(tapes: Tape[], videoId?: string): string | undefined 
 }
 
 export interface TapeStore {
-  list(limit: number): Promise<Tape[]>
+  /** The most recently approved, newest submission first. */
+  listApproved(limit: number): Promise<Tape[]>
+  /** The longest waiting, so the queue drains in turn; newest submission first. */
+  listPending(limit: number): Promise<Tape[]>
   /** Removed rows too. */
   get(videoId: string): Promise<Tape | undefined>
   /** False when the id already exists. */
   insert(tape: Tape): Promise<boolean>
+  /** Puts `tape`, awaiting review, over a row removed at `removedAt`. False when the row has changed since. */
+  resubmit(tape: Tape, removedAt: number): Promise<boolean>
   approve(videoId: string, at: number): Promise<void>
   remove(videoId: string, by: string, at: number): Promise<void>
+  restore(videoId: string): Promise<void>
   countSince(since: number, submitter?: string): Promise<number>
 }
 
@@ -93,6 +106,13 @@ export type PublicAccessDeps = {
   clientKey: (headers: Headers | undefined) => string
   limiter: (key: string) => boolean
   now?: () => number
+}
+
+/** Removed by the station rather than taken back by the wallet that sent it. An unknown remover counts as the station. */
+const isBlocked = (t: Tape, admins: string[]) => {
+  if (!t.removedAt) return false
+  const by = t.removedBy?.toLowerCase()
+  return by !== t.submitter.toLowerCase() || admins.includes(by)
 }
 
 /** The video id in any usual YouTube link, or undefined. */
@@ -163,8 +183,8 @@ export async function handlePublicAccessRequest(
   const { store } = deps
 
   if (url.pathname === PUBLIC_ACCESS_PATH && request.method === 'GET') {
-    const rows = await store.list(LIST_LIMIT)
-    return reply(200, { tapes: rows.filter((t) => t.approvedAt), pending: rows.filter((t) => !t.approvedAt), admins })
+    const [tapes, pending] = await Promise.all([store.listApproved(AIR_LIMIT), store.listPending(QUEUE_LIMIT)])
+    return reply(200, { tapes, pending, admins })
   }
 
   if (request.method !== 'POST') return fail(405, NOT_SENT)
@@ -189,12 +209,18 @@ export async function handlePublicAccessRequest(
 
   if (url.pathname === `${PUBLIC_ACCESS_PATH}/review`) {
     const decision = String(body.decision ?? '')
-    if (decision !== 'approve' && decision !== 'remove') return fail(400, NOT_SENT)
+    if (decision !== 'approve' && decision !== 'remove' && decision !== 'restore') return fail(400, NOT_SENT)
     if (!(await deps.verify(wallet, reviewMessage({ videoId, decision, wallet, at }), signature)))
       return fail(401, 'The signature does not match the wallet.')
     const tape = await store.get(videoId)
-    if (!tape || tape.removedAt) return fail(404, 'That video is not on public access.')
     const isAdmin = admins.includes(me)
+    if (decision === 'restore') {
+      if (!isAdmin) return fail(403, 'Only the station can restore a video.')
+      if (!tape || !isBlocked(tape, admins)) return fail(404, 'That video has not been blocked.')
+      await store.restore(videoId)
+      return reply(200, { ok: true })
+    }
+    if (!tape || tape.removedAt) return fail(404, 'That video is not on public access.')
     if (decision === 'approve' && !isAdmin) return fail(403, 'Only the station can approve a video.')
     if (decision === 'remove' && !isAdmin && tape.submitter !== me)
       return fail(403, 'Only whoever sent it or the station can remove this video.')
@@ -209,8 +235,8 @@ export async function handlePublicAccessRequest(
 
   if (HOUSE_TAPES.some((t) => t.videoId === videoId)) return fail(409, 'This video is already on the air.')
   const existing = await store.get(videoId)
-  if (existing?.removedAt) return fail(409, 'This video was removed and cannot be sent in again.')
-  if (existing) return fail(409, 'This video has already been sent in.')
+  if (existing && isBlocked(existing, admins)) return fail(409, 'This video was removed and cannot be sent in again.')
+  if (existing && !existing.removedAt) return fail(409, 'This video has already been sent in.')
   if ((await store.countSince(now - DAY_MS, me)) >= MAX_PER_WALLET_PER_DAY)
     return fail(429, `A wallet can send ${MAX_PER_WALLET_PER_DAY} videos a day. Come back tomorrow.`)
   if ((await store.countSince(now - DAY_MS)) >= MAX_PER_DAY)
@@ -223,9 +249,11 @@ export async function handlePublicAccessRequest(
     title: cleanLine(found.title, 120) || 'Untitled',
     author: cleanLine(found.author, 80),
     submitter: me,
-    submittedAt: now,
+    // Sending your own back keeps its place, so taking back and resending is no way up the queue.
+    submittedAt: existing?.submitter === me ? existing.submittedAt : now,
   }
-  if (!(await store.insert(tape))) return fail(409, 'This video has already been sent in.')
+  const saved = existing?.removedAt ? await store.resubmit(tape, existing.removedAt) : await store.insert(tape)
+  if (!saved) return fail(409, 'This video has already been sent in.')
   return reply(200, { tape })
 }
 
@@ -249,14 +277,26 @@ const fromDb = (r: Record<string, unknown>): Tape => ({
   submittedAt: Number(r.submitted_at),
   approvedAt: r.approved_at ? Number(r.approved_at) : undefined,
   removedAt: r.removed_at ? Number(r.removed_at) : undefined,
+  removedBy: r.removed_by ? String(r.removed_by) : undefined,
 })
 
 /** The Worker's store: Cloudflare D1, the `DB` binding (migrations/). */
 export const d1TapeStore = (db: D1Like): TapeStore => ({
-  list: async (limit) =>
+  listApproved: async (limit) =>
     (
       await db
-        .prepare('SELECT * FROM public_access_tapes WHERE removed_at IS NULL ORDER BY submitted_at DESC LIMIT ?')
+        .prepare(
+          'SELECT * FROM (SELECT * FROM public_access_tapes WHERE removed_at IS NULL AND approved_at IS NOT NULL ORDER BY approved_at DESC LIMIT ?) ORDER BY submitted_at DESC'
+        )
+        .bind(limit)
+        .all()
+    ).results.map(fromDb),
+  listPending: async (limit) =>
+    (
+      await db
+        .prepare(
+          'SELECT * FROM (SELECT * FROM public_access_tapes WHERE removed_at IS NULL AND approved_at IS NULL ORDER BY submitted_at ASC LIMIT ?) ORDER BY submitted_at DESC'
+        )
         .bind(limit)
         .all()
     ).results.map(fromDb),
@@ -273,6 +313,15 @@ export const d1TapeStore = (db: D1Like): TapeStore => ({
         .bind(t.videoId, t.title, t.author, t.submitter, t.submittedAt)
         .run()
     ).meta.changes > 0,
+  resubmit: async (t, removedAt) =>
+    (
+      await db
+        .prepare(
+          'UPDATE public_access_tapes SET title = ?, author = ?, submitter = ?, submitted_at = ?, approved_at = NULL, removed_at = NULL, removed_by = NULL WHERE video_id = ? AND removed_at = ?'
+        )
+        .bind(t.title, t.author, t.submitter, t.submittedAt, t.videoId, removedAt)
+        .run()
+    ).meta.changes > 0,
   approve: async (videoId, at) => {
     await db.prepare('UPDATE public_access_tapes SET approved_at = ? WHERE video_id = ?').bind(at, videoId).run()
   },
@@ -280,6 +329,12 @@ export const d1TapeStore = (db: D1Like): TapeStore => ({
     await db
       .prepare('UPDATE public_access_tapes SET removed_at = ?, removed_by = ? WHERE video_id = ?')
       .bind(at, by, videoId)
+      .run()
+  },
+  restore: async (videoId) => {
+    await db
+      .prepare('UPDATE public_access_tapes SET removed_at = NULL, removed_by = NULL WHERE video_id = ?')
+      .bind(videoId)
       .run()
   },
   countSince: async (since, submitter) => {
@@ -296,15 +351,28 @@ export const d1TapeStore = (db: D1Like): TapeStore => ({
 /** Tests and the dev server. */
 export function memoryTapeStore(): TapeStore {
   const rows = new Map<string, Tape>()
+  const newestSent = (a: Tape, b: Tape) => b.submittedAt - a.submittedAt
   return {
-    list: async (limit) =>
+    listApproved: async (limit) =>
       [...rows.values()]
-        .filter((t) => !t.removedAt)
-        .sort((a, b) => b.submittedAt - a.submittedAt)
-        .slice(0, limit),
+        .filter((t) => !t.removedAt && t.approvedAt)
+        .sort((a, b) => (b.approvedAt ?? 0) - (a.approvedAt ?? 0))
+        .slice(0, limit)
+        .sort(newestSent),
+    listPending: async (limit) =>
+      [...rows.values()]
+        .filter((t) => !t.removedAt && !t.approvedAt)
+        .sort((a, b) => a.submittedAt - b.submittedAt)
+        .slice(0, limit)
+        .sort(newestSent),
     get: async (id) => rows.get(id),
     insert: async (t) => {
       if (rows.has(t.videoId)) return false
+      rows.set(t.videoId, t)
+      return true
+    },
+    resubmit: async (t, removedAt) => {
+      if (rows.get(t.videoId)?.removedAt !== removedAt) return false
       rows.set(t.videoId, t)
       return true
     },
@@ -312,9 +380,13 @@ export function memoryTapeStore(): TapeStore {
       const t = rows.get(id)
       if (t) t.approvedAt = at
     },
-    remove: async (id, _by, at) => {
+    remove: async (id, by, at) => {
       const t = rows.get(id)
-      if (t) t.removedAt = at
+      if (t) rows.set(id, { ...t, removedAt: at, removedBy: by })
+    },
+    restore: async (id) => {
+      const t = rows.get(id)
+      if (t) rows.set(id, { ...t, removedAt: undefined, removedBy: undefined })
     },
     countSince: async (since, submitter) =>
       [...rows.values()].filter((t) => t.submittedAt >= since && (!submitter || t.submitter === submitter)).length,

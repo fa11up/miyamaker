@@ -1,9 +1,11 @@
+import { useEffect } from 'react'
 import styled from 'styled-components/macro'
 
+import { setPlaying } from '@/desktop/screensaver/playing'
 import { color, font, space, text } from '@/theme/tokens'
 
 import type { Channel, Source } from './channels'
-import { embedSrc } from './channels'
+import { embedSrc, kickEmptyWords } from './channels'
 import { PublicShow, RadioShow, SqueekShow } from './shows'
 import YouTubePlayer from './YouTubePlayer'
 
@@ -95,6 +97,7 @@ export default function Screen({
   volume,
   muted,
   checkingLive,
+  kickChecked,
   onAutoMuted,
   tapeId,
   tapePaused,
@@ -108,6 +111,8 @@ export default function Screen({
   muted: boolean
   /** Still asking who is live: nothing plays until there's an answer. */
   checkingLive: boolean
+  /** The server's word on whether it could ask Kick who is on; undefined when it doesn't say. */
+  kickChecked: boolean | undefined
   onAutoMuted: () => void
   tapeId?: string
   tapePaused: boolean
@@ -115,6 +120,14 @@ export default function Screen({
   onBreak: (on: boolean) => void
   reducedMotion: boolean
 }) {
+  // Kick and X don't say whether they're playing, so a player on screen counts. YouTube reports for itself.
+  const embedOn = channel.kind === 'iframe' && !!source && source.provider !== 'youtube'
+  useEffect(() => {
+    if (!embedOn) return undefined
+    setPlaying('tv-embed', true)
+    return () => setPlaying('tv-embed', false)
+  }, [embedOn])
+
   if (channel.kind === 'show') {
     if (channel.show === 'radio') return <RadioShow reducedMotion={reducedMotion} />
     if (channel.show === 'squeek') return <SqueekShow />
@@ -162,6 +175,7 @@ export default function Screen({
 
   // Nothing to play: Kick only offers who is on, so with no list it says so rather than show someone's offline card.
   if (channel.kind === 'iframe') {
+    const empty = kickEmptyWords(kickChecked)
     return checkingLive ? (
       <Card role="status">
         <span className="tag">tuning in</span>
@@ -170,9 +184,9 @@ export default function Screen({
       </Card>
     ) : (
       <Card role="status">
-        <span className="tag">no signal</span>
+        <span className="tag">{empty.tag}</span>
         <h2>{channel.name}</h2>
-        <p>Could not check who is live. Try again in a few minutes.</p>
+        <p>{empty.line}</p>
         {channel.links[0] && (
           <a href={channel.links[0].href} target="_blank" rel="noopener noreferrer">
             Watch on Kick ↗

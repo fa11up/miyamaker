@@ -1,9 +1,10 @@
 import { useConnectModal } from '@rainbow-me/rainbowkit'
 import type { CSSProperties } from 'react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import styled from 'styled-components/macro'
 import { formatUnits, parseUnits } from 'viem'
 
+import { TX_CANCELLED_WORDS, TX_REVERTED_WORDS, TX_UNCONFIRMED_WORDS } from '@/miyamints/txOutcome'
 import WarningIcon from '@/assets/icon/warning.png'
 import LoadingHourglass from '@/assets/loading_hourglass.gif'
 import { BigButton, Chip, Skeleton, StatusBox } from '@/components/Retro'
@@ -244,10 +245,6 @@ export default function Claim({ id, style }: { id?: string; style?: CSSPropertie
   const { openConnectModal } = useConnectModal()
   const [input, setInput] = useState('')
 
-  useEffect(() => {
-    if (wallet.legacy !== undefined && input === '') setInput(formatUnits(wallet.legacy, 18))
-  }, [wallet.legacy])
-
   const pick = (next: Legacy) => {
     if (next === which || tx.isAwaitingWallet || tx.isConfirming) return
     setWhich(next)
@@ -270,16 +267,27 @@ export default function Claim({ id, style }: { id?: string; style?: CSSPropertie
   const tooMuch = amount !== undefined && wallet.legacy !== undefined && amount > wallet.legacy
   const closed = state.closesAt !== undefined && Date.now() / 1000 >= state.closesAt
   const busy = tx.isAwaitingWallet || tx.isConfirming
+  // Another wallet starts clean: the amount and the last result were the previous one's. A transaction out with the
+  // wallet is seen to its end first.
+  const seenWallet = useRef(tx.address)
+  useEffect(() => {
+    if (busy || seenWallet.current === tx.address) return
+    seenWallet.current = tx.address
+    setInput('')
+    tx.reset()
+  }, [tx.address, busy])
   const err = describeError(tx.error)
   const txUrl = tx.hash ? `${explorerUrl(MIYANET_CHAIN_ID)}/tx/${tx.hash}` : undefined
   const needsApproval = amount !== undefined && wallet.allowance !== undefined && wallet.allowance < amount
+  const moonShut = which === 'mxxn' && !!state.moon && !state.moon.open
 
   const action = (() => {
     const idle = () => {}
 
+    if (tx.isAwaitingWallet) return { label: 'Confirm in wallet…', disabled: true, onClick: idle }
+    if (tx.isConfirming) return { label: 'Confirming…', disabled: true, onClick: idle }
     if (state.isError) return { label: 'Unavailable', disabled: true, onClick: idle }
     if (closed) return { label: 'Redemption closed', disabled: true, onClick: idle }
-    const moonShut = which === 'mxxn' && state.moon && !state.moon.open
     if (!tx.isConnected)
       return { label: 'Connect wallet', disabled: !openConnectModal, onClick: () => openConnectModal?.() }
     if (tx.wrongChain)
@@ -288,13 +296,24 @@ export default function Claim({ id, style }: { id?: string; style?: CSSPropertie
         disabled: tx.isSwitching,
         onClick: tx.switchToMainnet,
       }
-    if (tx.isAwaitingWallet) return { label: 'Confirm in wallet…', disabled: true, onClick: idle }
-    if (tx.isConfirming) return { label: 'Confirming…', disabled: true, onClick: idle }
+    if (tx.unconfirmed) return { label: 'Start over', disabled: false, onClick: tx.reset }
+    // Nothing is burned on a guess: what isn't read yet doesn't count as fine.
+    if (
+      wallet.legacy === undefined ||
+      wallet.allowance === undefined ||
+      state.rate === undefined ||
+      state.closesAt === undefined ||
+      (which === 'mxxn' && !state.moon)
+    )
+      return { label: 'Reading the chain…', disabled: true, onClick: idle }
     if (moonShut && state.moon?.behind)
       return { label: 'Move the moon clock on', disabled: false, onClick: () => tx.advanceClock() }
     if (wallet.legacy === 0n) return { label: `No ${symbol} in this wallet`, disabled: true, onClick: idle }
     if (amount === undefined || amount === 0n) return { label: 'Enter an amount', disabled: true, onClick: idle }
     if (tooMuch) return { label: `More than your ${symbol}`, disabled: true, onClick: idle }
+    // The approval landed and the allowance on screen is from before it: don't offer it again in the gap.
+    if (needsApproval && tx.isConfirmed && tx.lastAction === 'approve' && wallet.isFetching)
+      return { label: 'Checking…', disabled: true, onClick: idle }
     // Approving moves nothing, so it works any time; the burn waits for the full moon.
     if (needsApproval && tx.canBatch && !moonShut)
       return {
@@ -311,7 +330,8 @@ export default function Claim({ id, style }: { id?: string; style?: CSSPropertie
   // Which of the three steps the person is on: connect, approve, burn.
   let step = 3
   if (!tx.isConnected || tx.wrongChain) step = 1
-  else if ((needsApproval && !tx.canBatch) || (tx.isAwaitingWallet && tx.lastAction === 'approve')) step = 2
+  else if ((needsApproval && (!tx.canBatch || moonShut)) || (tx.isAwaitingWallet && tx.lastAction === 'approve'))
+    step = 2
 
   const vestingLeft = wallet.vesting ? wallet.vesting.total - wallet.vesting.claimed : 0n
   // Burned some before and none left: the fire, not a form that can only say "No MIYA in this wallet".
@@ -322,7 +342,7 @@ export default function Claim({ id, style }: { id?: string; style?: CSSPropertie
     : undefined
 
   let status = <Chip tone="ok">Open</Chip>
-  if (which === 'mxxn' && state.moon && !state.moon.open) status = <Chip tone="off">Full moon only</Chip>
+  if (moonShut) status = <Chip tone="off">Full moon only</Chip>
   if (state.isLoading) status = <Chip tone="off">Reading chain</Chip>
   else if (state.isError) status = <Chip tone="warn">RPC unavailable</Chip>
   else if (closed) status = <Chip tone="off">Closed</Chip>
@@ -523,9 +543,26 @@ export default function Claim({ id, style }: { id?: string; style?: CSSPropertie
           </span>
         </StatusBox>
       )}
+      {tx.unconfirmed && (
+        <StatusBox tone="info" role="alert">
+          <span>
+            {TX_UNCONFIRMED_WORDS}{' '}
+            {txUrl && (
+              <a href={txUrl} target="_blank" rel="noreferrer">
+                View transaction
+              </a>
+            )}
+          </span>
+        </StatusBox>
+      )}
+      {tx.cancelled && (
+        <StatusBox tone="info" role="status">
+          <span>{TX_CANCELLED_WORDS}</span>
+        </StatusBox>
+      )}
       {(tx.reverted || (tx.error && !busy)) && (
         <StatusBox tone={err.cancelled ? 'info' : 'error'} role="alert">
-          <span>{tx.reverted ? 'The transaction reverted.' : err.message}</span>
+          <span>{tx.reverted ? TX_REVERTED_WORDS : err.message}</span>
         </StatusBox>
       )}
 

@@ -800,7 +800,7 @@ export default function Stage(p: StageProps) {
             <PlayButton
               type="button"
               onClick={player.toggle}
-              disabled={dur <= 0 && !!player.error}
+              disabled={dur <= 0 && player.broken}
               aria-label={player.playing ? 'Pause track' : 'Play track'}
               title={player.playing ? 'Pause' : 'Play'}
             >

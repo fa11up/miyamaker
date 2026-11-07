@@ -4,7 +4,7 @@ import type { CrestParams } from './surface'
  * What the desktop wave is doing right now, for anything that wants to play with it (the pet).
  * Written by WaveBackground, read every frame by readers: plain mutable object, no React.
  *
- *  - `status`: 'off' (wave button off), 'webgl' (animated shader), 'still' (shader, one frame:
+ *  - `status`: 'off' (wave button off, or its context lost and nothing drawn), 'webgl' (animated shader), 'still' (shader, one frame:
  *    reduced motion), 'fallback' (no WebGL: static CSS wave drawn from the same crest params)
  *  - `frameTime`: the `t` of the frame on screen. Readers pass it to crestHeight() so they match
  *    the drawn water, even when the shader runs below the display rate.

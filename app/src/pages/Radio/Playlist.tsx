@@ -159,7 +159,11 @@ export default function Playlist({
   onInfo: () => void
 }) {
   const { queue } = radio
-  const [selected, setSelected] = useState<number[]>([])
+  const latestQueue = useRef(queue)
+  latestQueue.current = queue
+  // By track, not place, so a selection means the same tracks when the list changes under it.
+  const [selectedIds, setSelectedIds] = useState<string[]>([])
+  const selected = queue.tracks.flatMap((t, i) => (selectedIds.includes(t.id) ? [i] : []))
   const [menu, setMenu] = useState<MenuId>()
   const station = useStationRemove()
   const [takingOff, setTakingOff] = useState(false)
@@ -178,8 +182,7 @@ export default function Playlist({
     listRef.current?.querySelector('[data-active="true"]')?.scrollIntoView?.({ block: 'nearest' })
   }, [nowIndex])
 
-  // Selections are by position, so they don't survive the list changing.
-  useEffect(() => setSelected([]), [queue.tracks.length])
+  useEffect(() => setTakeOffFailed(false), [selectedIds])
 
   const allSelected = queue.tracks.length > 0 && selected.length === queue.tracks.length
   // The playing track knows its real length even when its metadata didn't say.
@@ -190,6 +193,7 @@ export default function Playlist({
   const removeSelected = () => {
     // Highest first, so the earlier positions stay put.
     ;[...selected].sort((a, b) => b - a).forEach((i) => radio.remove(i))
+    setSelectedIds([])
     setMenu(undefined)
   }
 
@@ -199,8 +203,14 @@ export default function Playlist({
     setTakeOffFailed(false)
     try {
       const tracks = offStation.map((i) => queue.tracks[i]!)
-      for (const t of tracks) await station.remove(t)
-      offStation.forEach((i) => radio.remove(i))
+      // Each comes off the list as soon as it's off the station, so trying again only asks about the ones left.
+      for (const t of tracks) {
+        await station.remove(t)
+        const at = latestQueue.current.tracks.findIndex((x) => x.id === t.id)
+        if (at >= 0) radio.remove(at)
+      }
+
+      setSelectedIds([])
       setMenu(undefined)
     } catch {
       setTakeOffFailed(true)
@@ -277,14 +287,16 @@ export default function Playlist({
                   onClick={(e) => {
                     // Single tap plays on touch screens (no double-click there), and picks it for removing too.
                     if (lastPointer.current === 'touch') {
-                      setSelected([i])
-                      radio.jumpTo(i)
+                      setSelectedIds([t.id])
+                      // Tapping what's already on must not start it over.
+                      if (!active) radio.jumpTo(i)
+                      else if (!radio.playing) radio.play()
                       return
                     }
 
-                    setSelected((s) => {
-                      if (!e.ctrlKey && !e.metaKey) return [i]
-                      return s.includes(i) ? s.filter((x) => x !== i) : [...s, i]
+                    setSelectedIds((s) => {
+                      if (!e.ctrlKey && !e.metaKey) return [t.id]
+                      return s.includes(t.id) ? s.filter((x) => x !== t.id) : [...s, t.id]
                     })
                   }}
                   title={`${t.artist ? `${t.artist} - ` : ''}${t.title} (double-click to play)`}
@@ -310,7 +322,7 @@ export default function Playlist({
           title={allSelected ? 'Select none' : 'Select all'}
           aria-pressed={allSelected}
           disabled={!queue.tracks.length}
-          onClick={() => setSelected(allSelected ? [] : queue.tracks.map((_, i) => i))}
+          onClick={() => setSelectedIds(allSelected ? [] : queue.tracks.map((t) => t.id))}
         >
           <PixelText text="SEL" />
         </Key>

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import styled from 'styled-components/macro'
 import type { Address } from 'viem'
 import { isAddress } from 'viem'
@@ -185,6 +185,12 @@ function DropActions({
 }: Common & { call: CallFn; dropReads: { data?: readonly { result?: unknown }[] } }) {
   const [to, setTo] = useState('')
   const [qty, setQty] = useState('1')
+  useEffect(() => {
+    if (tx.phase === 'done' && tx.id === 'gift') {
+      setTo('')
+      setQty('1')
+    }
+  }, [tx.phase, tx.id])
   const q = parseWhole(qty, { min: 1, max: 500, label: 'Amount' })
   type Ph = { start: bigint; end: bigint; price: bigint; maxPerWallet: number; supplyCap: number }
   const phases = (dropReads.data?.[9]?.result as Ph[] | undefined) || []
@@ -264,7 +270,20 @@ function AuctionPieces({
   const [img, setImg] = useState('')
   const [name, setName] = useState('')
   const [reserve, setReserve] = useState('')
-  const now = Date.now() / 1000
+  // Ticks, so Settle appears when a piece's time runs out with the tab open.
+  const [now, setNow] = useState(() => Date.now() / 1000)
+  useEffect(() => {
+    const tick = setInterval(() => setNow(Date.now() / 1000), 15_000)
+    return () => clearInterval(tick)
+  }, [])
+  // Sent and landed: a filled form would offer the same deposit again.
+  useEffect(() => {
+    if (tx.phase === 'done' && tx.id === 'queue') {
+      setImg('')
+      setName('')
+      setReserve('')
+    }
+  }, [tx.phase, tx.id])
   const l = parseLink(img)
   const n = parseName(name)
   const p = parseEth(reserve, { label: 'Starting bid' })
@@ -392,6 +411,14 @@ function EditionsTab({
   const [img, setImg] = useState('')
   const [price, setPrice] = useState('')
   const [copies, setCopies] = useState('')
+  useEffect(() => {
+    if (tx.phase === 'done' && tx.id === 'edition') {
+      setTitle('')
+      setImg('')
+      setPrice('')
+      setCopies('')
+    }
+  }, [tx.phase, tx.id])
   const n = parseName(title)
   const l = parseLink(img)
   const p = parseEth(price)
@@ -577,7 +604,9 @@ export default function MiyamintsManage({
     balance.refetch()
   }
 
-  const { tx, run, busy } = useTx(() => refetchAll())
+  const { tx, run, busy: sending, unconfirmed, reset } = useTx(() => refetchAll())
+  // Sent, but unread: it may still land, so nothing is pressed twice until someone says to start over.
+  const busy = sending || unconfirmed
   const r = <T,>(q: typeof dropReads | typeof auctionReads | typeof editionReads, i: number) =>
     q.data?.[i]?.result as T | undefined
 
@@ -687,6 +716,12 @@ export default function MiyamintsManage({
   )
 
   return (
+    <>
+      {unconfirmed && (
+        <SmallButton type="button" onClick={reset}>
+          Start over
+        </SmallButton>
+      )}
     <Tabs
       active={tab}
       fillHeight={false}
@@ -728,5 +763,6 @@ export default function MiyamintsManage({
           : []),
       ]}
     />
+    </>
   )
 }

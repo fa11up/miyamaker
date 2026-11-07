@@ -142,6 +142,7 @@ export default function MintCart({
   quantity,
   maxQty,
   busy,
+  stay,
   onQuantity,
   extras,
   total,
@@ -171,6 +172,8 @@ export default function MintCart({
   quantity: number
   maxQty: number
   busy: boolean
+  /** Not in flight, but its ending is unknown: the screen stays until someone starts over. */
+  stay?: boolean
   onQuantity: (n: number) => void
   extras?: ReactNode
   total: string
@@ -186,6 +189,8 @@ export default function MintCart({
   children?: ReactNode
 }) {
   const nav = useHandheld()
+  const holding = busy || !!stay
+  useEffect(() => (holding ? nav.hold?.() : undefined), [holding])
   const [info, setInfo] = useState(false)
   const [holo, setHolo] = useState(false)
   const landed = !!dropped
@@ -199,7 +204,10 @@ export default function MintCart({
     return () => clearTimeout(t)
   }, [landed])
   useEffect(() => {
-    if (!landed) scanned.current = false
+    if (landed) return
+    scanned.current = false
+    // Its timer went with it, and nothing else would take the scan down.
+    setScanning(false)
   }, [landed])
 
   const main = lamps[0]
@@ -311,7 +319,11 @@ export default function MintCart({
         </Lcd>
       }
       a={action}
-      b={info ? { label: 'Close info', onClick: () => setInfo(false) } : { label: 'Menu', onClick: back }}
+      b={
+        info
+          ? { label: 'Close info', onClick: () => setInfo(false) }
+          : { label: 'Menu', disabled: holding, onClick: back }
+      }
       start={{ label: info ? 'Close info' : 'Info', onClick: () => setInfo((v) => !v) }}
       dpad={info ? { up: scrollInfo(-90), down: scrollInfo(90) } : { up, down }}
     />

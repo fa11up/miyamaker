@@ -87,7 +87,7 @@ export async function runSweep<T, R>(
   d: {
     simulate: (item: T) => Promise<R>
     send: (item: T, request: R) => Promise<string>
-    /** Resolves with the receipt, whatever its status. Throws only when it cannot be read. */
+    /** The receipt, whatever its status, or status 'cancelled' for a wallet's cancel. Throws only when it can't be read. */
     wait: (hash: string) => Promise<{ status?: string }>
     isStopped: () => boolean
     isRefusal: (error: unknown) => boolean
@@ -148,6 +148,15 @@ export async function runSweep<T, R>(
     try {
       // eslint-disable-next-line no-await-in-loop
       const receipt = await d.wait(hash)
+      if (receipt.status === 'cancelled') {
+        // Replaced by the wallet's cancel: as good as refusing the prompt.
+        stopped = true
+        d.onRefused?.()
+        d.onState(item, { state: 'stopped', hash })
+        // eslint-disable-next-line no-continue
+        continue
+      }
+
       d.onState(
         item,
         receipt.status === 'success' ? { state: 'bought', hash } : { state: 'failed', hash, note: d.revertedNote }

@@ -36,6 +36,13 @@ test('getApproved: already this operator is ready; another one still needs askin
   assert.equal(nftApprovalCall('ready', CONDUIT, '42'), undefined)
 })
 
+test('a failed blanket-approval read asks again instead of checking for good', () => {
+  assert.equal(nftApprovalState({ ...base, approvedForAll: undefined }), 'checking')
+  assert.equal(nftApprovalState({ ...base, approvedForAll: undefined, readFailed: true }), 'failed')
+  assert.equal(nftApprovalState({ ...base, approvedForAll: undefined, operator: undefined, readFailed: true }), 'failed')
+  assert.equal(nftApprovalCall('failed', CONDUIT, '42'), undefined)
+})
+
 test('a blanket approval already given is enough, and is never added', () => {
   assert.equal(nftApprovalState({ ...base, approvedForAll: true }), 'ready')
 })

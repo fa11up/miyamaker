@@ -29,6 +29,7 @@ import { useEthUsd, useTokenUsd } from './MarketBoard'
 import { SwitchNote } from './nft/ui'
 import {
   APPROVE_FAILED_WORDS,
+  CANCELLED_WORDS,
   compactAmount,
   describeTxError,
   impactLevel,
@@ -482,10 +483,13 @@ export default function TokenSwap({
   const price = usePrice(request)
   const reference = useReferencePrice(request)
   const exec = useSwapExecution({ chainId, taker: address })
+  // Sent, and its ending couldn't be read: it may still land, so nothing changes until someone starts over.
+  const stuck = exec.unconfirmed || exec.approveUnconfirmed
 
   // Any change to the trade invalidates a reviewed quote.
   useEffect(() => {
-    if (!exec.swapHash) exec.reset()
+    // Never while something is out with the wallet: that would forget a transaction that can still send.
+    if (!exec.swapHash && !exec.awaitingWallet && !exec.confirming && !exec.approving && !stuck) exec.reset()
   }, [request?.sellAmount, request?.sellToken, request?.buyToken, request?.taker, slippageBps, chainId])
 
   useEffect(() => {
@@ -551,7 +555,7 @@ export default function TokenSwap({
   const buyUsd = useTokenUsd(buy)
   const ethUsd = useEthUsd()
   const busy = exec.quoting || exec.approving || exec.awaitingWallet || exec.confirming
-  const locked = busy || !!exec.swapHash
+  const locked = busy || !!exec.swapHash || stuck
   useEffect(() => onBusy?.(locked), [locked])
   const done = exec.confirmed
 
@@ -559,7 +563,7 @@ export default function TokenSwap({
   // clears a finished one.
   const appliedPreset = useRef<number>()
   useEffect(() => {
-    if (!preset || busy || appliedPreset.current === preset.key) return
+    if (!preset || busy || stuck || appliedPreset.current === preset.key) return
     appliedPreset.current = preset.key
     if (exec.swapHash) exec.reset()
     if (preset.chainId === chainId) applyPreset(preset)
@@ -567,7 +571,7 @@ export default function TokenSwap({
       pendingPreset.current = preset
       onChain(preset.chainId)
     }
-  }, [preset?.key, busy])
+  }, [preset?.key, busy, stuck])
 
   // Bring the review and the receipt into view: the window is short and the action dock covers the bottom.
   const detailsRef = useRef<HTMLDivElement>(null)
@@ -590,14 +594,19 @@ export default function TokenSwap({
   const impactIs = impactLevel(impact)
 
   const action = (() => {
+    // What is under way or just ended comes first: nothing about the price, the balance or the network outranks it.
+    if (exec.awaitingWallet) return { label: 'Confirm in wallet…', disabled: true }
+    if (exec.confirming) return { label: 'Swapping…', disabled: true }
+    if (exec.approving)
+      return { label: `${exec.approvingReset ? 'Resetting' : 'Approving'} ${sell.symbol}…`, disabled: true }
+    if (done) return { label: 'New swap', className: 'secondary', onClick: newSwap }
+    if (exec.reverted || exec.cancelled) return { label: 'Try again', className: 'secondary', onClick: newSwap }
+    // It may yet land, so the same step is not offered again: only a clean start, after the warning above the button.
+    if (stuck) return { label: 'Start over', className: 'secondary', onClick: newSwap }
     if (notConfigured) return { label: 'Swap unavailable', disabled: true }
     if (!isConnected) return { label: 'Connect wallet', onClick: () => openConnectModal?.() }
     if (wrongChain)
       return { label: switching ? 'Switching…' : `Switch to ${chainName}`, onClick: () => switchChain({ chainId }) }
-    if (done) return { label: 'New swap', className: 'secondary', onClick: newSwap }
-    if (exec.reverted) return { label: 'Try again', className: 'secondary', onClick: newSwap }
-    // It may yet land, so the same swap is not offered again: only a clean start, after the warning above the button.
-    if (exec.unconfirmed) return { label: 'Start over', className: 'secondary', onClick: newSwap }
     if (!sellAmount) return { label: 'Enter an amount', disabled: true }
     if (insufficient) return { label: `Not enough ${sell.symbol}`, disabled: true }
     if ((typing || price.isFetching) && !priceData) return { label: 'Finding best price…', disabled: true }
@@ -624,20 +633,16 @@ export default function TokenSwap({
     const numbered = step.at ? `Step ${step.at} of ${step.of}: ` : ''
     if (step.stage === 'reset')
       return {
-        label: exec.approving ? `Resetting ${sell.symbol}…` : `Reset ${sell.symbol} allowance`,
+        label: `Reset ${sell.symbol} allowance`,
         step: `${numbered}set your old ${sell.symbol} allowance for 0x to 0. This token needs that first.`,
-        disabled: exec.approving,
         onClick: exec.approve,
       }
     if (step.stage === 'approve')
       return {
-        label: exec.approving ? `Approving ${sell.symbol}…` : `Approve ${paying}`,
+        label: `Approve ${paying}`,
         step: `${numbered}let 0x, the swap router, spend exactly ${paying}. Then swap.`,
-        disabled: exec.approving,
         onClick: exec.approve,
       }
-    if (exec.awaitingWallet) return { label: 'Confirm in wallet…', disabled: true }
-    if (exec.confirming) return { label: 'Swapping…', disabled: true }
     const getting = compactAmount(Number(formatUnits(BigInt(firm.buyAmount), buy.decimals)))
     return {
       label: exec.quoting
@@ -939,9 +944,11 @@ export default function TokenSwap({
             <img src={LoadingHourglass} alt="" />
             <span>
               Swap sent. Waiting for the network.{' '}
-              <a href={`${explorer}/tx/${exec.swapHash}`} target="_blank" rel="noreferrer">
-                View on {explorerName}
-              </a>
+              {exec.swapHash && (
+                <a href={`${explorer}/tx/${exec.swapHash}`} target="_blank" rel="noreferrer">
+                  View on {explorerName}
+                </a>
+              )}
             </span>
           </StatusBox>
         )}
@@ -949,13 +956,20 @@ export default function TokenSwap({
           <StatusBox tone="error" role="alert">
             <span>
               {exec.approveReverted ? APPROVE_FAILED_WORDS : UNCONFIRMED_WORDS}{' '}
-              <a href={`${explorer}/tx/${exec.approveHash}`} target="_blank" rel="noreferrer">
-                View on {explorerName}
-              </a>
+              {exec.approveHash && (
+                <a href={`${explorer}/tx/${exec.approveHash}`} target="_blank" rel="noreferrer">
+                  View on {explorerName}
+                </a>
+              )}
             </span>
           </StatusBox>
         )}
-        {(exec.swapError || exec.approveError) && !busy && (
+        {(exec.approveCancelled || exec.cancelled) && !busy && (
+          <StatusBox tone="info" role="status" data-swap-cancelled>
+            <span>{CANCELLED_WORDS}</span>
+          </StatusBox>
+        )}
+        {!!(exec.swapError || exec.approveError) && !busy && (
           <StatusBox tone={txError.cancelled ? 'info' : 'error'} role="alert">
             <span>{txError.message}</span>
           </StatusBox>
@@ -980,9 +994,11 @@ export default function TokenSwap({
             <StatusBox tone="error" role="alert" data-swap-failed>
               <span>
                 {exec.reverted ? SWAP_FAILED_WORDS : UNCONFIRMED_WORDS}{' '}
-                <a href={`${explorer}/tx/${exec.swapHash}`} target="_blank" rel="noreferrer">
-                  View on {explorerName}
-                </a>
+                {exec.swapHash && (
+                  <a href={`${explorer}/tx/${exec.swapHash}`} target="_blank" rel="noreferrer">
+                    View on {explorerName}
+                  </a>
+                )}
               </span>
             </StatusBox>
           )}

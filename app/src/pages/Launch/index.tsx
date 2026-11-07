@@ -373,6 +373,7 @@ export default function LaunchPage() {
 
   const set = <K extends keyof LaunchForm>(k: K, v: LaunchForm[K]) => {
     setForm((f) => ({ ...f, [k]: v }))
+    launch.clearError()
     if (k === 'imageUri' || k === 'imageMode') launch.invalidate('image')
     if (k === 'audioUri' || k === 'audioMode') {
       launch.invalidate('audio')
@@ -461,6 +462,7 @@ export default function LaunchPage() {
 
   // Dry-run the create call when arriving at Review (and when inputs change there).
   const reviewKey = JSON.stringify({ form, vaultAddr, alignmentBps, address, chain: net.chainId })
+  const [recheck, setRecheck] = useState(0)
   useEffect(() => {
     if (step === 'review' && ready && resolvedBase && firstBlocked === -1 && !launch.instance) {
       launch.simulate(
@@ -471,7 +473,7 @@ export default function LaunchPage() {
       )
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [step, ready, reviewKey])
+  }, [step, ready, reviewKey, recheck])
 
   const goNext = () => {
     setShown((s) => ({ ...s, [step]: true }))
@@ -493,7 +495,8 @@ export default function LaunchPage() {
   }, [refused])
 
   const goTo = (i: number) => {
-    if (launch.running) return
+    // Once it's on the chain the artwork and settings are fixed, so they can't be edited into something else.
+    if (launch.running || launch.committed) return
     if (i <= stepIdx || firstBlocked === -1 || i <= firstBlocked) setStepIdx(i)
   }
 
@@ -711,7 +714,7 @@ export default function LaunchPage() {
                         type="button"
                         aria-current={i === stepIdx ? 'step' : undefined}
                         aria-label={`Step ${i + 1} of 5: ${STEP_LABEL[s]}`}
-                        disabled={i > stepIdx && !(firstBlocked === -1 || i <= firstBlocked)}
+                        disabled={launch.committed || (i > stepIdx && !(firstBlocked === -1 || i <= firstBlocked))}
                         onClick={() => goTo(i)}
                       >
                         <span className="n">{i + 1}</span>
@@ -883,7 +886,10 @@ export default function LaunchPage() {
                       )}
                       {ready && launch.check.state === 'error' && (
                         <StatusBox tone="error" role="alert">
-                          <span>{launch.check.message}</span>
+                          <span style={{ flex: 1 }}>{launch.check.message}</span>
+                          <SmallButton type="button" onClick={() => setRecheck((n) => n + 1)}>
+                            Check again
+                          </SmallButton>
                         </StatusBox>
                       )}
                       {launch.running && (
@@ -917,7 +923,7 @@ export default function LaunchPage() {
               </Body>
 
               <Foot>
-                {stepIdx > 0 && (
+                {stepIdx > 0 && !launch.committed && (
                   <BigButton
                     type="button"
                     className="secondary back"

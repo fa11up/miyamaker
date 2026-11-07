@@ -15,7 +15,7 @@ type ContractMetadata = {
 }
 
 export function useContractUri({ address }: { address?: Address }) {
-  const { data: contractUri, isFetched: uriFetched } = useReadContract({
+  const { data: contractUri, isFetched: uriFetched, refetch } = useReadContract({
     address,
     query: { enabled: !!address },
     functionName: 'contractURI',
@@ -76,5 +76,6 @@ export function useContractUri({ address }: { address?: Address }) {
     /** True once the current contractURI has been read (and fetched, if remote), even if it was empty or broken. */
     loaded: uriFetched && (!remoteUrl || remoteFetched),
     setContractUri,
+    refetch,
   }
 }

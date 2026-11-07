@@ -25,6 +25,8 @@ const REVEAL = 2.7
 const END = 3.05
 const METER = ['#2a6bff', '#27d3ff', '#b6ff3c', '#ffffff']
 const BARS = 25
+const MIRROR_RATIO = 0.5
+const MIRROR_STEP = 2
 
 const clamp = (v: number) => Math.max(0, Math.min(1, v))
 const part = (t: number, from: number, to: number) => clamp((t - from) / (to - from))
@@ -40,22 +42,32 @@ const mixBox = (a: Box, b: Box, f: number): Box => ({
   h: mix(a.h, b.h, f),
 })
 
-/** A cabinet in the studio's brushed silver, with a cone that kicks when the drop lands. */
-function speaker(g: CanvasRenderingContext2D, { x, y, w, h }: Box, kick: number) {
-  const body = g.createLinearGradient(0, y, 0, y + h)
+/** A blank canvas of this size in CSS pixels, with a context drawing in CSS pixels. */
+function layer(w: number, h: number, ratio: number) {
+  const canvas = document.createElement('canvas')
+  canvas.width = Math.max(1, Math.round(w * ratio))
+  canvas.height = Math.max(1, Math.round(h * ratio))
+  const g = canvas.getContext('2d')!
+  g.scale(ratio, ratio)
+  return { canvas, g }
+}
+
+/** A cabinet in the studio's brushed silver, with its two cones. */
+function drawSpeaker(g: CanvasRenderingContext2D, w: number, h: number) {
+  const body = g.createLinearGradient(0, 0, 0, h)
   body.addColorStop(0, '#f7faff')
   body.addColorStop(0.48, '#d5ddec')
   body.addColorStop(0.52, '#bcc8de')
   body.addColorStop(1, '#e8edf7')
   g.fillStyle = body
   g.beginPath()
-  g.roundRect(x, y, w, h, 8)
+  g.roundRect(0.5, 0.5, w - 1, h - 1, 8)
   g.fill()
   g.strokeStyle = '#3b4a6e'
   g.lineWidth = 1
   g.stroke()
   const cone = (cy: number, r: number) => {
-    const c = g.createRadialGradient(x + w / 2, cy, 0, x + w / 2, cy, r)
+    const c = g.createRadialGradient(w / 2, cy, 0, w / 2, cy, r)
     c.addColorStop(0, '#5d4d86')
     c.addColorStop(0.18, '#5d4d86')
     c.addColorStop(0.2, '#1b1430')
@@ -66,12 +78,56 @@ function speaker(g: CanvasRenderingContext2D, { x, y, w, h }: Box, kick: number)
     c.addColorStop(1, '#0d0a17')
     g.fillStyle = c
     g.beginPath()
-    g.arc(x + w / 2, cy, r, 0, Math.PI * 2)
+    g.arc(w / 2, cy, r, 0, Math.PI * 2)
     g.fill()
   }
-  cone(y + h * 0.27, w * 0.23)
-  cone(y + h * 0.68, w * (0.35 + kick * 0.03))
+  cone(h * 0.27, w * 0.23)
+  cone(h * 0.68, w * 0.35)
 }
+
+/**
+ * Everything on the stage that doesn't change, drawn once: redrawing gradients and hundreds of meter cells every frame is
+ * what made this stutter. Each frame only places these.
+ */
+function makeSprites(w: number, line: number, ratio: number) {
+  const room = layer(w, line, ratio)
+  const light = room.g.createRadialGradient(w / 2, 0, 0, w / 2, 0, Math.max(w, line) * 0.9)
+  light.addColorStop(0, '#1b57d6')
+  light.addColorStop(0.45, '#0a2a7a')
+  light.addColorStop(1, '#02071c')
+  room.g.fillStyle = light
+  room.g.fillRect(0, 0, w, line)
+
+  const beam = layer(w * 0.2, line, ratio)
+  const fade = beam.g.createLinearGradient(0, 0, 0, line)
+  fade.addColorStop(0, 'rgba(120, 200, 255, 0.22)')
+  fade.addColorStop(1, 'rgba(120, 200, 255, 0)')
+  beam.g.fillStyle = fade
+  beam.g.beginPath()
+  beam.g.moveTo(w * 0.1 - 6, 0)
+  beam.g.lineTo(w * 0.1 + 6, 0)
+  beam.g.lineTo(w * 0.2, line)
+  beam.g.lineTo(0, line)
+  beam.g.fill()
+
+  const sw = Math.min(w * 0.14, 84)
+  const sh = sw * 1.73
+  // Twice over, as it's drawn smaller and larger on the way to the real speakers.
+  const speaker = layer(sw, sh, ratio * 2)
+  drawSpeaker(speaker.g, sw, sh)
+
+  // One full bar of lit cells, from the floor up: each bar shows as much of it as its level.
+  const tallest = line * 0.62
+  const barW = (w * 0.54) / BARS - 2
+  const meter = layer(barW, tallest, ratio)
+  const lit = meter.g.createLinearGradient(0, tallest, 0, 0)
+  METER.forEach((c, i) => lit.addColorStop([0, 0.5, 0.85, 1][i]!, c))
+  meter.g.fillStyle = lit
+  for (let y = tallest - 4; y > 0; y -= 6) meter.g.fillRect(0, y, barW, 4)
+
+  return { room: room.canvas, beam: beam.canvas, speaker: speaker.canvas, meter: meter.canvas, sw, sh, tallest }
+}
+type Sprites = ReturnType<typeof makeSprites>
 
 /** The stage: its light, beams, speakers and meter, in whatever box it has reached. */
 function drawStage(
@@ -81,63 +137,64 @@ function drawStage(
   speakers: Box[],
   radius: number,
   speakersShown: number,
+  art: Sprites,
+  fullLine: number,
 ) {
   g.save()
   g.beginPath()
-  g.roundRect(stage.x, stage.y, stage.w, stage.h, radius)
+  if (radius) g.roundRect(stage.x, stage.y, stage.w, stage.h, radius)
+  else g.rect(stage.x, stage.y, stage.w, stage.h)
   g.clip()
-  const cx = stage.x + stage.w / 2
-  const room = g.createRadialGradient(cx, stage.y, 0, cx, stage.y, Math.max(stage.w, stage.h) * 0.9)
-  room.addColorStop(0, '#1b57d6')
-  room.addColorStop(0.45, '#0a2a7a')
-  room.addColorStop(1, '#02071c')
-  g.fillStyle = room
-  g.fillRect(stage.x, stage.y, stage.w, stage.h)
-  const bottom = stage.y + stage.h
+  g.drawImage(art.room, stage.x, stage.y, stage.w, stage.h)
   g.globalCompositeOperation = 'lighter'
+  const bw = stage.w * 0.2
   ;[0.22, 0.5, 0.78].forEach((at, i) => {
-    const x = stage.x + stage.w * at
-    const beam = g.createLinearGradient(0, stage.y, 0, bottom)
-    beam.addColorStop(0, 'rgba(120, 200, 255, 0.22)')
-    beam.addColorStop(1, 'rgba(120, 200, 255, 0)')
-    g.fillStyle = beam
     const sway = Math.sin(t * 1.4 + i * 2) * stage.w * 0.05
-    g.beginPath()
-    g.moveTo(x - 6, stage.y)
-    g.lineTo(x + 6, stage.y)
-    g.lineTo(x + sway + stage.w * 0.1, bottom)
-    g.lineTo(x + sway - stage.w * 0.1, bottom)
-    g.fill()
+    g.save()
+    // Leans from the top, so the beam swings from its lamp.
+    g.transform(1, 0, sway / stage.h, 1, stage.x + stage.w * at - bw / 2 - (sway / stage.h) * stage.y, 0)
+    g.drawImage(art.beam, 0, stage.y, bw, stage.h)
+    g.restore()
   })
   g.globalCompositeOperation = 'source-over'
 
   // The meter, off the same ripple as the rings.
   const rise = easeOut(part(t, LANDED + 0.2, LANDED + 0.75))
   if (rise > 0) {
+    const scale = stage.h / fullLine
     const span = stage.w * 0.54
-    const bw = span / BARS
-    const tallest = stage.h * 0.62
-    const base = bottom - 3
-    const meter = g.createLinearGradient(0, base, 0, base - tallest)
-    METER.forEach((c, i) => meter.addColorStop([0, 0.5, 0.85, 1][i]!, c))
+    const step = span / BARS
+    const base = stage.y + stage.h - 3
+    const left = stage.x + stage.w / 2 - span / 2
+    const fullH = art.tallest
+    const px = art.meter.height / fullH
     for (let i = 0; i < BARS; i += 1) {
       const m = Math.abs(i - (BARS - 1) / 2) / ((BARS - 1) / 2)
       const level = (1 - m * 0.72) * (0.55 + 0.45 * Math.abs(Math.sin(t * 6.5 + i * 1.3))) * rise
-      const tall = tallest * level
-      const x = cx - span / 2 + i * bw
-      const cells = Math.floor(tall / 6)
-      g.fillStyle = meter
-      for (let c = 0; c < cells; c += 1) g.fillRect(x, base - c * 6 - 4, bw - 2, 4)
+      const shown = fullH * level
+      const x = left + i * step
+      g.drawImage(
+        art.meter,
+        0,
+        (fullH - shown) * px,
+        art.meter.width,
+        shown * px,
+        x,
+        base - shown * scale,
+        step - 2,
+        shown * scale,
+      )
       g.fillStyle = '#ffffff'
-      g.fillRect(x, base - tall - 3, bw - 2, 2)
+      g.fillRect(x, base - shown * scale - 3, step - 2, 2)
     }
   }
   g.restore()
   if (speakersShown > 0) {
     g.save()
-    g.globalAlpha = speakersShown
-    const kick = t > LANDED && t < LANDED + 0.25 ? 1 : 0
-    speakers.forEach((s) => speaker(g, s, kick))
+    g.globalAlpha *= speakersShown
+    // A kick of the cones when the drop lands.
+    const kick = t > LANDED && t < LANDED + 0.15 ? 1.5 : 0
+    speakers.forEach((s) => g.drawImage(art.speaker, s.x - kick, s.y - kick, s.w + kick * 2, s.h + kick * 2))
     g.restore()
   }
 }
@@ -160,12 +217,16 @@ export default function StudioBoot({ onReveal, onDone }: { onReveal: () => void;
       calls.current.onDone()
       return undefined
     }
-    const ratio = Math.min(window.devicePixelRatio || 1, 2)
+    // Sharp enough for something that's moving, at under half the pixels of a full retina canvas.
+    const ratio = Math.min(window.devicePixelRatio || 1, 1.5)
     const water = new Image()
     water.src = waterSkin
-    // The stage alone, to mirror on the water.
-    const stageLayer = document.createElement('canvas')
-    const s = stageLayer.getContext('2d')!
+    let art: Sprites | undefined
+    let artFor = ''
+    // The stage again, at low resolution, to mirror on the water: ripples hide the softness.
+    let mirror: ReturnType<typeof layer> | undefined
+    let tile: CanvasPattern | null = null
+    let depth: CanvasGradient | undefined
 
     const inPage = (node: Element | null): Box | undefined => {
       const r = node?.getBoundingClientRect()
@@ -177,9 +238,17 @@ export default function StudioBoot({ onReveal, onDone }: { onReveal: () => void;
     let began = 0
     let frame = 0
     let revealed = false
+    let waterReady = false
+    let waited = 0
     const tick = (now: number) => {
       frame = requestAnimationFrame(tick)
       if (document.querySelector('[data-boot]')) return
+      // Starts once its water has decoded, so that isn't a stall in the middle.
+      if (!waterReady) {
+        waited ||= now
+        if (!(water.complete && water.naturalWidth) && now - waited < 400) return
+        waterReady = true
+      }
       if (!began) began = now
       const t = (now - began) / 1000
       const w = el.offsetWidth
@@ -199,8 +268,18 @@ export default function StudioBoot({ onReveal, onDone }: { onReveal: () => void;
       const real = t >= MORPH_FROM ? inPage(page.querySelector('.stage')) : undefined
       const stage = real ? mixBox(fullStage, real, morph) : fullStage
 
-      const sw = Math.min(w * 0.14, 84)
-      const sh = sw * 1.73
+      const key = `${w}x${line}`
+      if (artFor !== key) {
+        art = makeSprites(w, line, ratio)
+        mirror = layer(w, line, MIRROR_RATIO)
+        depth = g.createLinearGradient(0, line, 0, h)
+        depth.addColorStop(0, 'rgba(2, 14, 50, 0.4)')
+        depth.addColorStop(0.5, 'rgba(2, 14, 50, 0.12)')
+        depth.addColorStop(1, 'rgba(2, 14, 50, 0.4)')
+        artFor = key
+      }
+      const sprites = art!
+      const { sw, sh } = sprites
       const wide = [
         { x: w * 0.08, y: line - sh + 4, w: sw, h: sh },
         { x: w * 0.92 - sw, y: line - sh + 4, w: sw, h: sh },
@@ -228,30 +307,24 @@ export default function StudioBoot({ onReveal, onDone }: { onReveal: () => void;
           g.clip()
           g.translate(-((t * 26) % 512), line)
           g.scale(1, flat)
-          const tile = g.createPattern(water, 'repeat')
+          tile ||= g.createPattern(water, 'repeat')
           if (tile) {
             g.fillStyle = tile
             g.fillRect(0, 0, w + 1024, (h - line) / flat + 2)
           }
           g.restore()
         }
-        const depth = g.createLinearGradient(0, line, 0, h)
-        depth.addColorStop(0, 'rgba(2, 14, 50, 0.4)')
-        depth.addColorStop(0.5, 'rgba(2, 14, 50, 0.12)')
-        depth.addColorStop(1, 'rgba(2, 14, 50, 0.4)')
-        g.fillStyle = depth
+        g.fillStyle = depth!
         g.fillRect(0, line, w, h - line)
 
         // The stage mirrored on top of the water, each row pushed about by the surface and the rings.
-        if (stageLayer.width !== el.width || stageLayer.height !== Math.round(line * ratio)) {
-          stageLayer.width = el.width
-          stageLayer.height = Math.round(line * ratio)
-        }
-        s.setTransform(ratio, 0, 0, ratio, 0, 0)
-        drawStage(s, t, fullStage, wide, 0, 1)
+        const back = mirror!
+        back.g.clearRect(0, 0, w, line)
+        drawStage(back.g, t, fullStage, wide, 0, 1, sprites, line)
         const rows = h - line
         const rippled = t > LANDED ? clamp(1 - (t - LANDED) * 0.5) : 0
-        for (let y = 0; y < rows; y += 1) {
+        const srcH = Math.max(1, Math.round(MIRROR_STEP * MIRROR_RATIO))
+        for (let y = 0; y < rows; y += MIRROR_STEP) {
           const far = y / rows
           const from = line - 1 - y * 1.25
           if (from < 0) break
@@ -260,7 +333,17 @@ export default function StudioBoot({ onReveal, onDone }: { onReveal: () => void;
             Math.sin(y * 0.09 - t * 3) * (1 + far * 3) +
             Math.sin(y * 0.9 - t * 14) * 5 * rippled
           g.globalAlpha = seen * 0.72 * (1 - far) ** 1.4
-          g.drawImage(stageLayer, 0, Math.round(from * ratio), el.width, 1, push, line + y, w, 1.5)
+          g.drawImage(
+            back.canvas,
+            0,
+            Math.round(from * MIRROR_RATIO),
+            back.canvas.width,
+            srcH,
+            push,
+            line + y,
+            w,
+            MIRROR_STEP + 0.5,
+          )
         }
         g.globalAlpha = seen
         g.fillStyle = 'rgba(220, 245, 255, 0.5)'
@@ -291,7 +374,7 @@ export default function StudioBoot({ onReveal, onDone }: { onReveal: () => void;
       const outAlpha = 1 - part(t, REVEAL, END - 0.05)
       g.save()
       g.globalAlpha = outAlpha
-      drawStage(g, t, stage, speakers, 14 * morph, speakersShown)
+      drawStage(g, t, stage, speakers, 14 * morph, speakersShown, sprites, line)
       g.restore()
 
       // The splash: a crown of droplets thrown up and falling back.

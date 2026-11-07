@@ -98,6 +98,8 @@ export function nextRange(
   { maxSpan = 20n, overlap = 2n }: { maxSpan?: bigint; overlap?: bigint } = {}
 ): { fromBlock: bigint; toBlock: bigint } | undefined {
   if (latest <= 0n) return undefined
+  // An RPC that lags behind the one that last answered: nothing new, and the cursor stays where it was.
+  if (cursor !== undefined && latest < cursor) return undefined
   let fromBlock = cursor === undefined ? latest - maxSpan + 1n : cursor + 1n - overlap
   if (latest - fromBlock + 1n > maxSpan) fromBlock = latest - maxSpan + 1n
   if (fromBlock < 0n) fromBlock = 0n

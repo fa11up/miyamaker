@@ -217,6 +217,16 @@ export function pinnedSource(labels: string[], pinned?: string): { label?: strin
   return { label: labels[0], ended: !!pinned }
 }
 
+/**
+ * What Kick's channel says with nobody to show. `checked` is the server's word when it gives one: true it asked Kick and
+ * nobody is on, false it couldn't ask. Without it the list being empty could mean either, so the words fit both.
+ */
+export function kickEmptyWords(checked: boolean | undefined): { tag: string; line: string } {
+  if (checked === true) return { tag: 'off air', line: 'Nobody is live on Kick right now. Try again in a few minutes.' }
+  if (checked === false) return { tag: 'no signal', line: 'Could not check who is live. Try again in a few minutes.' }
+  return { tag: 'no signal', line: 'No one to show right now. Try again in a few minutes.' }
+}
+
 export type NativeChat = { kind: 'iframe'; src: string; label: string }
 
 /** A platform's own chat, where it can sit in our sidebar. Kick's popout chat frames fine (checked 2026-11-01). */

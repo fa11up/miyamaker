@@ -311,10 +311,14 @@ export default function TradePage() {
   const pastedToken = custom.listed || custom.token
 
   // Follow the wallet onto a supported chain, unless a link to one thing is open.
+  // Not during a trade: changing the floor's network would take the screen with it. It catches up when the trade ends.
+  const followedChain = useRef(walletChainId)
   useEffect(() => {
+    if (tradeBusy || followedChain.current === walletChainId) return
+    followedChain.current = walletChainId
     if (isSwapChain(walletChainId) && !collection && !pool && !tokenRef) setChainId(walletChainId)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [walletChainId])
+  }, [walletChainId, tradeBusy])
   useEffect(() => {
     if (isSwapChain(collection?.chainId)) setChainId(collection!.chainId as SwapChainId)
   }, [collection?.chainId])
@@ -362,8 +366,13 @@ export default function TradePage() {
   }
 
   // Back/forward and links into a sub-path drive the view. A plain push to /trade is the OS re-focusing the window,
-  // which must not throw away the open tab, so only POP navigations return to Tokens.
+  // which must not throw away the open tab, so only POP navigations return to Tokens. A trade in flight keeps its
+  // screen: Back during one takes effect when it ends.
+  const syncedPath = useRef<string>()
   useEffect(() => {
+    const here = `${navigationType} ${location.pathname}`
+    if (tradeBusy || syncedPath.current === here) return
+    syncedPath.current = here
     if (!location.pathname.startsWith(TRADE_PATH)) return
     const next = parseTradePath(location.pathname)
     if (location.pathname === TRADE_PATH && navigationType !== 'POP') return
@@ -378,7 +387,7 @@ export default function TradePage() {
         setCollection(undefined)
       }
     }
-  }, [location.pathname, navigationType])
+  }, [location.pathname, navigationType, tradeBusy])
 
   return (
     <WindowWrapper skin="floor">

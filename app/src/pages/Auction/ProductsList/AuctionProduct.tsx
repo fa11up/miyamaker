@@ -89,9 +89,12 @@ export default function AuctionProduct({
   onView,
   selected = false,
   hidden = false,
+  locked = false,
 }: {
   hidden?: boolean
   selected?: boolean
+  /** A bid is out on the lot on show: it stays until that ends. */
+  locked?: boolean
   nft: Address
   auctionContract: Address
   tokenId: number
@@ -107,6 +110,7 @@ export default function AuctionProduct({
   const artist = getTokenAttribute(attributes, 'Artist')
 
   const handleOpen = () => {
+    if (locked) return
     dispatch(
       setCurrentToken({
         tokenId,
@@ -137,7 +141,7 @@ export default function AuctionProduct({
       </ImageWrapper>
       <NormalButton
         onClick={handleOpen}
-        disabled={selected}
+        disabled={selected || locked}
         aria-current={selected ? 'true' : undefined}
         style={{ width: '100%', marginTop: '0.25rem', flex: 'none' }}
       >

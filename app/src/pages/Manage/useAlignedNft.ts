@@ -2,7 +2,7 @@ import type { Address } from 'viem'
 import { useReadContract } from 'wagmi'
 
 export function useAlignedNft({ address }: { address?: Address }) {
-  const { data: alignedNft } = useReadContract({
+  const { data: alignedNft, isLoading } = useReadContract({
     address,
     query: { enabled: !!address },
     functionName: 'alignedNft',
@@ -17,5 +17,5 @@ export function useAlignedNft({ address }: { address?: Address }) {
     ],
   })
 
-  return alignedNft as Address
+  return { alignedNft: alignedNft as Address, isLoading }
 }

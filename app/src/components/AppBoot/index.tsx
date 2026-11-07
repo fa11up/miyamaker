@@ -2,6 +2,8 @@ import type { ReactNode } from 'react'
 import { useEffect, useRef, useState } from 'react'
 import styled from 'styled-components/macro'
 
+import { preloadApp } from '@/constants/appLoaders'
+
 import type { Scene } from './scenes'
 import { SCENES } from './scenes'
 
@@ -46,16 +48,23 @@ export function ScenePlayer({ scene, onDone }: { scene: Scene; onDone: () => voi
     }
     const quiet = window.matchMedia('(prefers-reduced-motion: reduce)').matches
     const ratio = Math.min(window.devicePixelRatio || 1, 2)
-    let began = 0
+    // Time actually on screen: a minimized window's scene waits for it to come back.
+    let shown = 0
+    let last = 0
     let frame = 0
     const tick = (now: number) => {
       frame = requestAnimationFrame(tick)
-      // The whole OS's own boot comes first.
-      if (document.querySelector('[data-boot]')) return
-      if (!began) began = now
       const fullW = el.offsetWidth
       const fullH = el.offsetHeight
-      if (!fullW || !fullH) return
+      // The whole OS's own boot comes first.
+      if (document.querySelector('[data-boot]') || !fullW || !fullH) {
+        last = 0
+        return
+      }
+
+      // A long gap between frames is a tab that was in the background.
+      if (last) shown += Math.min(now - last, 100)
+      last = now
       // Whole screen pixels to each scene pixel, so every square is the same size.
       const chunk = scene.pixel ? Math.max(1, Math.round(fullW / PIXEL_WIDTH)) : 1 / ratio
       const w = scene.size ? scene.size[0] : Math.round(fullW / chunk)
@@ -66,7 +75,6 @@ export function ScenePlayer({ scene, onDone }: { scene: Scene; onDone: () => voi
       }
       g.setTransform(1, 0, 0, 1, 0, 0)
       if (!scene.pixel) g.scale(ratio, ratio)
-      const shown = now - began
       const t = quiet ? scene.ms / 1000 : shown / 1000
       if (scene.pixel) scene.draw(g, t, w, h)
       else scene.draw(g, t, fullW, fullH)
@@ -83,6 +91,9 @@ export function ScenePlayer({ scene, onDone }: { scene: Scene; onDone: () => voi
 export default function AppBoot({ identifier, children }: { identifier: string; children: ReactNode }) {
   const scene = SCENES[identifier]
   const [done, setDone] = useState(!scene)
+
+  // The scene is the wait, so the app downloads during it and is ready when it ends.
+  useEffect(() => preloadApp(identifier), [identifier])
 
   if (done || !scene) return <>{children}</>
   return (

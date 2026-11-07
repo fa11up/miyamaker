@@ -13,6 +13,7 @@ import {
   collectionStatus,
   lotFacts,
   lotPhase,
+  lotReadStatus,
   minimumBid,
   parseBidAmount,
   timeLeftWords,
@@ -156,4 +157,11 @@ test('an unknown error, or one with no message at all, still says something plai
 test('a missing trait is empty, never the word undefined', () => {
   assert.equal(getTokenAttribute([], 'Artist'), '')
   assert.equal(getTokenAttribute([{ trait_type: 'Artist', value: 'Remi' }], 'Artist'), 'Remi')
+})
+
+test('a failed poll keeps the last answer; only no answer at all reads as failed', () => {
+  assert.equal(lotReadStatus(true, true), 'ready')
+  assert.equal(lotReadStatus(true, false), 'ready')
+  assert.equal(lotReadStatus(false, true), 'failed')
+  assert.equal(lotReadStatus(false, false), 'loading')
 })

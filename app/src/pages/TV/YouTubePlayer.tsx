@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import styled from 'styled-components/macro'
 
+import { setPlaying } from '@/desktop/screensaver/playing'
+
 const Slot = styled.div`
   position: absolute;
   inset: 0;
@@ -57,7 +59,7 @@ function loadApi(): Promise<any> {
   if (w.YT?.Player) return Promise.resolve(w.YT)
   api =
     api ||
-    new Promise((resolve) => {
+    new Promise((resolve, reject) => {
       const before = w.onYouTubeIframeAPIReady
       w.onYouTubeIframeAPIReady = () => {
         before?.()
@@ -66,6 +68,12 @@ function loadApi(): Promise<any> {
 
       const script = document.createElement('script')
       script.src = 'https://www.youtube.com/iframe_api'
+      script.onerror = () => {
+        // Not kept, so tuning again tries again.
+        api = undefined
+        script.remove()
+        reject(new Error('YouTube did not load'))
+      }
       document.head.appendChild(script)
     })
   return api
@@ -113,6 +121,7 @@ export default function YouTubePlayer({
     setFailed(false)
     setCurtain(true)
     let gone = false
+    let failedNow = false
     let check: ReturnType<typeof setTimeout>
     let lift: ReturnType<typeof setTimeout>
     let skip: ReturnType<typeof setTimeout>
@@ -147,26 +156,37 @@ export default function YouTubePlayer({
             check = setTimeout(() => {
               const state = e.target.getPlayerState?.()
               // Quick, so a refused start isn't a frozen screen. A slow connection reads as buffering, not refused.
-              if (gone || latest.current.paused || state === PLAYING || state === BUFFERING) return
+              // A video that has failed or already finished isn't refused either, and muting it would be a false alarm.
+              if (gone || failedNow || latest.current.paused || [PLAYING, BUFFERING, ENDED].includes(state)) return
               e.target.mute()
               e.target.playVideo()
               latest.current.onAutoMuted?.()
             }, 2000)
           },
           onStateChange: (e: any) => {
-            if (e.data === ENDED) latest.current.onEnded?.()
+            setPlaying('tv-youtube', e.data === PLAYING || e.data === BUFFERING)
+            if (e.data === ENDED) {
+              // With nothing to go on to, this beats YouTube's end frame of other people's videos.
+              if (latest.current.onEnded) latest.current.onEnded()
+              else setFailed(true)
+            }
+
             if (e.data === PLAYING) {
               clearTimeout(lift)
               lift = setTimeout(() => setCurtain(false), CURTAIN_AFTER_PLAY_MS)
             }
           },
           onError: () => {
+            failedNow = true
+            setPlaying('tv-youtube', false)
             setFailed(true)
             clearTimeout(skip)
             skip = setTimeout(() => latest.current.onDead?.(), DEAD_SKIP_MS)
           },
         },
       })
+    }).catch(() => {
+      if (!gone) setFailed(true)
     })
     return () => {
       gone = true
@@ -174,6 +194,7 @@ export default function YouTubePlayer({
       clearTimeout(lift)
       clearTimeout(most)
       clearTimeout(skip)
+      setPlaying('tv-youtube', false)
       player.current?.destroy?.()
       player.current = undefined
       host.remove()

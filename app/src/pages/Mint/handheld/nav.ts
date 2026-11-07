@@ -9,6 +9,9 @@ export type HandheldNav = {
   openMenu: () => void
   close: () => void
   minimize: () => void
+  /** A mint is out and its screen must stay: nothing leaves it until `hold`'s release is called. */
+  held?: boolean
+  hold?: () => () => void
 }
 
 const nothing = () => {}
