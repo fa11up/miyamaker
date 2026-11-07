@@ -35,6 +35,10 @@ const Fallback = styled.svg`
 `
 
 const FPS_CAP = 30
+/** New canvases to try after a lost context before settling for the still wave. */
+const MAX_REMOUNTS = 2
+/** This long without losing it and the last failures no longer count against it. */
+const STEADY_MS = 60_000
 
 function taskbarHeight(): number {
   try {
@@ -62,6 +66,7 @@ export default function WaveBackground() {
   const blend = useMemo(pickBlend, [])
   /** bumps to remount a fresh <canvas> after a context loss that did not come back */
   const [generation, setGeneration] = useState(0)
+  const remounts = useRef(0)
   const [failed, setFailed] = useState(() => !blend)
   const [size, setSize] = useState(() => ({ w: window.innerWidth, h: window.innerHeight }))
 
@@ -121,12 +126,23 @@ export default function WaveBackground() {
     const onVisibility = () => (document.hidden ? cancelAnimationFrame(raf) : start())
 
     let lossTimer = 0
+    let steadyTimer = 0
     const onLost = (e: Event) => {
       e.preventDefault() // allow a restore
       cancelAnimationFrame(raf)
-      waveBus.status = 'fallback'
+      window.clearTimeout(steadyTimer)
+      // nothing is drawn until it comes back, so there is no water to ride
+      waveBus.status = 'off'
       // some browsers never restore: give it a few seconds, then start over on a new canvas
-      lossTimer = window.setTimeout(() => setGeneration((g) => g + 1), 4000)
+      lossTimer = window.setTimeout(() => {
+        if (remounts.current >= MAX_REMOUNTS) {
+          setFailed(true)
+          return
+        }
+
+        remounts.current += 1
+        setGeneration((g) => g + 1)
+      }, 4000)
     }
 
     const onRestored = () => {
@@ -137,6 +153,7 @@ export default function WaveBackground() {
         return
       }
 
+      remounts.current = 0
       waveBus.status = reducedMotion ? 'still' : 'webgl'
       measure()
       start()
@@ -145,6 +162,9 @@ export default function WaveBackground() {
     measure()
     waveBus.status = reducedMotion ? 'still' : 'webgl'
     start()
+    steadyTimer = window.setTimeout(() => {
+      remounts.current = 0
+    }, STEADY_MS)
     const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(onResize) : undefined
     ro?.observe(canvas)
     window.addEventListener('resize', onResize)
@@ -154,6 +174,7 @@ export default function WaveBackground() {
     return () => {
       cancelAnimationFrame(raf)
       window.clearTimeout(lossTimer)
+      window.clearTimeout(steadyTimer)
       ro?.disconnect()
       window.removeEventListener('resize', onResize)
       document.removeEventListener('visibilitychange', onVisibility)

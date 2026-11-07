@@ -8,6 +8,8 @@ import merge from 'lodash.merge'
 import { Provider } from 'react-redux'
 import { WagmiProvider } from 'wagmi'
 
+import NewHere from '@/wallet/NewHere'
+import PrivyMount from '@/wallet/PrivyMount'
 import { wagmiConfig } from './config/wagmi'
 import { GRAPHQL_URL } from './constants/indexer'
 import AccountProvider from './context/AccountProvider'
@@ -24,7 +26,12 @@ const queryClient = new QueryClient({
 const readTheme = merge(lightTheme(), {
   colors: {
     modalBackground: '#a9a3c9',
-    accentColor: '#d97ada',
+    // Links and buttons in the dialog use the accent as text on lilac, so it has to read there.
+    accentColor: '#4f1f96',
+    accentColorForeground: '#ffffff',
+    actionButtonSecondaryBackground: '#f6f4ff',
+    modalTextSecondary: '#1b1530',
+    modalTextDim: '#332d4d',
     selectedOptionBorder: '#000',
   },
   fonts: {
@@ -57,16 +64,17 @@ export default function App() {
   return (
     <ApolloProvider client={client}>
       <Provider store={store}>
-        <WagmiProvider config={wagmiConfig}>
+        <WagmiProvider config={wagmiConfig} reconnectOnMount={false}>
           <QueryClientProvider client={queryClient}>
             <AccountProvider>
               <ClustersProvider>
-                <RainbowKitProvider theme={readTheme} appInfo={{ appName: 'miyamaker' }}>
+                <RainbowKitProvider theme={readTheme} appInfo={{ appName: 'miyamaker', disclaimer: NewHere }}>
                   <ThemeProvider>
                     <ThemedGlobalStyle />
                     <RadioProvider>
                       <Router />
                     </RadioProvider>
+                    <PrivyMount />
                   </ThemeProvider>
                 </RainbowKitProvider>
               </ClustersProvider>

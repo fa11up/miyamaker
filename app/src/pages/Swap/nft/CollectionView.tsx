@@ -1,5 +1,5 @@
 import { useConnectModal } from '@rainbow-me/rainbowkit'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import styled from 'styled-components/macro'
 import type { Address } from 'viem'
 import { useAccount, useReadContract, useSwitchChain } from 'wagmi'
@@ -11,7 +11,7 @@ import { chains, explorerUrl, mainnet } from '@/config/wagmi'
 import { cleanText } from '@/desktop/files/sanitize'
 import { txWords, useTx } from '@/miyamints/useTx'
 
-import { ethInUsd } from '../board'
+import { ethInUsd, isFeatured } from '../board'
 import { Chip, Eyebrow, Skeleton, StatusBox } from '../floor/retro'
 import { bevel, color, space, text } from '../floor/tokens'
 import { useEthUsd } from '../MarketBoard'
@@ -23,7 +23,7 @@ import type { PoolMode } from './pool'
 import { KIND, MODE, MODE_HINT, MODE_LABEL } from './pool'
 import { MAX_SWEEP, pickCheapest, sumPrices, sweepable } from './sweep'
 import SweepReview from './SweepReview'
-import { Card, Chips, Field, Head, Hint, LinkButton, Mono, Prose, PushButton } from './ui'
+import { Action, Card, Chips, Field, Head, Hint, LinkButton, Mono, Prose, PushButton, SwitchNote } from './ui'
 import { useMarketListings, useMarketSales, useOpenSeaCollection, useOpenSeaNftImage } from './useMarkets'
 import type { PoolPrice } from './usePoolPrices'
 import { pairsFor, poolSide, usePoolPrices } from './usePoolPrices'
@@ -85,6 +85,10 @@ const Stats = styled.dl`
     font-weight: 400;
     color: ${color.inkMuted};
   }
+  /* Three across on a phone: the odd last one takes the empty cell, so no slate block shows. */
+  .narrow & div:last-child:nth-child(3n + 2) {
+    grid-column: span 2;
+  }
 `
 
 const Tiles = styled.ul`
@@ -120,6 +124,9 @@ const TileButton = styled.button`
   &[data-picked] {
     box-shadow: ${bevel.pressed};
   }
+  &:disabled {
+    cursor: not-allowed;
+  }
   .label {
     display: flex;
     flex-direction: column;
@@ -128,6 +135,10 @@ const TileButton = styled.button`
     line-height: 1.3;
     white-space: nowrap;
     overflow: hidden;
+  }
+  .buy {
+    color: ${color.accent};
+    font-weight: 700;
   }
   .label b {
     font-variant-numeric: tabular-nums;
@@ -145,7 +156,7 @@ const SweepBar = styled.div`
   gap: ${space[3]};
   padding: ${space[2]} ${space[3]};
   background: ${color.well};
-  border: 1px solid ${color.accent};
+  border: 1px solid ${color.dark};
   font-size: ${text.sm};
   b {
     color: ${color.accent};
@@ -166,6 +177,9 @@ const SweepBar = styled.div`
     input {
       grid-column: 1 / -1;
       grid-row: 2;
+    }
+    button {
+      grid-column: 1 / -1;
     }
   }
 `
@@ -189,6 +203,11 @@ const Sales = styled.ul`
   a {
     white-space: nowrap;
   }
+  .narrow & a {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+  }
 `
 
 const timeAgo = (seconds: number) => {
@@ -211,6 +230,7 @@ function ListingTile({
   listing,
   onOpen,
   picked,
+  disabled,
 }: {
   chainId: SupportedChainId
   contract: Address
@@ -218,6 +238,7 @@ function ListingTile({
   onOpen: () => void
   /** In the sweep the bar would buy. */
   picked?: boolean
+  disabled?: boolean
 }) {
   const id = listing.tokenId!
   const osImage = useOpenSeaNftImage(chainId, contract, id)
@@ -227,6 +248,7 @@ function ListingTile({
       <TileButton
         type="button"
         onClick={onOpen}
+        disabled={disabled}
         data-picked={picked || undefined}
         aria-label={`#${id}, ${formatPrice(listing.price)} on OpenSea${picked ? ', in the sweep' : ''}. Open`}
       >
@@ -234,6 +256,7 @@ function ListingTile({
         <span className="label">
           <span>#{id}</span>
           <b>{formatPrice(listing.price)}</b>
+          <span className="buy">Buy →</span>
         </span>
       </TileButton>
     </li>
@@ -307,9 +330,13 @@ function PoolPriceLine({
   )
 }
 
+/** What a person set on a collection's page, kept by NftTrade so going to an NFT and back loses none of it. */
+export type CollectionPlace = { tileLimit?: number; sweepCount?: number }
+
 /**
- * One collection in Trade → NFTs: the best price, every venue it trades on (MiyaPool first, then OpenSea and Blur) with what each one's API can tell us, and the cheapest OpenSea listings. Venue links always work;
- * prices need the OpenSea key on the server (a quiet note says so).
+ * One collection in Trade → NFTs: the best price, every venue it trades on (MiyaPool first, then OpenSea) with what each
+ * one's API can tell us, and the cheapest OpenSea listings. Prices need the OpenSea key on the server: without it the page
+ * says buying here is offline, and links to OpenSea for that reason only.
  */
 export default function CollectionView({
   chainId,
@@ -317,16 +344,23 @@ export default function CollectionView({
   onBack,
   onOpenItem,
   onOpenPool,
+  onBusy,
+  place,
+  onPlace,
 }: {
   chainId: SupportedChainId
   address: Address
   onBack: () => void
   onOpenItem: (tokenId: string) => void
   onOpenPool: (pool: Address) => void
+  /** Told while a trade is in flight, when the page must not change. */
+  onBusy?: (busy: boolean) => void
+  place?: CollectionPlace
+  onPlace?: (place: CollectionPlace) => void
 }) {
   const chain = chains.find((c) => c.id === chainId) || mainnet
   const { address: me, isConnected, chainId: walletChain } = useAccount()
-  const { switchChain, isPending: switching } = useSwitchChain()
+  const { switchChain, isPending: switching, error: switchError } = useSwitchChain()
   const { openConnectModal } = useConnectModal()
   const wrongChain = isConnected && walletChain !== chainId
 
@@ -344,20 +378,29 @@ export default function CollectionView({
   })
   const [lookup, setLookup] = useState('')
   const ethUsd = useEthUsd()
-  const [sweeping, setSweeping] = useState(false)
-  const [sweepCount, setSweepCount] = useState(3)
+  // The set agreed to is frozen when Review is pressed. Picking it live let any list change remount the review, re-arming
+  // a finished sweep for the next NFTs at higher prices, with the old run still opening wallet prompts behind it.
+  const [sweepSet, setSweepSet] = useState<OsOrder[]>()
+  const [sweepCount, setSweepCount] = useState(place?.sweepCount ?? 3)
   // Each tile looks up its own image, so the grid grows on request rather than asking for every listing at once.
-  const [tileLimit, setTileLimit] = useState(TILE_PAGE)
+  const [tileLimit, setTileLimit] = useState(place?.tileLimit ?? TILE_PAGE)
+  useEffect(() => onPlace?.({ tileLimit, sweepCount }), [tileLimit, sweepCount])
+  const [sweepBusy, setSweepBusy] = useState(false)
   const listed = (listings.listings ?? []).filter((l) => l.tokenId)
   const shownListings = listed.slice(0, tileLimit)
   const canSweep = sweepable(listings.listings ?? [], me)
   const pickedListings = pickCheapest(canSweep, Math.min(sweepCount, canSweep.length))
   const create = useTx(() => pools.refetch())
+  const busy = sweepBusy || create.busy
+  useEffect(() => onBusy?.(busy), [busy])
+  useEffect(() => () => onBusy?.(false), [])
 
   const knownName = os.info?.name || cleanText(onchainName.data as string | undefined, 80)
   const named = !!knownName
   const name = knownName || 'Unnamed collection'
   const venues = venuesFor(chainId)
+  const unverified = !isFeatured(chainId, address) && os.info?.verified !== true
+  const openSeaHref = collectionUrl('opensea', chainId, address, os.slug)
 
   // MiyaPool prices: one pool token (= one NFT) through 0x, in ETH for the comparison and in the chosen pair to show.
   const pairs = pairsFor(chainId)
@@ -374,7 +417,9 @@ export default function CollectionView({
 
   // OpenSea's stat can be lower than anything its listings call returns: show the lowest known, and what can be bought.
   const floor: Price | undefined = lowerPrice(os.stats?.floor, listings.floor)
-  const buyHere = listings.floor && floor && listings.floor.amount !== floor.amount ? listings.floor : undefined
+  // Compared as shown: raw amounts can differ below the rounding, and "0.687 ETH, cheapest here 0.687 ETH" says nothing.
+  const buyHere =
+    listings.floor && floor && formatPrice(listings.floor) !== formatPrice(floor) ? listings.floor : undefined
   const cheapest = bestQuote([
     { where: 'on OpenSea', price: floor },
     ...poolsWithNfts.map((p) => ({
@@ -390,9 +435,13 @@ export default function CollectionView({
         price: poolSide(ethPrices[p.address.toLowerCase()], 'bid'),
       })),
     ],
-    'highest'
+    'highest',
   )
   const poolLines = swap ? pools.pools : poolsWithNfts
+  // The one Buy button goes wherever is cheapest right now.
+  const cheapestPool = poolsWithNfts.find((p) => `on ${poolVenue(p)}` === cheapest?.where)
+  const cheapestListing = canSweep[0] ?? listed[0]
+  const offerPool = pools.pools.find((p) => `sell into ${poolVenue(p)}` === topOffer?.where)
 
   const createPool = (mode: PoolMode) =>
     factory &&
@@ -404,9 +453,47 @@ export default function CollectionView({
       chainId,
     })
 
+  const startButtons = (
+    <>
+      {pools.freeModes.map((m) =>
+        !isConnected ? null : (
+          <PushButton
+            key={m}
+            type="button"
+            title={MODE_HINT[m]}
+            disabled={create.busy || wrongChain}
+            onClick={() => createPool(m)}
+          >
+            Start a {MODE_LABEL[m]} pool
+          </PushButton>
+        ),
+      )}
+      {pools.freeModes.length > 0 && !isConnected && (
+        <PushButton type="button" onClick={() => openConnectModal?.()}>
+          Connect to start a pool
+        </PushButton>
+      )}
+      {pools.freeModes.length > 0 && wrongChain && (
+        <PushButton type="button" onClick={() => switchChain({ chainId })} disabled={switching}>
+          Switch to {chain.name}
+        </PushButton>
+      )}
+    </>
+  )
+  const switchNote = wrongChain && pools.freeModes.length > 0 && (
+    <SwitchNote chainName={chain.name} failed={!!switchError} />
+  )
+  const createStatus = create.tx.phase !== 'idle' && (
+    <StatusBox tone={create.tx.phase === 'error' ? 'error' : create.tx.phase === 'done' ? 'ok' : 'info'}>
+      {create.busy && <img src={LoadingHourglass} alt="" />}
+      <span>{create.tx.phase === 'done' ? 'Pool started. Open it above.' : txWords(create.tx)}</span>
+    </StatusBox>
+  )
+  const noPoolYet = !!factory && !pools.loading && pools.pools.length === 0
+
   return (
     <>
-      <LinkButton type="button" onClick={onBack}>
+      <LinkButton type="button" onClick={onBack} disabled={busy}>
         ← All collections
       </LinkButton>
 
@@ -426,9 +513,10 @@ export default function CollectionView({
             <Chips>
               <Chip>{chain.name}</Chip>
               {os.info?.verified && <Chip tone="ok">Verified on OpenSea</Chip>}
+              {os.info && unverified && <Chip tone="warn">Not verified: check the address</Chip>}
             </Chips>
             <Hint>
-              <Mono>{shortAddress(address)}</Mono> ·{' '}
+              <Mono data-collection-address>{os.info && unverified ? address : shortAddress(address)}</Mono> ·{' '}
               <a href={`${explorerUrl(chainId)}/address/${address}`} target="_blank" rel="noreferrer">
                 Explorer ↗
               </a>
@@ -465,7 +553,7 @@ export default function CollectionView({
           </Stats>
         )}
 
-        {/* The figures above already give OpenSea's prices; this is for comparing them against our pools. */}
+        {/* The figures above already give OpenSea's prices: the price lines are here only to compare them with our pools. */}
         {poolLines.length > 0 && (
           <Best aria-label="Best prices">
             {cheapest && (
@@ -484,6 +572,11 @@ export default function CollectionView({
                 </strong>
               </div>
             )}
+            {offerPool && (
+              <PushButton type="button" disabled={busy} onClick={() => onOpenPool(offerPool.address)}>
+                Sell into the pool
+              </PushButton>
+            )}
             {poolLines.map((p) => (
               <PoolPriceLine
                 key={p.address}
@@ -493,7 +586,7 @@ export default function CollectionView({
                 price={shownPrices[p.address.toLowerCase()]}
               />
             ))}
-            {poolLines.length > 0 && (
+            {swap && (
               <PairSwitch
                 label="Pool price in"
                 options={pairs.map((t) => t.symbol)}
@@ -503,17 +596,43 @@ export default function CollectionView({
             )}
           </Best>
         )}
+        {cheapest &&
+          (cheapestPool ? (
+            <Action type="button" data-best-buy disabled={busy} onClick={() => onOpenPool(cheapestPool.address)}>
+              Buy for {formatPrice(cheapest.price)} {cheapest.where}
+            </Action>
+          ) : cheapestListing?.tokenId ? (
+            <Action type="button" data-best-buy disabled={busy} onClick={() => onOpenItem(cheapestListing.tokenId!)}>
+              Buy #{cheapestListing.tokenId} for {formatPrice(cheapestListing.price)} on OpenSea
+            </Action>
+          ) : null)}
       </Card>
 
-      {sweeping && pickedListings.length > 0 ? (
+      {noPoolYet && (
+        <Card aria-label="Start the first pool" data-start-pool>
+          <Eyebrow>Start the first pool</Eyebrow>
+          <Prose>
+            A pool lets anyone swap one of these NFTs for a token and back, with no fees. Anyone can start it. It shows
+            no price until someone adds liquidity for its token.
+          </Prose>
+          {switchNote}
+          <Chips>{startButtons}</Chips>
+          {createStatus}
+          {pools.freeModes.includes(MODE.RANDOM) && isConnected && <Hint>Random pools work only for ERC-721.</Hint>}
+        </Card>
+      )}
+
+      {sweepSet ? (
         <SweepReview
-          key={pickedListings.map((l) => l.hash).join()}
-          listings={pickedListings}
+          key="sweep"
+          listings={sweepSet}
           chainId={chainId}
           contract={address}
           title={name}
-          onClose={() => setSweeping(false)}
+          unverified={unverified}
+          onClose={() => setSweepSet(undefined)}
           onDone={() => listings.refetch()}
+          onBusy={setSweepBusy}
         />
       ) : (
         canSweep.length >= 2 && (
@@ -532,20 +651,56 @@ export default function CollectionView({
             <strong title={ethInUsd(sumPrices(pickedListings), ethUsd)}>
               {formatAmount(sumPrices(pickedListings), 18, 4)} ETH
             </strong>
-            <PushButton type="button" onClick={() => setSweeping(true)}>
+            <PushButton type="button" onClick={() => setSweepSet(pickedListings)}>
               Review sweep
             </PushButton>
           </SweepBar>
         )
       )}
 
-      {os.slug && (listings.loading || (listings.listings && listings.listings.length > 0)) && (
+      {os.needsKey && !os.missing && (
+        <StatusBox tone="error" role="status" data-market-offline>
+          <span>
+            Buying here is offline right now. Try again later, or buy it on OpenSea.{' '}
+            {openSeaHref && (
+              <a href={openSeaHref} target="_blank" rel="noreferrer">
+                Open on OpenSea ↗
+              </a>
+            )}
+          </span>
+        </StatusBox>
+      )}
+
+      {os.slug && (
         <Card aria-label="Cheapest for sale">
-          <Eyebrow>Cheapest for sale</Eyebrow>
-          <Hint>
-            Press one to see it and buy it here.{listings.stale ? ' These prices may be a few minutes old.' : ''}
-          </Hint>
-          {listings.loading ? (
+          <Eyebrow>For sale{listed.length ? ` · ${listed.length}` : ''}</Eyebrow>
+          {listed.length > 0 && (
+            <Hint>
+              Cheapest first. Press one to see it and buy it right here.
+              {listings.stale ? ' These prices may be a few minutes old.' : ''}
+            </Hint>
+          )}
+          {!listings.listings && !listings.loading ? (
+            listings.needsKey ? (
+              <Hint data-listings-offline>
+                Buying here is offline right now. Try again later, or buy it on OpenSea.{' '}
+                {openSeaHref && (
+                  <a href={openSeaHref} target="_blank" rel="noreferrer">
+                    Open on OpenSea ↗
+                  </a>
+                )}
+              </Hint>
+            ) : (
+              <Hint data-listings-failed>
+                Could not load listings.{' '}
+                <LinkButton type="button" onClick={() => listings.refetch()}>
+                  Try again
+                </LinkButton>
+              </Hint>
+            )
+          ) : !listings.loading && !listed.length ? (
+            <Hint data-listings-empty>Nothing for sale right now. Hold one? Enter its number below to see offers.</Hint>
+          ) : listings.loading ? (
             <Tiles>
               {[0, 1, 2].map((i) => (
                 <li key={i}>
@@ -557,7 +712,8 @@ export default function CollectionView({
             <Tiles>
               {shownListings.map((l) => (
                 <ListingTile
-                  picked={!sweeping && pickedListings.some((p) => p.hash === l.hash)}
+                  picked={!sweepSet && pickedListings.some((p) => p.hash === l.hash)}
+                  disabled={busy}
                   key={l.hash}
                   chainId={chainId}
                   contract={address}
@@ -580,7 +736,8 @@ export default function CollectionView({
           <Eyebrow>Recent sales</Eyebrow>
           {sales.day && (
             <Hint>
-              Last 24 hours: {sales.day.count} sold, {formatAmount(BigInt(sales.day.volume), 18, 2)} ETH.
+              Last 24 hours: {sales.day.count} sold, {formatAmount(BigInt(sales.day.volume), 18, 2)} ETH
+              {sales.day.other ? `, plus ${sales.day.other} in other tokens` : ''}.
             </Hint>
           )}
           <Sales>
@@ -612,7 +769,7 @@ export default function CollectionView({
                   note={
                     pools.pools.length
                       ? 'Swap an NFT for 1 pool token, or 1 pool token for an NFT.'
-                      : 'No pool for this collection yet. Anyone can start one.'
+                      : 'No pool for this collection yet. Start one above.'
                   }
                   facts={pools.pools.map((p) => ({
                     label: MODE_LABEL[p.mode],
@@ -620,89 +777,41 @@ export default function CollectionView({
                   }))}
                 >
                   {pools.pools.map((p) => (
-                    <PushButton key={p.address} type="button" onClick={() => onOpenPool(p.address)}>
+                    <PushButton key={p.address} type="button" disabled={busy} onClick={() => onOpenPool(p.address)}>
                       Open {MODE_LABEL[p.mode]} pool
                     </PushButton>
                   ))}
-                  {pools.freeModes.map((m) =>
-                    !isConnected ? null : (
-                      <PushButton
-                        key={m}
-                        type="button"
-                        title={MODE_HINT[m]}
-                        disabled={create.busy || wrongChain}
-                        onClick={() => createPool(m)}
-                      >
-                        Start a {MODE_LABEL[m]} pool
-                      </PushButton>
-                    )
-                  )}
-                  {pools.freeModes.length > 0 && !isConnected && (
-                    <PushButton type="button" onClick={() => openConnectModal?.()}>
-                      Connect to start a pool
-                    </PushButton>
-                  )}
-                  {pools.freeModes.length > 0 && wrongChain && (
-                    <PushButton type="button" onClick={() => switchChain({ chainId })} disabled={switching}>
-                      Switch to {chain.name}
-                    </PushButton>
-                  )}
+                  {pools.pools.length > 0 && startButtons}
                 </VenueRow>
               )
             }
 
-            const href = collectionUrl(v.id, chainId, address, os.slug)
             if (v.id === 'opensea') {
-              const facts: { label: string; value: string }[] = []
-              if (os.stats?.floor) facts.push({ label: 'Floor', value: formatPrice(os.stats.floor) })
-              if (os.bestOffer) facts.push({ label: 'Best offer', value: formatPrice(os.bestOffer.price) })
-              if (os.stats?.sales7d !== undefined)
-                facts.push({ label: 'Sold this week', value: String(os.stats.sales7d) })
               return (
                 <VenueRow
                   key={v.id}
                   venue={v}
-                  facts={facts}
                   note={
                     os.loading && !os.needsKey
                       ? 'Getting prices…'
                       : os.missing
-                      ? 'OpenSea does not list this contract (yet).'
-                      : os.needsKey
-                      ? 'Listings and offers need an API key. The link works.'
-                      : listings.listings?.length
-                      ? 'Buy listed NFTs right here, above.'
-                      : undefined
+                        ? 'Not on OpenSea yet.'
+                        : os.needsKey
+                          ? 'Listings are unavailable right now.'
+                          : listings.listings?.length
+                            ? 'Buy listed NFTs right here, above.'
+                            : undefined
                   }
-                >
-                  {href && (
-                    <OutLink href={href} target="_blank" rel="noreferrer">
-                      Open on OpenSea ↗
-                    </OutLink>
-                  )}
-                </VenueRow>
+                ></VenueRow>
               )
             }
 
-            return (
-              <VenueRow key={v.id} venue={v} note={`${v.name} has no public price feed. See prices there.`}>
-                {href && (
-                  <OutLink href={href} target="_blank" rel="noreferrer">
-                    Open on {v.name} ↗
-                  </OutLink>
-                )}
-              </VenueRow>
-            )
+            return null
           })}
         </VenueList>
-        {!os.supported && <Hint>OpenSea and Blur do not trade on {chain.name}. Only MiyaPool does.</Hint>}
-        {os.error && <Hint>Could not get OpenSea prices right now. The links still work.</Hint>}
-        {create.tx.phase !== 'idle' && (
-          <StatusBox tone={create.tx.phase === 'error' ? 'error' : create.tx.phase === 'done' ? 'ok' : 'info'}>
-            {create.busy && <img src={LoadingHourglass} alt="" />}
-            <span>{create.tx.phase === 'done' ? 'Pool started. Open it above.' : txWords(create.tx)}</span>
-          </StatusBox>
-        )}
+        {os.error && <Hint>Could not get OpenSea prices right now.</Hint>}
+        {!noPoolYet && switchNote}
+        {!noPoolYet && createStatus}
         {pools.freeModes.includes(MODE.RANDOM) && pools.freeModes.length > 0 && isConnected && (
           <Hint>Random pools work only for ERC-721.</Hint>
         )}
@@ -714,7 +823,7 @@ export default function CollectionView({
           onSubmit={(e) => {
             e.preventDefault()
             const id = lookup.trim().replace(/^#/, '')
-            if (/^[0-9]{1,78}$/.test(id)) onOpenItem(id)
+            if (/^[0-9]{1,78}$/.test(id) && !busy) onOpenItem(id)
           }}
         >
           <Field
@@ -724,7 +833,7 @@ export default function CollectionView({
             aria-label="Token number"
             inputMode="numeric"
           />
-          <PushButton type="submit" disabled={!/^#?[0-9]{1,78}$/.test(lookup.trim())}>
+          <PushButton type="submit" disabled={busy || !/^#?[0-9]{1,78}$/.test(lookup.trim())}>
             Open
           </PushButton>
         </LookupRow>

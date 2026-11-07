@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import { BadgeResolver } from '../src/badges'
+import { BadgeResolver, INFER, MIYAMINI, readHoldings } from '../src/badges'
 import type { Badge, Msg, ServerFrame } from '../src/protocol'
 import type { Conn, ConnMeta, KV } from '../src/room-core'
 import { RoomCore } from '../src/room-core'
@@ -262,6 +262,135 @@ describe('RoomCore', () => {
     expect(a.last()).toEqual({ t: 'slow', seconds: 0 })
     await send(room, m, { t: 'send', text: '/bogus' })
     expect(m.last()).toMatchObject({ t: 'err', code: 'bad' })
+  })
+})
+
+describe('RoomCore state transitions', () => {
+  it('a failed re-auth signs the socket out rather than leaving it as the old address', async () => {
+    const room = makeRoom()
+    const m = await join(room)
+    await send(room, m, { t: 'auth', token: MOD })
+    await send(room, m, { t: 'auth', token: 'nope' })
+    expect(m.last()).toMatchObject({ t: 'err', code: 'auth' })
+    expect(m.meta).toMatchObject({ address: null, badges: [], mod: false, exp: 0 })
+    await send(room, m, { t: 'send', text: 'still me?' })
+    expect(m.last()).toMatchObject({ t: 'err', code: 'auth' })
+    expect(room.state.history).toEqual([])
+  })
+
+  it('a timed-out mod cannot lift their own timeout or moderate until it ends', async () => {
+    const room = makeRoom()
+    const a = await join(room)
+    const m = await join(room)
+    await send(room, a, { t: 'auth', token: A })
+    await send(room, m, { t: 'auth', token: MOD })
+    await send(room, a, { t: 'send', text: 'spam' })
+    await send(room, m, { t: 'send', text: `/timeout ${MOD} 60` })
+    await send(room, m, { t: 'send', text: `/untimeout ${MOD}` })
+    expect(m.last()).toMatchObject({ t: 'err', code: 'timeout' })
+    expect(room.state.timeouts[MOD]).toBe(now + 60_000)
+    await send(room, m, { t: 'del', id: 'm1' })
+    expect(m.last()).toMatchObject({ t: 'err', code: 'timeout' })
+    expect(room.state.history).toHaveLength(1)
+    now += 60_001
+    await send(room, m, { t: 'send', text: `/untimeout ${MOD}` })
+    expect(room.state.timeouts[MOD]).toBeUndefined()
+  })
+
+  it('a refusal by the IP limit costs nothing from the address bucket', async () => {
+    const room = makeRoom()
+    const fill = []
+    for (const d of ['1', '2', '3']) {
+      const c = await join(room, '9.9.9.9')
+      await send(room, c, { t: 'auth', token: '0x' + d.repeat(40) })
+      fill.push(c)
+    }
+    for (let i = 0; i < 10; i++) await send(room, fill[i % 3]!, { t: 'send', text: `x${i}` })
+    const a = await join(room, '9.9.9.9')
+    await send(room, a, { t: 'auth', token: A })
+    for (let i = 0; i < 8; i++) await send(room, a, { t: 'send', text: 'no room' })
+    expect(a.last()).toMatchObject({ t: 'err', code: 'rate' })
+    now += 1000
+    await send(room, a, { t: 'send', text: 'my first' })
+    expect(a.last()).toMatchObject({ t: 'msg', msg: { text: 'my first' } })
+  })
+
+  it('a refusal by the address limit costs nothing from the IP bucket', async () => {
+    const room = makeRoom()
+    const a = await join(room, '9.9.9.9')
+    const b = await join(room, '9.9.9.9')
+    await send(room, a, { t: 'auth', token: A })
+    await send(room, b, { t: 'auth', token: B })
+    for (let i = 0; i < 20; i++) await send(room, a, { t: 'send', text: `a${i}` })
+    expect(room.state.history).toHaveLength(5)
+    for (let i = 0; i < 5; i++) await send(room, b, { t: 'send', text: `b${i}` })
+    expect(room.state.history).toHaveLength(10)
+  })
+
+  it('the slow-mode clock survives hibernation on the socket', async () => {
+    const room = makeRoom()
+    const a = await join(room)
+    const m = await join(room)
+    await send(room, a, { t: 'auth', token: A })
+    await send(room, m, { t: 'auth', token: MOD })
+    await send(room, m, { t: 'send', text: '/slow 60' })
+    await send(room, a, { t: 'send', text: 'one' })
+    now += 20_000
+
+    const revived = makeRoom()
+    await send(revived, a, { t: 'send', text: 'two' })
+    expect(a.last()).toMatchObject({ t: 'err', code: 'slow', retryAfter: 40 })
+    now += 40_000
+    await send(revived, a, { t: 'send', text: 'three' })
+    expect(a.last()).toMatchObject({ t: 'msg', msg: { text: 'three' } })
+  })
+
+  it("the clock belongs to the address: signing in as another doesn't inherit it", async () => {
+    const room = makeRoom()
+    const a = await join(room)
+    const m = await join(room)
+    await send(room, a, { t: 'auth', token: A })
+    await send(room, m, { t: 'auth', token: MOD })
+    await send(room, m, { t: 'send', text: '/slow 60' })
+    await send(room, a, { t: 'send', text: 'one' })
+    const revived = makeRoom()
+    await send(revived, a, { t: 'auth', token: B })
+    await send(revived, a, { t: 'send', text: 'as b' })
+    expect(a.last()).toMatchObject({ t: 'msg', msg: { from: B } })
+  })
+})
+
+describe('readHoldings', () => {
+  it('reads both balances, and a failed read reaches the caller', async () => {
+    const balance = (mini: bigint, infer: bigint) => async (token: string) => (token === MIYAMINI ? mini : token === INFER ? infer : 0n)
+    expect(await readHoldings(balance(1n, 0n))).toEqual({ miyamini: true, infer: false })
+    await expect(
+      readHoldings(async (token) => {
+        if (token === INFER) throw new Error('rpc down')
+        return 1n
+      })
+    ).rejects.toThrow('rpc down')
+  })
+
+  it('a dead RPC gets the short retry, not ten minutes of no badges', async () => {
+    let calls = 0
+    let dead = true
+    const r = new BadgeResolver(
+      () => {
+        calls++
+        return readHoldings(async () => {
+          if (dead) throw new Error('rpc down')
+          return 1n
+        })
+      },
+      new Set(),
+      () => now
+    )
+    expect(await r.badgesFor(A)).toEqual([])
+    now += 60_000 + 1
+    dead = false
+    expect(await r.badgesFor(A)).toEqual(['miyamini', 'infer'])
+    expect(calls).toBe(2)
   })
 })
 

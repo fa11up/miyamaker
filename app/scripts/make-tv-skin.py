@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Renders miyatv's skin to tiling bitmaps, the way early web pages and media players were skinned: walnut veneer, brushed
+Renders miyatv's skin to bitmaps, the way early web pages and media players were skinned: walnut veneer, brushed
 gold, and a gold moulding with a beaded edge for the title bar. Everything is seeded, so a run gives the same files.
 Needs numpy and pillow. Run: python3 scripts/make-tv-skin.py
 """
@@ -118,8 +118,63 @@ def paper(size=512):
     )
 
 
+def tea_paper(name, w, h, seed, quality):
+    """The guide's sheet, drawn whole because stains can't tile: tea washes dried into tide lines, darker toward the
+    edges, with age spots, long fibres, and a raised grain that catches the light from the top left. And one cup ring."""
+    global rng
+    rng = np.random.default_rng(seed)
+
+    def field(cx, cy, power):
+        return noise(h, w, cx * w / 1800, cy * h / 1800, power)
+
+    wash = 0.62 * field(3, 3, 1.9) + 0.38 * field(11, 11, 1.5)
+    tide = field(4, 4, 2.2) + 0.1 * field(70, 70, 1.1)
+    lines = np.zeros((h, w))
+    pooled = np.zeros((h, w))
+    for level, strength in ((0.5, 1.0), (-0.65, 0.7), (1.25, 0.85)):
+        lines += strength * np.exp(-(((tide - level) / 0.03) ** 2))
+        pooled += strength * np.clip((tide - level) / 0.5, 0, 1) * 0.5
+
+    y, x = np.mgrid[0:h, 0:w]
+    inward = np.minimum.reduce([x, w - 1 - x, y, h - 1 - y]) / (0.14 * min(w, h))
+    edge = np.clip(1 - inward + 0.22 * field(16, 16, 1.4), 0, 1) ** 1.8
+
+    radius = 0.13 * min(w, h)
+    wobble = 0.012 * radius * field(30, 30, 1.3)
+    dist = np.hypot(x - 0.8 * w, y - 0.8 * h) + 8 * wobble
+    patchy = np.clip(0.55 + 0.45 * field(6, 6, 1.6), 0, 1)
+    ring = np.exp(-(((dist - radius) / (0.018 * radius + 1.6)) ** 2)) * patchy
+
+    across = noise(h, w, 5, 240, 0.8)
+    down = noise(h, w, 240, 5, 0.8)
+    value = (
+        0.63
+        + 0.085 * wash
+        - 0.075 * pooled
+        - 0.1 * lines
+        - 0.3 * edge
+        - 0.13 * ring
+        + 0.02 * (across + down)
+    )
+    rgb = colour_map(
+        np.clip(value, 0, 1),
+        [(0.0, (120, 78, 38)), (0.3, (178, 132, 80)), (0.55, (218, 186, 134)), (0.75, (238, 218, 174)), (1.0, (250, 240, 212))],
+    )
+
+    tooth = noise(h, w, 420, 420, 0.42)
+    relief = tooth - np.roll(np.roll(tooth, 1, axis=0), 1, axis=1)
+    rgb = rgb + 8.5 * relief[..., None]
+
+    crowded = np.clip(field(7, 7, 1.7), 0, 1)
+    spots = np.clip((field(150, 150, 0.85) + 0.75 * crowded - 3.0) * 2.4, 0, 1)[..., None] * 0.62
+    rgb = rgb * (1 - spots) + np.array([104, 64, 30]) * spots
+    save(name, rgb, quality)
+
+
 if __name__ == "__main__":
     wood()
     gold()
     moulding()
     paper()
+    tea_paper("tea-paper.webp", 1800, 1200, 1961, 58)
+    tea_paper("tea-paper-tall.webp", 800, 1600, 1962, 62)

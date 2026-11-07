@@ -5,7 +5,16 @@ import { test } from 'node:test'
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts'
 import { verifyMessage } from 'viem'
 
-import { addMessage, handleStationRequest, MAX_PER_WALLET_PER_DAY, memoryStore, removeMessage } from '../api/_lib/station.ts'
+import {
+  addMessage,
+  handleStationRequest,
+  LIST_LIMIT,
+  MAX_PER_DAY,
+  MAX_PER_WALLET_PER_DAY,
+  memoryStore,
+  removeMessage,
+  restoreMessage,
+} from '../api/_lib/station.ts'
 
 const ORIGIN = 'https://www.miyamaker.com'
 const AUDIO = 'a'.repeat(43)
@@ -47,7 +56,11 @@ function setup() {
     const fields = { txId, wallet: who.address, at: now }
     return post('/remove', { ...fields, signature: await who.signMessage({ message: removeMessage(fields) }) })
   }
-  return { post, list, add, remove, deps, advance: (ms: number) => { now += ms } }
+  const restore = async (who: typeof uploader, txId = AUDIO) => {
+    const fields = { txId, wallet: who.address, at: now }
+    return post('/restore', { ...fields, signature: await who.signMessage({ message: restoreMessage(fields) }) })
+  }
+  return { post, list, add, remove, restore, deps, advance: (ms: number) => { now += ms } }
 }
 
 test('a signed upload is live at once', async () => {
@@ -112,6 +125,71 @@ test('a removed track cannot be added back, and a live one not twice', async () 
   const again = await s.add()
   assert.equal(again.status, 409)
   assert.match(again.body.error, /removed/)
+})
+
+test('taking your own track off leaves it free to be added again, so nobody can block a track', async () => {
+  const s = setup()
+  await s.add(uploader)
+  s.advance(1000)
+  assert.equal((await s.remove(uploader)).status, 200)
+  assert.equal((await s.add(uploader)).status, 200)
+  const [back] = (await s.list()).tracks
+  assert.equal(back.addedAt, T, 'no way up the list')
+  await s.remove(uploader)
+
+  const again = await s.add(stranger)
+  assert.equal(again.status, 200)
+  const [taken] = (await s.list()).tracks
+  assert.equal(taken.uploader, stranger.address.toLowerCase())
+  assert.equal(taken.addedAt, T + 1000)
+  assert.equal(taken.removedAt, undefined)
+})
+
+test('an admin taking their own track off still blocks it', async () => {
+  const s = setup()
+  await s.add(admin)
+  await s.remove(admin)
+  assert.equal((await s.add(uploader)).status, 409)
+})
+
+test('only an admin can restore a blocked track, and only a blocked one', async () => {
+  const s = setup()
+  await s.add()
+  assert.equal((await s.restore(admin)).status, 404, 'live, so nothing to restore')
+  await s.remove(admin)
+  const fields = { txId: AUDIO, wallet: admin.address, at: T }
+  const forged = await stranger.signMessage({ message: restoreMessage(fields) })
+  assert.equal((await s.post('/restore', { ...fields, signature: forged })).status, 401)
+  assert.equal((await s.restore(stranger)).status, 403)
+  assert.equal((await s.restore(admin)).status, 200)
+  assert.equal((await s.list()).tracks.length, 1)
+  await s.remove(uploader)
+  assert.equal((await s.restore(admin)).status, 404, 'taken off by its uploader, so not put back')
+})
+
+test('a busy day pushes no live track out of the listing, and older pages can be reached', async () => {
+  assert.ok(LIST_LIMIT >= 5 * MAX_PER_DAY)
+  const s = setup()
+  const id = (i: number) => String(i).padStart(43, 'x')
+  // All in the same millisecond, the hard case for a cursor.
+  for (let i = 0; i < LIST_LIMIT + 5; i += 1) {
+    // eslint-disable-next-line no-await-in-loop
+    await s.deps.store.insert({ txId: id(i), title: 't', artist: 'a', uploader: 'u', addedAt: T })
+  }
+  const first = await s.list()
+  assert.equal(first.tracks.length, LIST_LIMIT)
+  assert.ok(first.nextBefore)
+  const page = async (before: string) =>
+    (await handleStationRequest(
+      { method: 'GET', url: `${ORIGIN}/api/station?before=${before}`, headers: new Headers() },
+      s.deps
+    ))
+  const second = (await (await page(first.nextBefore)).json()) as any
+  assert.equal(second.tracks.length, 5)
+  assert.equal(second.nextBefore, undefined)
+  const seen = new Set([...first.tracks, ...second.tracks].map((t: { txId: string }) => t.txId))
+  assert.equal(seen.size, LIST_LIMIT + 5)
+  assert.equal((await page('nope')).status, 400)
 })
 
 test('a wallet has a daily limit', async () => {

@@ -31,7 +31,7 @@ export function parsePriceEth(input: string): Ok<{ wei: bigint }> | Err {
 export function parseSupply(input: string): Ok<{ supply: bigint; model: number }> | Err {
   const s = (input || '').trim()
   if (!s || /^0+$/.test(s)) return { ok: true, supply: 0n, model: PRICING_MODEL.UNLIMITED }
-  if (!/^\d{1,9}$/.test(s)) return { ok: false, error: 'Supply must be a whole number (blank = open edition).' }
+  if (!/^\d{1,9}$/.test(s)) return { ok: false, error: 'Number of copies must be a whole number (blank = no limit).' }
   return { ok: true, supply: BigInt(s), model: PRICING_MODEL.LIMITED_FIXED }
 }
 
@@ -41,11 +41,11 @@ export function parseSupply(input: string): Ok<{ supply: bigint; model: number }
  */
 export function parseAlignmentPct(input: string, minBps: number, protocolFeeBps = 0): Ok<{ bps: number }> | Err {
   const s = (input || '').trim()
-  if (!/^\d{1,3}(\.\d{1,2})?$/.test(s)) return { ok: false, error: 'Alignment must be a percent like 10 or 12.5.' }
+  if (!/^\d{1,3}(\.\d{1,2})?$/.test(s)) return { ok: false, error: 'Type the vault share as a percent like 10 or 12.5.' }
   const [whole, frac = ''] = s.split('.')
   const bps = Number(whole) * 100 + Number(frac.padEnd(2, '0'))
-  if (bps < minBps) return { ok: false, error: `Alignment must be at least ${minBps / 100}%.` }
-  if (bps + protocolFeeBps > 10_000) return { ok: false, error: 'Alignment plus protocol fee cannot exceed 100%.' }
+  if (bps < minBps) return { ok: false, error: `The vault share must be at least ${minBps / 100}%.` }
+  if (bps + protocolFeeBps > 10_000) return { ok: false, error: 'The vault share plus the miya fee cannot pass 100%.' }
   return { ok: true, bps }
 }
 

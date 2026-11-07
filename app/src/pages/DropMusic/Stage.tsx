@@ -166,9 +166,9 @@ const Sign = styled.div<{ $status: StageStatus }>`
   border: 2px solid currentColor;
   border-radius: 6px;
   color: ${({ $status }) => ($status === 'rec' ? '#ff5d73' : $status === 'onair' ? '#ffe27a' : '#f5c6f6')};
-  text-shadow: 0 0 6px currentColor, 0 0 14px currentColor;
-  box-shadow: 0 0 10px currentColor, inset 0 0 10px currentColor;
-  background: rgba(20, 16, 31, 0.6);
+  text-shadow: 0 0 4px currentColor;
+  box-shadow: 0 0 10px currentColor, inset 0 0 6px currentColor;
+  background: rgba(10, 8, 30, 0.88);
   animation: ${({ $status }) => ($status === 'rec' ? blink : flicker)} ${({ $status }) => ($status === 'rec' ? 1 : 4)}s
     steps(1) infinite;
   .still & {
@@ -555,6 +555,21 @@ const Transport = styled.div`
   .narrow & .time .total {
     display: none;
   }
+  @media (hover: none) {
+    .drop-hint {
+      display: none;
+    }
+  }
+`
+
+const StageNotice = styled.div`
+  margin-top: ${space[1]};
+  padding: ${space[1]} ${space[3]};
+  border: 1px solid #a01818;
+  border-radius: 10px;
+  background: #fff1f0;
+  color: #8a1010;
+  font-size: ${text.xs};
 `
 
 const PlayButton = styled.button`
@@ -670,6 +685,8 @@ export type StageProps = {
   onChooseCover: () => void
   onDropFile: (file: File) => void
   onSendToRadio?: () => void
+  /** Why the last file was refused: it may have been dropped here, far from the tab that holds the error. */
+  notice?: string
 }
 
 /**
@@ -714,11 +731,11 @@ export default function Stage(p: StageProps) {
         ))}
         <Floor $run={!p.reduced && (player.playing || p.busy)} aria-hidden />
         <StageViz mood={mood} getAnalyser={player.getAnalyser} levelTarget={root} />
-        <Speaker $side="left" aria-hidden>
+        <Speaker $side="left" aria-hidden data-speaker>
           <i />
           <i />
         </Speaker>
-        <Speaker $side="right" aria-hidden>
+        <Speaker $side="right" aria-hidden data-speaker>
           <i />
           <i />
         </Speaker>
@@ -783,7 +800,7 @@ export default function Stage(p: StageProps) {
             <PlayButton
               type="button"
               onClick={player.toggle}
-              disabled={dur <= 0 && !!player.error}
+              disabled={dur <= 0 && player.broken}
               aria-label={player.playing ? 'Pause track' : 'Play track'}
               title={player.playing ? 'Pause' : 'Play'}
             >
@@ -818,10 +835,11 @@ export default function Stage(p: StageProps) {
             <DeckButton type="button" className="hot" onClick={p.onChooseTrack}>
               ♪ Choose a track
             </DeckButton>
-            <span className="hint">or drop an audio file on the stage. Cover art too.</span>
+            <span className="hint drop-hint">or drop an audio file on the stage. Cover art too.</span>
           </>
         )}
       </Transport>
+      {p.notice && <StageNotice role="alert">{p.notice}</StageNotice>}
     </div>
   )
 }

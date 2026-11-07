@@ -21,7 +21,6 @@ import { keyOf, KIND_LABEL, kindFromFactory } from '@/miyamints/collections'
 import { rememberLaunch } from '@/miyamints/local'
 import { useMyLaunches } from '@/miyamints/useMyLaunches'
 import { setManageTarget, useManageTarget, useOpenManage } from '@/miyamints/useOpenManage'
-import { useOpenApp } from '@/music/useOpenApp'
 import { updateManagedCollection } from '@/store/experience/actions'
 import { useAppDispatch, useAppSelector } from '@/store/hooks'
 import { closeWindow, minimizeWindow } from '@/store/windows/actions'
@@ -65,6 +64,66 @@ const Inner = styled.div`
   margin: 0 auto;
 `
 
+/* The picker fits its window exactly: nothing scrolls but the launches, and nothing moves when the address form opens. */
+const Picker = styled.div`
+  height: 100%;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: ${space[3]};
+  padding: ${space[3]};
+  max-width: 920px;
+  margin: 0 auto;
+  > * {
+    flex: none;
+  }
+  > .launches {
+    flex: 1 1 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .launches [role='menu'] {
+    flex: 1 1 0;
+    min-height: 0;
+    overflow-y: auto;
+  }
+  /* A phone's window is only as tall as its content, so the list needs a limit of its own. */
+  @media (max-width: 768px), (max-height: 500px) {
+    height: auto;
+    > .launches {
+      flex: none;
+    }
+    .launches [role='menu'] {
+      flex: none;
+      max-height: 30dvh;
+    }
+  }
+`
+
+const AddressToggle = styled.button`
+  all: unset;
+  align-self: flex-start;
+  min-height: 24px;
+  cursor: pointer;
+  font-size: ${text.sm};
+  &:focus-visible {
+    outline: 1px dotted currentColor;
+  }
+  @media (max-width: 768px) {
+    min-height: 44px;
+  }
+`
+
+const AddressPanel = styled(Panel)`
+  height: 176px;
+  box-sizing: border-box;
+  overflow: hidden;
+  @media (max-width: 768px) {
+    height: 214px;
+  }
+`
+
 const Head = styled.header`
   display: flex;
   align-items: flex-end;
@@ -84,7 +143,6 @@ export default function ManagePage() {
   const { address: wallet, isConnected, chainId: walletChainId } = useAccount()
   const { openConnectModal } = useConnectModal()
   const { switchChain } = useSwitchChain()
-  const openApp = useOpenApp()
   const openManage = useOpenManage()
   const target = useManageTarget()
   const stored = useAppSelector((state) => state.experience.managedCollection)
@@ -93,7 +151,11 @@ export default function ManagePage() {
   // Deep link: ?collection=0x… (legacy behaviour).
   useEffect(() => {
     const p = params.get('collection')
-    if (p && isAddress(p)) dispatch(updateManagedCollection({ value: getAddress(p) }))
+    if (p && isAddress(p)) {
+      dispatch(updateManagedCollection({ value: getAddress(p) }))
+      // The session's target would win otherwise, and the link would open whatever was open before.
+      if (target && target.address.toLowerCase() !== p.toLowerCase()) setManageTarget(undefined)
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params])
 
@@ -119,9 +181,13 @@ export default function ManagePage() {
   const detected: LaunchKind | undefined = (() => {
     if (target && target.kind !== 'unknown') return target.kind
     if (!reads.data) return undefined
+    // A failed read isn't an answer: calling that legacy would pin the collection as what it may not be. No registry on
+    // this network is one, since nothing from Launch can be here.
+    if (a.registry && reads.data[0]?.status !== 'success') return undefined
     const k = kindFromFactory(factory && factory !== zeroAddress ? factory : undefined, a)
     return k === 'unknown' ? 'legacy' : k
   })()
+  const readFailed = !detected && !reads.isFetching && (reads.isError || !!reads.data)
   const isOwner = !!owner && !!wallet && owner.toLowerCase() === wallet.toLowerCase()
   const onWrongChain = isConnected && walletChainId !== chainId
 
@@ -152,6 +218,7 @@ export default function ManagePage() {
   }
 
   const [paste, setPaste] = useState('')
+  const [addressOpen, setAddressOpen] = useState(false)
   const pasteOk = isAddress(paste.trim())
 
   const explorer = explorerUrl(chainId)
@@ -177,17 +244,16 @@ export default function ManagePage() {
       >
         {Pages.manager?.label}
       </TitleBar>
-      <Layout data-manage>
-        <Inner>
-          {!collection ? (
-            <>
+      <Layout data-manage style={collection ? undefined : { overflowY: 'hidden' }}>
+        {!collection ? (
+            <Picker>
               <Head>
                 <div>
                   <Eyebrow style={{ color: color.highlight, textShadow: `1px 1px 0 ${color.dark}` }}>Manage</Eyebrow>
                   <DisplayTitle>Pick a collection</DisplayTitle>
                 </div>
               </Head>
-              <Panel aria-label="My launches">
+              <Panel className="launches" aria-label="My launches">
                 <Eyebrow>My launches</Eyebrow>
                 {isConnected ? (
                   <div role="menu" aria-label="My launches">
@@ -197,7 +263,6 @@ export default function ManagePage() {
                       error={mine.error}
                       onRetry={() => mine.refetch()}
                       onPick={(l) => openManage({ chainId: l.chainId, address: l.address, kind: l.kind })}
-                      onLaunch={() => openApp('launch')}
                     />
                   </div>
                 ) : (
@@ -217,9 +282,11 @@ export default function ManagePage() {
                   </>
                 )}
               </Panel>
-              <details>
-                <summary style={{ cursor: 'pointer', fontSize: text.sm }}>Manage a collection by its address</summary>
-                <Panel style={{ marginTop: space[2] }}>
+              <AddressToggle type="button" aria-expanded={addressOpen} onClick={() => setAddressOpen((o) => !o)}>
+                {addressOpen ? '▼' : '▶'} Manage a collection by its address
+              </AddressToggle>
+              {/* Its room is always kept, and hidden until asked for, so opening it moves nothing. */}
+              <AddressPanel style={{ visibility: addressOpen ? 'visible' : 'hidden' }}>
                   <Field>
                     Collection address on {chain.name}
                     <input
@@ -242,11 +309,10 @@ export default function ManagePage() {
                       Open
                     </SmallButton>
                   </div>
-                </Panel>
-              </details>
-            </>
+              </AddressPanel>
+            </Picker>
           ) : (
-            <>
+          <Inner>
               <Head>
                 <div style={{ minWidth: 0 }}>
                   <Eyebrow style={{ color: color.highlight, textShadow: `1px 1px 0 ${color.dark}` }}>
@@ -301,7 +367,14 @@ export default function ManagePage() {
                 </StatusBox>
               )}
               <Panel style={{ padding: space[2] }}>
-                {!detected ? (
+                {readFailed ? (
+                  <span style={{ fontSize: text.sm }}>
+                    Couldn&apos;t read this collection.{' '}
+                    <SmallButton type="button" onClick={() => reads.refetch()}>
+                      Check again
+                    </SmallButton>
+                  </span>
+                ) : !detected ? (
                   <span style={{ fontSize: text.sm }}>Loading…</span>
                 ) : detected === 'legacy' ? (
                   <LegacyManage key={collection} collection={collection} onChange={clear} />
@@ -315,9 +388,8 @@ export default function ManagePage() {
                   />
                 )}
               </Panel>
-            </>
-          )}
-        </Inner>
+          </Inner>
+        )}
       </Layout>
     </WindowWrapper>
   )

@@ -306,7 +306,8 @@ contract ParimutuelMarketTest is MarketsBase {
         _stake(m, alice, 2, 100e18);
         _resolve(m, 1, m.terms().lockAt);
         assertEq(uint8(m.state()), uint8(MarketTypes.State.Void));
-        assertEq(m.finalOutcome(), 1);
+        assertEq(m.finalOutcome(), 0);
+        assertEq(m.decidedOutcome(), 1);
         assertEq(_refund(m, alice), 100e18);
     }
 

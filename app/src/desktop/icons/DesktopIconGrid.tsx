@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import styled from 'styled-components/macro'
 
 import DesktopIcon from '@/pages/OperatingSystem/DesktopIcon'
+import { preloadApp } from '@/constants/appLoaders'
 import { color, MOBILE_BREAKPOINT } from '@/theme/tokens'
 
 import { DESKTOP_EVENTS, useReducedMotion } from '../prefs'
@@ -113,7 +114,13 @@ export default function DesktopIconGrid({
     return (
       <MobileGrid>
         {icons.map((icon) => (
-          <DesktopIcon key={icon.id} normalState={icon.src} onClick={() => onOpen(icon.id)} perchId={icon.id}>
+          <DesktopIcon
+            key={icon.id}
+            normalState={icon.src}
+            onClick={() => onOpen(icon.id)}
+            onPointerDown={() => preloadApp(icon.id)}
+            perchId={icon.id}
+          >
             {icon.label}
           </DesktopIcon>
         ))}
@@ -132,7 +139,9 @@ function FreeGrid({ icons, onOpen }: { icons: readonly DesktopIconApp[]; onOpen:
   const [saved, setSaved] = useState<unknown>(loadIconLayout)
   const [drag, setDrag] = useState<{ id: string; x: number; y: number; target: Cell }>()
   const [status, setStatus] = useState('')
-  const suppressClick = useRef(false)
+  // Until when a click is the tail of a drag. A time, as browsers differ on when the click comes, and a drag let go
+  // away from its icon gets no click at all, which would otherwise swallow the next real one.
+  const suppressClickUntil = useRef(0)
 
   useLayoutEffect(() => {
     const el = ref.current
@@ -185,19 +194,48 @@ function FreeGrid({ icons, onOpen }: { icons: readonly DesktopIconApp[]; onOpen:
 
   const onPointerDown = (id: string) => (e: React.PointerEvent<HTMLDivElement>) => {
     if (!layout || !dims || e.button !== 0 || !e.isPrimary) return
+    const placed = layout
+    const { cols, rows } = dims
+    const slot = e.currentTarget
     const start = cellToPx(layout[id]!)
     const sx = e.clientX
     const sy = e.clientY
     let dragging = false
     let last = { x: start.x, y: start.y, target: layout[id]! }
 
-    const onMove = (ev: PointerEvent) => {
+    const stop = () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', end)
+      window.removeEventListener('pointercancel', end)
+      window.removeEventListener('blur', cancel)
+      slot.removeEventListener('lostpointercapture', cancel)
+    }
+
+    function cancel() {
+      stop()
+      if (dragging) setDrag(undefined)
+    }
+
+    function onMove(ev: PointerEvent) {
       if (ev.pointerId !== e.pointerId) return
+      // The button came up somewhere we never heard about.
+      if (ev.pointerType === 'mouse' && ev.buttons === 0) {
+        cancel()
+        return
+      }
+
       const dx = ev.clientX - sx
       const dy = ev.clientY - sy
       if (!dragging) {
         if (Math.hypot(dx, dy) < DRAG_THRESHOLD) return
         dragging = true
+        // Only now: captured from the press, a plain click would land on the slot and miss the icon's button.
+        try {
+          slot.setPointerCapture(ev.pointerId)
+          slot.addEventListener('lostpointercapture', cancel)
+        } catch {
+          // The pointer has already gone: the buttons check above ends the drag.
+        }
       }
 
       const el = ref.current
@@ -205,29 +243,25 @@ function FreeGrid({ icons, onOpen }: { icons: readonly DesktopIconApp[]; onOpen:
       const maxY = (el?.clientHeight ?? 0) - GRID.cellH
       const x = Math.min(Math.max(0, start.x + dx), Math.max(0, maxX))
       const y = Math.min(Math.max(0, start.y + dy), Math.max(0, maxY))
-      last = { x, y, target: pxToCell(x, y, dims.cols, dims.rows) }
+      last = { x, y, target: pxToCell(x, y, cols, rows) }
       setDrag({ id, ...last })
     }
 
-    const end = (ev: PointerEvent) => {
+    function end(ev: PointerEvent) {
       if (ev.pointerId !== e.pointerId) return
-      window.removeEventListener('pointermove', onMove)
-      window.removeEventListener('pointerup', end)
-      window.removeEventListener('pointercancel', end)
+      stop()
       if (!dragging) return
       setDrag(undefined)
       if (ev.type === 'pointercancel') return
       // the click that follows this pointerup must not open the app
-      suppressClick.current = true
-      window.setTimeout(() => {
-        suppressClick.current = false
-      }, 0)
-      commit(moveIcon(layout, id, last.target))
+      suppressClickUntil.current = performance.now() + 300
+      commit(moveIcon(placed, id, last.target))
     }
 
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', end)
     window.addEventListener('pointercancel', end)
+    window.addEventListener('blur', cancel)
   }
 
   const onKeyDown = (id: string, label: string) => (e: React.KeyboardEvent<HTMLDivElement>) => {
@@ -251,10 +285,12 @@ function FreeGrid({ icons, onOpen }: { icons: readonly DesktopIconApp[]; onOpen:
               key={icon.id}
               className={`${dragging ? 'dragging' : ''} ${reducedMotion ? 'still' : ''}`}
               style={{ transform: `translate(${pos.x}px, ${pos.y}px)` }}
+              onPointerEnter={() => preloadApp(icon.id)}
               onPointerDown={onPointerDown(icon.id)}
               onKeyDown={onKeyDown(icon.id, icon.label)}
               onClickCapture={(e) => {
-                if (!suppressClick.current) return
+                if (performance.now() >= suppressClickUntil.current) return
+                suppressClickUntil.current = 0
                 e.preventDefault()
                 e.stopPropagation()
               }}

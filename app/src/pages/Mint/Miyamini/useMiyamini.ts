@@ -7,13 +7,13 @@ import {
   useBalance,
   useReadContracts,
   useSwitchChain,
-  useWaitForTransactionReceipt,
   useWriteContract,
 } from 'wagmi'
 
 import { MIYAMINI_CHAIN_ID, MIYAMINI_CONTRACT, MIYAMINI_METADATA_BASE } from '@/constants/contracts'
 
 import { erc721mAbi } from './abi'
+import { useTxOutcome } from '@/miyamints/useTxOutcome'
 
 const contract = { address: MIYAMINI_CONTRACT, abi: erc721mAbi, chainId: MIYAMINI_CHAIN_ID } as const
 
@@ -92,15 +92,11 @@ export function useMiyaminiMint() {
   const { switchChain, isPending: isSwitching } = useSwitchChain()
   const balance = useBalance({ address, chainId: MIYAMINI_CHAIN_ID, query: { enabled: !!address } })
   const write = useWriteContract()
-  const receipt = useWaitForTransactionReceipt({
-    hash: write.data as Hash | undefined,
-    chainId: MIYAMINI_CHAIN_ID,
-    query: { enabled: !!write.data },
-  })
+  const { outcome } = useTxOutcome(MIYAMINI_CHAIN_ID, write.data as Hash | undefined)
 
   useEffect(() => {
-    if (receipt.isSuccess) balance.refetch()
-  }, [receipt.isSuccess])
+    if (outcome === 'success') balance.refetch()
+  }, [outcome])
 
   const mint = (amount: number, price: bigint) =>
     write.writeContract({
@@ -121,10 +117,14 @@ export function useMiyaminiMint() {
     reset: write.reset,
     hash: write.data,
     isAwaitingWallet: write.isPending,
-    isConfirming: !!write.data && receipt.isLoading,
-    isConfirmed: receipt.isSuccess && receipt.data?.status === 'success',
-    reverted: receipt.isSuccess && receipt.data?.status === 'reverted',
-    error: write.error || receipt.error,
+    isConfirming: outcome === 'waiting',
+    isConfirmed: outcome === 'success',
+    reverted: outcome === 'reverted',
+    /** Replaced by the wallet's cancel: the replacement's receipt says success, and nothing was minted. */
+    cancelled: outcome === 'cancelled',
+    /** It was sent, but its receipt couldn't be read: it may still land, so Mint isn't offered again. */
+    unconfirmed: outcome === 'unknown',
+    error: write.error,
   }
 }
 

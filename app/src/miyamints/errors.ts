@@ -35,6 +35,8 @@ const FRIENDLY: Record<string, string> = {
 }
 
 /** A wallet / contract error as one plain sentence. */
+const TX_GENERIC_WORDS = 'That did not go through. Nothing moved. Try again.'
+
 export function describeError(error: unknown): string {
   if (!error) return ''
   if (error instanceof BaseError) {
@@ -46,8 +48,35 @@ export function describeError(error: unknown): string {
       return 'Not enough ETH in this wallet to pay for the network fee.'
     }
 
-    return name ? `The contract said no (${name}).` : error.shortMessage
+    // Anything else viem says is for developers: it can name functions and quote calldata.
+    return TX_GENERIC_WORDS
   }
 
   return (error as Error)?.message || 'Something went wrong.'
+}
+
+/** For a step that may already have spent something, where only the wallet's activity can say what went through. */
+export const TX_RETRY_WORDS = "That did not go through. Check your wallet's activity, then try again."
+/** For a dry run: nothing was sent. */
+export const TX_CHECK_WORDS = 'That did not go through. Nothing was charged for this step. Try again.'
+
+const REJECTED = /user rejected|user denied|rejected the request|denied transaction/i
+const DEVELOPER_TEXT = /0x[0-9a-f]{8}|revert|viem|contract function|execution|rpc|version:|failed to fetch|\n/i
+
+/**
+ * describeError for the creator windows, where real money moves: a sentence written for people when there is one, and
+ * `fallback` in place of anything a library or contract wrote for developers.
+ */
+export function plainTxError(error: unknown, fallback: string = TX_RETRY_WORDS): string {
+  if (!error) return ''
+  const words = describeError(error)
+  if (error instanceof BaseError) {
+    // Not the generic line: here a step may already have spent something, so "nothing moved" could be untrue.
+    return words === TX_GENERIC_WORDS || words === error.shortMessage || words.startsWith('The contract said no')
+      ? fallback
+      : words
+  }
+
+  if (REJECTED.test(words)) return 'You cancelled in your wallet.'
+  return DEVELOPER_TEXT.test(words) || words.length > 200 ? fallback : words
 }

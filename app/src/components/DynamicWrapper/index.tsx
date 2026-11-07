@@ -2,22 +2,23 @@ import { lazy, Suspense, useMemo } from 'react'
 
 import { HighlightButton } from '@/components/Button'
 import ErrorBoundary from '@/components/ErrorBoundary'
+import { isChunkLoadError } from '@/components/ErrorBoundary/chunkError'
 import TitleBar from '@/components/TitleBar'
 import WindowWrapper from '@/components/WindowWrapper'
+import { APP_LOADERS } from '@/constants/appLoaders'
 import Pages from '@/constants/pages'
 import { useAppDispatch } from '@/store/hooks'
 import { closeWindow } from '@/store/windows/actions'
 
-const Launch = lazy(() => import('@/pages/Launch'))
-const Home = lazy(() => import('@/pages/Home'))
-const Components = lazy(() => import('@/pages/Components'))
-const Uploader = lazy(() => import('@/pages/Uploader'))
-const Manager = lazy(() => import('@/pages/Manage'))
-const Auction = lazy(() => import('@/pages/Auction'))
-const Mint = lazy(() => import('@/pages/Mint'))
-const Swap = lazy(() => import('@/pages/Swap'))
-const MyFiles = lazy(() => import('@/desktop/files/MyFiles'))
-const DisplayProperties = lazy(() => import('@/desktop/display/DisplayProperties'))
+const Launch = lazy(APP_LOADERS.launch!)
+const Home = lazy(APP_LOADERS.home!)
+const Uploader = lazy(APP_LOADERS.uploader!)
+const Manager = lazy(APP_LOADERS.manager!)
+const Auction = lazy(APP_LOADERS.auction!)
+const Mint = lazy(APP_LOADERS.mint!)
+const Swap = lazy(APP_LOADERS.swap!)
+const MyFiles = lazy(APP_LOADERS.files!)
+const DisplayProperties = lazy(APP_LOADERS.display!)
 
 /** Shown in place of a window whose app threw while rendering. The rest of the desktop keeps working. */
 function CrashedWindow({ identifier, error, reset }: { identifier: string; error: Error; reset: () => void }) {
@@ -39,11 +40,7 @@ function CrashedWindow({ identifier, error, reset }: { identifier: string; error
         <code style={{ wordBreak: 'break-word', fontSize: '0.75rem', opacity: 0.8 }}>{error.message}</code>
         <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
           {/* A failed chunk import stays rejected inside React.lazy, so that case needs a full page reload. */}
-          <HighlightButton
-            onClick={() =>
-              /dynamically imported module|Loading chunk/i.test(error.message) ? window.location.reload() : reset()
-            }
-          >
+          <HighlightButton onClick={() => (isChunkLoadError(error.message) ? window.location.reload() : reset())}>
             Reload
           </HighlightButton>
           <HighlightButton onClick={() => close()}>Close</HighlightButton>
@@ -53,10 +50,9 @@ function CrashedWindow({ identifier, error, reset }: { identifier: string; error
   )
 }
 
-const TV = lazy(() => import('@/pages/TV'))
-const Radio = lazy(() => import('@/pages/Radio'))
-const DropMusic = lazy(() => import('@/pages/DropMusic'))
-const MusicMaker = lazy(() => import('@/pages/MusicMaker'))
+const TV = lazy(APP_LOADERS.tv!)
+const Radio = lazy(APP_LOADERS.radio!)
+const DropMusic = lazy(APP_LOADERS.dropmusic!)
 
 export default function DynamicWrapper({ identifier }: { identifier: string }) {
   const component = useMemo(() => {
@@ -65,8 +61,6 @@ export default function DynamicWrapper({ identifier }: { identifier: string }) {
         return <Launch />
       case 'home':
         return <Home />
-      case 'components':
-        return <Components />
       case 'uploader':
         return <Uploader />
       case 'manager':
@@ -87,8 +81,6 @@ export default function DynamicWrapper({ identifier }: { identifier: string }) {
         return <Radio />
       case 'dropmusic':
         return <DropMusic />
-      case 'music':
-        return <MusicMaker />
       default:
         return <></>
     }

@@ -1,17 +1,20 @@
-import Countdown, { zeroPad } from 'react-countdown'
+import { formatEther } from 'viem'
 import styled from 'styled-components/macro'
-import { useWindowSize } from 'usehooks-ts'
 
-import type { BalanceData } from '@/context/AccountProvider'
-import AuctionButton from '@/pages/Auction/AuctionButton'
-import type { Attribute, TokenMetadata } from '@/store/collections/reducer'
-import { getTokenAttribute } from '@/utils/getTokenAttribute'
+import { ConnectedButton } from '@/components/Button'
+import { NormalButton } from '@/components/Button/NormalButton'
+import { AUCTION_CHAIN_ID } from '@/constants/contracts'
+import type { LotPhase } from '@/pages/Auction/bidding'
+import { balanceWords, monthYear, timeLeftWords } from '@/pages/Auction/bidding'
 
 const BidWrapper = styled.div`
   display: flex;
-  justify-content: space-between;
-  align-items: center;
+  align-items: stretch;
   gap: 0.75rem;
+
+  @media only screen and (max-width: 640px) {
+    flex-direction: column;
+  }
 `
 
 const InputWrapper = styled.div`
@@ -24,21 +27,23 @@ const ActionWrapper = styled.div`
   flex: none;
   display: flex;
   white-space: nowrap;
-  justify-content: end;
-  align-items: center;
 
-  > * + * {
-    margin-left: 0.5rem;
+  > button {
+    width: 100%;
+    padding: 0.5rem 0.7rem;
+    font-size: 0.75rem;
   }
 `
 
 const TextInput = styled.input.attrs({ type: 'text' })`
+  flex: 1 1 auto;
   width: 100%;
+  min-width: 0;
   padding-left: 0.5rem;
   padding-right: 0.5rem;
   border: none;
-  box-shadow: inset -1px -1px #fff, inset 1px 1px grey, inset -2px -2px #dfdfdf, inset 2px 2px #0a0a0a;
-  background-color: #ffffff;
+  box-shadow: inset 0 0 0 1px #a8843a, inset 0 1px 3px rgba(42, 20, 16, 0.25);
+  background-color: #fffdf6;
   box-sizing: border-box;
   -webkit-appearance: none;
   -moz-appearance: none;
@@ -48,169 +53,155 @@ const TextInput = styled.input.attrs({ type: 'text' })`
 
   &:disabled,
   &:read-only {
-    background-color: #c0c0c0;
+    background-color: #efe4c8;
   }
 
   &:focus {
-    outline: none;
+    outline: 2px solid #7a1620;
+    outline-offset: 1px;
+  }
+
+  @media only screen and (max-width: 640px) {
+    min-height: 44px;
+    /* iOS zooms the page into any field under 16px. */
+    font-size: 16px;
   }
 `
 
-const Text = styled.div`
-  width: 100%;
-  border: none;
-  box-shadow: inset -1px -1px #fff, inset 1px 1px grey, inset -2px -2px #dfdfdf, inset 2px 2px #0a0a0a;
-  background-color: #c0c0c0;
-  box-sizing: border-box;
+const Unit = styled.div`
+  flex: none;
+  padding: 0 0.75rem;
+  box-shadow: inset 0 0 0 1px #a8843a, inset 0 1px 3px rgba(42, 20, 16, 0.25);
+  background-color: #efe4c8;
   display: flex;
   justify-content: center;
   align-items: center;
 `
 
-const Timer = styled.div`
+const InfoRow = styled.div`
   display: flex;
-  justify-content: center;
-  align-items: center;
-  padding: 0.7rem;
-  font-size: 0.7rem;
-  white-space: nowrap;
-  box-shadow: inset -1px -1px #fff, inset 1px 1px grey, inset -2px -2px #dfdfdf, inset 2px 2px #0a0a0a;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0 0.75rem;
+  margin-bottom: 0.25rem;
+  font-size: 0.75rem;
 `
 
-const SettleWrapper = styled.div`
-  display: flex;
-  justify-content: center;
-  align-items: center;
+const TimeLeft = styled.span`
   font-weight: bolder;
-  margin-top: 1rem;
+`
+
+const Note = styled.p`
+  margin: 0.3rem 0 0;
+  font-size: 0.75rem;
+  line-height: 1.3;
+`
+
+const Message = styled.div`
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.5rem 0;
+  font-weight: bolder;
+  text-align: center;
+`
+
+const Standing = styled.p<{ $good: boolean }>`
+  margin: 0 0 0.4rem;
+  padding: 0.3rem 0.5rem;
+  border-left: 3px solid ${({ $good }) => ($good ? '#3d6b2c' : '#7a1620')};
+  background: rgba(255, 253, 246, 0.7);
+  font-size: 0.8rem;
+  font-weight: bolder;
 `
 
 export default function BidContainer({
-  bidAmount,
-  bidDisabled,
-  handleCheckBidAmount,
-  handleBid,
-  isConnected,
-  transacting,
+  phase,
+  startTime,
   endTime,
+  now,
+  bidAmount,
+  onBidAmount,
+  onBid,
+  onRetry,
+  minimum,
+  check,
+  busy,
+  canSend,
   balance,
-  currentAuctionToken,
-  attributes,
+  standing,
 }: {
+  phase: LotPhase
+  startTime: number
+  endTime: number
+  now: number
   bidAmount: string
-  bidDisabled: boolean
-  handleCheckBidAmount: (value: string) => void
-  handleBid: () => void
-  isConnected: boolean
-  transacting: boolean
-  endTime: number | undefined
-  balance: BalanceData | undefined
-  currentAuctionToken: TokenMetadata
-  attributes: Attribute[]
+  onBidAmount: (value: string) => void
+  onBid: () => void
+  onRetry: () => void
+  minimum: bigint
+  check: { valid: boolean; value?: bigint; label: string }
+  busy: 'wallet' | 'mining' | undefined
+  /** The wallet is connected and on the auction's chain, so the button places a bid rather than connecting or switching. */
+  canSend: boolean
+  balance: bigint | undefined
+  standing?: { good: boolean; words: string }
 }) {
-  const { width } = useWindowSize()
-
-  const renderTimer = ({
-    days,
-    hours,
-    minutes,
-    seconds,
-    completed,
-  }: {
-    days: number
-    hours: number
-    minutes: number
-    seconds: number
-    completed: boolean
-  }) => {
-    if (completed) {
-      // Render a completed state
-      return <Timer>00h:00m:00s</Timer>
-    }
-
-    // Render a countdown
+  if (phase === 'loading') return <Message role="status">Checking this lot…</Message>
+  if (phase === 'failed') {
     return (
-      <Timer>
-        {zeroPad(days)}d:{zeroPad(hours)}h:{zeroPad(minutes)}m:{zeroPad(seconds)}s
-      </Timer>
+      <Message role="alert">
+        Couldn&apos;t read this lot from Ethereum.
+        <NormalButton type="button" onClick={onRetry}>
+          Try again
+        </NormalButton>
+      </Message>
     )
   }
-
-  if (!endTime || endTime * 1000 <= new Date().getTime()) {
-    return <SettleWrapper>This auction has ended.</SettleWrapper>
+  if (phase === 'missing') return <Message>This lot isn&apos;t up for auction.</Message>
+  if (phase === 'upcoming') {
+    return <Message>Bidding opens {new Date(startTime * 1000).toLocaleString()}.</Message>
   }
 
-  if (width > 640) {
-    return (
-      <>
-        <div style={{ width: '100%', fontSize: '0.75rem', textAlign: 'end' }}>Time left:</div>
-        <BidWrapper>
-          <InputWrapper>
-            <TextInput
-              value={bidAmount}
-              inputMode="decimal"
-              onChange={(event) => handleCheckBidAmount(event.target.value)}
-              style={{ width: '70%' }}
-              placeholder="Type price..."
-            />
-            <Text style={{ width: '30%' }}>
-              {getTokenAttribute(
-                currentAuctionToken.attributes.length > 0 ? currentAuctionToken.attributes : attributes,
-                'Currency'
-              )}
-            </Text>
-          </InputWrapper>
-          <ActionWrapper>
-            <AuctionButton
-              handleBid={handleBid}
-              isConnected={isConnected}
-              transacting={transacting}
-              disabled={bidDisabled}
-            />
-            <Countdown date={endTime ? endTime * 1000 : 0} renderer={renderTimer} />
-          </ActionWrapper>
-        </BidWrapper>
-        <div style={{ fontSize: '0.75rem', marginTop: '0.25rem' }}>
-          Total offer amount: {balance ? Number(balance.formatted).toFixed(3) : 0.0} ETH
-        </div>
-      </>
-    )
-  }
+  if (phase === 'ended') return <Message>This auction ended {monthYear(endTime)}.</Message>
+
+  const buttonWords = busy === 'wallet' ? 'Confirm in your wallet…' : busy === 'mining' ? 'Waiting for Ethereum…' : check.label
 
   return (
     <>
-      <div style={{ width: '100%', fontSize: '0.75rem', textAlign: 'end' }}>Time left:</div>
+      {standing && (
+        <Standing role="status" $good={standing.good}>
+          {standing.words}
+        </Standing>
+      )}
+      <InfoRow>
+        <TimeLeft>{timeLeftWords(endTime * 1000 - now)}</TimeLeft>
+        {balance !== undefined && <span>Your balance: {balanceWords(balance)}</span>}
+      </InfoRow>
       <BidWrapper>
         <InputWrapper>
           <TextInput
             value={bidAmount}
             inputMode="decimal"
-            onChange={(event) => handleCheckBidAmount(event.target.value)}
-            style={{ width: '70%' }}
-            placeholder="Type price..."
+            aria-label="Your bid in ETH"
+            disabled={!!busy}
+            onChange={(event) => onBidAmount(event.target.value)}
+            placeholder={`${formatEther(minimum)} or more`}
           />
-          <Text style={{ width: '30%' }}>
-            {getTokenAttribute(
-              currentAuctionToken.attributes.length > 0 ? currentAuctionToken.attributes : attributes,
-              'Currency'
-            )}
-          </Text>
+          <Unit>ETH</Unit>
         </InputWrapper>
         <ActionWrapper>
-          <Countdown date={endTime ? endTime * 1000 : 0} renderer={renderTimer} />
+          <ConnectedButton withChain={[AUCTION_CHAIN_ID]} disabled={canSend && (!!busy || !check.valid)} onClick={onBid}>
+            {buttonWords}
+          </ConnectedButton>
         </ActionWrapper>
       </BidWrapper>
-      <div style={{ fontSize: '0.75rem', marginTop: '0.25rem' }}>
-        Total offer amount: {balance ? Number(balance.formatted).toFixed(3) : 0.0} ETH
-      </div>
-      <div style={{ display: 'flex', justifyContent: 'center', paddingTop: '1rem' }}>
-        <AuctionButton
-          handleBid={handleBid}
-          isConnected={isConnected}
-          transacting={transacting}
-          disabled={bidDisabled}
-        />
-      </div>
+      {check.valid && check.value !== undefined && (
+        <Note>You send {formatEther(check.value)} ETH now on Ethereum, plus gas.</Note>
+      )}
+      <Note>If someone outbids you, your ETH comes back automatically.</Note>
     </>
   )
 }

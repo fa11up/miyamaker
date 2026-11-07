@@ -1,10 +1,13 @@
 import { useQueryClient } from '@tanstack/react-query'
-import { readContract, simulateContract, waitForTransactionReceipt, writeContract } from '@wagmi/core'
-import { useCallback, useState } from 'react'
+import { getAccount, readContract, simulateContract, writeContract } from '@wagmi/core'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Address, Hash } from 'viem'
 import { parseEventLogs } from 'viem'
 import { useAccount } from 'wagmi'
 
+import { TxEndError } from '@/miyamints/txOutcome'
+import { latestOnly } from '@/pages/Swap/swapLogic'
+import { waitForTx } from '@/miyamints/useTxOutcome'
 import type { TxStepState } from '@/components/LaunchKit'
 import type { SupportedChainId } from '@/config/wagmi'
 import { wagmiConfig } from '@/config/wagmi'
@@ -16,12 +19,12 @@ import {
   erc1155FactoryAbi,
   erc1155InstanceAbi,
 } from '@/miyamints/abi'
-import { describeError } from '@/miyamints/errors'
+import { describeError, plainTxError, TX_CHECK_WORDS } from '@/miyamints/errors'
 import type { LaunchForm, LaunchType, Resolved } from '@/miyamints/launch'
 import { buildAuctionArgs, buildDropArgs, buildEditionArgs, makeSalt } from '@/miyamints/launch'
 import { rememberLaunch } from '@/miyamints/local'
 import { addKnownCollection } from '@/music/known'
-import { tryBatch } from '@/utils/batch'
+import { tryBatch, waitForBatch } from '@/utils/batch'
 import { instanceAddressAbi } from '@/utils/batchCalls'
 import { fundAndUpload } from '@/utils/fundAndUpload'
 import getIrysToken from '@/utils/getIrysToken'
@@ -57,16 +60,40 @@ export function useLaunch() {
   const [uploaded, setUploaded] = useState<{ image?: string; audio?: string }>({})
   const [instance, setInstance] = useState<Address>()
   const [hashes, setHashes] = useState<{ deploy?: Hash; first?: Hash }>({})
+  /** A create-and-first-piece batch the wallet has, until it says how it ended. */
+  const [sentBatch, setSentBatch] = useState<{ id: string; predicted: Address }>()
   const [result, setResult] = useState<LaunchResult>()
   const [error, setError] = useState('')
   const [running, setRunning] = useState(false)
+  /** What the current upload is waiting for, in the storage service's own steps. */
+  const [note, setNote] = useState('')
   const [check, setCheck] = useState<{ state: 'idle' | 'checking' | 'ok' | 'error'; message?: string }>({
     state: 'idle',
   })
 
+  const checks = useRef(latestOnly()).current
+
+  // Gone from the screen: no more wallet prompts, as SweepReview. Reset on mount for React's double effects.
+  const left = useRef(false)
+  useEffect(() => {
+    left.current = false
+    return () => {
+      left.current = true
+    }
+  }, [])
+  const stopIfClosed = () => {
+    if (left.current) throw new Error('The window was closed, so this stopped.')
+  }
+  // fundAndUpload says what it is about to ask before each prompt, so throwing here stops it between them.
+  const uploadNote = (words: string) => {
+    stopIfClosed()
+    setNote(words)
+  }
+
   const mark = (id: PipeStep, state: TxStepState) => setSteps((s) => ({ ...s, [id]: state }))
 
   const upload = async (id: 'image' | 'audio', file: File) => {
+    stopIfClosed()
     mark(id, 'active')
     const tx = await fundAndUpload(
       file,
@@ -77,11 +104,14 @@ export function useLaunch() {
       ],
       undefined,
       getIrysToken(chain?.id || 1),
-      chain
-    ).catch((e) => {
-      mark(id, 'error')
-      throw e
-    })
+      chain,
+      uploadNote,
+    )
+      .catch((e) => {
+        mark(id, 'error')
+        throw e
+      })
+      .finally(() => setNote(''))
 
     mark(id, 'done')
     return `ar://${tx}`
@@ -125,22 +155,24 @@ export function useLaunch() {
       form: LaunchForm,
       r: Omit<Resolved, 'image'> & { image?: string },
       a: MiyamintsAddresses,
-      chainId: SupportedChainId
+      chainId: SupportedChainId,
     ) => {
       if (!address) return
+      // Only the newest check counts: an older one landing late would speak for settings no longer on the screen.
+      const ticket = checks.begin()
       setCheck({ state: 'checking' })
       try {
         const now = BigInt(Math.floor(Date.now() / 1000))
         const call = deployCall(form, { ...r, image: r.image || 'ar://placeholder-artwork' }, a, now)
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         await simulateContract(wagmiConfig, { account: address, chainId, ...(call as any) })
-        setCheck({ state: 'ok' })
+        if (checks.isCurrent(ticket)) setCheck({ state: 'ok' })
       } catch (e) {
-        setCheck({ state: 'error', message: describeError(e) })
+        if (checks.isCurrent(ticket)) setCheck({ state: 'error', message: plainTxError(e, TX_CHECK_WORDS) })
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [address]
+    [address],
   )
 
   const run = useCallback(
@@ -177,6 +209,11 @@ export function useLaunch() {
           } else if (input.audio.file) audio = await upload('audio', input.audio.file)
           else throw new Error('Add your track.')
           setUploaded((u) => ({ ...u, audio }))
+        }
+
+        // Paying for storage takes the wallet to Ethereum and back. If it didn't come back, nothing goes to the wrong place.
+        if (getAccount(wagmiConfig).chainId !== chainId) {
+          throw new Error('Your wallet is on another network. Switch it back, then try again. Your uploads are kept.')
         }
 
         const r: Resolved = { ...input.resolved, image, audio, audioMime: input.audio?.mime }
@@ -216,22 +253,36 @@ export function useLaunch() {
             functionName: string
             args: readonly [`0x${string}`, unknown]
           }
-          const predicted = await readContract(wagmiConfig, {
-            address: factory,
-            abi: instanceAddressAbi,
-            functionName: 'computeInstanceAddress',
-            args: [args[0], address],
-            chainId,
-          }).catch(() => undefined)
-          const sent =
-            predicted &&
-            (await tryBatch([{ address: factory, abi, functionName, args }, firstCall(predicted)], {
-              account: address,
+          const predicted =
+            sentBatch?.predicted ??
+            (await readContract(wagmiConfig, {
+              address: factory,
+              abi: instanceAddressAbi,
+              functionName: 'computeInstanceAddress',
+              args: [args[0], address],
               chainId,
-              onAsk: () => mark('deploy', 'active'),
-              onSent: () => mark('first', 'active'),
-            }))
+            }).catch(() => undefined))
+          stopIfClosed()
+          // A batch already out is waited on, never sent again. Only the wallet saying it failed frees it.
+          const sent = await Promise.resolve(
+            sentBatch
+              ? waitForBatch(sentBatch.id)
+              : predicted &&
+                  tryBatch([{ address: factory, abi, functionName, args }, firstCall(predicted)], {
+                    account: address,
+                    chainId,
+                    onAsk: () => mark('deploy', 'active'),
+                    onSent: (id) => {
+                      setSentBatch({ id, predicted })
+                      mark('first', 'active')
+                    },
+                  }),
+          ).catch((e) => {
+            if (!(e as TxEndError).unconfirmed) setSentBatch(undefined)
+            throw e
+          })
           if (sent) {
+            setSentBatch(undefined)
             const logs = sent.receipts.flatMap((receipt) => receipt.logs ?? [])
             inst = (
               form.type === 'auction'
@@ -246,7 +297,7 @@ export function useLaunch() {
             setInstance(inst)
             mark('deploy', 'done')
             // Same address as named means the first piece went in with it. Otherwise it goes in as its own step below.
-            if (inst.toLowerCase() === predicted.toLowerCase()) {
+            if (inst.toLowerCase() === predicted?.toLowerCase()) {
               firstHash = sent.hash
               setHashes((h) => ({ ...h, first: sent.hash }))
               mark('first', 'done')
@@ -256,13 +307,24 @@ export function useLaunch() {
 
         if (!inst) {
           mark('deploy', 'active')
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const { request } = await simulateContract(wagmiConfig, { account: address, chainId, ...(call as any) })
-          const hash = await writeContract(wagmiConfig, request)
-          deployHash = hash
-          setHashes((h) => ({ ...h, deploy: hash }))
-          const receipt = await waitForTransactionReceipt(wagmiConfig, { hash, chainId })
-          if (receipt.status !== 'success') throw new Error('The create transaction failed on-chain.')
+          // One already sent is waited on, not sent again: a failed lookup says nothing about how it ended.
+          if (!deployHash) {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const { request } = await simulateContract(wagmiConfig, { account: address, chainId, ...(call as any) })
+            stopIfClosed()
+            const hash = await writeContract(wagmiConfig, request)
+            deployHash = hash
+            setHashes((h) => ({ ...h, deploy: hash }))
+          }
+
+          const receipt = await waitForTx(chainId, deployHash).catch((e) => {
+            if ((e as TxEndError).reverted || (e as TxEndError).cancelled) {
+              setHashes((h) => ({ ...h, deploy: undefined }))
+            }
+
+            throw e
+          })
+
           if (form.type === 'drop') {
             inst = parseEventLogs({ abi: dropFactoryAbi, eventName: 'DropCreated', logs: receipt.logs })[0]?.args.drop
           } else if (form.type === 'auction') {
@@ -282,16 +344,28 @@ export function useLaunch() {
 
         if (form.type !== 'drop' && !firstHash) {
           mark('first', 'active')
-          const { request } = await simulateContract(wagmiConfig, {
-            account: address,
-            chainId,
-            ...firstCall(inst),
-          } as never)
-          firstHash = await writeContract(wagmiConfig, request as never)
+          // Sending this one twice would pay the auction's deposit twice, so one already out is only waited on.
+          let sending = hashes.first
+          if (!sending) {
+            const { request } = await simulateContract(wagmiConfig, {
+              account: address,
+              chainId,
+              ...firstCall(inst),
+            } as never)
+            stopIfClosed()
+            const hash: Hash = await writeContract(wagmiConfig, request as never)
+            sending = hash
+            setHashes((h) => ({ ...h, first: hash }))
+          }
 
-          setHashes((h) => ({ ...h, first: firstHash }))
-          const receipt = await waitForTransactionReceipt(wagmiConfig, { hash: firstHash, chainId })
-          if (receipt.status !== 'success') throw new Error('That transaction failed on-chain. You can retry it.')
+          await waitForTx(chainId, sending).catch((e) => {
+            if ((e as TxEndError).reverted || (e as TxEndError).cancelled) {
+              setHashes((h) => ({ ...h, first: undefined }))
+            }
+
+            throw e
+          })
+          firstHash = sending
           mark('first', 'done')
         }
 
@@ -305,13 +379,13 @@ export function useLaunch() {
           })
           return next
         })
-        setError(describeError(e))
+        setError(e instanceof TxEndError ? e.message : plainTxError(e))
       } finally {
         setRunning(false)
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [address, chain, uploaded, instance, hashes]
+    [address, chain, uploaded, instance, hashes, sentBatch],
   )
 
   const reset = () => {
@@ -319,17 +393,44 @@ export function useLaunch() {
     setUploaded({})
     setInstance(undefined)
     setHashes({})
+    setSentBatch(undefined)
     setResult(undefined)
     setError('')
+    checks.cancel()
     setCheck({ state: 'idle' })
+  }
+
+  /** The form changed, so the last try's error is about what's no longer on the screen. Not once it's on the chain. */
+  const clearError = () => {
+    if (!instance && !hashes.deploy && !sentBatch) setError('')
   }
 
   /** Media changed: forget its upload (only before deploying). */
   const invalidate = (what: 'image' | 'audio') => {
+    clearError()
     if (instance) return
     setUploaded((u) => ({ ...u, [what]: undefined }))
     mark(what, 'idle')
   }
 
-  return { steps, uploaded, instance, hashes, result, error, running, check, simulate, run, reset, invalidate }
+  /** Something has gone to the chain, so what it was built from can't change any more. */
+  const committed = !!instance || !!hashes.deploy || !!sentBatch
+
+  return {
+    committed,
+    steps,
+    uploaded,
+    instance,
+    hashes,
+    result,
+    error,
+    running,
+    note,
+    check,
+    simulate,
+    run,
+    reset,
+    invalidate,
+    clearError,
+  }
 }

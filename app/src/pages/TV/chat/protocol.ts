@@ -8,6 +8,20 @@ export type ChatMessage = { id: string; at: number; from: string; badges: Badge[
 
 export type Me = { address: string; badges: Badge[]; mod: boolean }
 
+/** What an empty chat says while it isn't open: failure never reads as loading. */
+export function chatWaitLine(status: 'off' | 'connecting' | 'open' | 'reconnecting'): string {
+  if (status === 'open') return 'No messages yet. Say hi.'
+  if (status === 'connecting') return 'Joining chat…'
+  if (status === 'reconnecting') return 'Chat dropped. Reconnecting…'
+  return 'Chat is offline right now. The stream still works.'
+}
+
+/** The words for a failed sign-in. Whatever the wallet library or the chat server said stays out of it. */
+export function signInProblem(e: unknown): string {
+  const m = e instanceof Error ? e.message : String(e)
+  return /reject|denied|cancel/i.test(m) ? 'Signature cancelled.' : 'Could not sign you in. Try again.'
+}
+
 export type ErrorCode = 'auth' | 'rate' | 'slow' | 'timeout' | 'length' | 'empty' | 'forbidden' | 'bad'
 
 export type ServerFrame =
@@ -41,6 +55,16 @@ export const initialRoomState: RoomState = {
   me: undefined,
   error: undefined,
 }
+
+/**
+ * A new socket isn't anyone until it has signed in again, and what went wrong on the old one is over. A refused
+ * sign-in stays up long enough to be read: being refused is what closed that socket.
+ */
+export const freshSocket = (state: RoomState): RoomState => ({
+  ...state,
+  me: undefined,
+  error: state.error?.code === 'auth' ? state.error : undefined,
+})
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null
 

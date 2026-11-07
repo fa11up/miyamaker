@@ -1,8 +1,7 @@
 /* eslint-disable @typescript-eslint/no-non-null-assertion */
-import MiyaLogo from 'assets/134321870.png'
-import CreateNew from 'assets/miyamints1.png?preset=thumbnail&resize=true'
 import { Fragment, useEffect, useMemo, useState } from 'react'
 import { Helmet } from 'react-helmet-async'
+import { useStore } from 'react-redux'
 import { useLocation, useNavigate } from 'react-router-dom'
 import styled from 'styled-components/macro'
 import { useWindowSize } from 'usehooks-ts'
@@ -11,16 +10,18 @@ import DynamicWrapper from '@/components/DynamicWrapper'
 import OsLoader from '@/components/OsLoader'
 import TaskBar from '@/components/TaskBar'
 import Pages from '@/constants/pages'
+import { DESKTOP_ICONS } from '@/constants/programs'
 import { DesktopOverlays, DesktopPetLayer } from '@/desktop'
 import DesktopIconGrid from '@/desktop/icons/DesktopIconGrid'
+import { useOpenApp } from '@/music/useOpenApp'
 import { canonicalPath } from '@/pages/Swap/tradePath'
+import type { AppState } from '@/store'
 import { useAppDispatch, useAppSelector } from '@/store/hooks'
-import { closeWindow, minimizeWindow, openWindow, setToFront } from '@/store/windows/actions'
+import { minimizeWindow, setToFront } from '@/store/windows/actions'
 import { useWindows } from '@/store/windows/hooks'
 import type { PageKey } from '@/store/windows/reducer'
 import { MOBILE_BREAKPOINT } from '@/theme/tokens'
 
-import AppSwitcher from './AppSwitcher'
 import Background from './Background'
 import FourthWall from './FourthWall'
 import NotFound from './NotFound'
@@ -31,6 +32,12 @@ const Foreground = styled.div`
   z-index: 1;
   height: calc(100svh - var(--taskbar-h));
   pointer-events: none;
+  /* miyaTV tilted on a phone is the whole screen: the taskbar steps off the bottom for it. */
+  @media (orientation: landscape) and (max-height: 500px) and (pointer: coarse) {
+    &:has(.is-focused:not(.minimized) [data-testid='miyatv']) {
+      height: 100svh;
+    }
+  }
   * {
     pointer-events: auto;
   }
@@ -63,9 +70,22 @@ const WindowContainer = styled.div<{ mobile?: boolean }>`
     width: 100% !important;
     height: 100% !important;
   }
-  /* Phones: one app at a time, switch via the taskbar app switcher. */
+  /* Phones: one app at a time, switch from the taskbar. */
   > .react-draggable:not(.is-focused) {
     display: none;
+  }
+  /* Small jobs float over the desktop at the size of their content. */
+  > .react-draggable.phone-card {
+    left: 12px;
+    top: 50%;
+    transform: translate(0, -50%) !important;
+    width: calc(100% - 24px) !important;
+    height: auto !important;
+  }
+  > .react-draggable.phone-card > * {
+    position: relative !important;
+    max-height: calc(100dvh - var(--taskbar-h, 34px) - 24px);
+    overflow-y: auto !important;
   }
   `}
 `
@@ -81,60 +101,27 @@ const Icons = styled.div`
   }
 `
 
-// const ComponentPage = Pages.components
-export type DesktopApp = { id: PageKey; label: string; src: string | undefined }
-
-const DESKTOP_ICONS: DesktopApp[] = [
-  { id: 'mint', label: Pages.mint?.label || 'Mint', src: Pages.mint?.icon?.src },
-  { id: 'swap', label: Pages.swap?.label || 'Trade', src: Pages.swap?.icon?.src },
-  { id: 'home', label: 'miyanet', src: MiyaLogo },
-  { id: 'launch', label: 'Launch', src: CreateNew[0]?.src },
-  { id: 'manager', label: Pages.manager?.label || 'Manager', src: Pages.manager?.icon?.src },
-  { id: 'auction', label: Pages.auction?.label || 'Auction', src: Pages.auction?.icon?.src },
-  { id: 'uploader', label: Pages.uploader?.label || 'Upload', src: Pages.uploader?.icon?.src },
-  { id: 'files', label: Pages.files?.label || 'My Files', src: Pages.files?.icon?.src },
-  { id: 'display', label: 'Display', src: Pages.display?.icon?.src },
-  { id: 'tv', label: Pages.tv?.label || 'miyatv', src: Pages.tv?.icon?.src },
-  { id: 'radio', label: Pages.radio?.label || 'miya radio', src: Pages.radio?.icon?.src },
-  { id: 'dropmusic', label: Pages.dropmusic?.label || 'Drop Music', src: Pages.dropmusic?.icon?.src },
-  { id: 'music', label: Pages.music?.label || 'MiyaMusicMaker', src: Pages.music?.icon?.src },
-]
-
 export default function OperatingSystem() {
   const location = useLocation()
   const navigate = useNavigate()
   /* Responsiveness stuff */
   const { width, height } = useWindowSize()
-  const isMobile = width > 0 && width <= MOBILE_BREAKPOINT
-  const [switcherOpen, setSwitcherOpen] = useState(false)
+  // A phone on its side is still a phone, however wide it has become.
+  const isMobile =
+    width > 0 &&
+    (width <= MOBILE_BREAKPOINT || (height <= 500 && window.matchMedia('(pointer: coarse)').matches))
   const [missing, setMissing] = useState<string>()
 
   /* Redux stuff */
   const dispatch = useAppDispatch()
+  const store = useStore<AppState>()
   const [windows, zindex, fullScreen, minimized] = useWindows()
   const onTop = useAppSelector((state) => state.windows.onTop)
   const firstLoad = useAppSelector((state) => state.experience.firstLoad)
   // The boot screen greets visitors to the desktop itself; a shared link (/mint/...) goes straight to its window.
   const [bootHere] = useState(() => location.pathname === '/')
 
-  const handleOpen = (id: string) => {
-    if (windows.includes(id)) {
-      dispatch(setToFront({ value: id }))
-      return
-    }
-
-    const page = Pages[id]
-    if (!page) return
-    dispatch(
-      openWindow({
-        value: id,
-        position: {
-          x: Math.max(0, width / 2 - page.minSize.width / 2),
-          y: Math.max(0, (height - 34) / 2 - page.minSize.height / 2),
-        },
-      })
-    )
-  }
+  const handleOpen = useOpenApp()
 
   useEffect(() => {
     // Renamed windows: an in-app link to an old path (/swap) lands on the new one (/trade).
@@ -196,9 +183,14 @@ export default function OperatingSystem() {
             label={page.label}
             baseSize={page.minSize}
             shaped={page.shaped}
+            noTrail={page.noTrail}
             fixedSize={page.fixedSize}
             corner={page.corner}
-            onClick={() => zindex.indexOf(window) !== zindex.length - 1 && dispatch(setToFront({ value: window }))}
+            onClick={() => {
+              // The press on a minimize button bubbles up to here: what it just put away stays away.
+              const { zIndex, minimized: away } = store.getState().windows
+              if (!away.includes(window) && zIndex[zIndex.length - 1] !== window) dispatch(setToFront({ value: window }))
+            }}
           >
             <DynamicWrapper identifier={window} />
           </Windows>
@@ -231,25 +223,7 @@ export default function OperatingSystem() {
         focus={zindex[zindex.length - 1]}
         onClick={(id) => handleTaskbar(id)}
         mobile={isMobile}
-        onOpenSwitcher={() => setSwitcherOpen((open) => !open)}
-        onHome={() => {
-          const top = zindex[zindex.length - 1]
-          if (top) dispatch(minimizeWindow({ value: top }))
-        }}
       />
-      {isMobile && switcherOpen && (
-        <AppSwitcher
-          open={windows}
-          focus={zindex[zindex.length - 1]}
-          apps={DESKTOP_ICONS}
-          onSelect={(id) => {
-            setSwitcherOpen(false)
-            handleOpen(id)
-          }}
-          onClose={(id) => dispatch(closeWindow({ value: id }))}
-          onDismiss={() => setSwitcherOpen(false)}
-        />
-      )}
       <DesktopOverlays />
       {missing && <NotFound path={missing} onClose={() => setMissing(undefined)} />}
     </div>

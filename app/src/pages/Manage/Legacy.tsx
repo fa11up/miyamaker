@@ -85,7 +85,7 @@ export default function LegacyManage({ collection, onChange }: { collection: Add
   // Account
   const { isConnected, address } = useAccount()
 
-  const alignedNft = useAlignedNft({ address: collection })
+  const { alignedNft, isLoading: alignedLoading } = useAlignedNft({ address: collection })
   const symbol = useSymbol({ address: collection })
   const { uriLocked, lockUri, refetch: refetchUriLocked } = useBaseUri({ address: collection })
   const { mintOpen, openMint, refetch: refetchMintOpen } = useMintOpen({ address: collection })
@@ -95,7 +95,7 @@ export default function LegacyManage({ collection, onChange }: { collection: Add
     return !!alignedNft
   }, [alignedNft])
 
-  const { data: owner, refetch: refetchOwner } = useReadContract({
+  const { data: owner, refetch: refetchOwner, isLoading: ownerLoading } = useReadContract({
     functionName: 'owner',
     address: collection,
     abi: [
@@ -221,10 +221,23 @@ export default function LegacyManage({ collection, onChange }: { collection: Add
         refetchMintOpen()
       }
 
+      if (transacting === 'metadata') {
+        // Saved: the form follows the chain again, instead of holding on to edits no longer pending.
+        setFormDirty(false)
+        metadata.refetch()
+      }
+
       setTransacting('')
       setTxHash('')
     },
-    onReplaced: () => {
+    // A revert or an unreadable receipt: stop showing "Updating...", or the row is stuck.
+    onError: () => {
+      setTransacting('')
+      setTxHash('')
+    },
+    onReplaced: (reason) => {
+      // A sped-up copy is the same change: onSuccess comes with its receipt, and refetches.
+      if (reason === 'repriced') return
       setTransacting('')
       setTxHash('')
     },
@@ -415,6 +428,9 @@ export default function LegacyManage({ collection, onChange }: { collection: Add
   }, [form.description, form.external_link, form.image, form.name, transacting, metadata.loaded])
 
   const connectHint = !isConnected && <p>Connect your wallet to manage a collection you own.</p>
+
+  // Not a verdict until the chain has answered.
+  if (alignedLoading || ownerLoading) return <div style={{ padding: '8px' }}>Loading…</div>
 
   if (!(isOwner && is721m)) {
     return (

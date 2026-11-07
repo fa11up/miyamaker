@@ -20,6 +20,7 @@ import {ICreateX, CREATEX} from "../../../src/shared/CreateXConstants.sol";
 import {CREATEX_BYTECODE} from "createx-forge/script/CreateX.d.sol";
 import {FreeMintParams} from "../../../src/interfaces/IFactoryTypes.sol";
 import {GatingScope} from "../../../src/gating/IGatingModule.sol";
+import {PasswordTierGatingModule} from "../../../src/gating/PasswordTierGatingModule.sol";
 
 contract MockRejectGatingModule {
     function canMint(address, uint256, bytes calldata) external pure returns (bool allowed, bool permanent) {
@@ -879,6 +880,107 @@ contract ERC1155FactoryTest is Test {
         uint256 editionId = inst.nextEditionId() - 1;
 
         inst.mint{value: 0.01 ether}(editionId, 1, bytes32(0), "", 0);
+        assertEq(inst.balanceOf(address(this), editionId), 1);
+    }
+
+    // ── gatingScope ───────────────────────────────────────────────────────────
+
+    function _deployScoped(address gatingModuleAddr, GatingScope scope) internal returns (ERC1155Instance inst) {
+        vm.prank(registryOwner);
+        registry.setComponent(gatingModuleAddr, true);
+        vm.deal(artist, 1 ether);
+        vm.prank(artist);
+        inst = ERC1155Instance(payable(factory.createInstance{value: 0}(
+            _nextSalt(),
+            ERC1155Factory.CreateParams({
+                name: "ScopedProject",
+                metadataURI: "ipfs://Qm",
+                creator: artist,
+                vault: address(vault),
+                alignmentBps: ALIGNMENT_BPS,
+                styleUri: "",
+                gatingModule: gatingModuleAddr,
+                freeMint: FreeMintParams({allocation: 5, scope: scope})
+            })
+        )));
+    }
+
+    function _scopedEdition(ERC1155Instance inst) internal returns (uint256) {
+        vm.prank(artist);
+        inst.addEdition("Art 1", 0.01 ether, 0, "ipfs://art1", ERC1155Instance.PricingModel.UNLIMITED, 0, 0);
+        return inst.nextEditionId() - 1;
+    }
+
+    function test_gatingScope_freeMintOnly_paidMintIsOpenFreeMintIsGated() public {
+        ERC1155Instance inst = _deployScoped(address(new MockRejectGatingModule()), GatingScope.FREE_MINT_ONLY);
+        uint256 editionId = _scopedEdition(inst);
+
+        inst.mint{value: 0.01 ether}(editionId, 1, bytes32(0), "", 0);
+        assertEq(inst.balanceOf(address(this), editionId), 1);
+
+        vm.expectRevert(GatingCheckFailed.selector);
+        inst.claimFreeMint(editionId, "");
+    }
+
+    function test_gatingScope_paidOnly_paidMintIsGatedFreeMintIsOpen() public {
+        ERC1155Instance inst = _deployScoped(address(new MockRejectGatingModule()), GatingScope.PAID_ONLY);
+        uint256 editionId = _scopedEdition(inst);
+
+        vm.expectRevert(GatingCheckFailed.selector);
+        inst.mint{value: 0.01 ether}(editionId, 1, bytes32(0), "", 0);
+
+        inst.claimFreeMint(editionId, "");
+        assertEq(inst.balanceOf(address(this), editionId), 1);
+    }
+
+    function test_gatingScope_both_gatesEach() public {
+        ERC1155Instance inst = _deployScoped(address(new MockRejectGatingModule()), GatingScope.BOTH);
+        uint256 editionId = _scopedEdition(inst);
+
+        vm.expectRevert(GatingCheckFailed.selector);
+        inst.mint{value: 0.01 ether}(editionId, 1, bytes32(0), "", 0);
+        vm.expectRevert(GatingCheckFailed.selector);
+        inst.claimFreeMint(editionId, "");
+    }
+
+    function test_claimFreeMint_callerCannotChooseOpenTimeToSkipTierLock() public {
+        PasswordTierGatingModule module = new PasswordTierGatingModule(address(registry));
+        ERC1155Instance inst = _deployScoped(address(module), GatingScope.BOTH);
+        uint256 openAt = block.timestamp + 1 hours;
+        vm.prank(artist);
+        inst.addEdition("Art 1", 0.01 ether, 0, "ipfs://art1", ERC1155Instance.PricingModel.UNLIMITED, 0, openAt);
+        uint256 editionId = inst.nextEditionId() - 1;
+
+        bytes32 hash = keccak256("tier1");
+        bytes32[] memory hashes = new bytes32[](1);
+        hashes[0] = hash;
+        uint256[] memory unlocks = new uint256[](1);
+        unlocks[0] = 1 days;
+        vm.prank(address(factory));
+        module.configureFor(address(inst), PasswordTierGatingModule.TierConfig({
+            tierType: PasswordTierGatingModule.TierType.TIME_BASED,
+            passwordHashes: hashes,
+            volumeCaps: new uint256[](0),
+            tierUnlockTimes: unlocks
+        }));
+        vm.warp(openAt);
+
+        // Encoding openTime = 0 used to put the unlock far in the past.
+        vm.expectRevert(PasswordTierGatingModule.TierTimeLocked.selector);
+        inst.claimFreeMint(editionId, abi.encode(hash, uint256(0)));
+        vm.expectRevert(PasswordTierGatingModule.TierTimeLocked.selector);
+        inst.claimFreeMint(editionId, abi.encode(hash));
+
+        vm.warp(openAt + 1 days);
+        inst.claimFreeMint(editionId, abi.encode(hash));
+        assertEq(inst.balanceOf(address(this), editionId), 1);
+    }
+
+    function test_claimFreeMint_emptyDataIsOpenTierLikeMint() public {
+        PasswordTierGatingModule module = new PasswordTierGatingModule(address(registry));
+        ERC1155Instance inst = _deployScoped(address(module), GatingScope.BOTH);
+        uint256 editionId = _scopedEdition(inst);
+        inst.claimFreeMint(editionId, "");
         assertEq(inst.balanceOf(address(this), editionId), 1);
     }
 

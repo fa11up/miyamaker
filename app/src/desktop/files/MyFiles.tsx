@@ -1,24 +1,29 @@
 import { useConnectModal } from '@rainbow-me/rainbowkit'
 import FileEye from 'assets/file_eye.png'
 import FolderIcon from 'assets/folder.png'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import styled from 'styled-components/macro'
 import { useAccount } from 'wagmi'
 
+import type { Artwork } from '@/components/ArtViewer'
+import ArtViewer from '@/components/ArtViewer'
 import { BigButton, Skeleton, StatusBox } from '@/components/Retro'
 import TitleBar from '@/components/TitleBar'
 import WindowWrapper from '@/components/WindowWrapper'
-import { useAppDispatch } from '@/store/hooks'
+import { useAppDispatch, useAppSelector } from '@/store/hooks'
 import { closeWindow, minimizeWindow } from '@/store/windows/actions'
 import { useFullscreen } from '@/store/windows/hooks'
 import { bevel, color, MOBILE_BREAKPOINT, space, text } from '@/theme/tokens'
 
+import { findCollection } from '../collections'
 import { shortAddress } from '../mints/dedupe'
+import { isPixelArt } from './fitArtwork'
 import { groupByCollection } from './indexer/parse'
 import type { OwnedNft } from './indexer/types'
 import Properties from './Properties'
+import { fileLabel, QUARANTINE_WARNING, splitScam } from './scam'
 import type { TokenDoc } from './useWalletFiles'
-import { useTokenDocs, useWalletNfts } from './useWalletFiles'
+import { useContractChecks, useTokenDocs, useWalletNfts } from './useWalletFiles'
 import { WIRED_BACKDROP } from './wired'
 
 const ID = 'files'
@@ -65,6 +70,15 @@ const Toolbar = styled.div`
       min-height: 40px;
       min-width: 44px;
     }
+  }
+`
+
+const RefreshButton = styled.button`
+  && {
+    min-width: 36px;
+    padding: 0 ${space[1]};
+    font-size: 24px;
+    line-height: 1;
   }
 `
 
@@ -143,6 +157,9 @@ const Item = styled.button`
     height: 100%;
     object-fit: cover;
     display: block;
+  }
+  .thumb img.pixel,
+  .thumb img.placeholder {
     image-rendering: pixelated;
   }
   .thumb img.placeholder {
@@ -189,7 +206,9 @@ const Doc = styled.div`
   height: 54px;
   position: relative;
   background: ${color.highlight};
-  box-shadow: 1px 1px 0 ${color.dark}, inset -1px -1px 0 ${color.shadow};
+  box-shadow:
+    1px 1px 0 ${color.dark},
+    inset -1px -1px 0 ${color.shadow};
   clip-path: polygon(0 0, 72% 0, 100% 22%, 100% 100%, 0 100%);
   display: flex;
   flex-direction: column;
@@ -220,6 +239,16 @@ const Doc = styled.div`
   }
 `
 
+const ScamNote = styled.p`
+  margin: 0 0 ${space[2]};
+  padding: ${space[2]};
+  border: 1px solid #ff5a74;
+  background: rgba(92, 18, 38, 0.92);
+  color: #fff;
+  font-size: ${text.xs};
+  line-height: 1.4;
+`
+
 const StatusBar = styled.div`
   flex: 0 0 auto;
   display: flex;
@@ -233,10 +262,10 @@ const StatusBar = styled.div`
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  > div:first-child {
+  > div {
     flex: 0 0 auto;
   }
-  > div:last-child {
+  > div.status {
     flex: 1 1 auto;
     min-width: 0;
   }
@@ -271,7 +300,9 @@ const Empty = styled.div`
   p,
   p * {
     color: #fff !important;
-    text-shadow: 0 1px 3px #000, 0 0 2px #000;
+    text-shadow:
+      0 1px 3px #000,
+      0 0 2px #000;
   }
   ${BigButton} {
     outline: 1px solid ${PHOSPHOR};
@@ -291,9 +322,33 @@ const Empty = styled.div`
 
 export type Selection = { kind: 'nft'; nft: OwnedNft } | { kind: 'token'; doc: TokenDoc }
 
+const touchOnly = () => typeof window !== 'undefined' && !!window.matchMedia?.('(hover: none)').matches
+
 const isTouch = (e: React.MouseEvent | React.PointerEvent) =>
-  (e.nativeEvent as PointerEvent).pointerType === 'touch' ||
-  (typeof window !== 'undefined' && window.matchMedia?.('(hover: none)').matches)
+  (e.nativeEvent as PointerEvent).pointerType === 'touch' || touchOnly()
+
+const SCAM_KEY = 'scam'
+const CHECKING_KEY = 'checking'
+
+const nftKey = (n: OwnedNft) => `nft:${n.chainId}:${n.contract}:${n.tokenId}`
+
+const keyOf = (s: Selection) =>
+  s.kind === 'nft' ? nftKey(s.nft) : s.doc.key
+
+const toViewerItem = (n: OwnedNft): Artwork => ({
+  src: n.fullImage || n.image,
+  name: n.name || `#${n.tokenId}`,
+  description: n.description,
+  details: [
+    ['Collection', n.collectionName],
+    ['Token ID', n.tokenId],
+    ['Contract', shortAddress(n.contract)],
+    ['Why it is here', n.scamReason],
+    ['Status', n.checking ? 'Contract not checked yet' : undefined],
+  ],
+  link: n.externalUrl || undefined,
+  warning: n.scamReason || n.checking ? QUARANTINE_WARNING : undefined,
+})
 
 export default function MyFiles() {
   const dispatch = useAppDispatch()
@@ -301,13 +356,94 @@ export default function MyFiles() {
   const { address, isConnected } = useAccount()
   const { openConnectModal } = useConnectModal()
   const nfts = useWalletNfts(address)
-  const tokens = useTokenDocs(address)
+  const { docs: tokens, refetch: refetchTokens } = useTokenDocs(address)
   const [folderKey, setFolderKey] = useState<string>()
   const [selected, setSelected] = useState<string>()
-  const [open, setOpen] = useState<Selection>()
+  // Popups, last in front. Each stays open until closed, so two can be compared side by side.
+  const [open, setOpen] = useState<{ selection: Selection; cascade: number }[]>([])
+  const opened = useRef(0)
+  const [viewing, setViewing] = useState<{ nfts: OwnedNft[]; start: number }>()
+  const [notice, setNotice] = useState('')
+  const stack = useAppSelector((state) => state.windows.zIndex)
+  const onTop = useAppSelector((state) => state.windows.onTop)
+  const minimized = useAppSelector((state) => state.windows.minimized).includes(ID)
+  // Just above this window and below the next one up, the sum the desktop stacks windows by.
+  const popupDepth = stack.indexOf(ID) * 1000 + 2000 + (onTop?.includes(ID) ? 100000 : 0) + 200
 
-  const folders = useMemo(() => groupByCollection(nfts.data?.nfts || []), [nfts.data])
+  const openFile = (selection: Selection) =>
+    setOpen((list) => {
+      const others = list.filter((o) => keyOf(o.selection) !== keyOf(selection))
+      const already = list.find((o) => keyOf(o.selection) === keyOf(selection))
+      if (already) return [...others, already]
+      const cascade = opened.current % 6
+      opened.current += 1
+      return [...list, { selection, cascade }]
+    })
+  const toFront = (selection: Selection) =>
+    setOpen((list) =>
+      list[list.length - 1]?.selection === selection
+        ? list
+        : [...list.filter((o) => o.selection !== selection), ...list.filter((o) => o.selection === selection)],
+    )
+
+  // Another wallet's files should not stay on screen.
+  useEffect(() => {
+    setOpen([])
+    setViewing(undefined)
+    setNotice('')
+    setFolderKey(undefined)
+    setSelected(undefined)
+  }, [address])
+
+  const allNfts = nfts.data?.nfts
+  const checks = useContractChecks(
+    useMemo(
+      // Already flagged or our own: asking Etherscan would change nothing and use up its limit.
+      () => (allNfts ?? []).filter((n) => !n.spam && !findCollection(n.chainId, n.contract)).map((n) => n.contract),
+      [allNfts],
+    ),
+  )
+  const { clean, scam, checking } = useMemo(
+    () => splitScam(allNfts ?? [], checks.data ?? {}, (n) => !!findCollection(n.chainId, n.contract)),
+    [allNfts, checks.data],
+  )
+  const collections = useMemo(() => groupByCollection(clean), [clean])
+  const folders = useMemo(
+    () => [
+      ...collections,
+      ...(checking.length
+        ? [
+            {
+              key: CHECKING_KEY,
+              chainId: 1,
+              contract: '',
+              name: `Still checking (${checking.length})`,
+              items: checking,
+            },
+          ]
+        : []),
+      ...(scam.length ? [{ key: SCAM_KEY, chainId: 1, contract: '', name: 'Scam / Unverified', items: scam }] : []),
+    ],
+    [collections, checking, scam],
+  )
   const folder = folders.find((f) => f.key === folderKey)
+
+  // A file's popup and viewer show what is known about it now, so a contract that turns out bad loses its link there too.
+  const latest = useMemo(() => {
+    const byKey = new Map<string, OwnedNft>()
+    folders.forEach((f) => f.items.forEach((n) => byKey.set(nftKey(n), n)))
+    return (n: OwnedNft) => byKey.get(nftKey(n)) ?? n
+  }, [folders])
+
+  // An open folder can empty out when Etherscan answers. Say where its files went instead of silently leaving.
+  useEffect(() => {
+    if (!folderKey || folder || !allNfts) return
+    const contract = folderKey.split(':')[1]
+    setFolderKey(undefined)
+    setSelected(undefined)
+    if (folderKey === CHECKING_KEY) setNotice('Every file in that folder has been checked.')
+    else if (scam.some((n) => n.contract === contract)) setNotice('This collection was moved to Scam / Unverified.')
+  }, [folderKey, folder, allNfts, scam])
 
   const path = `C:\\Wallet\\${address ? shortAddress(address) : 'Disconnected'}${folder ? `\\${folder.name}` : ''}`
   const count = !isConnected ? 0 : folder ? folder.items.length : folders.length + tokens.length
@@ -326,9 +462,20 @@ export default function MyFiles() {
     'aria-selected': selected === key,
   })
 
+  const viewNft = (nft: OwnedNft) => {
+    const inFolder = folders.find((f) => f.items.includes(nft))?.items.filter((n) => n.image) ?? [nft]
+    setViewing({ nfts: inFolder, start: Math.max(0, inFolder.indexOf(nft)) })
+  }
+
   const goUp = () => {
+    setSelected(folderKey)
     setFolderKey(undefined)
-    setSelected(undefined)
+  }
+
+  const refresh = () => {
+    nfts.refetch()
+    refetchTokens()
+    checks.refetch()
   }
 
   let body: React.ReactNode
@@ -337,7 +484,8 @@ export default function MyFiles() {
       <Empty>
         <img src={FolderIcon} alt="" />
         <p>
-          <strong>My Files</strong> shows your wallet as a folder: NFTs grouped by collection, tokens as documents.
+          See your Ethereum NFTs by collection, and ETH, INFER, imdUSD and MIYA as documents. Nothing here moves your
+          money.
         </p>
         <BigButton type="button" onClick={() => openConnectModal?.()} data-files-connect="">
           Connect wallet
@@ -346,28 +494,50 @@ export default function MyFiles() {
     )
   } else if (folder) {
     body = (
-      <Grid role="listbox" aria-label={folder.name}>
-        {folder.items.map((n) => (
-          <Item
-            key={`${n.contract}:${n.tokenId}`}
-            type="button"
-            role="option"
-            title={n.name}
-            {...itemProps(`${n.contract}:${n.tokenId}`, () => setOpen({ kind: 'nft', nft: n }))}
-          >
-            <span className="icon">
-              <span className="thumb">
-                {n.image ? (
-                  <img src={n.image} alt="" loading="lazy" referrerPolicy="no-referrer" />
-                ) : (
-                  <img src={FileEye} alt="" className="placeholder" />
-                )}
+      <>
+        {folder.key === SCAM_KEY && (
+          <ScamNote role="note">
+            These may be scams. Don&apos;t follow a link or offer in them, or sign anything they ask for. Some are only
+            unverified; each file says why it&apos;s here.
+          </ScamNote>
+        )}
+        {folder.key === CHECKING_KEY && (
+          <ScamNote role="note">
+            We&apos;re still checking these contracts. Their links and names stay hidden until then. Files that pass go
+            back to their collections.
+          </ScamNote>
+        )}
+        <Grid role="listbox" aria-label={folder.name}>
+          {folder.items.map((n) => (
+            <Item
+              key={`${n.contract}:${n.tokenId}`}
+              type="button"
+              role="option"
+              title={n.name}
+              {...itemProps(`${n.contract}:${n.tokenId}`, () => openFile({ kind: 'nft', nft: n }))}
+            >
+              <span className="icon">
+                <span className="thumb">
+                  {n.image ? (
+                    <img
+                      src={n.image}
+                      alt=""
+                      loading="lazy"
+                      referrerPolicy="no-referrer"
+                      onLoad={({ currentTarget: img }) =>
+                        img.classList.toggle('pixel', isPixelArt({ w: img.naturalWidth, h: img.naturalHeight }))
+                      }
+                    />
+                  ) : (
+                    <img src={FileEye} alt="" className="placeholder" />
+                  )}
+                </span>
               </span>
-            </span>
-            <span className="label">#{n.tokenId}</span>
-          </Item>
-        ))}
-      </Grid>
+              <span className="label">{fileLabel(n)}</span>
+            </Item>
+          ))}
+        </Grid>
+      </>
     )
   } else {
     body = (
@@ -379,14 +549,20 @@ export default function MyFiles() {
             role="option"
             title={f.name}
             {...itemProps(f.key, () => {
+              setNotice('')
               setFolderKey(f.key)
               setSelected(undefined)
             })}
           >
             <span className="icon">
-              <img src={FolderIcon} alt="" className="folder" />
+              <img
+                src={FolderIcon}
+                alt=""
+                className="folder"
+                style={f.key === SCAM_KEY ? { filter: 'hue-rotate(-60deg) saturate(2.6) brightness(0.85)' } : undefined}
+              />
             </span>
-            <span className="label">{f.name}</span>
+            <span className="label">{f.key === SCAM_KEY ? '⚠ Scam / Unverified' : f.name}</span>
             <span className="meta">{f.items.length} item(s)</span>
           </Item>
         ))}
@@ -405,13 +581,13 @@ export default function MyFiles() {
             type="button"
             role="option"
             title={`${t.name}.doc`}
-            {...itemProps(t.key, () => setOpen({ kind: 'token', doc: t }))}
+            {...itemProps(t.key, () => openFile({ kind: 'token', doc: t }))}
           >
             <span className="icon">
               <Doc>{t.symbol}</Doc>
             </span>
             <span className="label">{t.symbol}.doc</span>
-            <span className="meta">{t.loading ? '…' : t.formatted ?? '?'}</span>
+            <span className="meta">{t.loading ? '…' : (t.formatted ?? '?')}</span>
           </Item>
         ))}
       </Grid>
@@ -434,37 +610,76 @@ export default function MyFiles() {
       </TitleBar>
       <Root data-my-files="">
         <Toolbar>
-          <button type="button" onClick={goUp} disabled={!folder} aria-label="Up one level" title="Up">
-            ← Up
-          </button>
+          {folder && (
+            <button type="button" onClick={goUp} aria-label="Up one level" title="Up">
+              ← Up
+            </button>
+          )}
           <AddressBar title={path}>{path}</AddressBar>
-          <button
+          <RefreshButton
             type="button"
-            onClick={() => nfts.refetch()}
+            onClick={refresh}
             disabled={!isConnected || nfts.isFetching}
             aria-label="Refresh"
             title="Refresh"
           >
             ⟳
-          </button>
+          </RefreshButton>
         </Toolbar>
         {nfts.isError && isConnected && (
           <StatusBox tone="error">Couldn&apos;t read NFTs for this wallet. Tokens still load; try ⟳.</StatusBox>
         )}
+        {isConnected && nfts.data?.limited && (
+          <StatusBox tone="error">
+            Couldn&apos;t read your full NFT list. Only miyaOS collections are showing. Try ⟳.
+          </StatusBox>
+        )}
+        {isConnected && nfts.data?.partial && !nfts.data.limited && (
+          <StatusBox tone="info">Showing your first 500 NFTs.</StatusBox>
+        )}
+        {notice && <StatusBox tone="info">{notice}</StatusBox>}
         <Pane onClick={(e) => e.target === e.currentTarget && setSelected(undefined)}>{body}</Pane>
         <StatusBar>
           <div>{count} object(s)</div>
-          <div>
+          <div className="status">
             {!isConnected
               ? 'Not connected'
               : nfts.isFetching
-              ? 'Reading wallet…'
-              : nfts.data
-              ? `${nfts.data.source}${nfts.data.partial ? ' · partial' : ''}`
-              : ''}
+                ? 'Reading wallet…'
+                : selected && !touchOnly()
+                  ? 'Double-click to open'
+                  : checking.length
+                    ? 'Checking contracts…'
+                    : 'Ready'}
           </div>
+          {!folder && <div>Ethereum only</div>}
         </StatusBar>
-        {open && address && <Properties selection={open} owner={address} onClose={() => setOpen(undefined)} />}
+        {address &&
+          open.map(({ selection, cascade }, i) => (
+            <Properties
+              key={keyOf(selection)}
+              selection={
+                selection.kind === 'nft'
+                  ? { kind: 'nft', nft: latest(selection.nft) }
+                  : { kind: 'token', doc: tokens.find((t) => t.key === selection.doc.key) ?? selection.doc }
+              }
+              owner={address}
+              cascade={cascade}
+              zIndex={popupDepth + i}
+              hidden={minimized}
+              onFront={() => toFront(selection)}
+              onClose={() => setOpen((list) => list.filter((o) => o.selection !== selection))}
+              onView={() => selection.kind === 'nft' && viewNft(latest(selection.nft))}
+            />
+          ))}
+        {viewing && (
+          <ArtViewer
+            skin="files"
+            items={viewing.nfts.map((n) => toViewerItem(latest(n)))}
+            startIndex={viewing.start}
+            onClose={() => setViewing(undefined)}
+          />
+        )}
       </Root>
     </WindowWrapper>
   )

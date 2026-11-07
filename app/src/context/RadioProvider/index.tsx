@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 
+import { setPlaying as tellScreensaver } from '@/desktop/screensaver/playing'
 import { classifyChannels, safeUri } from '@/music/audio'
 import type { EqState } from '@/music/eq'
 import { clampBalance, dbToGain, effectiveGains, EQ_BANDS, sanitizeEq } from '@/music/eq'
@@ -290,6 +291,7 @@ export default function RadioProvider({ children }: { children: ReactNode }) {
       if (ctx.state === 'suspended') ctx.resume().catch(() => undefined)
     } catch {
       fxBrokenRef.current = true
+      setUsingFx(false)
     }
   }, [])
 
@@ -323,19 +325,50 @@ export default function RadioProvider({ children }: { children: ReactNode }) {
     (el: HTMLAudioElement) => {
       if (el === fxRef.current) ensureGraph()
       el.play().catch((e: Error) => {
-        if (e?.name === 'NotAllowedError') {
-          wantPlayRef.current = false
-          setPlaying(false)
-        } else if (e?.name !== 'AbortError') {
-          setError('Could not start playback.')
-        }
+        // Aborted: something newer took over. Not supported: the element's own error event deals with that.
+        if (e?.name === 'AbortError' || e?.name === 'NotSupportedError') return
+        wantPlayRef.current = false
+        setPlaying(false)
+        setLoading(false)
+        if (e?.name !== 'NotAllowedError') setError('Could not start playback.')
       })
     },
     [ensureGraph]
   )
 
+  // Tracks that failed in a row: a bad one is skipped, but a queue where nothing loads stops instead of looping.
+  const failStreakRef = useRef(0)
+  const skipTimerRef = useRef<ReturnType<typeof setTimeout>>()
+  const cancelSkip = useCallback(() => clearTimeout(skipTimerRef.current), [])
+  const advanceRef = useRef<(auto: boolean) => void>(() => undefined)
+
+  const trackFailed = useCallback(
+    (track: Track, why: 'load' | 'link') => {
+      setLoading(false)
+      setPlaying(false)
+      failStreakRef.current += 1
+      const name = track.title || 'this track'
+      const others = queueRef.current.tracks.length - 1
+      if (wantPlayRef.current && failStreakRef.current <= others) {
+        setError(`Skipped ${name}: ${why === 'link' ? 'unsupported link' : 'could not load'}.`)
+        const { id } = track
+        cancelSkip()
+        skipTimerRef.current = setTimeout(() => {
+          if (wantPlayRef.current && currentRef.current?.id === id) advanceRef.current(false)
+        }, 1500)
+        return
+      }
+
+      // Nothing more to try: the next track someone picks shouldn't start by itself.
+      wantPlayRef.current = false
+      setError(why === 'link' ? 'This track has an unsupported link.' : `Could not load ${name}.`)
+    },
+    [cancelSkip]
+  )
+
   const load = useCallback(
     (track: Track | undefined, autoplay: boolean) => {
+      cancelSkip()
       const { fx, plain } = els()
       ;[fx, plain].forEach((el) => {
         el.pause()
@@ -355,8 +388,7 @@ export default function RadioProvider({ children }: { children: ReactNode }) {
       const url = playableUrl(track)
       if (!url) {
         activeRef.current = null
-        setPlaying(false)
-        setError('This track has an unsupported link.')
+        trackFailed(track, 'link')
         return
       }
 
@@ -370,7 +402,7 @@ export default function RadioProvider({ children }: { children: ReactNode }) {
       if (autoplay) startPlayback(el)
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [els, startPlayback]
+    [els, startPlayback, cancelSkip, trackFailed]
   )
 
   // Load whenever the current track changes.
@@ -380,11 +412,17 @@ export default function RadioProvider({ children }: { children: ReactNode }) {
   }, [current?.id, load])
 
   const restart = useCallback(() => {
+    cancelSkip()
     const el = activeRef.current
-    if (!el) return
+    // Nothing loaded that could start over: load it again.
+    if (!el || el.error) {
+      load(Q.currentTrack(queueRef.current), wantPlayRef.current)
+      return
+    }
+
     el.currentTime = 0
     if (wantPlayRef.current) startPlayback(el)
-  }, [startPlayback])
+  }, [cancelSkip, load, startPlayback])
 
   const advance = useCallback(
     (auto: boolean) => {
@@ -406,10 +444,7 @@ export default function RadioProvider({ children }: { children: ReactNode }) {
     },
     [commit, restart]
   )
-  const advanceRef = useRef(advance)
   advanceRef.current = advance
-  // Tracks that failed in a row: a bad one is skipped, but a queue where nothing loads stops instead of looping.
-  const failStreakRef = useRef(0)
 
   // Element events (attached once). Events from the inactive element are ignored.
   useEffect(() => {
@@ -454,33 +489,26 @@ export default function RadioProvider({ children }: { children: ReactNode }) {
           setUsingFx(false)
           plain.src = url
           plain.volume = volumeRef.current
-          if (wantPlayRef.current) plain.play().catch(() => undefined)
+          if (wantPlayRef.current) startPlayback(plain)
           return
         }
 
-        setLoading(false)
-        setPlaying(false)
-        failStreakRef.current += 1
-        const others = queueRef.current.tracks.length - 1
-        if (wantPlayRef.current && failStreakRef.current <= others) {
-          setError(`Skipped ${track.title || 'this track'}: could not load.`)
-          const { id } = track
-          setTimeout(() => {
-            if (currentRef.current?.id === id) advanceRef.current(false)
-          }, 1500)
-          return
-        }
-
-        setError(`Could not load ${track.title || 'this track'}.`)
+        trackFailed(track, 'load')
       })
     })
-    return () => cleanups.forEach((c) => c())
-  }, [els])
+    return () => {
+      cleanups.forEach((c) => c())
+      cancelSkip()
+    }
+  }, [els, startPlayback, trackFailed, cancelSkip])
 
   // ── actions ─────────────────────────────────────────────────────────────────
 
   const play = useCallback(() => {
     wantPlayRef.current = true
+    cancelSkip()
+    // Someone asked: it gets another go at the whole list.
+    failStreakRef.current = 0
     const q = queueRef.current
     if (!Q.currentTrack(q)) {
       if (q.tracks.length) commit({ ...q, position: 0 })
@@ -488,19 +516,21 @@ export default function RadioProvider({ children }: { children: ReactNode }) {
     }
 
     const el = activeRef.current
-    if (!el || loadedIdRef.current !== Q.currentTrack(q)?.id) {
+    // A track that failed to load won't play from where it is: load it again, or a dropped connection is permanent.
+    if (!el || el.error || loadedIdRef.current !== Q.currentTrack(q)?.id) {
       load(Q.currentTrack(q), true)
       return
     }
 
     if (el.ended) el.currentTime = 0
     startPlayback(el)
-  }, [commit, load, startPlayback])
+  }, [cancelSkip, commit, load, startPlayback])
 
   const pause = useCallback(() => {
     wantPlayRef.current = false
+    cancelSkip()
     activeRef.current?.pause()
-  }, [])
+  }, [cancelSkip])
 
   const toggle = useCallback(() => {
     if (activeRef.current && !activeRef.current.paused) pause()
@@ -518,12 +548,12 @@ export default function RadioProvider({ children }: { children: ReactNode }) {
   const prevAction = useCallback(() => {
     const r = Q.prev(queueRef.current, activeRef.current?.currentTime || 0)
     if (r.restart) {
-      if (activeRef.current) activeRef.current.currentTime = 0
+      restart()
       return
     }
 
     commit(r.state)
-  }, [commit])
+  }, [commit, restart])
 
   const seek = useCallback((seconds: number) => {
     const el = activeRef.current
@@ -549,6 +579,7 @@ export default function RadioProvider({ children }: { children: ReactNode }) {
     (track: Track) => {
       const before = Q.currentTrack(queueRef.current)?.id
       wantPlayRef.current = true
+      failStreakRef.current = 0
       const next = Q.playNow(queueRef.current, track)
       commit(next)
       if (Q.currentTrack(next)?.id === before) play()
@@ -560,7 +591,8 @@ export default function RadioProvider({ children }: { children: ReactNode }) {
     (trackIndex: number) => {
       const q = queueRef.current
       wantPlayRef.current = true
-      if (Q.currentIndex(q) === trackIndex && activeRef.current) {
+      failStreakRef.current = 0
+      if (Q.currentIndex(q) === trackIndex) {
         restart()
         return
       }
@@ -603,6 +635,8 @@ export default function RadioProvider({ children }: { children: ReactNode }) {
     }, 300)
     return () => clearTimeout(t)
   }, [eq, balance])
+
+  useEffect(() => tellScreensaver('radio', playing), [playing])
 
   const getAnalyser = useCallback(() => (usingFx ? analyserRef.current : null), [usingFx])
 

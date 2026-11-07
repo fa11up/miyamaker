@@ -1,6 +1,7 @@
 import WingHeartIcon from 'assets/miya_website_logo_2-removebg-preview.png?preset=icon&resize=true'
 import type { CSSProperties, ReactNode } from 'react'
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import styled, { keyframes } from 'styled-components/macro'
 
 import { font } from '@/theme/tokens'
@@ -252,6 +253,9 @@ export const Key = styled.button`
   }
 `
 
+/** Tap size by bead size. The window's cleft beads sit 24px apart, the arms 33px and the transport 37px. */
+const BEAD_TAP: Record<number, number> = { 13: 24, 20: 32, 24: 36, 28: 44 }
+
 /** A round chrome bead with a glyph on it. `$orb` is the big glass play button. */
 export const Bead = styled.button.attrs({ type: 'button' })<{ $size: number; $lit?: boolean; $orb?: boolean }>`
   all: unset;
@@ -275,11 +279,11 @@ export const Bead = styled.button.attrs({ type: 'button' })<{ $size: number; $li
   svg {
     filter: drop-shadow(0 1px 0 rgba(255, 255, 255, 0.5));
   }
-  /* Small beads keep their look but take a 24px tap. */
+  /* Small beads keep their look but take a bigger tap, as big as they can before touching a neighbour. */
   &::after {
     content: '';
     position: absolute;
-    inset: ${({ $size }) => Math.min(0, ($size - 24) / 2)}px;
+    inset: ${({ $size }) => Math.min(0, ($size - (BEAD_TAP[$size] ?? 24)) / 2)}px;
     border-radius: 50%;
   }
   &:active:not(:disabled) {
@@ -521,17 +525,46 @@ const MenuBox = styled.div`
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+  img {
+    display: block;
+    width: 48px;
+    height: 48px;
+    margin: 2px 4px;
+    border: none;
+    object-fit: cover;
+  }
+  /* In the phone's sheet under the heart: full width, and big enough for a thumb. */
+  &.sheet {
+    position: static;
+    width: auto !important;
+    max-width: none;
+    font-size: 15px;
+    line-height: 20px;
+    button {
+      min-height: 44px;
+      align-items: center;
+      padding: 0 12px;
+    }
+    dl {
+      padding: 8px 12px;
+    }
+  }
 `
 
-/** A small pop-up, shut by Escape or a click anywhere else. */
+/**
+ * A small pop-up, shut by Escape or a click anywhere else. On a phone it opens in `sheet`, under the heart: the glass
+ * is too small to hold anything a thumb can press.
+ */
 export function Menu({
   label,
   style,
+  sheet,
   onClose,
   children,
 }: {
   label: string
   style: CSSProperties
+  sheet?: HTMLElement | null
   onClose: () => void
   children: ReactNode
 }) {
@@ -557,9 +590,16 @@ export function Menu({
     }
   }, [])
 
-  return (
-    <MenuBox ref={ref} role="group" aria-label={label} style={style}>
+  const box = (
+    <MenuBox
+      ref={ref}
+      className={sheet ? 'sheet' : undefined}
+      role="group"
+      aria-label={label}
+      style={sheet ? undefined : style}
+    >
       {children}
     </MenuBox>
   )
+  return sheet ? createPortal(box, sheet) : box
 }

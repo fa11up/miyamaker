@@ -1,20 +1,25 @@
 import type { ReactNode } from 'react'
 
+import type { TitleSkin } from '@/components/TitleBar'
 import TitleBar from '@/components/TitleBar'
 import WindowWrapper from '@/components/WindowWrapper'
 
 export default function ErrorWindow({
   errorLabel,
   handleClose,
+  skin,
   children,
 }: {
   errorLabel: string
   handleClose: () => void
+  /** The look of the app it pops up in. */
+  skin?: TitleSkin
   children: ReactNode
 }) {
   return (
-    <WindowWrapper>
+    <WindowWrapper skin={skin}>
       <TitleBar
+        skin={skin}
         closeBtn
         onClose={(e) => {
           if (e.cancelable) e.stopPropagation()

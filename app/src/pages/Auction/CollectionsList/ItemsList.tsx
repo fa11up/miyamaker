@@ -2,10 +2,15 @@ import { useRef } from 'react'
 import styled from 'styled-components/macro'
 import type { Address } from 'viem'
 
+import { NormalButton } from '@/components/Button/NormalButton'
 import NftImage from '@/components/NftImage'
+import { collectionStatus } from '@/pages/Auction/bidding'
 import { AUCTION_PAGE_SECTION } from '@/pages/Auction/constants'
+import { useAllTokenIds } from '@/pages/Auction/useAllTokenIds'
 import { useFitText } from '@/pages/Auction/useFitText'
+import { useLotAuctions } from '@/pages/Auction/useLots'
 import { useNFT } from '@/pages/Auction/useNFT'
+import type { Auction } from '@/store/auction/reducer'
 import { setCurrentNFT } from '@/store/collections/actions'
 import { useAppDispatch } from '@/store/hooks'
 import { safeHttpUrl } from '@/utils/resolveUri'
@@ -19,7 +24,17 @@ const Items = styled.div`
   cursor: pointer;
 
   :hover {
-    background-color: rgba(255, 255, 255, 0.2);
+    background-color: rgba(122, 22, 32, 0.07);
+  }
+
+  &.solo {
+    flex: 1 1 auto;
+    height: auto;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    max-width: 560px;
+    margin: 0 auto;
   }
 
   /* Rows stack on phones and the list scrolls, so each row takes the height its content needs. */
@@ -48,21 +63,44 @@ const DescriptionItem = styled(Item)`
   display: block;
   line-height: 1.25;
 
+  .solo & {
+    width: 100%;
+    flex: none;
+    max-height: 9rem;
+    text-align: center;
+  }
+
   @media only screen and (max-width: 640px) {
     flex: none;
   }
 `
 
-const LinkItem = styled.a`
+const LinkItem = styled.div`
   width: 25%;
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 0.5rem;
   padding: 0.5rem;
-  text-decoration: none;
+  overflow-wrap: anywhere;
+  min-width: 0;
 
+  .solo & {
+    width: 100%;
+    align-items: center;
+  }
+
+  /* Pads the link to the phone's smallest tap target. */
   @media only screen and (max-width: 640px) {
     width: 100%;
-    justify-content: center;
+    align-items: center;
+
+    > a {
+      display: inline-flex;
+      align-items: center;
+      min-height: 32px;
+    }
   }
 `
 
@@ -75,6 +113,20 @@ const ImageItem = styled.div`
 
   > * + * {
     margin-left: 1rem;
+  }
+
+  .solo & {
+    width: 100%;
+    flex: none;
+    flex-direction: column;
+    justify-content: center;
+    height: 19rem;
+    text-align: center;
+
+    > * + * {
+      margin-top: 0.5rem;
+      margin-left: 0;
+    }
   }
 
   @media only screen and (max-width: 640px) {
@@ -117,10 +169,32 @@ const ImageWrapper = styled.div`
   //}
 `
 
-export default function ItemsList({ nft, setPageSection }: { nft: string; setPageSection: (section: string) => void }) {
+const Status = styled.div`
+  margin-top: 0.15rem;
+  font-size: 0.75rem;
+  font-weight: normal;
+  color: #5f4030;
+`
+
+export default function ItemsList({
+  nft,
+  setPageSection,
+  auctionContract,
+  solo,
+}: {
+  nft: string
+  setPageSection: (section: string) => void
+  auctionContract: Address
+  /** The only sale there is: laid out as a catalogue cover, not one row of an empty table. */
+  solo?: boolean
+}) {
   const dispatch = useAppDispatch()
 
   const { name, symbol, description, image, externalLink, collaborators } = useNFT({ address: nft as Address })
+  const { tokenIds } = useAllTokenIds({ nft: nft as Address, address: auctionContract })
+  const { auctions } = useLotAuctions({ nft: nft as Address, tokenIds, address: auctionContract })
+  const lots = auctions.filter((a): a is Auction => !!a)
+  const status = lots.length > 0 && lots.length === tokenIds.length ? collectionStatus(lots, Date.now()) : ''
 
   // external_link comes from on-chain metadata: only http(s) links are rendered as links.
   const safeLink = safeHttpUrl(externalLink)
@@ -139,7 +213,7 @@ export default function ItemsList({ nft, setPageSection }: { nft: string; setPag
   }
 
   return (
-    <Items onClick={handleClick}>
+    <Items onClick={handleClick} className={solo ? 'solo' : undefined}>
       <ImageItem>
         <ImageWrapper>
           <NftImage
@@ -154,18 +228,23 @@ export default function ItemsList({ nft, setPageSection }: { nft: string; setPag
         </ImageWrapper>
         <div>
           {name} ({symbol})
+          {status && <Status>{status}</Status>}
         </div>
       </ImageItem>
       <DescriptionItem ref={descriptionRef} title={description}>
         {description}
       </DescriptionItem>
-      {safeLink ? (
-        <LinkItem href={safeLink} target="_blank" rel="noreferrer noopener">
-          {externalLink.replace('https://', '')}
-        </LinkItem>
-      ) : (
-        <Item>{externalLink}</Item>
-      )}
+      <LinkItem>
+        {/* Only the link itself leaves the site; the rest of the row opens the collection. */}
+        {safeLink ? (
+          <a href={safeLink} target="_blank" rel="noreferrer noopener" onClick={(e) => e.stopPropagation()}>
+            {externalLink.replace('https://', '')}
+          </a>
+        ) : (
+          externalLink
+        )}
+        <NormalButton type="button">View lots</NormalButton>
+      </LinkItem>
     </Items>
   )
 }

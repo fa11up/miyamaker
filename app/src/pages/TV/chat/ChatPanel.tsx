@@ -9,7 +9,7 @@ import { color, font, space, text } from '@/theme/tokens'
 import type { NativeChat } from '../channels'
 import { linkify, shortAddress } from './linkify'
 import type { Badge, ChatMessage } from './protocol'
-import { cleanText, codePoints, MAX_MESSAGE_LENGTH } from './protocol'
+import { chatWaitLine, cleanText, codePoints, MAX_MESSAGE_LENGTH } from './protocol'
 import { CHAT_URL, useChatRoom, useChatSession } from './useChat'
 
 /** miyatv's chat, in the cabinet's dark walnut and cream. */
@@ -38,7 +38,9 @@ const Root = styled.section`
     outline: none;
     border-radius: 5px;
     background: linear-gradient(180deg, #f8efd9 0%, #dccfae 100%);
-    box-shadow: 0 2px 0 #6d5c3c, inset 0 1px 0 #fff;
+    box-shadow:
+      0 2px 0 #6d5c3c,
+      inset 0 1px 0 #fff;
     color: #2a1a0e;
     font-size: ${text.sm};
     text-shadow: none;
@@ -61,11 +63,31 @@ const Tabs = styled.div`
     cursor: pointer;
     font-size: ${text.xs};
     white-space: nowrap;
+    .narrow & {
+      min-height: 40px;
+    }
   }
   button[aria-selected='true'] {
     background: ${glow.screen};
     color: ${glow.ink};
     font-weight: 700;
+  }
+`
+
+/** The channel's panel. It scrolls only if it must, so no button is ever cut off; the chat below takes the room that is left. */
+const Upper = styled.div`
+  flex: 0 0 auto;
+  max-height: 64%;
+  overflow-x: hidden;
+  overflow-y: auto;
+  border-radius: 4px;
+  box-shadow: 0 0 0 1px ${glow.line};
+  .narrow & {
+    max-height: 55%;
+  }
+  /* Typing on a phone: the keyboard has taken half the screen, so the chat takes the rest. */
+  .narrow section:has(form input:focus) & {
+    display: none;
   }
 `
 
@@ -180,6 +202,11 @@ const Composer = styled.form`
     color: ${glow.ink};
     font-size: 15px;
     font-family: ${font.body};
+    /* Under 16px, iPhone Safari zooms the page when the field is pressed. */
+    .narrow & {
+      height: 40px;
+      font-size: 16px;
+    }
   }
   button[type='submit'] {
     min-width: 56px;
@@ -210,6 +237,9 @@ const Composer = styled.form`
     color: ${glow.link};
     cursor: pointer;
     font-size: ${text.xs};
+    .narrow & {
+      padding: 8px 4px;
+    }
   }
   .over {
     color: #ff8fa3;
@@ -250,6 +280,13 @@ const Offline = styled.div`
   }
 `
 
+const FreeLine = styled.p`
+  margin: 0;
+  text-align: center;
+  font-size: ${text.xs};
+  color: ${glow.muted};
+`
+
 const BADGE_LABEL: Record<Badge, string> = { mod: 'mod', miyamini: 'miyamini', infer: 'infer' }
 const BADGE_TITLE: Record<Badge, string> = {
   mod: 'Moderator',
@@ -269,7 +306,7 @@ function MessageText({ text: body }: { text: string }) {
           </a>
         ) : (
           <span key={i}>{seg.text}</span>
-        )
+        ),
       )}
     </>
   )
@@ -304,7 +341,7 @@ function Line({ msg, canDelete, onDelete }: { msg: ChatMessage; canDelete: boole
 }
 
 function OurChat({ room, roomLabel }: { room: string; roomLabel: string }) {
-  const { address, session, signIn, signOut, signingIn, error: signInError } = useChatSession(CHAT_URL)
+  const { address, session, signIn, cancelSignIn, signOut, signingIn, error: signInError } = useChatSession(CHAT_URL)
   const { openConnectModal } = useConnectModal()
   const chat = useChatRoom(CHAT_URL, room, session?.token)
   const [draft, setDraft] = useState('')
@@ -327,15 +364,19 @@ function OurChat({ room, roomLabel }: { room: string; roomLabel: string }) {
   }, [chat.error])
 
   // The server refused our token (expired, secret rotated): drop it so the user can sign in again.
+  // Once per refusal: the error stays set after this, and acting on it again would sign out each new session as it arrives.
+  const refusal = useRef(chat.error)
   useEffect(() => {
-    if (chat.error?.code === 'auth' && session) signOut()
+    if (chat.error?.code !== 'auth' || !session || refusal.current === chat.error) return
+    refusal.current = chat.error
+    signOut()
   }, [chat.error, session, signOut])
 
   if (!CHAT_URL) {
     return (
       <Offline role="status">
-        <strong>chat offline</strong>
-        <span>miyatv chat isn’t connected on this deployment yet. The stream still works.</span>
+        <strong>Chat offline</strong>
+        <span>{chatWaitLine('off')}</span>
       </Offline>
     )
   }
@@ -374,15 +415,13 @@ function OurChat({ room, roomLabel }: { room: string; roomLabel: string }) {
       <Log
         ref={logRef}
         aria-live="polite"
-        aria-label={`${roomLabel} chat messages`}
+        aria-label="miyaTV chat messages"
         onScroll={(e) => {
           const el = e.currentTarget
           stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40
         }}
       >
-        {chat.messages.length === 0 && (
-          <li className="empty">{chat.status === 'open' ? 'No messages yet. Say hi.' : 'Tuning in…'}</li>
-        )}
+        {chat.messages.length === 0 && <li className="empty">{chatWaitLine(chat.status)}</li>}
         {chat.messages.map((m) => (
           <Line key={m.id} msg={m} canDelete={!!chat.me?.mod} onDelete={chat.remove} />
         ))}
@@ -430,18 +469,33 @@ function OurChat({ room, roomLabel }: { room: string; roomLabel: string }) {
         </Composer>
       ) : session ? (
         <StatusBox tone="info" role="status">
-          <span>Signing you in to the room…</span>
+          {/* With the room down this could wait a long time, so there's a way out of it. */}
+          <span>{chat.status === 'open' ? 'Signing you in to the room…' : chatWaitLine(chat.status)}</span>{' '}
+          <button type="button" onClick={signOut}>
+            Cancel
+          </button>
         </StatusBox>
       ) : (
-        <BigButton
-          type="button"
-          className="secondary"
-          style={{ minHeight: 44, fontSize: text.sm, fontFamily: font.ui, letterSpacing: 0 }}
-          disabled={signingIn}
-          onClick={() => (address ? signIn() : openConnectModal?.())}
-        >
-          {signingIn ? 'Check your wallet…' : address ? 'Sign in with Ethereum to chat' : 'Connect wallet to chat'}
-        </BigButton>
+        <>
+          <BigButton
+            type="button"
+            className="secondary"
+            style={{ minHeight: 44, fontSize: text.sm, fontFamily: font.ui, letterSpacing: 0 }}
+            disabled={signingIn}
+            onClick={() => (address ? signIn() : openConnectModal?.())}
+          >
+            {signingIn ? 'Check your wallet…' : address ? 'Sign a free message to chat' : 'Connect wallet to chat'}
+          </BigButton>
+          {signingIn ? (
+            <FreeLine>
+              <button type="button" onClick={cancelSignIn}>
+                Cancel
+              </button>
+            </FreeLine>
+          ) : (
+            address && <FreeLine>No gas. No permissions.</FreeLine>
+          )}
+        </>
       )}
     </Pane>
   )
@@ -450,64 +504,49 @@ function OurChat({ room, roomLabel }: { room: string; roomLabel: string }) {
 export default function ChatPanel({
   room,
   roomLabel,
+  channelId,
   native,
   panel,
 }: {
   room: string
   roomLabel: string
+  /** The channel on now: its panel changes with it, the chat below does not. */
+  channelId: string
   native: NativeChat | undefined
-  /** The channel's own sidebar, shown first when it has one. */
-  panel?: { label: string; node: ReactNode }
+  /** The channel's own panel, above the chat. */
+  panel?: ReactNode
 }) {
-  const [tab, setTab] = useState<'panel' | 'ours' | 'native'>(panel ? 'panel' : 'ours')
+  const [tab, setTab] = useState<'ours' | 'native'>('ours')
+  // miyatv chat comes first on every channel.
+  useEffect(() => setTab('ours'), [channelId])
   const nativeTab = tab === 'native' && native
-  const panelTab = tab === 'panel' && panel
 
   return (
-    <Root aria-label="Chat">
-      <Tabs role="tablist">
-        {panel && (
-          <button type="button" role="tab" aria-selected={!!panelTab} onClick={() => setTab('panel')}>
-            {panel.label}
+    <Root aria-label="Sidebar">
+      {native && (
+        <Tabs role="tablist">
+          <button type="button" role="tab" aria-selected={!nativeTab} onClick={() => setTab('ours')}>
+            miyaTV chat
           </button>
-        )}
-        <button
-          type="button"
-          role="tab"
-          aria-selected={tab === 'ours' || (!nativeTab && !panelTab)}
-          onClick={() => setTab('ours')}
-        >
-          miyatv chat
-        </button>
-        {native && (
           <button type="button" role="tab" aria-selected={!!nativeTab} onClick={() => setTab('native')}>
             {native.label}
           </button>
-        )}
-      </Tabs>
-      {panelTab ? (
-        panel.node
-      ) : nativeTab ? (
-        native.kind === 'iframe' ? (
-          <Frame
-            key={native.src}
-            src={native.src}
-            title={native.label}
-            sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-forms"
-            referrerPolicy="strict-origin-when-cross-origin"
-            loading="lazy"
-          />
-        ) : (
-          <Offline>
-            <strong>{native.label}</strong>
-            <span>This platform’s chat can’t be embedded here.</span>
-            <a href={native.href} target="_blank" rel="noopener noreferrer">
-              Open it on {new URL(native.href).host.replace(/^www\./, '')} ↗
-            </a>
-          </Offline>
-        )
+        </Tabs>
+      )}
+      {nativeTab ? (
+        <Frame
+          key={native.src}
+          src={native.src}
+          title={native.label}
+          sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-forms"
+          referrerPolicy="strict-origin-when-cross-origin"
+          loading="lazy"
+        />
       ) : (
-        <OurChat key={room} room={room} roomLabel={roomLabel} />
+        <>
+          {panel && <Upper key={channelId}>{panel}</Upper>}
+          <OurChat room={room} roomLabel={roomLabel} />
+        </>
       )}
     </Root>
   )

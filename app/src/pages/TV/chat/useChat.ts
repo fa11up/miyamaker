@@ -4,7 +4,7 @@ import { createSiweMessage } from 'viem/siwe'
 import { useAccount, useSignMessage } from 'wagmi'
 
 import type { ClientFrame, Me, RoomState } from './protocol'
-import { initialRoomState, parseFrame, reduceRoom, roomSocketUrl } from './protocol'
+import { freshSocket, initialRoomState, parseFrame, reduceRoom, roomSocketUrl, signInProblem } from './protocol'
 
 /** Base URL of the chat worker (chat/ in the monorepo). Unset = chat offline. */
 export const CHAT_URL: string | undefined = import.meta.env.VITE_CHAT_URL?.trim() || undefined
@@ -47,14 +47,25 @@ export function useChatSession(base: string | undefined) {
   const [session, setSession] = useState<Session | undefined>(() => loadSession(address))
   const [signingIn, setSigningIn] = useState(false)
   const [error, setError] = useState<string>()
+  // The sign-in under way. Whichever is left behind (another account, a cancel) still finishes, and is ignored.
+  const run = useRef(0)
 
   useEffect(() => {
+    run.current += 1
     setSession(loadSession(address))
+    setSigningIn(false)
     setError(undefined)
   }, [address])
 
+  const cancelSignIn = useCallback(() => {
+    run.current += 1
+    setSigningIn(false)
+  }, [])
+
   const signIn = useCallback(async () => {
     if (!base || !address) return
+    run.current += 1
+    const mine = run.current
     setSigningIn(true)
     setError(undefined)
     try {
@@ -65,7 +76,7 @@ export function useChatSession(base: string | undefined) {
       const message = createSiweMessage({
         domain: window.location.host,
         address: getAddress(address),
-        statement: 'Sign in to miyatv chat. This is free and does not grant any permissions.',
+        statement: 'Sign in to miyaTV chat. This is free and does not grant any permissions.',
         uri: window.location.origin,
         version: '1',
         chainId: 1,
@@ -87,13 +98,13 @@ export function useChatSession(base: string | undefined) {
       }
       if (!res.ok || !body.token || !body.address || !body.expiresAt) throw new Error(body.error || 'Sign-in failed')
       const s: Session = { token: body.token, address: body.address, expiresAt: toMs(body.expiresAt) }
+      // Still good for the account that signed, if it comes back. Just not for whoever is connected now.
       storeSession(s, address)
-      setSession(s)
+      if (run.current === mine) setSession(s)
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e)
-      setError(/reject|denied|cancel/i.test(msg) ? 'Signature cancelled.' : msg.split('\n')[0])
+      if (run.current === mine) setError(signInProblem(e))
     } finally {
-      setSigningIn(false)
+      if (run.current === mine) setSigningIn(false)
     }
   }, [base, address, signMessageAsync])
 
@@ -102,17 +113,21 @@ export function useChatSession(base: string | undefined) {
     setSession(undefined)
   }, [address])
 
-  return { address, session: session && address ? session : undefined, signIn, signOut, signingIn, error }
+  // Checked here too: for one render after an account change, the state still holds the last one's session.
+  const mine = session && address && session.address.toLowerCase() === address.toLowerCase() ? session : undefined
+  return { address, session: mine, signIn, cancelSignIn, signOut, signingIn, error }
 }
 
 /* ---------- room socket ---------- */
 
 export type SocketStatus = 'off' | 'connecting' | 'open' | 'reconnecting'
 
-type Action = { kind: 'frame'; raw: unknown } | { kind: 'reset' }
+type Action = { kind: 'frame'; raw: unknown } | { kind: 'reset' } | { kind: 'fresh-socket' } | { kind: 'new-token' }
 
 function reducer(state: RoomState, action: Action): RoomState {
   if (action.kind === 'reset') return initialRoomState
+  if (action.kind === 'fresh-socket') return freshSocket(state)
+  if (action.kind === 'new-token') return { ...state, me: undefined }
   const frame = parseFrame(action.raw)
   return frame ? reduceRoom(state, frame) : state
 }
@@ -146,6 +161,7 @@ export function useChatRoom(base: string | undefined, room: string, token: strin
       ws.onopen = () => {
         attempt = 0
         setStatus('open')
+        dispatch({ kind: 'fresh-socket' })
         if (tokenRef.current) ws.send(JSON.stringify({ t: 'auth', token: tokenRef.current } satisfies ClientFrame))
         ping = setInterval(() => ws.readyState === WebSocket.OPEN && ws.send('ping'), PING_MS)
       }
@@ -182,6 +198,8 @@ export function useChatRoom(base: string | undefined, room: string, token: strin
     if (prevToken.current === token) return
     const hadToken = !!prevToken.current
     prevToken.current = token
+    // Whoever the room said we were before: the next 'me' says who we are now.
+    dispatch({ kind: 'new-token' })
     if (!ws || ws.readyState !== WebSocket.OPEN) return
     if (token) ws.send(JSON.stringify({ t: 'auth', token } satisfies ClientFrame))
     else if (hadToken) ws.close(4000, 'signed out')

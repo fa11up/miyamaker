@@ -13,7 +13,7 @@ type CleanTextFn = (value: unknown, max?: number) => string
 export function parseAlchemyOwnedNfts(
   json: unknown,
   chainId: number,
-  deps: { sanitize: SanitizeFn; cleanText: CleanTextFn; resolve?: Resolve }
+  deps: { sanitize: SanitizeFn; cleanText: CleanTextFn; resolve?: Resolve },
 ): { nfts: OwnedNft[]; pageKey?: string } {
   const root = json && typeof json === 'object' ? (json as Record<string, unknown>) : {}
   const list = Array.isArray(root.ownedNfts) ? root.ownedNfts : []
@@ -32,6 +32,8 @@ export function parseAlchemyOwnedNfts(
     const image = n.image && typeof n.image === 'object' ? n.image : {}
     // Prefer Alchemy's cached copies (already http), then the raw metadata image.
     const cached = deps.sanitize({ image: image.thumbnailUrl || image.cachedUrl || image.pngUrl }, deps.resolve).image
+    const hostedThumb = cached || undefined
+    const hostedFull = deps.sanitize({ image: image.cachedUrl || image.pngUrl }, deps.resolve).image || undefined
     nfts.push({
       chainId,
       contract: address.toLowerCase(),
@@ -44,6 +46,14 @@ export function parseAlchemyOwnedNfts(
       description: deps.cleanText(n.description, 600) || meta.description,
       image: cached || meta.image,
       externalUrl: meta.externalUrl,
+      fullImage: hostedFull || meta.image || cached,
+      spam:
+        contract.isSpam === true ||
+        (Array.isArray(contract.spamClassifications) && contract.spamClassifications.length > 0),
+      hostedThumb,
+      hostedFull,
+      tokenType: tokenType === 'ERC1155' || tokenType === 'ERC721' ? tokenType : undefined,
+      balance: typeof n.balance === 'string' && /^\d+$/.test(n.balance) ? n.balance : undefined,
     })
   }
 
@@ -86,7 +96,7 @@ export function heldFromTransfers(transfers: TransferLike[], owner: string): str
 export function heldFromOwnerSweep(
   ids: (bigint | number)[],
   results: { status: 'success' | 'failure'; result?: unknown }[],
-  owner: string
+  owner: string,
 ): string[] {
   const me = owner.toLowerCase()
   const out: string[] = []
@@ -102,7 +112,7 @@ export function logChunks(
   fromBlock: bigint,
   toBlock: bigint,
   chunk: bigint,
-  maxChunks: number
+  maxChunks: number,
 ): { chunks: { fromBlock: bigint; toBlock: bigint }[]; partial: boolean } {
   const chunks: { fromBlock: bigint; toBlock: bigint }[] = []
   let hi = toBlock

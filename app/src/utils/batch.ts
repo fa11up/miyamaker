@@ -3,6 +3,7 @@ import type { Address, Hash } from 'viem'
 import { useAccount, useCapabilities } from 'wagmi'
 
 import { wagmiConfig } from '@/config/wagmi'
+import { TxEndError } from '@/miyamints/txOutcome'
 
 import { batchRefused, type BatchStep, canBatch, toCall } from './batchCalls'
 
@@ -10,13 +11,10 @@ import { batchRefused, type BatchStep, canBatch, toCall } from './batchCalls'
  * A batch or transaction that was sent, but whose ending could not be read: the wait ran out or the connection dropped.
  * It may yet land, so a caller keeps what it sent and waits on it again rather than sending it a second time.
  */
-export class UnconfirmedError extends Error {
-  unconfirmed = true
-
-  constructor(
-    message = 'We could not confirm this yet. It may still go through. Check your wallet before trying again.'
-  ) {
-    super(message)
+export class UnconfirmedError extends TxEndError {
+  constructor(message?: string) {
+    super('unconfirmed')
+    if (message) this.message = message
   }
 }
 

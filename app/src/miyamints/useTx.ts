@@ -1,4 +1,4 @@
-import { simulateContract, waitForTransactionReceipt, writeContract } from '@wagmi/core'
+import { getPublicClient, simulateContract, writeContract } from '@wagmi/core'
 import { useState } from 'react'
 import type { Hash, TransactionReceipt } from 'viem'
 import { useAccount } from 'wagmi'
@@ -7,12 +7,15 @@ import { wagmiConfig } from '@/config/wagmi'
 import { tryBatch } from '@/utils/batch'
 
 import { describeError } from './errors'
+import { settle } from './txOutcome'
 
 export type TxState = {
   id?: string
   phase: 'idle' | 'wallet' | 'pending' | 'done' | 'error'
   hash?: Hash
   message?: string
+  /** What went wrong (phase 'error'), for screens with their own words. */
+  error?: unknown
   /** Set when phase is 'done', for callers that read events from it. */
   receipt?: TransactionReceipt
 }
@@ -33,17 +36,25 @@ export function useTx(onDone?: (id: string) => void) {
     }
 
     setTx({ id, phase: 'wallet' })
+    let hash: Hash | undefined
     try {
       const { request } = await simulateContract(wagmiConfig, { account: address, ...call })
-      const hash = await writeContract(wagmiConfig, request)
+      const sent = await writeContract(wagmiConfig, request)
+      hash = sent
       setTx({ id, phase: 'pending', hash })
-      const receipt = await waitForTransactionReceipt(wagmiConfig, { hash, chainId: call.chainId })
-      if (receipt.status !== 'success') throw new Error('The transaction failed on-chain.')
-      setTx({ id, phase: 'done', hash, receipt })
-      onDone?.(id)
+      const client = getPublicClient(wagmiConfig, { chainId: call.chainId })
+      // No timeout, as in wagmi's own wait: a slow transaction keeps waiting. txOutcome.ts says why it isn't wagmi's.
+      const receipt = await settle((onReplaced) =>
+        client!.waitForTransactionReceipt({ hash: sent, timeout: 0, onReplaced })
+      )
+      setTx({ id, phase: 'done', hash, receipt: receipt as TransactionReceipt })
     } catch (e) {
-      setTx({ id, phase: 'error', message: describeError(e) })
+      setTx({ id, phase: 'error', hash, message: describeError(e), error: e })
+      return
     }
+
+    // Outside the try: a screen's follow-up failing must not report a finished transaction as failed.
+    onDone?.(id)
   }
 
   /**
@@ -70,10 +81,12 @@ export function useTx(onDone?: (id: string) => void) {
       }
 
       setTx({ id, phase: 'done', hash: sent.hash })
-      onDone?.(id)
     } catch (e) {
-      setTx({ id, phase: 'error', message: describeError(e) })
+      setTx({ id, phase: 'error', message: describeError(e), error: e })
+      return
     }
+
+    onDone?.(id)
   }
 
   return {
@@ -81,6 +94,10 @@ export function useTx(onDone?: (id: string) => void) {
     run,
     runBatch,
     busy: tx.phase === 'wallet' || tx.phase === 'pending',
+    /** Sent, but its ending couldn't be read: it may still land, so a screen must not offer the same thing again. */
+    unconfirmed: tx.phase === 'error' && !!(tx.error as { unconfirmed?: boolean } | undefined)?.unconfirmed,
+    /** Replaced by the wallet's cancel: nothing moved, so the same thing may be offered again. */
+    cancelled: tx.phase === 'error' && !!(tx.error as { cancelled?: boolean } | undefined)?.cancelled,
     reset: () => setTx({ phase: 'idle' }),
   }
 }

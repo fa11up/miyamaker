@@ -1,14 +1,15 @@
 import { useConnectModal } from '@rainbow-me/rainbowkit'
-import { useEffect, useState } from 'react'
+import { Fragment, useEffect, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import styled from 'styled-components/macro'
 import { useElementSize } from 'usehooks-ts'
+import { formatEther } from 'viem'
 import { useAccount, useSwitchChain } from 'wagmi'
 
 import LoadingHourglass from '@/assets/loading_hourglass.gif'
-import { SmallButton, SplitMeter, TxSteps } from '@/components/LaunchKit'
+import { CloseGuardBox, DropZone, SmallButton, SplitMeter, TxSteps, useCloseGuard } from '@/components/LaunchKit'
 import { BigButton, Chip, DisplayTitle, Eyebrow, Panel, StatusBox, Well } from '@/components/Retro'
-import { pinstripe, y2kSkin } from '@/components/Retro/y2k'
+import { y2kSkin } from '@/components/Retro/y2k'
 import TitleBar from '@/components/TitleBar'
 import WindowWrapper from '@/components/WindowWrapper'
 import { explorerUrl } from '@/config/wagmi'
@@ -16,27 +17,33 @@ import Pages from '@/constants/pages'
 import type { LaunchForm, LaunchType, StepKey } from '@/miyamints/launch'
 import {
   AUCTION_TIME_BUFFER_SECONDS,
+  draftHasData,
   EMPTY_FORM,
   parseAlignmentPct,
+  parseEth,
   parseRoyaltyPct,
   parseVault,
+  phaseLine,
   STEP_ORDER,
   txPlan,
   validateStep,
+  whenWords,
 } from '@/miyamints/launch'
 import { pctLabel } from '@/miyamints/split'
 import { useLaunchChain, useRegistryRules, useVaultInfo } from '@/miyamints/useMiyamints'
-import { useOpenManage } from '@/miyamints/useOpenManage'
 import { validateAudioFile, validateImageFile } from '@/music/audio'
+import { nextStepsWords, storageWords, storedBytes } from '@/music/creatorWords'
 import { readAudioDuration } from '@/music/readDuration'
-import { useOpenApp } from '@/music/useOpenApp'
 import { useAppDispatch } from '@/store/hooks'
 import { closeWindow, minimizeWindow } from '@/store/windows/actions'
 import { useFullscreen } from '@/store/windows/hooks'
 import { color, font, space, text } from '@/theme/tokens'
+import { FREE_BYTES } from '@/utils/fundAndUpload'
 import { resolveUri } from '@/utils/resolveUri'
+import { useStorageQuote } from '@/utils/useStorageQuote'
 
-import { gel } from '../DropMusic/y2k'
+import goldSkin from './skin/gold.webp'
+import malachiteSkin from './skin/malachite.webp'
 import Preview, { PreviewCard, priceLine, supplyLine, TYPE_LABEL } from './Preview'
 import type { Pick } from './Steps'
 import { AlignStep, ArtStep, PhaseBox, SaleStep, TypeCard, TypeStep, VaultCard } from './Steps'
@@ -48,51 +55,150 @@ const STEP_LABEL: Record<StepKey, string> = {
   type: 'Type',
   art: 'Artwork',
   sale: 'Price & supply',
-  align: 'Community',
+  align: 'Vault share',
   review: 'Review',
 }
 
-/** Launch's own material: a glossy emerald launchpad with a chrome-gold gleam. */
+/** Launch's own material: polished malachite, ivory panels and brushed champagne gold. */
 const Layout = styled.div`
   height: 100%;
-  overflow-y: auto;
+  /* Always there: a scrollbar coming and going with the step's height would nudge the page sideways. */
+  overflow-y: scroll;
   overflow-x: hidden;
+  /* Long steps: a field scrolled to must not end up under the sticky footer. */
+  scroll-padding-bottom: 96px;
   ${y2kSkin({
-    ink: '#06302c',
-    inkSoft: '#14574c',
-    material: `${pinstripe(0.1)}, radial-gradient(520px 300px at 90% -60px, rgba(255, 244, 190, 0.85), transparent 70%),
-      radial-gradient(420px 420px at -60px 110%, rgba(198, 255, 61, 0.45), transparent 70%),
-      linear-gradient(170deg, #17d99a 0%, #0a9a7c 42%, #06504a 100%)`,
-    head: '#ffffff',
-    headShadow: '#06302c',
-    frost: 'rgba(242, 255, 250, 0.9)',
-    edge: '#06302c',
-    glow: 'rgba(23, 217, 154, 0.28)',
-    gelTop: '#fff2a8',
-    gelBottom: '#f2b91f',
-    gelInk: '#3a2600',
-    smallTop: '#d8fff0',
-    smallBottom: '#4fe3b0',
-    link: '#075e8a',
+    ink: '#12261e',
+    inkSoft: '#4a5f53',
+    material: `linear-gradient(rgba(3, 26, 20, 0.34), rgba(3, 26, 20, 0.34)), url(${malachiteSkin}) 0 0 / 1024px 1024px`,
+    head: '#f4ecd2',
+    headShadow: '#02140f',
+    frost: '#fbf8ee',
+    edge: '#b39a5e',
+    glow: 'rgba(179, 154, 94, 0.08)',
+    gelTop: '#f0e0b2',
+    gelBottom: '#c9b27a',
+    gelInk: '#1c2a1e',
+    smallTop: '#fdfbf3',
+    smallBottom: '#ece5cf',
+    link: '#0b5d45',
   })}
+  /* Square up the Y2K layer's pills and take the gloss off: stone and metal, not plastic. */
+  && ${Panel}, && ${Well}, && ${StatusBox} {
+    border-radius: 4px;
+    box-shadow: 0 1px 3px rgba(2, 20, 15, 0.35);
+  }
+  && ${BigButton}, && ${SmallButton} {
+    border-radius: 3px;
+    filter: none;
+  }
+  && ${BigButton} {
+    font-family: ${font.ui};
+    font-size: ${text.sm};
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+  && ${BigButton}:not(:disabled):not(.secondary) {
+    border: 1px solid #6e5a2a;
+    background: #c9b27a url(${goldSkin}) 0 0 / 256px 256px;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55), 0 1px 3px rgba(2, 20, 15, 0.5);
+    color: #1c2a1e;
+    &:hover {
+      filter: brightness(1.06);
+    }
+  }
+  && ${BigButton}.secondary:not(:disabled), && ${SmallButton}:not(:disabled) {
+    border: 1px solid #b39a5e;
+    background: #fdfbf3;
+    box-shadow: 0 1px 2px rgba(2, 20, 15, 0.25);
+    color: #12261e;
+    &:hover {
+      background: #f7f1dd;
+    }
+  }
+  && ${SmallButton}[aria-pressed='true']:not(:disabled) {
+    border-color: #6e5a2a;
+    background: #c9b27a url(${goldSkin}) 0 0 / 256px 256px;
+    font-weight: 700;
+  }
+  && ${BigButton}:disabled, && ${SmallButton}:disabled {
+    border: 1px solid #cfc6a8;
+    background: #ece7d6;
+    box-shadow: none;
+    color: #6f6d5c;
+  }
+  && input[type='text'],
+  && input[type='number'],
+  && input[type='url'],
+  && input[type='datetime-local'],
+  && input:not([type]),
+  && input[type='file'],
+  && textarea,
+  && select {
+    border-radius: 3px;
+    box-shadow: inset 0 1px 2px rgba(2, 20, 15, 0.15);
+  }
+  && input[aria-invalid='true'],
+  && textarea[aria-invalid='true'] {
+    box-shadow: inset 0 0 0 2px ${color.danger};
+  }
+  && ${StatusBox} {
+    background: #fbf8ee;
+  }
+  && ${DropZone} {
+    border: 1px dashed #8d7338;
+    border-radius: 4px;
+    outline: none;
+    background: #f7f1dd;
+    box-shadow: none;
+  }
   ${PreviewCard}, ${TypeCard}, ${VaultCard}, ${PhaseBox} {
-    border: 1px solid #06302c;
-    border-radius: 14px;
-    background: linear-gradient(180deg, #fff 0%, #e4fff4 100%);
-    box-shadow: 0 2px 0 rgba(6, 48, 44, 0.3);
-    color: #06302c;
+    border: 1px solid #b39a5e;
+    border-radius: 4px;
+    background: #fdfbf3;
+    box-shadow: 0 1px 2px rgba(2, 20, 15, 0.2);
+    color: #12261e;
   }
   ${TypeCard}:hover:not(:disabled), ${VaultCard}:hover:not(:disabled) {
-    background: linear-gradient(180deg, #fff 0%, #c8ffe6 100%);
+    background: #f7f1dd;
   }
   ${TypeCard}[aria-pressed='true'], ${VaultCard}[aria-pressed='true'], ${TypeCard}[aria-checked='true'],
   ${VaultCard}[aria-checked='true'] {
-    border-width: 2px;
-    background: linear-gradient(180deg, #fffbe0 0%, #ffe680 100%);
+    border-color: #8d7338;
+    background: #f5ebcb;
+    box-shadow: inset 0 0 0 1px #8d7338;
+  }
+  && ${TypeCard}[aria-pressed='true'], && ${VaultCard}[aria-pressed='true'], && ${TypeCard}[aria-checked='true'],
+  && ${VaultCard}[aria-checked='true'] {
+    outline: none;
+  }
+  && ${TypeCard}:focus-visible, && ${VaultCard}:focus-visible {
+    outline: 2px solid #8d7338;
+    outline-offset: 1px;
+  }
+  && ${CloseGuardBox} {
+    border: 1px solid #b39a5e;
+    border-radius: 4px;
+    background: #fbf8ee;
+    color: #12261e;
+  }
+  && ${CloseGuardBox} .keep:not(:disabled) {
+    border-color: #6e5a2a;
+    background: #c9b27a url(${goldSkin}) 0 0 / 256px 256px;
+    font-weight: 700;
   }
   ${PreviewCard} ${Eyebrow}, ${PreviewCard} ${DisplayTitle} {
-    color: #14574c !important;
+    color: #4a5f53 !important;
     text-shadow: none !important;
+  }
+  /* The page's title, stamped in gold foil. */
+  header ${DisplayTitle} {
+    background: linear-gradient(180deg, #fff6d8 0%, #e6cf95 45%, #b4985a 55%, #f0e0b2 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    text-shadow: none;
+    filter: drop-shadow(0 1px 0 #02140f);
   }
 `
 
@@ -103,6 +209,9 @@ const Inner = styled.div`
   padding: ${space[3]};
   max-width: 1100px;
   margin: 0 auto;
+  /* Fills the window, so the footer meets its bottom edge on a short step. */
+  box-sizing: border-box;
+  min-height: 100%;
 `
 
 const Head = styled.header`
@@ -123,12 +232,10 @@ const Rail = styled.ol`
   li button {
     width: 100%;
     min-height: 36px;
-    border: 1px solid #06302c;
-    border-radius: 999px;
-    background: linear-gradient(180deg, rgba(255, 255, 255, 0.85) 0%, rgba(255, 255, 255, 0.3) 48%, transparent 50%),
-      rgba(216, 255, 240, 0.72);
-    box-shadow: 0 2px 0 rgba(6, 48, 44, 0.35);
-    color: #06302c;
+    border: 1px solid #b39a5e;
+    border-radius: 3px;
+    background: rgba(3, 28, 22, 0.86);
+    color: #f4ecd2;
     font: inherit;
     font-size: ${text.xs};
     display: flex;
@@ -140,11 +247,17 @@ const Rail = styled.ol`
     overflow: hidden;
   }
   li button:disabled {
-    color: #3b6d63;
+    color: #93a79b;
     cursor: default;
   }
+  li button:disabled .n {
+    background: #3f5a4d;
+    color: #93a79b;
+  }
   li button[aria-current='step'] {
-    ${gel('#fff2a8', '#f2b91f', '#3a2600')}
+    border-color: #6e5a2a;
+    background: #c9b27a url(${goldSkin}) 0 0 / 256px 256px;
+    color: #1c2a1e;
     font-weight: 700;
   }
   .n {
@@ -154,13 +267,13 @@ const Rail = styled.ol`
     height: 20px;
     flex: 0 0 20px;
     border-radius: 50%;
-    background: #06302c;
-    color: #d8fff0;
+    background: #c9b27a;
+    color: #12261e;
     font-variant-numeric: tabular-nums;
   }
   [aria-current='step'] .n {
-    background: #3a2600;
-    color: #fff2a8;
+    background: #12261e;
+    color: #f4ecd2;
   }
   .narrow & .label {
     display: none;
@@ -184,12 +297,10 @@ const Foot = styled.div`
   position: sticky;
   bottom: 0;
   z-index: 1;
-  margin: 0 -${space[3]} -${space[3]};
+  margin: auto -${space[3]} -${space[3]};
   padding: ${space[2]} ${space[3]} ${space[3]};
-  border-top: 1px solid #06302c;
-  border-radius: 16px 16px 0 0;
-  background: rgba(242, 255, 250, 0.88);
-  box-shadow: inset 0 2px 0 #fff;
+  border-top: 1px solid #b39a5e;
+  background: #031c16;
   display: flex;
   gap: ${space[2]};
   align-items: center;
@@ -201,6 +312,8 @@ const Foot = styled.div`
   }
   .primary {
     flex: 0 1 320px;
+    /* Stays on the right when the first step has no Back. */
+    margin-left: auto;
   }
   .narrow & .primary {
     flex: 1 1 auto;
@@ -234,8 +347,6 @@ export default function LaunchPage() {
   const { address, isConnected, chainId: walletChainId } = useAccount()
   const { openConnectModal } = useConnectModal()
   const { switchChain } = useSwitchChain()
-  const openApp = useOpenApp()
-  const openManage = useOpenManage()
 
   const net = useLaunchChain()
   const rules = useRegistryRules(net.chainId, net.addresses.registry)
@@ -256,11 +367,18 @@ export default function LaunchPage() {
   const [shown, setShown] = useState<Partial<Record<StepKey, boolean>>>({})
   const [image, setImage] = useState<Pick>()
   const [audio, setAudio] = useState<Pick>()
+  const scrollBox = useRef<HTMLDivElement | null>(null)
+  // Counts refused presses of Next, so the same error scrolls back into view each time.
+  const [refused, setRefused] = useState(0)
 
   const set = <K extends keyof LaunchForm>(k: K, v: LaunchForm[K]) => {
     setForm((f) => ({ ...f, [k]: v }))
+    launch.clearError()
     if (k === 'imageUri' || k === 'imageMode') launch.invalidate('image')
-    if (k === 'audioUri' || k === 'audioMode') launch.invalidate('audio')
+    if (k === 'audioUri' || k === 'audioMode') {
+      launch.invalidate('audio')
+      setForm((f) => ({ ...f, audioMime: '' }))
+    }
   }
 
   // Default the alignment share to the registry minimum once it is known.
@@ -344,6 +462,7 @@ export default function LaunchPage() {
 
   // Dry-run the create call when arriving at Review (and when inputs change there).
   const reviewKey = JSON.stringify({ form, vaultAddr, alignmentBps, address, chain: net.chainId })
+  const [recheck, setRecheck] = useState(0)
   useEffect(() => {
     if (step === 'review' && ready && resolvedBase && firstBlocked === -1 && !launch.instance) {
       launch.simulate(
@@ -354,16 +473,30 @@ export default function LaunchPage() {
       )
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [step, ready, reviewKey])
+  }, [step, ready, reviewKey, recheck])
 
   const goNext = () => {
     setShown((s) => ({ ...s, [step]: true }))
-    if (!stepOk) return
+    if (!stepOk) {
+      setRefused((n) => n + 1)
+      return
+    }
+
     setStepIdx((i) => Math.min(i + 1, STEP_ORDER.length - 1))
   }
 
+  // Every step starts at its top.
+  useEffect(() => {
+    scrollBox.current?.scrollTo({ top: 0 })
+  }, [stepIdx])
+
+  useEffect(() => {
+    if (refused) scrollBox.current?.querySelector('.err')?.scrollIntoView({ block: 'center' })
+  }, [refused])
+
   const goTo = (i: number) => {
-    if (launch.running) return
+    // Once it's on the chain the artwork and settings are fixed, so they can't be edited into something else.
+    if (launch.running || launch.committed) return
     if (i <= stepIdx || firstBlocked === -1 || i <= firstBlocked) setStepIdx(i)
   }
 
@@ -377,7 +510,7 @@ export default function LaunchPage() {
       audio:
         form.type === 'editions' && form.editionKind === 'music'
           ? form.audioMode === 'link'
-            ? { uri: form.audioUri.trim() }
+            ? { uri: form.audioUri.trim(), mime: form.audioMime || undefined }
             : { file: audio?.check.ok ? audio.file : undefined, mime: audio?.check.ok ? audio.check.mime : undefined }
           : undefined,
       addresses: net.addresses,
@@ -397,6 +530,31 @@ export default function LaunchPage() {
   const explorer = explorerUrl(net.chainId)
   const [layoutRef, { width }] = useElementSize()
   const narrow = width > 0 && width <= 640
+  const setLayout = (el: HTMLDivElement | null) => {
+    scrollBox.current = el
+    layoutRef(el)
+  }
+
+  // What the wallet will be asked for: only files not stored yet cost anything.
+  const needsAudio = form.type === 'editions' && form.editionKind === 'music'
+  const toStore = [
+    ...(form.imageMode === 'upload' && image?.check.ok && !launch.uploaded.image ? [image.file] : []),
+    ...(needsAudio && form.audioMode === 'upload' && audio?.check.ok && !launch.uploaded.audio ? [audio.file] : []),
+  ]
+  const storage = useStorageQuote(
+    storedBytes(
+      toStore.map((f) => f.size),
+      FREE_BYTES
+    )
+  )
+  const reserve = form.type === 'auction' ? parseEth(form.reserve) : undefined
+  const deposit = reserve?.ok ? `${formatEther(reserve.wei)} ETH` : ''
+  const hasDraft = !launch.result && draftHasData(form, !!image || !!audio)
+  const guard = useCloseGuard({
+    draft: hasDraft,
+    running: launch.running,
+    close: () => dispatch(closeWindow({ value: 'launch' })),
+  })
 
   const primary = (() => {
     if (step !== 'review') return { label: `Next: ${STEP_LABEL[STEP_ORDER[stepIdx + 1] as StepKey]}`, onClick: goNext }
@@ -409,16 +567,18 @@ export default function LaunchPage() {
     if (firstBlocked !== -1)
       return { label: `Fix: ${STEP_LABEL[STEP_ORDER[firstBlocked] as StepKey]}`, onClick: () => goTo(firstBlocked) }
     if (launch.running) return { label: 'Working… check your wallet', disabled: true }
-    if (launch.instance && !launch.result) return { label: 'Retry the last step', onClick: create }
+    if (launch.instance && !launch.result) {
+      return { label: deposit ? `Finish: pay ${deposit} and start` : 'Retry the last step', onClick: create }
+    }
+
     if (form.type === 'auction')
-      return { label: 'Create auction', onClick: create, disabled: launch.check.state === 'error' }
+      return { label: `Create auction and pay ${deposit}`, onClick: create, disabled: launch.check.state === 'error' }
     if (form.type === 'editions')
       return { label: 'Create edition', onClick: create, disabled: launch.check.state === 'error' }
     return { label: 'Create collection', onClick: create, disabled: launch.check.state === 'error' }
   })()
 
   const plan = form.type ? txPlan(form.type) : []
-  const needsAudio = form.type === 'editions' && form.editionKind === 'music'
   const pipeline = [
     {
       id: 'image',
@@ -448,11 +608,8 @@ export default function LaunchPage() {
       }), recommended`
     : 'Default vault, recommended'
 
-  const statusChip = net.deployed ? (
-    <Chip tone="ok">Live on {net.chain.name}</Chip>
-  ) : (
-    <Chip tone="warn">Opens soon</Chip>
-  )
+  // Before launch the note under the header says so.
+  const statusChip = net.deployed && <Chip tone="ok">Live on {net.chain.name}</Chip>
 
   const success = launch.result
   const royalty = parseRoyaltyPct(form.royaltyPct)
@@ -464,7 +621,7 @@ export default function LaunchPage() {
         closeBtn
         onClose={(e) => {
           if (e.cancelable) e.stopPropagation()
-          dispatch(closeWindow({ value: 'launch' }))
+          guard.ask()
         }}
         fullscreen={fullscreen}
         fullscreenBtn
@@ -477,7 +634,8 @@ export default function LaunchPage() {
       >
         {Pages.launch?.label}
       </TitleBar>
-      <Layout ref={layoutRef} className={narrow ? 'narrow' : undefined} data-launch>
+      <Layout ref={setLayout} className={narrow ? 'narrow' : undefined} data-launch>
+        {guard.dialog}
         <Inner>
           <Head>
             <div>
@@ -489,15 +647,15 @@ export default function LaunchPage() {
 
           {!net.deployed && !success && (
             <StatusBox tone="info" role="status">
-              <span>
-                Launching opens soon. You can try every step now and see how collectors will see your work, but you
-                cannot publish yet. The Create button turns on when launch opens.
-              </span>
+              <span>Launching opens soon. Try every step; you cannot publish yet.</span>
             </StatusBox>
           )}
           {net.wrongChain && (
             <StatusBox tone="error" role="alert">
-              <span>Your wallet is on a network miya does not support. Switch to Ethereum.</span>
+              <span style={{ flex: 1 }}>Your wallet is on a network miya does not support.</span>
+              <SmallButton type="button" onClick={() => switchChain({ chainId: net.chainId })}>
+                Switch to {net.chain.name}
+              </SmallButton>
             </StatusBox>
           )}
 
@@ -519,18 +677,7 @@ export default function LaunchPage() {
                   </span>
                 </StatusBox>
                 <TxSteps steps={pipeline} label="What happened" />
-                <BigButton
-                  type="button"
-                  onClick={() =>
-                    openManage({ chainId: success.chainId, address: success.instance, kind: success.type })
-                  }
-                >
-                  Open in Manage
-                </BigButton>
                 <div style={{ display: 'flex', gap: space[2], flexWrap: 'wrap' }}>
-                  <SmallButton type="button" onClick={() => openApp('mint')}>
-                    Open in Mint
-                  </SmallButton>
                   <SmallButton
                     as="a"
                     href={`${explorer}/address/${success.instance}`}
@@ -567,7 +714,7 @@ export default function LaunchPage() {
                         type="button"
                         aria-current={i === stepIdx ? 'step' : undefined}
                         aria-label={`Step ${i + 1} of 5: ${STEP_LABEL[s]}`}
-                        disabled={i > stepIdx && !(firstBlocked === -1 || i <= firstBlocked)}
+                        disabled={launch.committed || (i > stepIdx && !(firstBlocked === -1 || i <= firstBlocked))}
                         onClick={() => goTo(i)}
                       >
                         <span className="n">{i + 1}</span>
@@ -603,6 +750,13 @@ export default function LaunchPage() {
                       audio={audio}
                       onImage={pickImage}
                       onAudio={pickAudio}
+                      requiredDone={
+                        !stepErrors.name &&
+                        !stepErrors.symbol &&
+                        !stepErrors.image &&
+                        !stepErrors.audio &&
+                        !stepErrors.artist
+                      }
                     />
                   )}
                   {step === 'sale' && <SaleStep form={form} set={set} errors={shownErrors} />}
@@ -653,11 +807,13 @@ export default function LaunchPage() {
                         <dd>{supplyLine(form)}</dd>
                         {form.type === 'drop' && (
                           <>
-                            <dt>Sale</dt>
-                            <dd>
-                              {form.phases.length} phase{form.phases.length > 1 ? 's' : ''}, first starts{' '}
-                              {form.phases[0]?.start ? new Date(form.phases[0].start).toLocaleString() : 'right away'}
-                            </dd>
+                            {form.phases.map((p, i) => (
+                              // eslint-disable-next-line react/no-array-index-key
+                              <Fragment key={i}>
+                                <dt>{form.phases.length > 1 ? `Phase ${i + 1}` : 'Sale'}</dt>
+                                <dd>{phaseLine(p)}</dd>
+                              </Fragment>
+                            ))}
                             <dt>Kept back</dt>
                             <dd>{form.ownerReserve.trim() || 'None'}</dd>
                             <dt>Resale royalty</dt>
@@ -666,17 +822,30 @@ export default function LaunchPage() {
                         )}
                         {form.type === 'auction' && (
                           <>
+                            <dt>Bid step</dt>
+                            <dd>{form.bidStep.trim()} ETH</dd>
                             <dt>Length</dt>
                             <dd>
                               {form.durationHours} hours, late bids add {AUCTION_TIME_BUFFER_SECONDS / 60} minutes
                             </dd>
+                            <dt>You pay now</dt>
+                            <dd>
+                              <b>{deposit} deposit.</b> You get it back when the piece sells. If nobody bids, miya keeps
+                              it and the piece is not minted.
+                            </dd>
+                          </>
+                        )}
+                        {form.type === 'editions' && (
+                          <>
+                            <dt>Sale opens</dt>
+                            <dd>{form.editionStart ? whenWords(form.editionStart) : 'Right away'}</dd>
                           </>
                         )}
                         <dt>Network</dt>
                         <dd>{net.chain.name}</dd>
                         <dt>Vault</dt>
                         <dd>
-                          {vaultName ? `Buys ${vaultName}` : 'Alignment vault'}{' '}
+                          {vaultName ? `Buys ${vaultName}` : 'Community vault'}{' '}
                           <span className="mono">{short(vaultAddr)}</span>
                         </dd>
                       </Summary>
@@ -689,12 +858,20 @@ export default function LaunchPage() {
                       </Well>
                       <div>
                         <Eyebrow style={{ marginBottom: space[2] }}>
-                          What happens next: {plan.length} wallet {plan.length > 1 ? 'prompts' : 'prompt'}
-                          {form.imageMode === 'upload' ? ' + 1 upload' : ''}
+                          {nextStepsWords({
+                            uploads: toStore.length,
+                            paying: toStore.some((f) => f.size > FREE_BYTES),
+                            txs: plan.length,
+                          })}
                         </Eyebrow>
                         <Well style={{ padding: space[2] }}>
                           <TxSteps steps={pipeline} label="Launch progress" />
                         </Well>
+                        {storage.state !== 'none' && (
+                          <small style={{ display: 'block', marginTop: space[1], fontSize: text.xs }}>
+                            {storageWords(storage)}
+                          </small>
+                        )}
                       </div>
                       {ready && launch.check.state === 'checking' && (
                         <StatusBox tone="info" role="status">
@@ -709,13 +886,18 @@ export default function LaunchPage() {
                       )}
                       {ready && launch.check.state === 'error' && (
                         <StatusBox tone="error" role="alert">
-                          <span>{launch.check.message}</span>
+                          <span style={{ flex: 1 }}>{launch.check.message}</span>
+                          <SmallButton type="button" onClick={() => setRecheck((n) => n + 1)}>
+                            Check again
+                          </SmallButton>
                         </StatusBox>
                       )}
                       {launch.running && (
                         <StatusBox tone="info" role="status">
                           <img src={LoadingHourglass} alt="" />
-                          <span>Confirm in your wallet, then wait for the network. Keep this window open.</span>
+                          <span>
+                            {launch.note || 'Confirm in your wallet, then wait for the network.'} Keep this window open.
+                          </span>
                         </StatusBox>
                       )}
                       {launch.error && !launch.running && (
@@ -741,16 +923,25 @@ export default function LaunchPage() {
               </Body>
 
               <Foot>
+                {stepIdx > 0 && !launch.committed && (
+                  <BigButton
+                    type="button"
+                    className="secondary back"
+                    style={{ width: 'auto' }}
+                    disabled={launch.running}
+                    onClick={() => setStepIdx((i) => i - 1)}
+                  >
+                    Back
+                  </BigButton>
+                )}
                 <BigButton
                   type="button"
-                  className="secondary back"
-                  style={{ width: 'auto' }}
-                  disabled={stepIdx === 0 || launch.running}
-                  onClick={() => setStepIdx((i) => Math.max(0, i - 1))}
+                  className="primary"
+                  disabled={!!primary.disabled}
+                  // Looks not ready until the step is filled in, and a press says what's missing.
+                  style={step !== 'review' && !stepOk ? { opacity: 0.55 } : undefined}
+                  onClick={primary.onClick}
                 >
-                  Back
-                </BigButton>
-                <BigButton type="button" className="primary" disabled={!!primary.disabled} onClick={primary.onClick}>
                   {primary.label}
                 </BigButton>
               </Foot>

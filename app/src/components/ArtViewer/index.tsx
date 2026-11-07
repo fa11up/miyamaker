@@ -1,11 +1,16 @@
 import type { PointerEvent as ReactPointerEvent } from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import styled from 'styled-components/macro'
+import styled, { css } from 'styled-components/macro'
 
 import { NormalButton } from '@/components/Button/NormalButton'
 import { imageCandidates, prefetchImages } from '@/components/NftImage'
 import TitleBar from '@/components/TitleBar'
+import { WIRED_BACKDROP } from '@/desktop/files/wired'
+import damaskSkin from '@/pages/Auction/skin/damask.webp'
+import giltSkin from '@/pages/Auction/skin/gilt.webp'
+import { paddleButton } from '@/pages/Auction/skin/paddle'
+import paperSkin from '@/pages/Auction/skin/paper.webp'
 import { bevel, color, font, space, text } from '@/theme/tokens'
 import { thumbFor } from '@/utils/artThumbs'
 import { ipfsPath } from '@/utils/ipfsGateways'
@@ -18,7 +23,12 @@ export type Artwork = {
   /** Extra label rows, e.g. ['Dimensions', '5ft x 4ft']. Empty values are skipped. */
   details?: [string, string | undefined][]
   link?: string
+  /** Shown first on the label, for art that can't be trusted. */
+  warning?: string
 }
+
+/** The app the viewer was opened from, whose materials it wears. */
+export type ViewerSkin = 'auction' | 'files'
 
 const MIN_SCALE = 1
 const MAX_SCALE = 8
@@ -43,15 +53,18 @@ const Backdrop = styled.div`
   `}
 `
 
-const Frame = styled.div`
+const Frame = styled.div<{ $skin?: ViewerSkin }>`
   display: flex;
   flex-direction: column;
   width: min(1400px, 100%);
   height: min(920px, 100%);
   background: ${color.face};
-  box-shadow: ${bevel.raised}, 0 20px 60px rgba(0, 0, 0, 0.55);
+  box-shadow:
+    ${bevel.raised},
+    0 20px 60px rgba(0, 0, 0, 0.55);
   padding: 3px;
   outline: none;
+  ${({ $skin }) => $skin && SKINS[$skin]}
 `
 
 const Body = styled.div`
@@ -72,6 +85,7 @@ const Stage = styled.div<{ $grab: boolean; $zoomed: boolean }>`
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+  container-type: size;
   background: radial-gradient(ellipse at center, #2a2440 0%, #0d0a16 75%);
   box-shadow: ${bevel.sunken};
   touch-action: none;
@@ -85,8 +99,12 @@ const Art = styled.img`
   position: absolute;
   inset: 0;
   margin: auto;
-  max-width: calc(100% - 48px);
-  max-height: calc(100% - 48px);
+  /* Every piece hangs in the same square, so the frame stays put while the arrows step through a set. */
+  box-sizing: border-box;
+  width: min(100cqw - 48px, 100cqh - 48px);
+  height: min(100cqw - 48px, 100cqh - 48px);
+  max-width: none;
+  object-fit: contain;
   box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6);
   transform-origin: center center;
   will-change: transform;
@@ -159,6 +177,16 @@ const Label = styled.aside`
   `}
 `
 
+const LabelWarning = styled.p`
+  margin: 0 0 ${space[3]};
+  padding: ${space[1]} ${space[2]};
+  border: 1px solid #ff5a74;
+  background: #5c1226;
+  color: #fff;
+  font-size: 13px;
+  line-height: 1.4;
+`
+
 const LabelTitle = styled.h2`
   margin: 0;
   font-family: ${font.ui};
@@ -210,6 +238,116 @@ const Hint = styled.div`
   color: ${color.inkMuted};
 `
 
+// ── skins ───────────────────────────────────────────────────────────────────
+
+const SKINS: Record<ViewerSkin, ReturnType<typeof css>> = {
+  /* My Files: the same dark CRT, the picture up against the wires at dusk. */
+  files: css`
+    padding: 0 3px 3px;
+    background: linear-gradient(180deg, #2a1230, #120a1c);
+    box-shadow:
+      inset 0 0 0 1px #5f7a68,
+      0 20px 60px rgba(0, 0, 0, 0.7);
+    & *::selection {
+      background: #7dff9a;
+      color: #04140a;
+    }
+    ${Art} {
+      border: none;
+      background: #07040c;
+      box-shadow:
+        0 0 0 1px #5f7a68,
+        0 0 26px rgba(200, 16, 46, 0.25),
+        0 10px 40px rgba(0, 0, 0, 0.7);
+    }
+    ${Toolbar}, ${Label} {
+      background: #07040c;
+      box-shadow: 0 0 0 1px #5f7a68;
+      color: #cfe8d3;
+    }
+    ${Body} button {
+      border: 1px solid #5f7a68;
+      border-radius: 0;
+      background: #1c1226;
+      box-shadow: none;
+      color: #cfe8d3;
+      &:hover:not(:disabled) {
+        background: #c8102e;
+        color: #fff;
+      }
+      &:disabled {
+        color: #6f7f76;
+      }
+    }
+    ${ZoomReadout} {
+      color: #cfe8d3;
+    }
+    ${LabelArtist}, ${LabelLink} {
+      color: #ff5a74;
+    }
+    ${LabelRows} dt, ${Hint} {
+      color: #8fa897;
+    }
+    /* Last: the backdrop's long data URL would swallow any rule after it. */
+    ${Stage} {
+      background:
+        linear-gradient(rgba(7, 4, 12, 0.55), rgba(7, 4, 12, 0.55)),
+        #160b26 ${WIRED_BACKDROP} right bottom / cover no-repeat;
+      box-shadow: 0 0 0 1px #5f7a68;
+    }
+  `,
+  /* The sale room: a gilt frame, the piece hung on the damask wall, its label on catalogue paper. */
+  auction: css`
+    padding: 0 6px 6px;
+    background: url(${giltSkin}) 0 0 / 128px 128px;
+    & *::selection {
+      background: #7a1620;
+      color: #f4dd9c;
+    }
+    box-shadow:
+      inset 0 0 0 1px #4a2f08,
+      0 20px 60px rgba(0, 0, 0, 0.55);
+
+    ${Stage} {
+      background:
+        radial-gradient(ellipse at center, transparent 45%, rgba(12, 2, 4, 0.72) 100%),
+        #3f0a12 url(${damaskSkin}) 0 0 / 360px 360px;
+      box-shadow: 0 0 0 1px #4a2f08;
+    }
+    ${Art} {
+      border: none;
+      padding: 10px;
+      background: #fffdf6;
+      box-shadow:
+        0 0 0 1px #4a2f08,
+        0 0 0 7px #c9a24c,
+        0 0 0 8px #4a2f08,
+        0 14px 40px rgba(8, 1, 2, 0.75);
+    }
+    ${Toolbar}, ${Label} {
+      background: #f6eeda url(${paperSkin}) 0 0 / 256px 256px;
+      box-shadow: 0 0 0 1px #4a2f08;
+      color: #2a1410;
+    }
+    ${Body} button {
+      ${paddleButton}
+    }
+    ${Label}, ${Label} * {
+      font-family: Georgia, 'Times New Roman', serif;
+    }
+    ${ZoomReadout} {
+      color: #2a1410;
+      font-family: Georgia, 'Times New Roman', serif;
+    }
+    ${LabelArtist}, ${LabelLink} {
+      color: #7a1620;
+    }
+    ${LabelRows} dt, ${Hint} {
+      color: #5f4030;
+    }
+  `,
+}
+
 // ── component ───────────────────────────────────────────────────────────────
 
 /**
@@ -220,10 +358,12 @@ export default function ArtViewer({
   items,
   startIndex = 0,
   onClose,
+  skin,
 }: {
   items: Artwork[]
   startIndex?: number
   onClose: () => void
+  skin?: ViewerSkin
 }) {
   const [index, setIndex] = useState(Math.min(Math.max(startIndex, 0), Math.max(items.length - 1, 0)))
   const [scale, setScale] = useState(1)
@@ -273,7 +413,7 @@ export default function ArtViewer({
       setScale(target)
       setOffset(nextOffset)
     },
-    [clampOffset]
+    [clampOffset],
   )
 
   const reset = useCallback(() => {
@@ -286,7 +426,7 @@ export default function ArtViewer({
       if (!multiple) return
       setIndex((i) => (i + delta + items.length) % items.length)
     },
-    [items.length, multiple]
+    [items.length, multiple],
   )
 
   useEffect(() => {
@@ -425,6 +565,7 @@ export default function ArtViewer({
   return createPortal(
     <Backdrop onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <Frame
+        $skin={skin}
         ref={frameRef}
         role="dialog"
         aria-modal="true"
@@ -432,7 +573,7 @@ export default function ArtViewer({
         tabIndex={-1}
         onKeyDown={onKeyDown}
       >
-        <TitleBar closeBtn onClose={onClose}>
+        <TitleBar skin={skin} closeBtn onClose={onClose}>
           Viewer — {item.name}
           {multiple ? ` (${index + 1} of ${items.length})` : ''}
         </TitleBar>
@@ -453,17 +594,12 @@ export default function ArtViewer({
                 alt=""
                 aria-hidden
                 draggable={false}
-                style={{
-                  filter: 'blur(4px)',
-                  boxShadow: 'none',
-                  width: 'calc(100% - 48px)',
-                  height: 'calc(100% - 48px)',
-                  objectFit: 'contain',
-                }}
+                style={{ filter: 'blur(4px)', boxShadow: 'none' }}
               />
             )}
             <Art
-              key={src}
+              // By place too: the next piece can share a picture, and only a new element loads again.
+              key={`${index}:${src}`}
               ref={artRef}
               src={src}
               alt={item.name}
@@ -483,10 +619,20 @@ export default function ArtViewer({
 
             {multiple && (
               <>
-                <NavButton $side="left" aria-label="Previous artwork" onClick={() => go(-1)}>
+                <NavButton
+                  $side="left"
+                  aria-label="Previous artwork"
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onClick={() => go(-1)}
+                >
                   ‹
                 </NavButton>
-                <NavButton $side="right" aria-label="Next artwork" onClick={() => go(1)}>
+                <NavButton
+                  $side="right"
+                  aria-label="Next artwork"
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onClick={() => go(1)}
+                >
                   ›
                 </NavButton>
               </>
@@ -511,6 +657,7 @@ export default function ArtViewer({
 
           {showLabel && (
             <Label aria-label="About this artwork">
+              {item.warning && <LabelWarning role="note">{item.warning}</LabelWarning>}
               <LabelTitle>{item.name}</LabelTitle>
               {item.artist && item.artist !== 'undefined' && <LabelArtist>{item.artist}</LabelArtist>}
               {details.length > 0 && (
@@ -542,7 +689,7 @@ export default function ArtViewer({
         </Body>
       </Frame>
     </Backdrop>,
-    document.body
+    document.body,
   )
 }
 

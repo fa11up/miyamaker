@@ -13,6 +13,7 @@ import {
 import { cleanText, decodeDataJson, safeImageUrl, safeLinkUrl, sanitizeMetadata } from '../src/desktop/files/sanitize.ts'
 import { initialPet, PET_PHYSICS, petEvent, stepPet } from '../src/desktop/pet/machine.ts'
 import { clampDelayMinutes, idleRemaining, isTextEntry, movedEnough, shouldStartScreensaver } from '../src/desktop/screensaver/idle.ts'
+import { anythingPlaying, setPlaying } from '../src/desktop/screensaver/playing.ts'
 
 const ME = '0x5167d014a056e43883e1bbea5530c3c0dc993281'
 const OTHER = '0x00000000000000000000000000000000000000aa'
@@ -83,6 +84,9 @@ test('poll range: first poll looks back maxSpan blocks, later polls overlap the 
   // Tab was asleep for an hour: don't ask the RPC for 300 blocks.
   assert.deepEqual(nextRange(1000n, 1300n, { maxSpan: 20n }), { fromBlock: 1281n, toBlock: 1300n })
   assert.equal(nextRange(undefined, 0n), undefined)
+  // A lagging RPC: nothing to ask for, so the cursor never moves back and fromBlock never passes toBlock.
+  assert.equal(nextRange(1000n, 995n, { maxSpan: 20n, overlap: 2n }), undefined)
+  assert.deepEqual(nextRange(1000n, 1000n, { maxSpan: 20n, overlap: 2n }), { fromBlock: 999n, toBlock: 1000n })
 })
 
 /* ---------- pet state machine ---------- */
@@ -299,4 +303,14 @@ test('nfts group into collection folders sorted by numeric token id', () => {
     folders[1]!.items.map((i) => i.tokenId),
     ['9', '10']
   )
+})
+
+test('the screensaver waits while any one thing is still playing', () => {
+  assert.equal(anythingPlaying(), false)
+  setPlaying('radio', true)
+  setPlaying('tv-youtube', true)
+  setPlaying('radio', false)
+  assert.equal(anythingPlaying(), true)
+  setPlaying('tv-youtube', false)
+  assert.equal(anythingPlaying(), false)
 })

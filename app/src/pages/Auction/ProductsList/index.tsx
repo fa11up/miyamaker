@@ -1,16 +1,17 @@
 import ChevronLeftIcon from 'assets/chevron-left-icon.svg'
 import ChevronRightIcon from 'assets/chevron-right-icon.svg'
-import { useCallback, useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import styled from 'styled-components/macro'
 import { useWindowSize } from 'usehooks-ts'
 import type { Address } from 'viem'
 
-import type { Artwork } from '@/components/ArtViewer'
 import ArtViewer from '@/components/ArtViewer'
 import { NormalButton } from '@/components/Button/NormalButton'
 import AuctionProduct from '@/pages/Auction/ProductsList/AuctionProduct'
 import { useAllTokenIds } from '@/pages/Auction/useAllTokenIds'
+import { useLotGallery } from '@/pages/Auction/useLots'
 import { setCurrentTokenIdsList } from '@/store/auction/actions'
+import { NO_LOT } from '@/store/collections/reducer'
 import { useAppDispatch, useAppSelector } from '@/store/hooks'
 
 /* Desktop: one row of lots sized to fit the panel, paged with arrows when there are more than fit in a row (no
@@ -44,7 +45,7 @@ const Pager = styled.div`
   flex-direction: column;
   align-items: center;
   gap: 0.25rem;
-  font-size: 0.65rem;
+  font-size: 0.75rem;
 `
 
 const Icon = styled.img`
@@ -58,7 +59,7 @@ const LOTS_PER_PAGE = 6
 /** Fewer lots than this still get this many column widths, so one or two lots do not become giant cards. */
 const MIN_COLUMNS = 4
 
-export default function ProductsList({ auctionContract }: { auctionContract: Address }) {
+export default function ProductsList({ auctionContract, locked }: { auctionContract: Address; locked?: boolean }) {
   const dispatch = useAppDispatch()
 
   const nftContract = useAppSelector((state) => state.collections.currentNFTContract)
@@ -72,10 +73,11 @@ export default function ProductsList({ auctionContract }: { auctionContract: Add
     dispatch(setCurrentTokenIdsList({ tokenIds, tokenURIs }))
   }, [dispatch, tokenIds, tokenURIs])
 
-  // Metadata each card has loaded, so the viewer can step through every lot in list order.
-  const [artworks, setArtworks] = useState<Record<number, Artwork>>({})
+  // Every lot in list order, with its bid, so the viewer can step through all of them.
+  const gallery = useLotGallery({ nft: nftContract, tokenIds, tokenURIs, address: auctionContract })
   const [viewing, setViewing] = useState<number | null>(null)
-  const handleArtwork = useCallback((id: number, art: Artwork) => setArtworks((a) => ({ ...a, [id]: art })), [])
+  const chosenLot = useAppSelector((state) => state.collections.currentTokenId)
+  const shownLot = chosenLot === NO_LOT ? tokenIds[0] : chosenLot
 
   const { width } = useWindowSize()
   const paged = width > 640
@@ -85,9 +87,6 @@ export default function ProductsList({ auctionContract }: { auctionContract: Add
   const columns = Math.max(MIN_COLUMNS, Math.min(tokenIds.length, LOTS_PER_PAGE))
   const onPage = (index: number) =>
     !paged || (index >= currentPage * LOTS_PER_PAGE && index < (currentPage + 1) * LOTS_PER_PAGE)
-
-  const gallery = tokenIds.filter((id) => artworks[id])
-  const items = gallery.map((id) => artworks[id] as Artwork)
 
   return (
     <LotsPanel>
@@ -103,16 +102,16 @@ export default function ProductsList({ auctionContract }: { auctionContract: Add
         </Pager>
       )}
       <LotsRow $columns={columns}>
-        {/* Every lot stays mounted (off-page ones hidden) so the viewer can step through all of them. */}
         {tokenIds.map((tokenId: number, index: number) => (
           <AuctionProduct
             nft={nftContract}
             auctionContract={auctionContract}
             key={index}
             hidden={!onPage(index)}
+            selected={tokenId === shownLot}
+            locked={locked}
             tokenId={tokenId}
             tokenURI={tokenURIs[index] || ''}
-            onArtwork={handleArtwork}
             onView={setViewing}
           />
         ))}
@@ -131,8 +130,13 @@ export default function ProductsList({ auctionContract }: { auctionContract: Add
           </span>
         </Pager>
       )}
-      {viewing !== null && items.length > 0 && (
-        <ArtViewer items={items} startIndex={Math.max(0, gallery.indexOf(viewing))} onClose={() => setViewing(null)} />
+      {viewing !== null && gallery.items.length > 0 && (
+        <ArtViewer
+          skin="auction"
+          items={gallery.items}
+          startIndex={Math.max(0, gallery.ids.indexOf(viewing))}
+          onClose={() => setViewing(null)}
+        />
       )}
     </LotsPanel>
   )

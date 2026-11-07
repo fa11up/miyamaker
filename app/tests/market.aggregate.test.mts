@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
 import {
+  edgeCache,
   fromOpenSea,
   fromOpenSeaSale,
   handleMarketRequest,
@@ -89,7 +90,7 @@ test('sales: newest first, and the last day counted in ETH', () => {
     now
   )
   assert.deepEqual(s.sales.map((x) => x.tx), ['new', 'usdc', 'old'])
-  assert.deepEqual(s.day, { count: 2, volume: '20' })
+  assert.deepEqual(s.day, { count: 2, volume: '20', other: 1 })
 })
 
 function setup() {
@@ -170,4 +171,39 @@ test('a refused large page falls back to the smaller one', async () => {
   assert.equal(r.status, 200)
   assert.deepEqual(limits, ['100', '20'])
   assert.equal(((await r.json()) as any).count, 1)
+})
+
+test('sales in other tokens are counted apart, not added to the ETH figure', () => {
+  const now = 1_000_000
+  const sale = (currency: string, price: string) => ({ tokenId: '1', price, currency, at: now - 60, buyer: '', seller: '', tx: '0x' })
+  const s = summarizeSales([sale('ETH', '10'), sale('WETH', '5'), sale('BETH', '700')], now)
+  assert.deepEqual(s.day, { count: 3, volume: '15', other: 1 })
+})
+
+test('edgeCache keeps an entry for the time asked, 15 minutes when not asked', async () => {
+  const written: (string | null)[] = []
+  const fake = {
+    match: async () => undefined,
+    put: async (_r: Request, res: Response) => {
+      written.push(res.headers.get('cache-control'))
+    },
+  } as unknown as Cache
+  const cache = edgeCache(fake)
+  await cache.put('a', { at: 1, body: 1 })
+  await cache.put('b', { at: 1, body: 1 }, 2_592_000)
+  assert.deepEqual(written, ['public, max-age=900', 'public, max-age=2592000'])
+})
+
+test('memoryCache honours the same time to live', async () => {
+  let now = 1000
+  const cache = memoryCache(() => now)
+  await cache.put('short', { at: 1, body: 's' })
+  await cache.put('long', { at: 1, body: 'l' }, 3600)
+  now += 15 * 60_000 - 1
+  assert.equal((await cache.get('short'))?.body, 's')
+  now += 1
+  assert.equal(await cache.get('short'), undefined)
+  assert.equal((await cache.get('long'))?.body, 'l')
+  now += 3600_000
+  assert.equal(await cache.get('long'), undefined)
 })

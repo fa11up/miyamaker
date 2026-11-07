@@ -9,6 +9,20 @@ export interface OwnedNft {
   /** safe http(s)/data:image URL or '' */
   image: string
   externalUrl: string
+  /** The largest copy, for the popup and viewer. `image` may be a thumbnail. */
+  fullImage?: string
+  /** The indexer flagged the contract as spam. */
+  spam?: boolean
+  /** The indexer's own copies of the image, which never touch the server the metadata points at. */
+  hostedThumb?: string
+  hostedFull?: string
+  /** Why it is in the Scam folder. */
+  scamReason?: string
+  /** Waiting for Etherscan's word on its contract. */
+  checking?: boolean
+  tokenType?: 'ERC721' | 'ERC1155'
+  /** How many this wallet holds, for ERC-1155. */
+  balance?: string
 }
 
 export interface IndexerResult {
@@ -17,6 +31,8 @@ export interface IndexerResult {
   source: string
   /** true when the adapter stopped early (page / chunk limits) */
   partial: boolean
+  /** true when only the collections miyaOS knows were read, not the wallet's full list */
+  limited?: boolean
 }
 
 /**

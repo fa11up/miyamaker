@@ -51,13 +51,19 @@ const getIrys = async (
   // Otherwise
   webIrys.tokenConfig.sendTx = async (data): Promise<string> => {
     // Money sent to Irys on any other chain is lost, so the wallet moves first, and viem refuses a mismatch.
-    if (getAccount(wagmiConfig).chainId !== payChain.id) await switchChain(wagmiConfig, { chainId: payChain.id as 1 })
-    const hash = await provider.sendTransaction({
-      to: data.to,
-      value: data.amount,
-      account: webIrys.address as `0x${string}`,
-    })
-    return hash
+    const from = getAccount(wagmiConfig).chainId
+    if (from !== payChain.id) await switchChain(wagmiConfig, { chainId: payChain.id as 1 })
+    try {
+      const hash = await provider.sendTransaction({
+        to: data.to,
+        value: data.amount,
+        account: webIrys.address as `0x${string}`,
+      })
+      return hash
+    } finally {
+      // Back where it was, for what the screen does next. A wallet that refuses is caught by that screen's own check.
+      if (from && from !== payChain.id) await switchChain(wagmiConfig, { chainId: from as 1 }).catch(() => undefined)
+    }
   }
 
   webIrys.tokenConfig.createTx = async (amount, to, fee): Promise<{ txId: string | undefined; tx: any }> => {

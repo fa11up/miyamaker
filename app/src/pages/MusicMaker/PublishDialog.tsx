@@ -8,7 +8,8 @@ import { wagmiConfig } from '@/config/wagmi'
 import { buildMusicMetadata, type MusicForm, validateAudioFile, validateImageFile } from '@/music/audio'
 import { MUSIC_CHAINS } from '@/music/config'
 import { parseAlignmentPct, parseEdition, parsePriceEth } from '@/music/drop'
-import { describeTxError, useMusicChain } from '@/pages/DropMusic/useDropMusic'
+import { useMusicChain } from '@/pages/DropMusic/useDropMusic'
+import { plainTxError } from '@/miyamints/errors'
 import { space, text } from '@/theme/tokens'
 import { isUnconfirmed } from '@/utils/batch'
 import { fundAndUpload } from '@/utils/fundAndUpload'
@@ -257,7 +258,7 @@ export default function PublishDialog({ job, onClose }: { job: PublishJob; onClo
       await run
       setStatus('')
     } catch (e) {
-      setError(isUnconfirmed(e) ? UNCONFIRMED : describeTxError(e) || (e as Error).message)
+      setError(isUnconfirmed(e) ? UNCONFIRMED : plainTxError(e))
       setStatus('')
     } finally {
       setBusy(false)
@@ -524,7 +525,7 @@ export default function PublishDialog({ job, onClose }: { job: PublishJob; onClo
           : 'Edition is live. Mint a copy from Music drops to see it in My Files.'
       )
     } catch (e) {
-      setError(isUnconfirmed(e) ? UNCONFIRMED : describeTxError(e) || (e as Error).message)
+      setError(isUnconfirmed(e) ? UNCONFIRMED : plainTxError(e))
       setStatus('')
     } finally {
       setBusy(false)

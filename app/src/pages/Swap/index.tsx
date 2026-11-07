@@ -1,25 +1,31 @@
 import { useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate, useNavigationType } from 'react-router-dom'
-import styled from 'styled-components/macro'
+import styled, { css } from 'styled-components/macro'
 import { useElementSize } from 'usehooks-ts'
+import { useAccount } from 'wagmi'
 
 import TitleBar from '@/components/TitleBar'
 import WindowWrapper from '@/components/WindowWrapper'
+import { mainnet } from '@/config/wagmi'
 import Pages from '@/constants/pages'
 import { useAppDispatch } from '@/store/hooks'
 import { closeWindow, minimizeWindow } from '@/store/windows/actions'
 import { useFullscreen } from '@/store/windows/hooks'
 
-import type { SwapToken } from './constants'
-import { DEFAULT_PAIR } from './constants'
+import type { SwapChainId, SwapToken } from './constants'
+import { isSwapChain, PINNED_TOKENS, sameAddress, SWAP_CHAINS } from './constants'
 import { Chip } from './floor/retro'
+import { PRICE_STATUS_WORDS } from './board'
 import { color, font, space, text } from './floor/tokens'
-import { Tape, useBoard } from './MarketBoard'
+import { ChainTabs } from './layout'
+import { Tape, TokenTable, useBoard } from './MarketBoard'
 import NftTrade from './nft/NftTrade'
+import { Field } from './nft/ui'
+import TokenPage, { TokenResults } from './TokenPage'
 import type { SwapPreset } from './TokenSwap'
-import TokenSwap from './TokenSwap'
-import type { CollectionRef, TradeMode } from './tradePath'
+import type { CollectionRef, TokenRef, TradeMode } from './tradePath'
 import { parseTradePath, TRADE_PATH, tradePath } from './tradePath'
+import { useCustomToken, useTokenList } from './useTokens'
 
 const page = Pages.swap
 
@@ -40,6 +46,31 @@ const Root = styled.div`
   a {
     color: ${color.link};
   }
+  /* Trade's own scrollbars: no grey Win95 buttons in the middle of a dark window. */
+  *::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  *::-webkit-scrollbar-track {
+    background: ${color.well};
+    box-shadow: none;
+  }
+  *::-webkit-scrollbar-thumb {
+    background: ${color.light};
+    border: none;
+    box-shadow: none;
+  }
+  *::-webkit-scrollbar-thumb:hover {
+    background: ${color.dark};
+  }
+  *::-webkit-scrollbar-button {
+    display: none;
+    width: 0;
+    height: 0;
+  }
+  *::-webkit-scrollbar-corner {
+    background: ${color.well};
+  }
 `
 
 const Bar = styled.header`
@@ -49,7 +80,8 @@ const Bar = styled.header`
   flex-wrap: wrap;
   gap: ${space[1]} ${space[3]};
   padding: ${space[2]} ${space[3]};
-  background: repeating-linear-gradient(0deg, rgba(0, 0, 0, 0.22) 0 1px, transparent 1px 3px),
+  background:
+    repeating-linear-gradient(0deg, rgba(0, 0, 0, 0.22) 0 1px, transparent 1px 3px),
     linear-gradient(180deg, #1b2630, ${color.face});
   border-bottom: 1px solid ${color.dark};
   /* Chrome lettering, in amber instead of miyanet's pink. */
@@ -84,6 +116,15 @@ const Bar = styled.header`
     align-items: center;
     gap: ${space[2]};
   }
+  .chains {
+    flex: 0 1 300px;
+    min-width: 0;
+  }
+  .chains button {
+    height: 28px;
+    font-size: ${text.xs};
+    white-space: nowrap;
+  }
   .lcd {
     padding: 2px ${space[2]};
     background: #000;
@@ -98,8 +139,23 @@ const Bar = styled.header`
     color: ${color.danger};
     text-shadow: none;
   }
+  .lcd.some,
+  .lcd.loading {
+    color: ${color.warning};
+    text-shadow: none;
+  }
+  /* The title bar already says Trade, and a phone needs the rows. */
   .narrow & h1 {
-    font-size: 20px;
+    display: none;
+  }
+  .narrow & .chains {
+    flex: 1 1 100%;
+  }
+  .narrow & .chains button {
+    height: 44px;
+  }
+  .narrow & .readout {
+    margin-left: 0;
   }
 `
 
@@ -120,56 +176,101 @@ function Clock() {
 const Floor = styled.div`
   flex: 1 1 auto;
   min-height: 0;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 380px;
-  &.one {
-    grid-template-columns: minmax(0, 1fr);
+  display: flex;
+  &.home {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+  /* No room for two columns: NFTs, then tokens, on one long page. */
+  &.home.stack {
+    display: block;
+    overflow-y: auto;
+    scrollbar-gutter: stable;
   }
 `
 
 const Pane = styled.div`
+  flex: 1 1 auto;
   min-height: 0;
   min-width: 0;
   overflow-y: auto;
   overflow-x: hidden;
+  scrollbar-gutter: stable;
   &[hidden] {
     display: none;
   }
-  &.dock {
-    border-left: 1px solid ${color.dark};
-    background: ${color.face};
-  }
-  .one &.dock {
-    border-left: none;
+  .stack > & {
+    overflow: visible;
   }
 `
 
-/* One column: the market and the swap take turns. */
-const PaneTabs = styled.div`
-  flex: none;
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  border-bottom: 1px solid ${color.dark};
-  button {
-    min-height: 44px;
-    border: none;
-    background: ${color.face};
-    color: ${color.inkMuted};
-    font-size: ${text.sm};
-    cursor: pointer;
+const Search = styled.div`
+  grid-column: 1 / -1;
+  padding: ${space[3]} ${space[4]} 0;
+  input {
+    box-sizing: border-box;
+    width: 100%;
   }
-  button[aria-selected='true'] {
-    color: ${color.accent};
-    font-weight: 700;
-    box-shadow: inset 0 -2px 0 ${color.accent};
+  .narrow & {
+    padding: ${space[2]} ${space[3]} 0;
+  }
+`
+
+/* Half a page each: tighter cells, so the sort arrows don't come out of the names. */
+const tightCells = css`
+  && th,
+  && td {
+    padding-left: ${space[2]};
+    padding-right: ${space[2]};
+  }
+  && th:first-child,
+  && td:first-child {
+    padding-left: ${space[3]};
+    width: 34%;
+  }
+  && .name {
+    width: 100%;
+  }
+  /* One figure beside the name on a slim window: the name takes the room, instead of breaking mid-word. */
+  .slim && th:first-child,
+  .slim && td:first-child {
+    width: 100%;
+  }
+`
+
+const NftsPane = styled(Pane)`
+  ${tightCells}
+  /* Half the page: a long collection name takes a second line rather than losing its end. */
+  tbody .words {
+    white-space: normal;
+    line-height: 1.2;
+  }
+`
+
+const TokensPane = styled(Pane)`
+  ${tightCells}
+  padding: ${space[3]} ${space[4]} ${space[3]} 0;
+  .stack > & {
+    padding: ${space[3]} ${space[4]};
+  }
+  .narrow .stack > & {
+    padding: ${space[2]} ${space[3]};
+  }
+  /* The NFTs' header mirrored: dark at the middle of the page, its colour and title at the outer edge. */
+  section > h2 {
+    text-align: right;
+    background:
+      repeating-linear-gradient(0deg, rgba(0, 0, 0, 0.25) 0 1px, transparent 1px 3px),
+      linear-gradient(270deg, #4a3408, ${color.face} 70%);
   }
 `
 
 /**
- * Trade: one floor for tokens and NFTs. The market (token prices, collections, pools, any collection or NFT) fills the
- * left, and the 0x swap stays docked on the right, so neither ever hides the other; in a narrow window they take turns.
- * Both stay mounted so nothing loses a trade in progress. The view lives in the path (/trade, /trade/nfts,
- * /trade/nfts/<pool>, /trade/nfts/collection/<chain>/<address>[/<id>]) so it can be shared and Back works.
+ * Trade under one header. Home is NFTs on the left and tokens on the right; each opens its own page: a collection with its
+ * listings, or a token with its chart, market and swap. Pages stay mounted once opened so nothing loses a trade in progress.
+ * The view lives in the path (/trade, /trade/tokens/<chain>/<address>, /trade/nfts/<pool>,
+ * /trade/nfts/collection/<chain>/<address>[/<id>]) so it can be shared and Back works.
  */
 export default function TradePage() {
   const [fullscreen, toggleFullscreen] = useFullscreen('swap')
@@ -179,10 +280,7 @@ export default function TradePage() {
 
   const [rootRef, { width }] = useElementSize()
   const narrow = width > 0 && width <= 440
-  const oneColumn = width > 0 && width < 820
   const slim = width > 0 && width < 980
-  const board = useBoard()
-
   const location = useLocation()
   const navigationType = useNavigationType()
   const navigate = useNavigate()
@@ -191,41 +289,105 @@ export default function TradePage() {
   const [collection, setCollection] = useState<CollectionRef | undefined>(initial.current.collection)
   const [offline, setOffline] = useState(false)
   const [preset, setPreset] = useState<SwapPreset>()
-  const [pane, setPane] = useState<'market' | 'swap'>('market')
+  const [mode, setMode] = useState<TradeMode>(initial.current.mode)
+  const [tokenRef, setTokenRef] = useState<TokenRef | undefined>(initial.current.token)
+  // Where a token page was opened from inside Trade, so its back button returns there. Empty for a link from outside.
+  const [tokenFrom, setTokenFrom] = useState<string>()
 
-  /** Put a token in the docked swap: buy it with ETH (or sell it, if it is ETH already). */
-  const tradeToken = (t: SwapToken) => {
-    const [eth, infer] = DEFAULT_PAIR[1]
-    setPreset(
-      t.symbol === eth.symbol
-        ? { key: Date.now(), chainId: 1, sell: eth, buy: infer }
-        : { key: Date.now(), chainId: 1, sell: eth, buy: t }
-    )
-    setPane('swap')
-  }
+  // One network for the whole floor: the market and the swap can't disagree about where you are trading.
+  const { chainId: walletChainId } = useAccount()
+  const linked = initial.current.collection?.chainId ?? initial.current.token?.chainId
+  const [chainId, setChainId] = useState<SwapChainId>(
+    isSwapChain(linked) ? linked : isSwapChain(walletChainId) ? walletChainId : mainnet.id,
+  )
+  const [marketBusy, setMarketBusy] = useState(false)
+  const [swapBusy, setSwapBusy] = useState(false)
+  const tradeBusy = marketBusy || swapBusy
+  const board = useBoard(chainId)
+  // One search for the whole home page. A pasted token's address isn't a collection, so the NFT side leaves it alone.
+  const [query, setQuery] = useState('')
+  const list = useTokenList(chainId)
+  const custom = useCustomToken(chainId, query, list.tokens)
+  const pastedToken = custom.listed || custom.token
 
-  const go = (nextMode: TradeMode, nextPool?: `0x${string}`, nextCollection?: CollectionRef) => {
+  // Follow the wallet onto a supported chain, unless a link to one thing is open.
+  // Not during a trade: changing the floor's network would take the screen with it. It catches up when the trade ends.
+  const followedChain = useRef(walletChainId)
+  useEffect(() => {
+    if (tradeBusy || followedChain.current === walletChainId) return
+    followedChain.current = walletChainId
+    if (isSwapChain(walletChainId) && !collection && !pool && !tokenRef) setChainId(walletChainId)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [walletChainId, tradeBusy])
+  useEffect(() => {
+    if (isSwapChain(collection?.chainId)) setChainId(collection!.chainId as SwapChainId)
+  }, [collection?.chainId])
+  useEffect(() => {
+    if (isSwapChain(tokenRef?.chainId)) setChainId(tokenRef!.chainId as SwapChainId)
+  }, [tokenRef?.chainId])
+
+  const view = mode === 'tokens' ? (tokenRef ? 'token' : 'home') : pool || collection ? 'nft' : 'home'
+  // The token page opens the first time it is wanted, then keeps its place (and any swap in flight) behind the others.
+  const lastToken = useRef(tokenRef)
+  if (tokenRef) lastToken.current = tokenRef
+
+  const go = (nextMode: TradeMode, nextPool?: `0x${string}`, nextCollection?: CollectionRef, nextToken?: TokenRef) => {
+    setMode(nextMode)
     if (nextMode === 'nfts') {
       setPool(nextPool)
       setCollection(nextPool ? undefined : nextCollection)
+    } else {
+      setTokenRef(nextToken)
+      if (!nextToken) {
+        setPool(undefined)
+        setCollection(undefined)
+      }
     }
 
     const path =
-      nextMode === 'nfts' ? tradePath(nextMode, nextPool, nextPool ? undefined : nextCollection) : tradePath(nextMode)
+      nextMode === 'nfts'
+        ? tradePath(nextMode, nextPool, nextPool ? undefined : nextCollection)
+        : tradePath(nextMode, undefined, undefined, nextToken)
     if (location.pathname !== path) navigate(path)
   }
 
+  const openToken = (t: SwapToken) => {
+    setPreset(undefined)
+    setTokenFrom(location.pathname)
+    go('tokens', undefined, undefined, { chainId: t.chainId, address: t.address })
+  }
+
+  const leaveToken = () => {
+    const from = tokenFrom ? parseTradePath(tokenFrom) : undefined
+    setTokenFrom(undefined)
+    if (from?.token) go('tokens', undefined, undefined, from.token)
+    else if (from?.mode === 'nfts') go('nfts', from.pool, from.collection)
+    else go('tokens')
+  }
+
   // Back/forward and links into a sub-path drive the view. A plain push to /trade is the OS re-focusing the window,
-  // which must not throw away the open tab, so only POP navigations return to Tokens.
+  // which must not throw away the open tab, so only POP navigations return to Tokens. A trade in flight keeps its
+  // screen: Back during one takes effect when it ends.
+  const syncedPath = useRef<string>()
   useEffect(() => {
+    const here = `${navigationType} ${location.pathname}`
+    if (tradeBusy || syncedPath.current === here) return
+    syncedPath.current = here
     if (!location.pathname.startsWith(TRADE_PATH)) return
     const next = parseTradePath(location.pathname)
     if (location.pathname === TRADE_PATH && navigationType !== 'POP') return
+    setMode(next.mode)
     if (next.mode === 'nfts') {
       setPool(next.pool)
       setCollection(next.collection)
+    } else {
+      setTokenRef(next.token)
+      if (!next.token) {
+        setPool(undefined)
+        setCollection(undefined)
+      }
     }
-  }, [location.pathname, navigationType])
+  }, [location.pathname, navigationType, tradeBusy])
 
   return (
     <WindowWrapper skin="floor">
@@ -250,42 +412,97 @@ export default function TradePage() {
       <Root ref={rootRef} className={[narrow && 'narrow', slim && 'slim'].filter(Boolean).join(' ') || undefined}>
         <Bar>
           <h1>trade</h1>
-          {!narrow && <p>Swap tokens. Buy NFTs. All in one place.</p>}
+          <span className="chains">
+            <ChainTabs role="group" aria-label="Network">
+              {SWAP_CHAINS.map((c) => (
+                <button
+                  key={c.id}
+                  type="button"
+                  aria-pressed={c.id === chainId}
+                  disabled={tradeBusy}
+                  onClick={() => {
+                    setChainId(c.id)
+                    go('tokens')
+                  }}
+                >
+                  {c.name}
+                </button>
+              ))}
+            </ChainTabs>
+          </span>
           <span className="readout">
             {offline && <Chip tone="warn">Swap offline</Chip>}
-            <span className={board.failed ? 'lcd off' : 'lcd'}>{board.failed ? 'PRICES OFF' : '● PRICES LIVE'}</span>
+            <span
+              className={board.status === 'live' ? 'lcd' : `lcd ${board.status}`}
+              data-price-status={board.status}
+            >
+              {PRICE_STATUS_WORDS[board.status]}
+            </span>
             {!narrow && <Clock />}
           </span>
         </Bar>
-        <Tape rows={board.rows} onTrade={tradeToken} />
-        {oneColumn && (
-          <PaneTabs role="tablist" aria-label="Market or swap">
-            <button type="button" role="tab" aria-selected={pane === 'market'} onClick={() => setPane('market')}>
-              Market
-            </button>
-            <button type="button" role="tab" aria-selected={pane === 'swap'} onClick={() => setPane('swap')}>
-              Swap
-            </button>
-          </PaneTabs>
-        )}
-        <Floor className={oneColumn ? 'one' : undefined}>
-          <Pane hidden={oneColumn && pane !== 'market'} data-trade-market>
+        <Tape rows={board.rows} loading={board.loading} disabled={tradeBusy} onTrade={openToken} />
+        <Floor className={view === 'home' ? (slim ? 'home stack' : 'home') : undefined}>
+          {view === 'home' && (
+            <Search>
+              <Field
+                type="search"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search or paste an address"
+                aria-label="Search NFTs and tokens by name, or paste an address"
+                spellCheck={false}
+              />
+            </Search>
+          )}
+          <NftsPane hidden={view === 'token'} data-trade-nfts>
             <NftTrade
+              query={pastedToken ? '' : query}
+              chainId={chainId}
+              onBusy={setMarketBusy}
               pool={pool}
               collection={collection}
-              board={board}
-              onTradeToken={tradeToken}
+              visible={view !== 'token'}
               onOpenPool={(p) => go('nfts', p)}
               onOpenCollection={(c) => go('nfts', undefined, c)}
               onSwapToken={(p) => {
+                // Pool tokens are the only ones here that aren't on the list, and the page is about them.
+                const pinned = (t?: SwapToken) =>
+                  PINNED_TOKENS[p.chainId].some((x) => sameAddress(x.address, t?.address))
+                const subject = pinned(p.buy) ? p.sell : p.buy
                 setPreset({ ...p, key: Date.now() })
-                setPane('swap')
+                setTokenFrom(location.pathname)
+                if (subject) go('tokens', undefined, undefined, { chainId: p.chainId, address: subject.address })
               }}
             />
-          </Pane>
-          <Pane className="dock" hidden={oneColumn && pane !== 'swap'} data-trade-swap>
-            <TokenSwap preset={preset} onOffline={setOffline} />
-          </Pane>
+          </NftsPane>
+          <TokensPane hidden={view !== 'home'} data-trade-home-tokens>
+            {query.trim() ? (
+              <TokenResults
+                query={query}
+                tokens={list.tokens}
+                pasted={pastedToken}
+                loading={list.isLoading || custom.isLoading}
+                onOpen={openToken}
+              />
+            ) : (
+              <TokenTable rows={board.rows} failed={board.failed} loading={board.loading} onTrade={openToken} />
+            )}
+          </TokensPane>
+          {lastToken.current && (
+            <Pane hidden={view !== 'token'} data-trade-tokens>
+              <TokenPage
+                chainId={chainId}
+                onChain={setChainId}
+                onBusy={setSwapBusy}
+                address={lastToken.current.chainId === chainId ? lastToken.current.address : undefined}
+                preset={preset}
+                onBack={leaveToken}
+                backLabel={tokenFrom ? 'Back' : 'All tokens'}
+                onOffline={setOffline}
+              />
+            </Pane>
+          )}
         </Floor>
       </Root>
     </WindowWrapper>

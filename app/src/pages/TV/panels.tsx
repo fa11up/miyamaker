@@ -8,17 +8,22 @@ import { useRadio } from '@/context/RadioProvider'
 import { fetchStation, toTrack } from '@/music/community'
 import { font, space, text } from '@/theme/tokens'
 
-import { airList, parseYouTubeId, STATION_SUBMITTER } from '../../../api/_lib/publicaccess'
+import { airList, parseYouTubeId, STATION_SUBMITTER, tapeProblem } from '../../../api/_lib/publicaccess'
 import { glow } from './chat/ChatPanel'
+import { LAND_PATH } from './earth'
+import type { FocusTimer } from './focusTimer'
+import { focusLength, mmss } from './focusTimer'
 import { fetchTapes, reviewTape, submitTape } from './publicAccess'
-import { parseEvents, parseVitals, SQUEEK_API } from './squeek'
+import type { Point } from './issMath'
+import { bearing, compass, destination, headingLabel, mapSegments, nightSide, viewFan, viewRing } from './issMath'
+import { formatDistance, parseLifetimeMetres, parseVitals, SQUEEK_API } from './squeek'
 
 /* Each channel's own sidebar, in the same dark walnut and cream as its chat. */
 
 const Panel = styled.div`
   flex: 1 1 auto;
-  min-height: 0;
-  overflow-y: auto;
+  min-width: 0;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   gap: ${space[2]};
@@ -51,6 +56,9 @@ const Panel = styled.div`
     color: #2a1a0e;
     font-size: ${text.xs};
     cursor: pointer;
+    .narrow & {
+      min-height: 40px;
+    }
   }
   button:active:not(:disabled) {
     transform: translateY(1px);
@@ -69,6 +77,11 @@ const Panel = styled.div`
     background: #120b06;
     color: ${glow.ink};
     font-size: 14px;
+    /* Under 16px, iPhone Safari zooms the page when the field is pressed. */
+    .narrow & {
+      height: 40px;
+      font-size: 16px;
+    }
   }
 `
 
@@ -161,75 +174,115 @@ const Big = styled.div`
   text-shadow: 0 0 8px rgba(255, 179, 71, 0.5);
 `
 
-const ago = (iso: string) => {
-  const s = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000))
-  if (!Number.isFinite(s)) return ''
-  if (s < 60) return `${s}s ago`
-  if (s < 3600) return `${Math.round(s / 60)}m ago`
-  return `${Math.round(s / 3600)}h ago`
-}
-
-const mmss = (s: number) => `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`
-
 /* ---------- Lofi Girl: a focus timer ---------- */
 
-const FOCUS = 25 * 60
-const REST = 5 * 60
+const Pips = styled.span`
+  display: inline-flex;
+  gap: 4px;
+  i {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #120b06;
+    box-shadow: inset 0 1px 2px #000;
+  }
+  i.on {
+    background: #ffb347;
+    box-shadow: 0 0 5px rgba(255, 179, 71, 0.7);
+  }
+`
 
-export function FocusPanel({ onRadio }: { onRadio: () => void }) {
-  const [left, setLeft] = useState(FOCUS)
-  const [running, setRunning] = useState(false)
-  const [resting, setResting] = useState(false)
-  const [done, setDone] = useState(0)
+const SpreadRow = styled.div`
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: ${space[2]};
+  min-width: 0;
+`
 
-  useEffect(() => {
-    if (!running) return undefined
-    const tick = setInterval(() => {
-      setLeft((l) => {
-        if (l > 1) return l - 1
-        setResting((r) => {
-          if (!r) setDone((d) => d + 1)
-          setLeft(r ? FOCUS : REST)
-          return !r
-        })
-        return l
-      })
-    }, 1000)
-    return () => clearInterval(tick)
-  }, [running])
-
+/** The timer itself lives with the set, so hiding the sidebar or changing channel leaves it running. */
+export function FocusPanel({
+  timer,
+  onToggle,
+  onReset,
+}: {
+  timer: FocusTimer
+  onToggle: () => void
+  onReset: () => void
+}) {
+  const { left, running, resting, done } = timer
+  const length = focusLength(timer)
   return (
     <Panel>
-      <h3>{resting ? 'Rest' : 'Focus'}</h3>
-      <Big role="timer">{mmss(left)}</Big>
-      <Row>
-        <button type="button" onClick={() => setRunning((r) => !r)}>
-          {running ? 'Pause' : 'Start'}
-        </button>
-        <button
-          type="button"
-          onClick={() => {
-            setRunning(false)
-            setResting(false)
-            setLeft(FOCUS)
-          }}
-        >
-          Reset
-        </button>
-      </Row>
-      <p>{done ? `${done} session${done === 1 ? '' : 's'} done.` : '25 minutes on, 5 off.'}</p>
-      <h3>Want our own music?</h3>
-      <p>The community station is on channel 2.</p>
-      <Row>
-        <button type="button" onClick={onRadio}>
-          Go to miya radio
-        </button>
-      </Row>
+      <SpreadRow>
+        <h3>{resting ? 'Rest' : 'Focus'}</h3>
+        <Pips role="img" aria-label={`${done} sessions done`}>
+          {[0, 1, 2, 3].map((i) => (
+            <i key={i} className={done % 4 > i || (done > 0 && done % 4 === 0) ? 'on' : undefined} />
+          ))}
+        </Pips>
+      </SpreadRow>
+      <SpreadRow>
+        <Big role="timer">{mmss(left)}</Big>
+        <Row style={{ flexWrap: 'nowrap' }}>
+          <button type="button" onClick={onToggle}>
+            {running ? 'Pause' : 'Start'}
+          </button>
+          <button type="button" onClick={onReset}>
+            Reset
+          </button>
+        </Row>
+      </SpreadRow>
+      <Bar
+        role="progressbar"
+        aria-label="Time through this session"
+        aria-valuenow={Math.round((100 * (length - left)) / length)}
+      >
+        <div style={{ width: `${(100 * (length - left)) / length}%` }} />
+      </Bar>
+      <p>25 minutes on, 5 off.</p>
     </Panel>
   )
 }
 
 /* ---------- Monterey Bay: a spotting log ---------- */
+
+const Tiles = styled.div`
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  button {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 4px;
+    min-width: 0;
+    text-align: left;
+  }
+  span {
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  b {
+    font-family: ${font.mono};
+  }
+`
+
+const ClearLink = styled.button`
+  && {
+    min-height: 0;
+    padding: 0 2px;
+    background: none;
+    box-shadow: none;
+    color: ${glow.link};
+    text-decoration: underline;
+  }
+  .narrow && {
+    min-height: 32px;
+    padding: 0 8px;
+  }
+`
 
 const BIRDS = ['Sandpiper', 'Avocet', 'Snowy plover', 'Oystercatcher', 'Turnstone', 'Someone else']
 const SPOTTED_KEY = 'miyatv.spotted'
@@ -256,26 +309,38 @@ export function SpottingPanel() {
   const total = Object.values(counts).reduce((a, b) => a + b, 0)
   return (
     <Panel>
-      <h3>Spotting log</h3>
-      <p>Who’s in the aviary? Tap when you see one. Your own tally, kept on this device.</p>
-      <List>
+      <SpreadRow>
+        <h3>Spotting log</h3>
+        <SpreadRow>
+          {total > 0 && (
+            <ClearLink
+              type="button"
+              onClick={() => {
+                setCounts({})
+                try {
+                  window.localStorage.removeItem(SPOTTED_KEY)
+                } catch {
+                  // ignore
+                }
+              }}
+            >
+              Clear
+            </ClearLink>
+          )}
+          <Readout as="span" style={{ display: 'block' }}>
+            <dd>{total} seen</dd>
+          </Readout>
+        </SpreadRow>
+      </SpreadRow>
+      <p>Who’s in the aviary? Tap when you see one.</p>
+      <Tiles>
         {BIRDS.map((bird) => (
-          <li key={bird}>
-            <span className="words">
-              <b>{bird}</b>
-            </span>
-            <span className="row">
-              <Readout as="span" style={{ display: 'block' }}>
-                <dd>{counts[bird] ?? 0}</dd>
-              </Readout>
-              <button type="button" aria-label={`Spotted a ${bird}`} onClick={() => spot(bird)}>
-                Spotted
-              </button>
-            </span>
-          </li>
+          <button key={bird} type="button" aria-label={`Spotted: ${bird}`} onClick={() => spot(bird)}>
+            <span>{bird}</span>
+            <b>{counts[bird] ?? 0}</b>
+          </button>
         ))}
-      </List>
-      <p>{total ? `${total} sighting${total === 1 ? '' : 's'} so far.` : 'Nothing logged yet.'}</p>
+      </Tiles>
     </Panel>
   )
 }
@@ -286,74 +351,246 @@ const Map = styled.svg`
   display: block;
   width: 100%;
   border-radius: 4px;
-  background: #120b06;
+  background: #0b2a44;
+  box-shadow: 0 0 0 1px ${glow.line};
+  text {
+    font-family: ${font.mono};
+    font-size: 8px;
+    fill: rgba(243, 231, 207, 0.6);
+  }
 `
 
+const ISS_API = 'https://api.wheretheiss.at/v1'
+type IssPosition = {
+  latitude: number
+  longitude: number
+  altitude: number
+  velocity: number
+  visibility: string
+  footprint: number
+  timestamp: number
+  solar_lat: number
+  solar_lon: number
+}
+
+const positionsAt = async (timestamps: number[]) => {
+  const res = await fetch(`${ISS_API}/satellites/25544/positions?timestamps=${timestamps.join(',')}`)
+  if (!res.ok) throw new Error('No position')
+  return (await res.json()) as IssPosition[]
+}
+
+const ORBIT_STEP = 180
+const toPoint = (p: IssPosition): Point => ({ lat: p.latitude, lon: p.longitude })
+
 export function IssPanel() {
-  const trail = useRef<[number, number][]>([])
   const iss = useQuery({
     queryKey: ['iss'],
     queryFn: async () => {
-      const res = await fetch('https://api.wheretheiss.at/v1/satellites/25544')
+      const res = await fetch(`${ISS_API}/satellites/25544`)
       if (!res.ok) throw new Error('No position')
-      return (await res.json()) as {
-        latitude: number
-        longitude: number
-        altitude: number
-        velocity: number
-        visibility: string
-      }
+      return (await res.json()) as IssPosition
     },
     refetchInterval: 5000,
   })
+  // 45 minutes either side, half an orbit each way. The API takes ten times to a call.
+  const orbit = useQuery({
+    queryKey: ['iss-orbit'],
+    queryFn: async () => {
+      const now = Math.floor(Date.now() / 1000)
+      const times = Array.from({ length: 30 }, (_, i) => now + (i - 15) * ORBIT_STEP)
+      const parts = await Promise.all([0, 10, 20].map((n) => positionsAt(times.slice(n, n + 10))))
+      return parts.flat()
+    },
+    refetchInterval: 5 * 60_000,
+    retry: 1,
+  })
+  const ahead = useQuery({
+    queryKey: ['iss-heading'],
+    queryFn: async () => {
+      const now = Math.floor(Date.now() / 1000)
+      const [from, to] = await positionsAt([now, now + 60])
+      return from && to ? bearing(toPoint(from), toPoint(to)) : undefined
+    },
+    refetchInterval: 30_000,
+    retry: 1,
+  })
   const d = iss.data
-  if (d) {
-    const last = trail.current[trail.current.length - 1]
-    if (!last || last[0] !== d.longitude) trail.current = [...trail.current.slice(-200), [d.longitude, d.latitude]]
-  }
+  const heading = ahead.data
+  const over = useQuery({
+    queryKey: ['iss-over', d ? Math.round(d.latitude) : 0, d ? Math.round(d.longitude / 5) : 0],
+    enabled: !!d,
+    staleTime: 30_000,
+    placeholderData: (previous) => previous,
+    retry: 0,
+    queryFn: async () => {
+      const res = await fetch(`${ISS_API}/coordinates/${d!.latitude.toFixed(2)},${d!.longitude.toFixed(2)}`)
+      if (!res.ok) throw new Error('No place')
+      return ((await res.json()) as { country_code?: string }).country_code
+    },
+  })
+
+  const here = d && toPoint(d)
+  const past = (orbit.data ?? []).filter((p) => !d || p.timestamp <= d.timestamp).map(toPoint)
+  const future = (orbit.data ?? []).filter((p) => d && p.timestamp > d.timestamp).map(toPoint)
+  const horizon = d ? d.footprint / 2 : 0
+  const fan = here && heading !== undefined ? viewFan(here, heading, horizon) : undefined
+  // On the map, the arrow follows the line of the orbit, which is what the eye compares it with.
+  const nose = here && heading !== undefined ? destination(here, heading, 600) : undefined
+  const turn = here && nose ? (Math.atan2(here.lat - nose.lat, nose.lon - here.lon) * 180) / Math.PI : 0
 
   return (
     <Panel>
-      <h3>Where it is now</h3>
+      <SpreadRow>
+        <h3>Right now</h3>
+        {heading !== undefined && (
+          <Readout as="span" style={{ display: 'block' }}>
+            <dd>{headingLabel(heading)}</dd>
+          </Readout>
+        )}
+      </SpreadRow>
       <Map
         viewBox="-180 -90 360 180"
         role="img"
         aria-label={
-          d ? `Latitude ${d.latitude.toFixed(0)}, longitude ${d.longitude.toFixed(0)}` : 'Finding the station'
+          d
+            ? `The station is at latitude ${d.latitude.toFixed(0)}, longitude ${d.longitude.toFixed(0)}${
+                heading !== undefined ? `, heading ${compass(heading)}` : ''
+              }`
+            : 'Finding the station'
         }
       >
-        {[-120, -60, 0, 60, 120].map((x) => (
-          <line key={x} x1={x} x2={x} y1={-90} y2={90} stroke={glow.line} strokeWidth="0.6" />
+        <path d={LAND_PATH} fill="#4f7a58" stroke="#274a33" strokeWidth="0.4" />
+        {d && <polygon points={nightSide({ lat: d.solar_lat, lon: d.solar_lon })} fill="#01060f" opacity="0.5" />}
+        {[-150, -120, -90, -60, -30, 0, 30, 60, 90, 120, 150].map((x) => (
+          <line
+            key={x}
+            x1={x}
+            x2={x}
+            y1={-90}
+            y2={90}
+            stroke="#f3e7cf"
+            strokeOpacity={x === 0 ? 0.35 : 0.14}
+            strokeWidth="0.5"
+          />
         ))}
         {[-60, -30, 0, 30, 60].map((y) => (
-          <line key={y} x1={-180} x2={180} y1={y} y2={y} stroke={glow.line} strokeWidth={y === 0 ? 1.2 : 0.6} />
+          <line
+            key={y}
+            x1={-180}
+            x2={180}
+            y1={y}
+            y2={y}
+            stroke="#f3e7cf"
+            strokeOpacity={y === 0 ? 0.35 : 0.14}
+            strokeWidth="0.5"
+          />
         ))}
-        {trail.current.map(([x, y], i) => (
-          <circle key={i} cx={x} cy={-y} r="1.1" fill="#cf6a1c" opacity={0.25 + (0.6 * i) / trail.current.length} />
+        <text x="-177" y="-62">
+          60N
+        </text>
+        <text x="-177" y="-2">
+          EQ
+        </text>
+        <text x="-177" y="58">
+          60S
+        </text>
+        <text x="-88" y="87">
+          90W
+        </text>
+        <text x="92" y="87">
+          90E
+        </text>
+        {mapSegments(past).map((line) => (
+          <polyline key={line} points={line} fill="none" stroke="#ffb347" strokeOpacity="0.55" strokeWidth="1" />
         ))}
-        {d && <circle cx={d.longitude} cy={-d.latitude} r="5" fill="#ffb347" stroke="#fff7e6" strokeWidth="1" />}
+        {mapSegments(here ? [here, ...future] : future).map((line) => (
+          <polyline key={line} points={line} fill="none" stroke="#fff7e6" strokeWidth="1" strokeDasharray="3 3" />
+        ))}
+        {here &&
+          viewRing(here, horizon).map((line) => (
+            <polyline key={line} points={line} fill="none" stroke="#ffb347" strokeWidth="0.8" />
+          ))}
+        {fan && <polygon points={fan} fill="#ffb347" fillOpacity="0.32" />}
+        {d && (
+          <g transform={`translate(${d.longitude} ${-d.latitude}) rotate(${turn})`}>
+            <path d="M9 0 L-5 -5 L-2 0 L-5 5 Z" fill="#ffb347" stroke="#2a1a0e" strokeWidth="0.8" />
+          </g>
+        )}
       </Map>
       {iss.isError && !d && <p>Could not find the station just now.</p>}
       {d && (
-        <Readout>
-          <dt>Latitude</dt>
-          <dd>{d.latitude.toFixed(2)}°</dd>
-          <dt>Longitude</dt>
-          <dd>{d.longitude.toFixed(2)}°</dd>
-          <dt>Altitude</dt>
-          <dd>{d.altitude.toFixed(0)} km</dd>
-          <dt>Speed</dt>
-          <dd>{Math.round(d.velocity).toLocaleString()} km/h</dd>
-          <dt>Outside</dt>
-          <dd>{d.visibility === 'daylight' ? 'Sunlight' : 'Earth’s shadow'}</dd>
-        </Readout>
+        <Wheel>
+          <div>
+            <span>Over</span>
+            <b>{placeName(over.data)}</b>
+          </div>
+          <div>
+            <span>Light</span>
+            <b>{d.visibility === 'daylight' ? 'Sunlight' : 'In shadow'}</b>
+          </div>
+          <div>
+            <span>Altitude</span>
+            <b>{d.altitude.toFixed(0)} km</b>
+          </div>
+          <div>
+            <span>Speed</span>
+            <b>{Math.round(d.velocity).toLocaleString()} km/h</b>
+          </div>
+        </Wheel>
       )}
-      <p>It goes round every 90 minutes or so. Leave this open and you’ll see its path draw itself.</p>
     </Panel>
   )
 }
 
+const placeName = (code?: string) => {
+  if (!code) return '…'
+  if (code === '??') return 'Open water'
+  try {
+    return new Intl.DisplayNames(undefined, { type: 'region' }).of(code) ?? code
+  } catch {
+    return code
+  }
+}
+
 /* ---------- squeekchain: the hamster's vitals ---------- */
+
+const Wheel = styled.div`
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  > div {
+    padding: ${space[1]} ${space[2]};
+    border-radius: 4px;
+    background: ${glow.panel};
+  }
+  span {
+    display: block;
+    font-size: ${text.xs};
+    color: ${glow.muted};
+  }
+  b {
+    font-family: ${font.mono};
+    font-size: 15px;
+    font-weight: 400;
+    color: #ffb347;
+  }
+`
+
+const Lamp = styled.span<{ $on: boolean }>`
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: ${text.xs};
+  color: ${glow.muted};
+  &::before {
+    content: '';
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: ${({ $on }) => ($on ? '#7be08a' : '#6d5c3c')};
+    box-shadow: ${({ $on }) => ($on ? '0 0 6px #7be08a' : 'none')};
+  }
+`
 
 export function SqueekPanel() {
   const status = useQuery({
@@ -361,89 +598,102 @@ export function SqueekPanel() {
     queryFn: async () => parseVitals(await (await fetch(`${SQUEEK_API}/status`)).json()),
     refetchInterval: 5000,
   })
-  const events = useQuery({
-    queryKey: ['squeek-events'],
-    queryFn: async () => parseEvents(await (await fetch(`${SQUEEK_API}/events?limit=8`)).json()),
-    refetchInterval: 15_000,
-  })
+  const lifetime = useQuery({
+    queryKey: ['squeek-lifetime'],
+    queryFn: async () => parseLifetimeMetres(await (await fetch(`${SQUEEK_API}/measurement/stats?range=7d`)).json()),
+    refetchInterval: 60_000,
+  }).data
   const v = status.data
   return (
     <Panel>
-      <h3>Hamster vitals</h3>
+      <SpreadRow>
+        <h3>Hamster vitals</h3>
+        {v && <Lamp $on={v.online}>{v.online ? 'Sensor online' : 'Sensor quiet'}</Lamp>}
+      </SpreadRow>
       {status.isError && !v && <p>Could not reach squeekchain.</p>}
       {v && (
         <>
-          <Readout>
-            <dt>Wheel</dt>
-            <dd>{v.running ? 'Running' : 'Stopped'}</dd>
-            <dt>Speed</dt>
-            <dd>{v.rpm.toFixed(0)} RPM</dd>
-            <dt>This run</dt>
-            <dd>{v.distanceMetres.toFixed(1)} m</dd>
-            <dt>Work done</dt>
-            <dd>{v.work}</dd>
-            <dt>Block</dt>
-            <dd>{v.blockHeight}</dd>
-          </Readout>
-          <Bar
-            role="progressbar"
-            aria-label="Progress through this block"
-            aria-valuenow={Math.round(v.blockProgress * 100)}
-          >
-            <div style={{ width: `${v.blockProgress * 100}%` }} />
-          </Bar>
-          <p>{v.online ? 'Live from the wheel, on testnet.' : 'The wheel has gone quiet.'}</p>
+          <SpreadRow>
+            <Big>{v.rpm.toFixed(0)}</Big>
+            <p style={{ flex: 1 }}>
+              RPM
+              <br />
+              {v.running ? 'On the wheel' : 'Resting'}
+            </p>
+          </SpreadRow>
+          <Wheel>
+            <div>
+              <span>Speed</span>
+              <b>{v.metresPerMinute.toFixed(1)} m/min</b>
+            </div>
+            <div>
+              <span>All time</span>
+              <b>{lifetime === undefined ? '–' : formatDistance(lifetime)}</b>
+            </div>
+          </Wheel>
         </>
       )}
-      <h3>On the chain</h3>
-      <List>
-        {(events.data ?? []).map((e) => (
-          <li key={e.id}>
-            <span className="words">
-              <b>{e.words}</b>
-              <span>{ago(e.at)}</span>
-            </span>
-            {e.tx && (
-              <a
-                href={`https://sepolia.etherscan.io/tx/${e.tx}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                aria-label="View on Etherscan"
-              >
-                ↗
-              </a>
-            )}
-          </li>
-        ))}
-      </List>
-      {events.data && !events.data.length && <p>Nothing has happened yet.</p>}
     </Panel>
   )
 }
 
 /* ---------- miya radio: what's on the station ---------- */
 
+const PageRow = styled.div`
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  font-size: ${text.xs};
+  color: ${glow.muted};
+  button {
+    min-height: 22px;
+  }
+  .narrow & button {
+    min-width: 36px;
+    min-height: 36px;
+  }
+`
+
+/** Lists page rather than scroll, so a panel stays short. */
+function usePages<T>(items: T[], size: number) {
+  const [wanted, setPage] = useState(0)
+  const pages = Math.max(1, Math.ceil(items.length / size))
+  const page = Math.min(wanted, pages - 1)
+  return {
+    shown: items.slice(page * size, (page + 1) * size),
+    pager:
+      pages > 1 ? (
+        <PageRow>
+          <button type="button" aria-label="Previous page" disabled={page === 0} onClick={() => setPage(page - 1)}>
+            ‹
+          </button>
+          <span>
+            {page + 1}/{pages}
+          </span>
+          <button type="button" aria-label="Next page" disabled={page === pages - 1} onClick={() => setPage(page + 1)}>
+            ›
+          </button>
+        </PageRow>
+      ) : null,
+  }
+}
+
 export function RadioPanel() {
   const radio = useRadio()
   const station = useQuery({ queryKey: ['station'], queryFn: fetchStation, refetchInterval: 60_000, retry: 1 })
   const tracks = station.data?.tracks ?? []
+  const { shown, pager } = usePages(tracks, 4)
   return (
     <Panel>
-      <h3>Now playing</h3>
-      <p>{radio.current ? `${radio.current.title}, ${radio.current.artist}` : 'Nothing yet.'}</p>
-      <Row>
-        <button type="button" disabled={!radio.current} onClick={radio.toggle}>
-          {radio.playing ? 'Pause' : 'Play'}
-        </button>
-        <button type="button" disabled={!radio.current} onClick={radio.next}>
-          Next
-        </button>
-      </Row>
-      <h3>On the station</h3>
+      <SpreadRow>
+        <h3>On the station</h3>
+        {pager}
+      </SpreadRow>
       {station.isError && <p>Could not load the station.</p>}
       {station.data && !tracks.length && <p>Nothing here yet.</p>}
       <List>
-        {tracks.map((t) => {
+        {shown.map((t) => {
           const track = toTrack(t)
           return (
             <li key={t.txId} className={radio.current?.id === track.id ? 'on' : undefined}>
@@ -472,13 +722,25 @@ export function PublicPanel({ tapeId, onPick }: { tapeId?: string; onPick: (vide
   const list = useQuery({ queryKey: ['public-access'], queryFn: fetchTapes, refetchInterval: 60_000, retry: 1 })
   const [link, setLink] = useState('')
   const [busy, setBusy] = useState(false)
+  const [waitingOnWallet, setWaitingOnWallet] = useState(false)
+  const stopWaiting = useRef<() => void>()
   const [note, setNote] = useState<string>()
 
   const me = address?.toLowerCase()
   const isAdmin = !!me && !!list.data?.admins.includes(me)
   const tapes = airList(list.data?.tapes)
   const pending = list.data?.pending ?? []
-  const sign = (message: string) => signMessageAsync({ message })
+  // A wallet that never answers would hold everything here for good, so the wait can be called off. The rejection reads
+  // as a cancel, and whatever the wallet says later goes nowhere.
+  const sign = (message: string) =>
+    new Promise<string>((resolve, reject) => {
+      setWaitingOnWallet(true)
+      stopWaiting.current = () => reject(new Error('user rejected'))
+      signMessageAsync({ message }).then(resolve, reject)
+    }).finally(() => {
+      stopWaiting.current = undefined
+      setWaitingOnWallet(false)
+    })
 
   const act = async (work: () => Promise<unknown>, done: string) => {
     setBusy(true)
@@ -488,28 +750,39 @@ export function PublicPanel({ tapeId, onPick }: { tapeId?: string; onPick: (vide
       setNote(done)
       qc.invalidateQueries({ queryKey: ['public-access'] })
     } catch (e) {
-      const m = (e as { shortMessage?: string })?.shortMessage || (e as Error).message
-      setNote(/user rejected|user denied|rejected the request/i.test(m) ? 'You cancelled it in your wallet.' : m)
+      setNote(tapeProblem(e))
     } finally {
       setBusy(false)
     }
   }
 
   const videoId = parseYouTubeId(link)
+  const onNow = tapes.some((t) => t.videoId === tapeId) ? tapeId : tapes[0]?.videoId
+  const onAir = usePages(tapes, 3)
+  const waiting = usePages(pending, 2)
   return (
     <Panel>
-      <h3>On air</h3>
+      <SpreadRow>
+        <h3>On air</h3>
+        {onAir.pager}
+      </SpreadRow>
       <List>
-        {tapes.map((t) => (
-          <li key={t.videoId} className={(tapeId ?? tapes[0]?.videoId) === t.videoId ? 'on' : undefined}>
+        {onAir.shown.map((t) => (
+          <li key={t.videoId} className={onNow === t.videoId ? 'on' : undefined}>
             <span className="words">
               <b title={t.title}>{t.title}</b>
               <span title={t.author}>{t.author}</span>
             </span>
             <span className="row">
-              <button type="button" aria-label={`Play ${t.title}`} onClick={() => onPick(t.videoId)}>
-                Play
-              </button>
+              {onNow === t.videoId ? (
+                <button type="button" disabled>
+                  On now
+                </button>
+              ) : (
+                <button type="button" aria-label={`Play ${t.title}`} onClick={() => onPick(t.videoId)}>
+                  Play
+                </button>
+              )}
               {address && t.submitter !== STATION_SUBMITTER && (isAdmin || t.submitter === me) && (
                 <button
                   type="button"
@@ -526,45 +799,53 @@ export function PublicPanel({ tapeId, onPick }: { tapeId?: string; onPick: (vide
       </List>
 
       <h3>Send in a tape</h3>
-      <p>Paste a YouTube link. The station looks at it before it airs.</p>
-      <input
-        type="url"
-        aria-label="YouTube link"
-        placeholder="https://youtu.be/…"
-        value={link}
-        disabled={busy}
-        onChange={(e) => setLink(e.target.value)}
-        onKeyDown={(e) => e.stopPropagation()}
-      />
-      <Row>
-        {isConnected && address ? (
-          <button
-            type="button"
-            disabled={!videoId || busy}
-            onClick={() =>
-              videoId &&
-              act(async () => {
-                await submitTape(videoId, address, sign)
-                setLink('')
-              }, 'Sent in. It airs once the station has looked at it.')
+      <p>Free to send. You sign a message. The station checks each tape before it airs.</p>
+      <SpreadRow>
+        <input
+          type="url"
+          aria-label="YouTube link"
+          placeholder="YouTube link"
+          style={{ flex: 1 }}
+          value={link}
+          disabled={busy}
+          onChange={(e) => setLink(e.target.value)}
+          onKeyDown={(e) => e.stopPropagation()}
+        />
+        <button
+          type="button"
+          disabled={!videoId || busy}
+          onClick={() => {
+            if (!videoId) return
+            if (!isConnected || !address) {
+              openConnectModal?.()
+              return
             }
-          >
-            {busy ? 'Working…' : 'Send it in'}
-          </button>
-        ) : (
-          <button type="button" onClick={() => openConnectModal?.()}>
-            Connect wallet
+
+            act(async () => {
+              await submitTape(videoId, address, sign)
+              setLink('')
+            }, 'Sent in. It airs once the station has looked at it.')
+          }}
+        >
+          {waitingOnWallet ? 'Check your wallet…' : busy ? 'Sending…' : 'Send it in'}
+        </button>
+        {waitingOnWallet && (
+          <button type="button" onClick={() => stopWaiting.current?.()}>
+            Cancel
           </button>
         )}
-      </Row>
+      </SpreadRow>
       {link && !videoId && <p>That doesn’t look like a YouTube video link.</p>}
       {note && <p role="status">{note}</p>}
 
       {isAdmin && address && (
         <>
-          <h3>Waiting for you ({pending.length})</h3>
+          <SpreadRow>
+            <h3>Waiting for you ({pending.length})</h3>
+            {waiting.pager}
+          </SpreadRow>
           <List>
-            {pending.map((t) => (
+            {waiting.shown.map((t) => (
               <li key={t.videoId}>
                 <span className="words">
                   <b title={t.title}>

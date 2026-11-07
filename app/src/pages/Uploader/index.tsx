@@ -1,20 +1,34 @@
-import styled from 'styled-components/macro'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import styled, { keyframes } from 'styled-components/macro'
 
 import ProgressBarUploader from '@/components/ProgressUploader'
-import { Panel } from '@/components/Retro'
+import { Panel, StatusBox } from '@/components/Retro'
 import { pinstripe, y2kSkin } from '@/components/Retro/y2k'
 import TitleBar from '@/components/TitleBar'
 import WindowWrapper from '@/components/WindowWrapper'
 import Pages from '@/constants/pages'
 import { useAppDispatch } from '@/store/hooks'
-import { closeWindow, deleteUploadOrder, finalizeUploadOrder, minimizeWindow } from '@/store/windows/actions'
-import { useFullscreen, useLastUploadRequest } from '@/store/windows/hooks'
+import { closeWindow, minimizeWindow } from '@/store/windows/actions'
+import { useFullscreen } from '@/store/windows/hooks'
 import type { PageKey } from '@/store/windows/reducer'
 import { space } from '@/theme/tokens'
 
 import { gel } from '../DropMusic/y2k'
 
 /** Infinite Upload's own material: the rainbow sheen of a blank CD on a night-blue burner. */
+const BOOT_MS = 2300
+const discBoot = keyframes`
+  0% { right: calc(50% - 150px); bottom: calc(50% - 150px); transform: scale(0.1) rotate(0deg); opacity: 0; }
+  14% { opacity: 1; }
+  30% { right: calc(50% - 150px); bottom: calc(50% - 150px); transform: scale(1.15) rotate(540deg); }
+  62% { right: calc(50% - 150px); bottom: calc(50% - 150px); transform: scale(1.15) rotate(1440deg); }
+  100% { right: -66px; bottom: -78px; transform: scale(1) rotate(2160deg); }
+`
+const panelBoot = keyframes`
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: none; }
+`
+
 const Layout = styled.div`
   display: flex;
   align-items: center;
@@ -39,6 +53,15 @@ const Layout = styled.div`
     link: '#0b3fd1',
   })}
   position: relative;
+
+  /* Its boot: the disc spins up in the middle of the window, then slows and settles into place as the background. */
+  &.booting::before {
+    animation: ${discBoot} ${BOOT_MS}ms cubic-bezier(0.3, 0.1, 0.25, 1) both;
+  }
+  &.booting ${Panel} {
+    pointer-events: none;
+    animation: ${panelBoot} 0.45s ease-out ${BOOT_MS - 520}ms both;
+  }
 
   /* A blank disc, half out of the window. */
   &::before {
@@ -68,11 +91,44 @@ const Layout = styled.div`
     /* See-through enough that the disc still shows behind it. */
     background: rgba(240, 248, 255, 0.84);
     color: #07184a;
+    /* A short window or a phone scrolls the panel, so nothing is cut off under the fold. */
+    max-height: 100%;
+    overflow-y: auto;
     button {
       ${gel('#c8f6ff', '#27b8ff', '#04123a')}
       min-height: 28px;
       padding: 0 ${space[3]};
       cursor: pointer;
+    }
+    @media (max-width: 640px) {
+      button,
+      a {
+        min-height: 44px;
+      }
+    }
+  }
+`
+
+const CloseCheck = styled(StatusBox)`
+  position: absolute;
+  z-index: 2;
+  left: ${space[3]};
+  right: ${space[3]};
+  bottom: ${space[3]};
+  flex-wrap: wrap;
+  align-items: center;
+  > span {
+    flex: 1 1 14rem;
+  }
+  button {
+    ${gel('#c8f6ff', '#27b8ff', '#04123a')}
+    min-height: 32px;
+    padding: 0 ${space[3]};
+    cursor: pointer;
+  }
+  @media (max-width: 640px) {
+    button {
+      min-height: 44px;
     }
   }
 `
@@ -81,22 +137,30 @@ const page = Pages.uploader
 const pageId = page?.id as PageKey
 
 export default function MintPage() {
-  const uploadRequest = useLastUploadRequest()
-
   const [fullscreen, toggleFullscreen] = useFullscreen(pageId)
   const dispatch = useAppDispatch()
-  const close = () => {
-    if (uploadRequest) {
-      dispatch(deleteUploadOrder({ requestFrom: uploadRequest.requestFrom }))
-    }
+  const dropArea = useRef<HTMLDivElement>(null)
+  const [busy, setBusy] = useState(false)
+  const [booting, setBooting] = useState(() => !window.matchMedia('(prefers-reduced-motion: reduce)').matches)
+  useEffect(() => {
+    const t = setTimeout(() => setBooting(false), BOOT_MS)
+    return () => clearTimeout(t)
+  }, [])
+  const [checkingClose, setCheckingClose] = useState(false)
+  const onBusyChange = useCallback((value: boolean) => {
+    setBusy(value)
+    if (!value) setCheckingClose(false)
+  }, [])
 
-    dispatch(closeWindow({ value: pageId }))
+  const closeNow = () => dispatch(closeWindow({ value: pageId }))
+
+  // Closing unmounts the window and loses the result, so a running upload asks first.
+  const close = () => {
+    if (busy) setCheckingClose(true)
+    else closeNow()
   }
 
   const minimize = () => dispatch(minimizeWindow({ value: pageId }))
-
-  const finalize = (result: string) =>
-    dispatch(finalizeUploadOrder({ requestFrom: uploadRequest?.requestFrom || '', result }))
 
   return (
     <WindowWrapper skin="upload">
@@ -118,10 +182,24 @@ export default function MintPage() {
       >
         {page?.label}
       </TitleBar>
-      <Layout>
+      <Layout
+        ref={dropArea}
+        className={booting ? 'booting' : undefined}
+        onPointerDown={() => setBooting(false)}
+      >
         <Panel>
-          <ProgressBarUploader request={uploadRequest} onRequest={(value) => finalize(value)} />
+          <ProgressBarUploader
+            dropArea={dropArea}
+            onBusyChange={onBusyChange}
+          />
         </Panel>
+        {checkingClose && (
+          <CloseCheck tone="info" role="alertdialog">
+            <span>Upload still running. Close anyway? If you paid, it stays on your storage balance.</span>
+            <button onClick={() => setCheckingClose(false)}>Keep uploading</button>
+            <button onClick={closeNow}>Close anyway</button>
+          </CloseCheck>
+        )}
       </Layout>
     </WindowWrapper>
   )

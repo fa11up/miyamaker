@@ -292,6 +292,23 @@ contract MarketFactoryTest is MarketsBase {
         p.resolveAfter = p.lockAt + 24 hours;
         vm.prank(creator);
         factory.createMarket(p);
+
+        // a market can't put off its result, and so its void path, past the cap
+        p = _params(tWinner, _gameSlots());
+        p.resolveAfter = p.lockAt + factory.MAX_RESOLVE_GAP() + 1;
+        vm.prank(creator);
+        vm.expectRevert(MarketFactory.InvalidTimes.selector);
+        factory.createMarket(p);
+        p.resolveAfter = type(uint64).max;
+        vm.prank(creator);
+        vm.expectRevert(MarketFactory.InvalidTimes.selector);
+        factory.createMarket(p);
+        p.resolveAfter = p.lockAt + factory.MAX_RESOLVE_GAP();
+        vm.prank(creator);
+        ParimutuelMarket m = ParimutuelMarket(factory.createMarket(p));
+        vm.warp(uint256(p.resolveAfter) + m.PROPOSE_GRACE() + 1);
+        m.voidUnresolved();
+        assertEq(uint8(m.state()), uint8(MarketTypes.State.Void));
     }
 
     function test_create_thresholdOnlyForThresholdTemplates() public {

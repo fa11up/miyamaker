@@ -3,14 +3,17 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import styled, { keyframes } from 'styled-components/macro'
 
 import { useRadio } from '@/context/RadioProvider'
+import { setPlaying } from '@/desktop/screensaver/playing'
 import { fetchStation, toTrack } from '@/music/community'
+import { Glyph } from '@/pages/Radio/Glyph'
 import { font, text } from '@/theme/tokens'
 
-import { airList } from '../../../api/_lib/publicaccess'
+import { airList, nextTapeId } from '../../../api/_lib/publicaccess'
 import type { BreakLog, Commercial } from './commercials'
 import { COMMERCIALS, DRAWN_SECONDS, isBreakDue, nextSpotIndex, SKIP_AFTER_SECONDS } from './commercials'
 import { fetchTapes } from './publicAccess'
 import { parseVitals, SQUEEK_API, wheelSeconds } from './squeek'
+import { firstMode, runVisuals, seedOf, VIZ_H, VIZ_MODES, VIZ_W } from './visuals'
 import YouTubePlayer from './YouTubePlayer'
 
 const Stage = styled.div`
@@ -67,6 +70,9 @@ const Centre = styled.div`
   p {
     margin: 0;
     max-width: 44ch;
+    padding: 4px 10px;
+    border-radius: 6px;
+    background: rgba(16, 9, 4, 0.72);
     font-size: ${text.sm};
     line-height: 1.4;
   }
@@ -76,7 +82,9 @@ const Centre = styled.div`
     border: none;
     border-radius: 5px;
     background: linear-gradient(180deg, #f2a23c 0%, #cf6a1c 100%);
-    box-shadow: 0 3px 0 #6e3208, inset 0 1px 0 rgba(255, 255, 255, 0.45);
+    box-shadow:
+      0 3px 0 #6e3208,
+      inset 0 1px 0 rgba(255, 255, 255, 0.45);
     color: #fff7e6;
     font-family: ${font.display};
     font-size: ${text.md};
@@ -90,99 +98,159 @@ const Centre = styled.div`
 
 /* ---------- miya radio: a picture generated from the sound ---------- */
 
-const Plasma = styled.canvas`
+const Picture = styled.canvas`
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
-  image-rendering: pixelated;
 `
 
-const W = 160
-const H = 90
+/** The player's controls, over the picture: they show when the pointer is there, or whenever it is paused. */
+const Deck = styled.div`
+  position: absolute;
+  left: 50%;
+  bottom: 12px;
+  z-index: 3;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: rgba(16, 9, 4, 0.82);
+  box-shadow:
+    0 0 0 1px #a97f28,
+    0 3px 10px rgba(0, 0, 0, 0.6);
+  opacity: 0;
+  transition: opacity 160ms;
+  ${Stage}:hover &,
+  &:focus-within,
+  &.held {
+    opacity: 1;
+  }
+  @media (hover: none) {
+    opacity: 1;
+  }
+  button {
+    display: inline-grid;
+    place-items: center;
+    min-width: 34px;
+    height: 32px;
+    padding: 0 6px;
+    border: none;
+    border-radius: 5px;
+    background: linear-gradient(180deg, #f8efd9 0%, #dccfae 100%);
+    box-shadow: 0 2px 0 #6d5c3c;
+    color: #2a1a0e;
+    font-size: ${text.xs};
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  button:active:not(:disabled) {
+    transform: translateY(1px);
+    box-shadow: 0 1px 0 #6d5c3c;
+  }
+  button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  button.main {
+    min-width: 44px;
+    height: 38px;
+    background: linear-gradient(180deg, #f2a23c 0%, #cf6a1c 100%);
+    box-shadow: 0 2px 0 #6e3208;
+    color: #fff7e6;
+  }
+  button[aria-pressed='true'] {
+    background: linear-gradient(180deg, #ffe08a 0%, #d9a838 100%);
+  }
+  .rule {
+    width: 1px;
+    height: 24px;
+    background: #6d5c3c;
+  }
+  .mode {
+    min-width: 64px;
+    text-align: center;
+    font-size: ${text.xs};
+    color: #ecd48a;
+  }
+  .narrow & .mode {
+    min-width: 0;
+  }
+`
 
-// Warm cabinet colours running round to the site's pink and a cold teal.
-const PALETTE = Array.from({ length: 256 }, (_, i) => {
-  const t = i / 255
-  const wave = (shift: number) => 0.5 + 0.5 * Math.cos(Math.PI * 2 * (t + shift))
-  return [Math.round(255 * wave(0.0) ** 0.8), Math.round(170 * wave(0.28)), Math.round(190 * wave(0.55))] as const
-})
+const TrackWords = styled(Words)`
+  top: 12px;
+  right: auto;
+  bottom: auto;
+  max-width: calc(100% - 36px);
+  padding: 4px 10px;
+  border-radius: 6px;
+  background: rgba(16, 9, 4, 0.72);
+`
 
-function usePlasma(active: boolean, getAnalyser: () => AnalyserNode | null, reduced: boolean) {
-  const canvas = useRef<HTMLCanvasElement>(null)
-  useEffect(() => {
-    const ctx = canvas.current?.getContext('2d')
-    if (!ctx) return undefined
-    const image = ctx.createImageData(W, H)
-    let raf = 0
-    let last = 0
-    let phase = 0
-    let bassSmooth = 0
-    const spectrum = new Uint8Array(512)
-    const draw = (now: number) => {
-      raf = requestAnimationFrame(draw)
-      if (now - last < (reduced ? 1000 : 40)) return
-      const dt = Math.min(0.1, (now - last) / 1000)
-      last = now
-      const analyser = active ? getAnalyser() : null
-      let bass = 0
-      let mids = 0
-      if (analyser) {
-        analyser.getByteFrequencyData(spectrum)
-        for (let i = 2; i < 12; i += 1) bass += spectrum[i]! / 2550
-        for (let i = 12; i < 90; i += 1) mids += spectrum[i]! / 19890
-      } else if (active) {
-        // Playing without the analyser (a host that blocks it): keep a slow pulse so the picture stays alive.
-        bass = 0.35 + 0.2 * Math.sin(now / 460)
-        mids = 0.3
-      }
-
-      bassSmooth += (bass - bassSmooth) * 0.25
-      phase += dt * (0.25 + mids * 1.6)
-      const kaleido = 5 + Math.round(mids * 6)
-      for (let y = 0; y < H; y += 1) {
-        for (let x = 0; x < W; x += 1) {
-          const dx = (x - W / 2) / H
-          const dy = (y - H / 2) / H
-          const r = Math.hypot(dx, dy)
-          const a = Math.atan2(dy, dx)
-          const v =
-            Math.sin(r * (11 + bassSmooth * 16) - phase * 2.4) +
-            Math.sin(a * kaleido + phase) * (0.5 + bassSmooth) +
-            Math.sin((dx + dy) * 6 + phase * 1.3) * 0.5
-          const shade = active ? 0.55 + bassSmooth * 0.6 : 0.35
-          const c = PALETTE[((Math.floor(((v + 2.5) / 5 + phase * 0.05) * 255) % 256) + 256) % 256]!
-          const n = (y * W + x) * 4
-          image.data[n] = c[0] * shade
-          image.data[n + 1] = c[1] * shade
-          image.data[n + 2] = c[2] * shade
-          image.data[n + 3] = 255
-        }
-      }
-
-      ctx.putImageData(image, 0, 0)
-    }
-
-    raf = requestAnimationFrame(draw)
-    return () => cancelAnimationFrame(raf)
-  }, [active, getAnalyser, reduced])
-  return canvas
-}
+/** How long a mode stays before the next one, when they are changing on their own. */
+const MODE_SECONDS = 40
 
 export function RadioShow({ reducedMotion }: { reducedMotion: boolean }) {
   const radio = useRadio()
-  const canvas = usePlasma(radio.playing, radio.getAnalyser, reducedMotion)
+  const canvas = useRef<HTMLCanvasElement>(null)
+  const [mode, setMode] = useState(0)
+  const [auto, setAuto] = useState(true)
   const [note, setNote] = useState<string>()
+  const trackId = radio.current?.id ?? ''
+  const seed = seedOf(trackId)
+
+  // The frame loop reads these fresh, so a new track or mode does not restart it.
+  const live = useRef({ mode, seed, playing: radio.playing, getAnalyser: radio.getAnalyser })
+  live.current = { mode, seed, playing: radio.playing, getAnalyser: radio.getAnalyser }
+
+  useEffect(() => {
+    if (!canvas.current) return undefined
+    return runVisuals(
+      canvas.current,
+      () => ({
+        mode: live.current.mode,
+        seed: live.current.seed,
+        playing: live.current.playing,
+        analyser: live.current.playing ? live.current.getAnalyser() : null,
+      }),
+      reducedMotion,
+    )
+  }, [reducedMotion])
+
+  // Each song opens on its own mode, unless someone has chosen one and turned Auto off.
+  useEffect(() => {
+    if (trackId && auto) setMode(firstMode(seed))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trackId])
+
+  useEffect(() => {
+    if (!auto || !radio.playing) return undefined
+    const change = setInterval(() => setMode((m) => (m + 1) % VIZ_MODES.length), MODE_SECONDS * 1000)
+    return () => clearInterval(change)
+  }, [auto, radio.playing, mode])
+
+  const gone = useRef(false)
+  useEffect(() => {
+    gone.current = false
+    return () => {
+      gone.current = true
+    }
+  }, [])
+
+  const stepMode = (by: number) => {
+    setAuto(false)
+    setMode((m) => (m + by + VIZ_MODES.length) % VIZ_MODES.length)
+  }
 
   const tuneIn = async () => {
     setNote(undefined)
-    if (radio.current) {
-      radio.toggle()
-      return
-    }
-
     try {
       const tracks = (await fetchStation()).tracks.map(toTrack)
+      // Changed channel while it answered: nothing should start over what's on now.
+      if (gone.current) return
       if (!tracks[0]) {
         setNote('Nothing on the station yet.')
         return
@@ -190,23 +258,61 @@ export function RadioShow({ reducedMotion }: { reducedMotion: boolean }) {
 
       radio.enqueue(tracks)
       radio.playNow(tracks[0])
-    } catch (e) {
-      setNote((e as Error).message)
+    } catch {
+      if (gone.current) return
+      setNote('Could not reach the station. Try again in a minute.')
     }
   }
 
   return (
     <Stage>
-      <Plasma ref={canvas} width={W} height={H} />
-      {radio.playing && radio.current ? (
-        <Words>
-          <strong>{radio.current.title}</strong>
-          <span>{radio.current.artist}</span>
-        </Words>
+      <Picture ref={canvas} width={VIZ_W} height={VIZ_H} />
+      {radio.current ? (
+        <>
+          <TrackWords>
+            <strong>{radio.current.title}</strong>
+            <span>{radio.current.artist}</span>
+          </TrackWords>
+          <Deck className={radio.playing ? undefined : 'held'} role="group" aria-label="Player">
+            <button type="button" aria-label="Go back" title="Go back" onClick={radio.prev}>
+              <Glyph kind="prev" size={12} />
+            </button>
+            <button
+              type="button"
+              className="main"
+              aria-label={radio.playing ? 'Pause' : 'Play'}
+              title={radio.playing ? 'Pause' : 'Play'}
+              onClick={radio.toggle}
+            >
+              <Glyph kind={radio.playing ? 'pause' : 'play'} size={14} />
+            </button>
+            <button type="button" aria-label="Skip" title="Skip" onClick={radio.next}>
+              <Glyph kind="next" size={12} />
+            </button>
+            <span className="rule" aria-hidden />
+            <button type="button" aria-label="Previous visual" title="Previous visual" onClick={() => stepMode(-1)}>
+              ‹
+            </button>
+            <span className="mode" aria-live="polite">
+              {VIZ_MODES[mode]?.name}
+            </span>
+            <button type="button" aria-label="Next visual" title="Next visual" onClick={() => stepMode(1)}>
+              ›
+            </button>
+            <button
+              type="button"
+              aria-pressed={auto}
+              title="Change visuals on their own"
+              onClick={() => setAuto((a) => !a)}
+            >
+              Auto
+            </button>
+          </Deck>
+        </>
       ) : (
         <Centre>
           <h2>miya radio</h2>
-          <p>The community station. The picture is drawn live from whatever is playing.</p>
+          <p>The people's station.</p>
           <button type="button" onClick={tuneIn}>
             Tune in
           </button>
@@ -237,6 +343,10 @@ const WheelStage = styled(Stage)`
     width: min(70%, 90cqh);
     height: 86%;
     transform: translate(-50%, -50%);
+  }
+  /* On a phone's short picture the caption would sit on the stand. */
+  .narrow & svg {
+    left: 60%;
   }
   .wheel {
     transform-origin: 200px 200px;
@@ -331,7 +441,7 @@ export function SqueekShow() {
       )}
       <Words>
         <strong>{v ? (v.running ? `${v.rpm.toFixed(0)} RPM` : 'Off the wheel') : 'Checking the wheel…'}</strong>
-        {status.isError ? <span>Could not reach squeekchain.</span> : v && <span>Block {v.blockHeight} · testnet</span>}
+        {status.isError && <span>Could not reach squeekchain.</span>}
       </Words>
     </WheelStage>
   )
@@ -443,6 +553,9 @@ const Spot = styled(Stage)`
     font-size: ${text.xs};
     cursor: pointer;
   }
+  .narrow & button {
+    min-height: 36px;
+  }
   @media (prefers-reduced-motion: reduce) {
     &::after {
       animation: none;
@@ -483,7 +596,13 @@ const FilmSpot = styled(Stage)`
     font-size: ${text.xs};
     cursor: pointer;
   }
+  .narrow & button {
+    min-height: 36px;
+  }
 `
+
+/** A commercial whose picture hasn't moved for this long isn't coming back: on with the show. */
+const STALLED_SECONDS = 8
 
 function VideoSpot({
   spot,
@@ -520,6 +639,21 @@ function VideoSpot({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // Skip counts playing time, so a video that stalls would never offer it.
+  useEffect(() => {
+    let at = -1
+    let still = 0
+    const watch = setInterval(() => {
+      const time = film.current?.currentTime ?? 0
+      still = time === at ? still + 1 : 0
+      at = time
+      if (still >= STALLED_SECONDS) onDone()
+    }, 1000)
+    return () => clearInterval(watch)
+  }, [onDone])
+
+  useEffect(() => () => setPlaying('tv-spot', false), [])
+
   const left = SKIP_AFTER_SECONDS - Math.floor(played)
   return (
     <FilmSpot data-testid="commercial">
@@ -530,6 +664,8 @@ function VideoSpot({
         playsInline
         preload="auto"
         onTimeUpdate={(e) => setPlayed(e.currentTarget.currentTime)}
+        onPlay={() => setPlaying('tv-spot', true)}
+        onPause={() => setPlaying('tv-spot', false)}
         onEnded={onDone}
         onError={onDone}
       />
@@ -581,13 +717,18 @@ function DrawnSpot({ spot, onDone }: { spot: Extract<Commercial, { kind: 'drawn'
 
 export function PublicShow({
   tapeId,
+  paused,
   onNext,
+  onBreak,
   volume,
   muted,
   onAutoMuted,
 }: {
   tapeId?: string
+  paused: boolean
   onNext: (videoId: string) => void
+  /** A commercial is on: the set's pause and next wait for it. */
+  onBreak: (on: boolean) => void
   volume: number
   muted: boolean
   onAutoMuted: () => void
@@ -597,9 +738,15 @@ export function PublicShow({
   const current = tapes.find((t) => t.videoId === tapeId) ?? tapes[0]!
   const [spot, setSpot] = useState<Commercial>()
 
+  const onSpot = !!spot
+  useEffect(() => {
+    onBreak(onSpot)
+    return () => onBreak(false)
+  }, [onSpot, onBreak])
+
   const nextTape = () => {
-    const next = tapes[(tapes.indexOf(current) + 1) % tapes.length]
-    if (next) onNext(next.videoId)
+    const next = nextTapeId(tapes, current.videoId)
+    if (next) onNext(next)
   }
 
   // Only the natural end of a tape can lead to a break, so nothing ever cuts into one.
@@ -636,8 +783,10 @@ export function PublicShow({
       videoId={current.videoId}
       volume={volume}
       muted={muted}
+      paused={paused}
       onAutoMuted={onAutoMuted}
       onEnded={tapeEnded}
+      onDead={nextTape}
     />
   )
 }

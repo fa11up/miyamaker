@@ -1,6 +1,9 @@
 import type { ReactNode } from 'react'
 import styled from 'styled-components/macro'
 
+import mahoganySkin from '@/pages/Auction/skin/mahogany.webp'
+import launchGoldSkin from '@/pages/Launch/skin/gold.webp'
+import malachiteSkin from '@/pages/Launch/skin/malachite.webp'
 import mouldingSkin from '@/pages/TV/skin/moulding.webp'
 import { bevel, color, font, space, text } from '@/theme/tokens'
 
@@ -37,7 +40,7 @@ const ChromeButton = styled.button`
       display: none;
     }
     width: 36px;
-    height: 30px;
+    height: 32px;
     svg {
       transform: scale(1.4);
     }
@@ -248,36 +251,30 @@ const StyledTitleBar = styled.div`
 
   /* Launch: laurel green and gold, the launchpad's wreath. */
   &[data-skin='launch'] {
-    background: linear-gradient(180deg, rgba(255, 255, 255, 0.62) 0%, rgba(255, 255, 255, 0.12) 48%, transparent 52%),
-      linear-gradient(90deg, #06504a, #0a9a7c 55%, #17d99a);
-    color: #fff;
+    background: linear-gradient(rgba(2, 20, 15, 0.62), rgba(2, 20, 15, 0.62)), url(${malachiteSkin}) 0 0 / 320px 320px;
+    border-bottom: 1px solid #c9b27a;
+    color: #f4ecd2;
     .mark {
-      color: #ffe27a;
-      text-shadow: 1px 1px 0 #06302c;
+      color: #d6bc80;
     }
     .title-bar {
-      text-shadow: 1px 1px 0 #06302c;
+      letter-spacing: 0.04em;
+      text-shadow: 1px 1px 0 #02140f;
     }
     ${ChromeButton} {
-      width: 18px;
-      border-radius: 50%;
-      color: #06302c;
-      background: radial-gradient(circle at 36% 28%, #fff 0 10%, #fff2a8 28%, #f2b91f 56%, #a86f00 100%);
-      box-shadow: 0 0 0 1px #06302c;
+      color: #1c2a1e;
+      background: #c9b27a url(${launchGoldSkin}) 0 0 / 128px 128px;
+      box-shadow: 0 0 0 1px #02140f;
     }
     ${ChromeButton}:hover {
-      filter: brightness(1.08);
-    }
-    ${ChromeButton}.close {
-      background: radial-gradient(circle at 36% 28%, #fff 0 10%, #ffc2e0 28%, #ff5fae 56%, #c81a78 100%);
+      filter: brightness(1.1);
     }
   }
 
   /* Auction: a sale room's mahogany and gold. */
   &[data-skin='auction'] {
-    background: repeating-linear-gradient(92deg, rgba(0, 0, 0, 0.1) 0 2px, transparent 2px 7px),
-      linear-gradient(180deg, #6b2a1c, #3b130c);
-    border-bottom: 1px solid #d9b45b;
+    background: #3b130c url(${mahoganySkin}) 0 0 / 256px 256px;
+    border-bottom: 2px solid #d9b45b;
     color: #f4dd9c;
     .mark {
       color: #d9b45b;
@@ -390,6 +387,24 @@ const StyledTitleBar = styled.div`
     }
     ${ChromeButton}:hover {
       background: #dcdcdc;
+    }
+  }
+
+  /* Phones: every skin's buttons keep the tap target, the round ones staying round. */
+  @media (max-width: 768px) {
+    &[data-skin] ${ChromeButton} {
+      width: 36px;
+      height: 32px;
+    }
+    &[data-skin='tv'] ${ChromeButton},
+    &[data-skin='manager'] ${ChromeButton},
+    &[data-skin='upload'] ${ChromeButton} {
+      width: 32px;
+    }
+    &[data-skin='tv'],
+    .react-draggable:not(.is-focused) &[data-skin='tv'] {
+      height: 46px;
+      background-size: 256px 46px;
     }
   }
 

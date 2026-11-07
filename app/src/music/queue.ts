@@ -68,6 +68,9 @@ export function currentTrack(state: QueueState): Track | undefined {
 }
 
 /** Append tracks (duplicates by id are ignored). Loads the first one if the queue was empty. */
+/** How many of these tracks enqueue would really add. */
+export const countNew = (state: QueueState, incoming: readonly Track[]) => dedupe(incoming, state.tracks).length
+
 export function enqueue(state: QueueState, incoming: readonly Track[]): QueueState {
   const added = dedupe(incoming, state.tracks)
   if (!added.length) return state

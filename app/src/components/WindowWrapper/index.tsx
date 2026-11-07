@@ -2,8 +2,27 @@ import type { ReactNode } from 'react'
 import styled from 'styled-components/macro'
 
 import type { TitleSkin } from '@/components/TitleBar'
+import giltSkin from '@/pages/Auction/skin/gilt.webp'
+import malachiteSkin from '@/pages/Launch/skin/malachite.webp'
 import goldSkin from '@/pages/TV/skin/gold.webp'
 import { bevel, color } from '@/theme/tokens'
+
+/** Selected text in a themed app takes that app's colours: [background, text]. Infinite Upload keeps the site's pink. */
+const SELECTION: Partial<Record<TitleSkin, [string, string]>> = {
+  miyanet: ['#5b37b8', '#ffffff'],
+  floor: ['#ffb000', '#0a0f13'],
+  aqua: ['#1e6fd9', '#ffffff'],
+  tv: ['#c49a3a', '#2a1a04'],
+  mint: ['#9a5fe0', '#ffffff'],
+  launch: ['#c9b27a', '#12261e'],
+  auction: ['#7a1620', '#f4dd9c'],
+  manager: ['#4b5563', '#ffffff'],
+  files: ['#7dff9a', '#04140a'],
+  display: ['#000080', '#ffffff'],
+}
+const selectionRules = Object.entries(SELECTION)
+  .map(([skin, colours]) => `&[data-skin='${skin}'] ::selection { background: ${colours?.[0]}; color: ${colours?.[1]}; }`)
+  .join('\n')
 
 /** Classic raised window frame. Content below the title bar fills the remaining height. */
 const WindowFrame = styled.div`
@@ -27,6 +46,8 @@ const WindowFrame = styled.div`
     flex: 1 1 auto;
     min-height: 0;
   }
+
+  ${selectionRules}
 
   /* The frame around a themed app takes the same material as its header. */
   /* Only the frame: an app that paints no background of its own still sits on the window face. */
@@ -59,13 +80,24 @@ const WindowFrame = styled.div`
     background: linear-gradient(180deg, #ff9fd6, #9a5fe0);
     box-shadow: inset 0 0 0 1px #5a1466, 4px 6px 0 rgba(20, 16, 31, 0.3);
   }
+  /* A slab of the stone, with a gold inlay line where it meets the page. */
   &[data-skin='launch'] {
-    background: linear-gradient(180deg, #17d99a, #06504a);
-    box-shadow: inset 0 0 0 1px #06302c, 4px 6px 0 rgba(6, 48, 44, 0.35);
+    padding: 0 4px 4px;
+    background: linear-gradient(rgba(2, 20, 15, 0.62), rgba(2, 20, 15, 0.62)), url(${malachiteSkin}) 0 0 / 320px 320px;
+    box-shadow: inset 0 0 0 1px #c9b27a, 4px 6px 0 rgba(6, 48, 44, 0.35);
   }
+  &[data-skin='launch'] > .window-body {
+    background: none;
+  }
+  /* A gilt picture frame, worn where hands have carried it. */
   &[data-skin='auction'] {
-    background: linear-gradient(180deg, #6b2a1c, #3b130c);
-    box-shadow: inset 0 0 0 1px #d9b45b, 4px 6px 0 rgba(20, 16, 31, 0.35);
+    padding: 0 6px 6px;
+    background: url(${giltSkin}) 0 0 / 128px 128px;
+    box-shadow: inset 0 0 0 1px #4a2f08, 4px 6px 0 rgba(20, 16, 31, 0.35);
+  }
+  &[data-skin='auction'] > .window-body {
+    background: none;
+    box-shadow: 0 0 0 1px #4a2f08;
   }
   &[data-skin='manager'] {
     background: linear-gradient(180deg, #c3cad5, #6f7886);

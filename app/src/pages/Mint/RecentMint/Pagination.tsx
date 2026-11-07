@@ -1,6 +1,5 @@
 import NextIcon from 'assets/explorer/icon/next.svg'
 import PreviousIcon from 'assets/explorer/icon/previous.svg'
-import { useEffect, useRef } from 'react'
 import styled from 'styled-components/macro'
 
 import { NormalButton } from '@/components/Button/NormalButton'
@@ -53,61 +52,21 @@ export default function Pagination({
   currentPage: number
   setCurrentCounter: (counter: number) => void
 }) {
-  const previousButtonRef = useRef<HTMLButtonElement>(null)
-  const nextButtonRef = useRef<HTMLButtonElement>(null)
-
-  const handleClickButton = (type: string) => {
-    let current = currentPage
-    if (type === 'next') {
-      if (current === 1 && previousButtonRef.current) {
-        previousButtonRef.current.disabled = false
-      }
-
-      if (!isEndPage) {
-        current += 1
-        setCurrentCounter(current)
-      }
-
-      return
-    }
-
-    if (!isEndPage && nextButtonRef.current) {
-      nextButtonRef.current.disabled = false
-    }
-
-    if (current > 1) {
-      current -= 1
-      setCurrentCounter(current)
-    }
-  }
-
-  useEffect(() => {
-    if (nextButtonRef.current && isEndPage) {
-      nextButtonRef.current.disabled = true
-    }
-  }, [isEndPage])
-
-  useEffect(() => {
-    if (previousButtonRef.current && currentPage === 1) {
-      previousButtonRef.current.disabled = true
-    }
-  }, [currentPage])
-
   return (
     <PaginateWrapper>
       <ButtonContainer>
         <NormalButton
           style={{ borderRadius: '50%', boxShadow: 'none', padding: '0' }}
-          ref={previousButtonRef}
-          onClick={() => handleClickButton('previous')}
+          disabled={currentPage === 1}
+          onClick={() => setCurrentCounter(currentPage - 1)}
         >
           <Icon src={PreviousIcon} alt="Previous Icon" />
         </NormalButton>
         <Counter>{currentPage}</Counter>
         <NormalButton
           style={{ borderRadius: '50%', boxShadow: 'none', padding: '0' }}
-          ref={nextButtonRef}
-          onClick={() => handleClickButton('next')}
+          disabled={isEndPage}
+          onClick={() => setCurrentCounter(currentPage + 1)}
         >
           <Icon src={NextIcon} alt="Next Icon" />
         </NormalButton>

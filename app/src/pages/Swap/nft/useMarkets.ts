@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query'
+import { useQueries, useQuery } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 
 import type { MarketListing, MarketSale } from '../../../../api/_lib/market'
@@ -51,7 +51,7 @@ async function call(init: { query: Record<string, string>; body?: unknown; signa
     body = text ? JSON.parse(text) : {}
   } catch {
     // A static host with no /api route answers index.html: same as "not set up".
-    throw new MarketError('Marketplace prices need an API key.', 'MARKET_NOT_CONFIGURED', res.status)
+    throw new MarketError('The market is unavailable right now.', 'MARKET_NOT_CONFIGURED', res.status)
   }
 
   if (!res.ok)
@@ -155,20 +155,45 @@ export function useOpenSeaCollection(chainId: number, address: string | undefine
 }
 
 /** One row of the market table: details and stats by known slug, no contract lookup and no offers (fewer requests). */
-export function useCollectionRow(slug: string) {
+export function useCollectionRow(slug: string | undefined) {
   const info = useQuery({
     queryKey: ['os-collection', slug],
+    enabled: !!slug,
     ...common,
     staleTime: 5 * 60_000,
     queryFn: async ({ signal }): Promise<OsCollection | null> =>
-      parseCollection(await orNone(get({ op: 'collection', slug }, signal))) || null,
+      parseCollection(await orNone(get({ op: 'collection', slug: slug! }, signal))) || null,
   })
   const stats = useQuery({
     queryKey: ['os-stats', slug],
+    enabled: !!slug,
     ...common,
-    queryFn: async ({ signal }): Promise<OsStats> => parseStats(await orNone(get({ op: 'stats', slug }, signal))),
+    queryFn: async ({ signal }): Promise<OsStats> =>
+      parseStats(await orNone(get({ op: 'stats', slug: slug! }, signal))),
   })
   return { info: info.data ?? undefined, stats: stats.data, loading: info.isLoading || stats.isLoading }
+}
+
+/**
+ * Whether each collection has OpenSea's badge, by slug: true, false, or undefined while unknown. The search results may
+ * not say, so this reads each collection's details (the same cached query as everywhere else).
+ */
+export function useCollectionsVerified(slugs: readonly string[]) {
+  const results = useQueries({
+    queries: slugs.map((slug) => ({
+      queryKey: ['os-collection', slug],
+      ...common,
+      staleTime: 5 * 60_000,
+      queryFn: async ({ signal }: { signal: AbortSignal }): Promise<OsCollection | null> =>
+        parseCollection(await orNone(get({ op: 'collection', slug }, signal))) || null,
+    })),
+  })
+  const verified: Record<string, boolean | undefined> = {}
+  slugs.forEach((slug, i) => {
+    const r = results[i]
+    verified[slug] = r?.data ? r.data.verified : r?.isError || r?.data === null ? false : undefined
+  })
+  return verified
 }
 
 type MarketListings = {
@@ -179,7 +204,12 @@ type MarketListings = {
   floor: { price: string; tokenId: string; source: string } | null
   listings: MarketListing[]
 }
-type MarketSales = { at: number; stale: boolean; day: { count: number; volume: string }; sales: MarketSale[] }
+type MarketSales = {
+  at: number
+  stale: boolean
+  day: { count: number; volume: string; other?: number }
+  sales: MarketSale[]
+}
 
 async function market<T>(path: string, signal?: AbortSignal): Promise<T> {
   const res = await fetch(`${MARKET_PREFIX}/${path}`, { signal }).catch((e) => {
@@ -320,8 +350,12 @@ export function useOpenSeaSearch(chainId: number, query: string) {
   })
   return {
     hits: enabled ? r.data || [] : [],
-    loading: enabled && r.isLoading,
+    // Still waiting for typing to pause counts as loading, so "no results" can't flash up first.
+    loading: q !== query.trim() || (enabled && r.isLoading),
     needsKey: wanted && ((known && !configured) || needsKey(r.error)),
+    failed: enabled && r.isError && !needsKey(r.error),
+    /** The search has answered, and found nothing. */
+    empty: q === query.trim() && enabled && r.isSuccess && !r.data?.length,
   }
 }
 

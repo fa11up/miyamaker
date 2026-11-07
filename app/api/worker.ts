@@ -1,6 +1,7 @@
 // Cloudflare Worker: the 0x and OpenSea proxies (keys injected server-side, see api/_lib), the apex -> www redirect,
 // and everything else from the static build in dist/ (wrangler.jsonc).
-import { verifyMessage } from 'viem'
+import { createPublicClient, http } from 'viem'
+import { mainnet } from 'viem/chains'
 
 import { edgeCache, handleMarketRequest, MARKET_PREFIX, openSeaReader } from './_lib/market'
 import { handleOpenSeaRequest, OPENSEA_PROXY_PATH, quoteBigInts } from './_lib/opensea'
@@ -10,8 +11,16 @@ import { handleVideoAudioRequest, VIDEO_AUDIO_PATH } from '../src/pages/MusicMak
 import { serveRange } from './_lib/ranges'
 import type { D1Like } from './_lib/station'
 import { d1Store, gatewayContentType, handleStationRequest, STATION_PATH } from './_lib/station'
+import { kickOnAir, kickReader } from './_lib/tvkick'
 import { handleTvLiveRequest, TV_LIVE_PATH } from './_lib/tvlive'
+import { CONTRACT_CHECK_PATH, etherscanReader, handleContractCheck } from './_lib/contractcheck'
 import { clientKey, createRateLimiter, handleZeroExRequest, PROXY_PREFIX, sameOrigin } from './_lib/zeroex'
+
+/** Checks wallet signatures: plain wallets locally, and passkey smart wallets by asking the chain. */
+const signatureClient = createPublicClient({
+  chain: mainnet,
+  transport: http('https://ethereum-rpc.publicnode.com', { timeout: 8_000 }),
+})
 
 type Env = {
   ASSETS: { fetch: (request: Request) => Promise<Response> }
@@ -19,6 +28,8 @@ type Env = {
   OPENSEA_API_KEY?: string
   /** Finds miyatv's current YouTube streams (api/_lib/tvlive.ts). */
   YOUTUBE_API_KEY?: string
+  /** Whether contracts are verified, for My Files' Scam folder (api/_lib/contractcheck.ts). */
+  ETHERSCAN_API_KEY?: string
   /** The radio's community station (migrations/). */
   DB?: D1Like
   /** Wallets that can remove any station track, comma-separated. */
@@ -34,6 +45,7 @@ const guards = {
   fillLimiter: createRateLimiter({ capacity: 10, perSecond: 0.2 }),
 }
 const marketLimiter = createRateLimiter({ capacity: 120, perSecond: 2 })
+const contractCheckLimiter = createRateLimiter({ capacity: 30, perSecond: 0.5 })
 const stationLimiter = createRateLimiter({ capacity: 20, perSecond: 0.2 })
 const publicAccessLimiter = createRateLimiter({ capacity: 20, perSecond: 0.2 })
 const sampleMediaLimiter = createRateLimiter({ capacity: 8, perSecond: 0.2 })
@@ -84,7 +96,7 @@ export default {
             .filter(Boolean),
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           verify: (address, message, signature) =>
-            verifyMessage({ address: address as any, message, signature: signature as any }).catch(() => false),
+            signatureClient.verifyMessage({ address: address as any, message, signature: signature as any }).catch(() => false),
           contentType: gatewayContentType,
           sameOrigin,
           clientKey,
@@ -93,10 +105,23 @@ export default {
       )
     }
 
+    if (url.pathname === CONTRACT_CHECK_PATH) {
+      return handleContractCheck(request, {
+        key: env.ETHERSCAN_API_KEY,
+        etherscan: env.ETHERSCAN_API_KEY ? etherscanReader(env.ETHERSCAN_API_KEY) : undefined,
+        cache: edgeCache((caches as unknown as { default?: Cache }).default),
+        sameOrigin,
+        clientKey,
+        limiter: contractCheckLimiter,
+      })
+    }
+
     if (url.pathname === TV_LIVE_PATH) {
+      const cache = edgeCache((caches as unknown as { default?: Cache }).default)
       return handleTvLiveRequest(request, {
         key: env.YOUTUBE_API_KEY,
-        cache: edgeCache((caches as unknown as { default?: Cache }).default),
+        cache,
+        kick: () => kickOnAir({ read: kickReader, cache, now: Date.now() }),
       })
     }
 
@@ -112,7 +137,7 @@ export default {
             .filter(Boolean),
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           verify: (address, message, signature) =>
-            verifyMessage({ address: address as any, message, signature: signature as any }),
+            signatureClient.verifyMessage({ address: address as any, message, signature: signature as any }).catch(() => false),
           lookup: youtubeLookup,
           sameOrigin,
           clientKey,

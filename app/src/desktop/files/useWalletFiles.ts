@@ -4,6 +4,7 @@ import { erc20Abi, formatUnits } from 'viem'
 import { mainnet } from 'viem/chains'
 import { useBalance, usePublicClient, useReadContracts } from 'wagmi'
 
+import { CONTRACT_CHECK_PATH } from '../../../api/_lib/contractcheck'
 import { DESKTOP_COLLECTIONS } from '../collections'
 import { getNftIndexer } from './indexer'
 
@@ -35,7 +36,7 @@ export function formatAmount(value: bigint | undefined, decimals: number): strin
   return n.toLocaleString('en-US', { maximumFractionDigits: n < 1 ? 6 : n < 1000 ? 4 : 2 })
 }
 
-export function useTokenDocs(owner: Address | undefined): TokenDoc[] {
+export function useTokenDocs(owner: Address | undefined): { docs: TokenDoc[]; refetch: () => void } {
   const chainId = mainnet.id
   const eth = useBalance({ address: owner, chainId, query: { enabled: !!owner, refetchInterval: 60_000 } })
   const reads = useReadContracts({
@@ -76,7 +77,42 @@ export function useTokenDocs(owner: Address | undefined): TokenDoc[] {
       loading: reads.isLoading,
     })
   })
-  return docs
+  return {
+    docs,
+    refetch: () => {
+      eth.refetch()
+      reads.refetch()
+    },
+  }
+}
+
+const CHECK_BATCH = 20
+
+/** Etherscan's word on each contract. Anything it has not answered is simply missing. */
+export function useContractChecks(contracts: string[]) {
+  const list = [...new Set(contracts.map((c) => c.toLowerCase()))].sort()
+  return useQuery({
+    queryKey: ['contract-checks', list.join()],
+    enabled: list.length > 0,
+    staleTime: 10 * 60_000,
+    retry: 1,
+    // A new contract changes the key. What's already known stays known meanwhile, or every folder would fall back to
+    // "checking" and whoever had one open would be thrown out of it.
+    placeholderData: (previous) => previous,
+    // Anything Etherscan could not answer yet (it is rate limited) gets asked again.
+    refetchInterval: (query) => (list.some((c) => query.state.data?.[c] === undefined) ? 60_000 : false),
+    queryFn: async () => {
+      const verified: Record<string, boolean> = {}
+      // One batch at a time: the server is pacing itself to Etherscan's limit.
+      for (let i = 0; i < list.length; i += CHECK_BATCH) {
+        // eslint-disable-next-line no-await-in-loop
+        const res = await fetch(`${CONTRACT_CHECK_PATH}?a=${list.slice(i, i + CHECK_BATCH).join(',')}`)
+        // eslint-disable-next-line no-await-in-loop
+        if (res.ok) Object.assign(verified, ((await res.json()) as { verified: Record<string, boolean> }).verified)
+      }
+      return verified
+    },
+  })
 }
 
 export function useWalletNfts(owner: Address | undefined) {

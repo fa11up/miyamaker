@@ -3,6 +3,7 @@ import type { Address } from 'viem'
 import { formatUnits, parseAbi } from 'viem'
 import { useReadContract, useReadContracts } from 'wagmi'
 
+import { AUCTION_CHAIN_ID } from '@/constants/contracts'
 import { resolveMetadataUri } from '@/utils/resolveUri'
 
 import { abi } from './constants'
@@ -10,8 +11,9 @@ import { abi } from './constants'
 const TOKEN_URI_ABI = parseAbi(['function tokenURI(uint256 tokenId) view returns (string)'])
 
 export function useAllTokenIds({ nft, address }: { nft: Address; address: Address }) {
-  const { data } = useReadContract({
+  const { data, isPending, isError, refetch } = useReadContract({
     address,
+    chainId: AUCTION_CHAIN_ID,
     query: { enabled: !!address },
     functionName: 'getAllTokenIds',
     abi,
@@ -25,6 +27,7 @@ export function useAllTokenIds({ nft, address }: { nft: Address; address: Addres
     query: { enabled: ids.length > 0, staleTime: 10 * 60_000 },
     contracts: ids.map((item) => ({
       address: nft,
+      chainId: AUCTION_CHAIN_ID,
       abi: TOKEN_URI_ABI,
       functionName: 'tokenURI' as const,
       args: [BigInt(item)] as const,
@@ -37,5 +40,8 @@ export function useAllTokenIds({ nft, address }: { nft: Address; address: Addres
   return {
     tokenIds: [...ids] as number[],
     tokenURIs,
+    isLoading: isPending && !isError,
+    isError,
+    refetch,
   }
 }
