@@ -843,6 +843,7 @@ export default function RadioWindow() {
           <div className="now">
             <TimeButton
               type="button"
+              style={{ display: 'inline-flex', alignItems: 'center', minHeight: 22 }}
               onClick={() => setRemaining((r) => !r)}
               aria-label={`Time ${timeText}${remaining ? ' remaining' : ''}. Press to switch elapsed and remaining.`}
             >

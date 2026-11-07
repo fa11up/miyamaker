@@ -52,13 +52,17 @@ export const walletConnectProjectId: string = import.meta.env.VITE_WC_PROJECT_ID
 
 const appName = 'miyamaker'
 
+/** Offered only when a wallet is there to answer: otherwise it waits on an extension that doesn't exist. */
+const browserWallets =
+  typeof window !== 'undefined' && (window as { ethereum?: unknown }).ethereum ? [injectedWallet] : []
+
 const connectors = connectorsForWallets(
   [
     {
       groupName: 'Recommended',
       wallets: walletConnectProjectId
-        ? [metaMaskWallet, rabbyWallet, coinbaseWallet, injectedWallet]
-        : [rabbyWallet, coinbaseWallet, injectedWallet],
+        ? [metaMaskWallet, rabbyWallet, coinbaseWallet, ...browserWallets]
+        : [rabbyWallet, coinbaseWallet, ...browserWallets],
     },
     ...(walletConnectProjectId ? [{ groupName: 'Other wallets', wallets: [rainbowWallet, walletConnectWallet] }] : []),
   ],

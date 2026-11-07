@@ -176,7 +176,8 @@ export default function ManagePage() {
         {Pages.manager?.label}
       </TitleBar>
       <Layout data-manage>
-        <Inner>
+        {/* The list of launches is short, so it sits in the middle of the window, not at the top of an empty one. */}
+        <Inner style={collection ? undefined : { minHeight: '100%', boxSizing: 'border-box', justifyContent: 'center' }}>
           {!collection ? (
             <>
               <Head>

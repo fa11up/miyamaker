@@ -177,19 +177,6 @@ export function BadgeWall() {
           <small>just a dollar</small>
         </span>
       </Badge>
-      <Badge
-        {...ext}
-        href={LINKS.box}
-        className="shiny"
-        style={{ background: `linear-gradient(90deg, ${y2k.headFrom}, ${color.accentDark})`, color: '#fff' }}
-        title="INFER BOX"
-      >
-        <Pix style={{ color: y2k.tape }}>✶</Pix>
-        <span>
-          <small>powered by</small>
-          <b>swarm</b>
-        </span>
-      </Badge>
       <Badge {...ext} href={LINKS.whitepaper} style={{ background: '#fff6c2', color: '#000' }} title="INFER whitepaper">
         <Pix style={{ background: '#fff', boxShadow: 'inset 1px 1px #a2479f' }}>¶</Pix>
         <span>

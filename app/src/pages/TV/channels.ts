@@ -88,7 +88,7 @@ export const CHANNELS: Channel[] = [
     show: 'radio',
     section: 'Sounds',
     name: 'miya radio',
-    tagline: 'The community station, with a picture that grows out of the music.',
+    tagline: "The people's station, with a picture that grows out of the music.",
     description: 'Tracks people uploaded to miya radio. The visuals are generated live from the sound.',
     links: [],
   },

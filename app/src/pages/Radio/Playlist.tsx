@@ -78,6 +78,9 @@ const Empty = styled.div`
     cursor: pointer;
     text-decoration: underline;
   }
+  .phone-radio & button.tune {
+    min-height: 30px;
+  }
   button.tune {
     margin-top: 2px;
     padding: 2px 6px;
@@ -101,6 +104,14 @@ const Foot = styled.div`
   padding: 0 4px;
   button {
     height: 12px;
+  }
+  /* The phone's glass draws this 1.5 times over, so these come out a thumb's size. */
+  .phone-radio & {
+    height: 34px;
+    button {
+      height: 30px;
+      min-width: 30px;
+    }
   }
   .time {
     margin-left: auto;

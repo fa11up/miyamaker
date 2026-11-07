@@ -106,16 +106,18 @@ export default function CollectionsList({
 
   return (
     <CollectionsListWrapper>
-      <HeadersWrapper>
-        {Headers.map(({ title, width }, index: number) => (
-          <Header key={index} style={{ width }}>
-            {title}
-          </Header>
-        ))}
-      </HeadersWrapper>
+      {nfts.length > 1 && (
+        <HeadersWrapper>
+          {Headers.map(({ title, width }, index: number) => (
+            <Header key={index} style={{ width }}>
+              {title}
+            </Header>
+          ))}
+        </HeadersWrapper>
+      )}
       <ItemsListWrapper>
         {nfts.slice(ITEM_PER_PAGE * (currentCounter - 1), ITEM_PER_PAGE * currentCounter).map((nft, index: number) => (
-          <ItemsList key={index} nft={nft} setPageSection={setPageSection} auctionContract={auctionContract} />
+          <ItemsList key={index} nft={nft} setPageSection={setPageSection} auctionContract={auctionContract} solo={nfts.length === 1} />
         ))}
       </ItemsListWrapper>
       {totalPages > 1 && (

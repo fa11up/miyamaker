@@ -24,7 +24,12 @@ const queryClient = new QueryClient({
 const readTheme = merge(lightTheme(), {
   colors: {
     modalBackground: '#a9a3c9',
-    accentColor: '#d97ada',
+    // Links and buttons in the dialog use the accent as text on lilac, so it has to read there.
+    accentColor: '#4f1f96',
+    accentColorForeground: '#ffffff',
+    actionButtonSecondaryBackground: '#f6f4ff',
+    modalTextSecondary: '#1b1530',
+    modalTextDim: '#332d4d',
     selectedOptionBorder: '#000',
   },
   fonts: {
