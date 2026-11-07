@@ -1,6 +1,6 @@
 import paint from 'assets/explorer/background/background.png'
 import type { ReactNode } from 'react'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import styled, { keyframes } from 'styled-components/macro'
 
 import type { DeviceAction } from './Device'
@@ -31,6 +31,7 @@ const Stage = styled.div`
   position: absolute;
   inset: 0;
   overflow: hidden;
+  touch-action: pan-y;
   background: ${PAINTED};
   > [role='listitem'] {
     position: absolute;
@@ -175,6 +176,9 @@ export default function Carousel({
   const index = Math.min(at, items.length - 1)
   const here = items[index]!
   const move = (step: number) => setAt(wrapIndex(items.length, index, step))
+  // On a phone the cards follow a finger: a sideways swipe moves one card, and the tap that ends it opens nothing.
+  const swipe = useRef<{ x: number; y: number } | null>(null)
+  const swiped = useRef(false)
   const open = { label: here.action, disabled: !here.open, onClick: () => here.open?.() }
 
   // Shortest way round, so the neighbours sit either side however many there are.
@@ -188,7 +192,31 @@ export default function Carousel({
       title={title}
       lamp={{ color: '#3dff7a', label: lampLabel }}
       screen={
-        <Stage role="list" aria-label={ariaLabel}>
+        <Stage
+          role="list"
+          aria-label={ariaLabel}
+          onTouchStart={(e) => {
+            const t = e.touches[0]
+            swipe.current = t ? { x: t.clientX, y: t.clientY } : null
+            swiped.current = false
+          }}
+          onTouchEnd={(e) => {
+            const from = swipe.current
+            const t = e.changedTouches[0]
+            swipe.current = null
+            if (!from || !t) return
+            const dx = t.clientX - from.x
+            if (Math.abs(dx) < 36 || Math.abs(dx) < Math.abs(t.clientY - from.y)) return
+            swiped.current = true
+            move(dx < 0 ? 1 : -1)
+          }}
+          onClickCapture={(e) => {
+            if (!swiped.current) return
+            swiped.current = false
+            e.stopPropagation()
+            e.preventDefault()
+          }}
+        >
           {items.map((item, i) => {
             const o = offset(i)
             return (
