@@ -3,7 +3,7 @@ import { PAD_KEYS } from './keys.js'
 import { FACTORY, KIT_LAYOUT } from './audio/presets.js'
 import { defaultNumpadFx, normalizeNumpadFx } from './audio/numpadFx.js'
 import { snapOctave } from './audio/knee.js'
-import { defaultPatch, renderSynth, SYNTH_SR } from './audio/synth.js'
+import { defaultPatch, MAX_PARTIALS, MAX_UNISON, renderSynth, safeEntries, SYNTH_SR } from './audio/synth.js'
 import { SongChanged, bumpSong, exclusive, sameSong, songId } from './jobs.js'
 
 export const BANKS = ['A', 'B', 'C', 'D']
@@ -84,6 +84,10 @@ export const model = {
   sliceView: null,
   k3: false,
   saveError: '',
+  /** Why the saved session did not open (shown with Restore backup), or ''. */
+  bootNotice: '',
+  /** The name of the kit last loaded, for Save kit. */
+  kitName: '',
 }
 
 /** Set or clear the "not saved" line. Only redraws when it changes. */
@@ -197,41 +201,78 @@ function int(value, fallback, min, max) {
 }
 
 function text(value, fallback, max = 80) {
-  return typeof value === 'string' ? value.slice(0, max) : fallback
+  return typeof value === 'string' ? plainText(value, max) : fallback
 }
 
-/** Synth patch from a file: numbers stay only when finite, other fields only when their type matches. */
+/**
+ * A name from a file, a wallet, or a remote host, as plain text: a string, no control characters, capped.
+ * Anything that is not a string or a number becomes ''.
+ */
+export function plainText(value, max = 80) {
+  if (typeof value !== 'string' && !(typeof value === 'number' && Number.isFinite(value))) return ''
+  // eslint-disable-next-line no-control-regex
+  return String(value).replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, max)
+}
+
+const OSC_TYPES = ['sine', 'triangle', 'saw', 'square', 'pulse', 'metal']
+const FILTER_TYPES = ['lowpass', 'highpass', 'bandpass']
+
+/**
+ * Synth patch from a file: numbers stay only when finite, other fields only when their type matches.
+ * Unknown keys and prototype keys are dropped, oscillators are exactly the three the renderer reads,
+ * and the fields that multiply render work (partials, unison) are capped.
+ */
 export function normalizePatch(raw) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
   const defaults = defaultPatch()
   const out = {}
-  for (const key of Object.keys(raw)) {
-    const value = raw[key]
+  for (const [key, value] of safeEntries(raw)) {
+    if (!Object.prototype.hasOwnProperty.call(defaults, key)) continue
     const want = defaults[key]
     if (key === 'oscs') {
       if (!Array.isArray(value)) continue
-      out.oscs = value.slice(0, 8).filter((o) => o && typeof o === 'object').map((o) => {
-        const osc = {}
-        for (const k of Object.keys(o)) {
-          if (typeof o[k] === 'number' ? Number.isFinite(o[k]) : typeof o[k] === 'string' || typeof o[k] === 'boolean') osc[k] = o[k]
+      out.oscs = defaults.oscs.map((base, i) => {
+        const src = value[i]
+        if (!src || typeof src !== 'object' || Array.isArray(src)) return base
+        return {
+          type: OSC_TYPES.includes(src.type) ? src.type : base.type,
+          ratio: num(src.ratio, base.ratio, 0, 64),
+          detune: num(src.detune, base.detune, -2400, 2400),
+          level: num(src.level, base.level, 0, 4),
+          duty: num(src.duty, base.duty, 0.01, 0.99),
         }
-        return osc
       })
       continue
     }
     if (key === 'partials') {
-      if (Array.isArray(value)) out.partials = value.slice(0, 32).map((v) => num(v, 0, -4, 4))
+      if (Array.isArray(value)) out.partials = value.slice(0, MAX_PARTIALS).map((v) => num(v, 0, -4, 4))
       continue
     }
-    if (typeof want === 'number' || (want === undefined && typeof value === 'number')) {
+    if (key === 'unison') {
+      out.unison = int(value, 1, 1, MAX_UNISON)
+      continue
+    }
+    if (key === 'fmFrom') {
+      out.fmFrom = int(value, defaults.fmFrom, -1, 2)
+      continue
+    }
+    if (key === 'filterType') {
+      if (FILTER_TYPES.includes(value)) out.filterType = value
+      continue
+    }
+    if (key === 'filter2Type') {
+      if (value === 'off' || FILTER_TYPES.includes(value)) out.filter2Type = value
+      continue
+    }
+    if (typeof want === 'number') {
       if (typeof value === 'number' && Number.isFinite(value)) out[key] = Math.max(-1e6, Math.min(1e6, value))
       continue
     }
-    if (typeof want === 'string' || (want === undefined && typeof value === 'string')) {
+    if (typeof want === 'string') {
       if (typeof value === 'string') out[key] = value.slice(0, 40)
       continue
     }
-    if (typeof value === 'boolean') out[key] = value
+    if (typeof want === 'boolean' && typeof value === 'boolean') out[key] = value
   }
   return out
 }
@@ -335,10 +376,6 @@ function emptyPattern() {
   return { name: '', bars: 1, steps: Array.from({ length: 16 }, emptyLanes) }
 }
 
-function clampUnit(v, a, b) {
-  return Math.max(a, Math.min(b, v))
-}
-
 export function busLabel(index) {
   return String((index | 0) + 1).padStart(2, '0')
 }
@@ -352,8 +389,8 @@ function normalizeLfo(raw) {
   if (!raw || typeof raw !== 'object') return d
   return {
     on: !!raw.on,
-    rate: clampUnit(Number(raw.rate ?? d.rate), 0.05, 12),
-    depth: clampUnit(Number(raw.depth ?? d.depth), 0, 1),
+    rate: num(raw.rate, d.rate, 0.05, 12),
+    depth: num(raw.depth, d.depth, 0, 1),
   }
 }
 
@@ -379,30 +416,31 @@ export function normalizeComp(raw) {
   const d = defaultComp()
   if (!raw || typeof raw !== 'object') return d
   return {
-    threshold: clampUnit(raw.threshold ?? d.threshold, -60, 0),
-    ratio: clampUnit(raw.ratio ?? d.ratio, 1, 20),
-    knee: clampUnit(raw.knee ?? d.knee, 0, 40),
-    attack: clampUnit(raw.attack ?? d.attack, 0.001, 0.5),
-    release: clampUnit(raw.release ?? d.release, 0.01, 1.2),
-    makeup: clampUnit(raw.makeup ?? d.makeup, 0.25, 4),
+    threshold: num(raw.threshold, d.threshold, -60, 0),
+    ratio: num(raw.ratio, d.ratio, 1, 20),
+    knee: num(raw.knee, d.knee, 0, 40),
+    attack: num(raw.attack, d.attack, 0.001, 0.5),
+    release: num(raw.release, d.release, 0.01, 1.2),
+    makeup: num(raw.makeup, d.makeup, 0.25, 4),
     justice: !!raw.justice,
-    kKnee: clampUnit(raw.kKnee ?? d.kKnee, 0, 1),
-    kPolice: clampUnit(raw.kPolice ?? d.kPolice, 0, 1),
-    kFold: clampUnit(raw.kFold ?? d.kFold, 0, 1),
-    kPitch: snapOctave(raw.kPitch ?? 0, false),
+    kKnee: num(raw.kKnee, d.kKnee, 0, 1),
+    kPolice: num(raw.kPolice, d.kPolice, 0, 1),
+    kFold: num(raw.kFold, d.kFold, 0, 1),
+    kPitch: snapOctave(num(raw.kPitch, 0, -2, 2), false),
     kSnap: raw.kSnap !== false,
     lfo: {
-      kPolice: normalizeLfo(raw.lfo?.kPolice),
-      kFold: normalizeLfo(raw.lfo?.kFold),
+      kPolice: normalizeLfo(raw.lfo && typeof raw.lfo === 'object' ? raw.lfo.kPolice : null),
+      kFold: normalizeLfo(raw.lfo && typeof raw.lfo === 'object' ? raw.lfo.kFold : null),
     },
   }
 }
 
 function normalizeBus(raw, index) {
+  if (!raw || typeof raw !== 'object') raw = null
   const bus = {
-    name: typeof raw?.name === 'string' && raw.name ? raw.name : busLabel(index),
-    volume: clampUnit(raw?.volume ?? 0.82, 0, 1),
-    pan: clampUnit(raw?.pan ?? 0, -1, 1),
+    name: typeof raw?.name === 'string' && raw.name ? plainText(raw.name, 24) || busLabel(index) : busLabel(index),
+    volume: num(raw?.volume, 0.82, 0, 1),
+    pan: num(raw?.pan, 0, -1, 1),
     mute: !!raw?.mute,
     solo: !!raw?.solo,
     fx: emptyFx(),
@@ -410,10 +448,10 @@ function normalizeBus(raw, index) {
   if (Array.isArray(raw?.fx)) {
     for (let i = 0; i < 5; i++) {
       const slot = raw.fx[i]
-      if (!slot) continue
+      if (!slot || typeof slot !== 'object') continue
       bus.fx[i] = {
         type: FX_TYPES.includes(slot.type) ? slot.type : 'none',
-        amount: clampUnit(slot.amount ?? 0.45, 0, 1),
+        amount: num(slot.amount, 0.45, 0, 1),
       }
     }
   }
@@ -430,12 +468,11 @@ function freshBuses() {
 
 /** Keep the loop point inside the trimmed region. */
 export function fitLoop(pad) {
-  const start = clampUnit(pad.trimStart || 0, 0, 0.98)
-  const end = clampUnit(pad.trimEnd ?? 1, start + 0.01, 1)
+  const start = num(pad.trimStart, 0, 0, 0.98)
+  const end = num(pad.trimEnd, 1, start + 0.01, 1)
   pad.trimStart = start
   pad.trimEnd = end
-  const loop = typeof pad.loopPoint === 'number' ? pad.loopPoint : (start + end) / 2
-  pad.loopPoint = clampUnit(loop, start, Math.max(start, end - 0.005))
+  pad.loopPoint = num(pad.loopPoint, (start + end) / 2, start, Math.max(start, end - 0.005))
 }
 
 export function applyTrim(pad, which, value) {
@@ -896,6 +933,13 @@ export function flushSave() {
   save()
 }
 
+/** Write the session now. True when localStorage took it (or there is none to write, as under Node). */
+export function saveNow() {
+  if (typeof window !== 'undefined' && saveTimer) window.clearTimeout(saveTimer)
+  save()
+  return !model.saveError.startsWith('Not saved')
+}
+
 export function save() {
   saveTimer = 0
   if (typeof localStorage === 'undefined') return
@@ -1042,14 +1086,23 @@ function noteWrite(promise) {
       return value
     },
     (err) => {
-      setSaveError(err?.name === 'QuotaExceededError' ? 'Sample not saved: browser storage is full' : 'Sample not saved: browser storage refused the write')
+      setSaveError(err?.name === 'QuotaExceededError'
+        ? 'Sample not saved: browser storage is full'
+        : err?.name === 'NoStorage' ? 'Sample not saved: this browser has no storage for samples' : 'Sample not saved: browser storage refused the write')
       throw err
     },
   )
 }
 
+/** Thrown by a write when this browser has no IndexedDB (private mode in some browsers, a locked-down profile). */
+export function noStorage() {
+  const err = new Error('Browser storage is not available here, so samples and songs cannot be kept')
+  err.name = 'NoStorage'
+  return err
+}
+
 export function idbSet(key, value) {
-  if (typeof indexedDB === 'undefined') return Promise.resolve()
+  if (typeof indexedDB === 'undefined') return noteWrite(Promise.reject(noStorage()))
   return noteWrite(withStore('readwrite', (store) => {
     store.put(value, key)
   }).then(() => undefined))
@@ -1088,7 +1141,7 @@ async function rememberSampleNow(index, record) {
   if (!model.pads[index]) throw new Error('That pad does not exist')
   const { stashUndo } = await import('./history.js')
   const prev = await idbGet(`pad:${index}`)
-  const sampleName = record.name || 'sample'
+  const sampleName = plainText(record.name, 80) || 'sample'
   await idbSet(`pad:${index}`, { pcm: record.pcm, sr: record.sr, name: sampleName })
   stashUndo(`pad:${index}`, prev || null)
   audioBank.set(index, { pcm: record.pcm, sr: record.sr, rev: Date.now() })
@@ -1102,6 +1155,7 @@ async function rememberSampleNow(index, record) {
     fitLoop(pad)
   }
   touch(true)
+  return sampleBudget()
 }
 
 export function compactPatterns() {
@@ -1151,6 +1205,7 @@ export function boot() {
   loadFactoryKit()
   keepBackup = false
   model.saveError = ''
+  model.bootNotice = ''
   if (typeof window !== 'undefined') window.addEventListener('pagehide', flushSave)
   if (typeof localStorage === 'undefined') return
   let raw = null
@@ -1160,6 +1215,9 @@ export function boot() {
     const data = JSON.parse(raw)
     if (!data || (data.v !== 1 && data.v !== 2) || !Array.isArray(data.pads) || data.pads.length !== 64) {
       backupRaw(raw)
+      noteBootFallback(data && typeof data === 'object' && data.v !== 1 && data.v !== 2
+        ? `Your saved session is from another version (v${plainText(data.v, 8) || '?'}) and was not opened.`
+        : 'Your saved session is damaged and was not opened.')
       return
     }
     const settings = data.settings && typeof data.settings === 'object' ? data.settings : {}
@@ -1221,23 +1279,117 @@ export function boot() {
     console.warn('saved session could not be read, factory kit loaded', err)
     backupRaw(raw)
     loadFactoryKit()
+    noteBootFallback('Your saved session could not be read.')
+  }
+}
+
+function noteBootFallback(why) {
+  model.bootNotice = keepBackup
+    ? `${why} The factory kit is loaded. The old save could not be backed up, so nothing is saved until you restore it or download it.`
+    : `${why} The factory kit is loaded and the old save is kept as a backup.`
+}
+
+/** The newest backup of a save this version could not open, or null. */
+export function latestBackup() {
+  if (typeof localStorage === 'undefined') return null
+  try {
+    const extra = backupKeys()
+    const key = extra.length ? extra[extra.length - 1] : BACKUP_KEY
+    const raw = localStorage.getItem(key)
+    return raw ? { key, raw } : null
+  } catch {
+    return null
   }
 }
 
 /**
- * Read each sample pad's audio back from IndexedDB. One unreadable pad does not stop the rest.
- * Rejects after the others are in, with a message for the user, when any could not be read.
+ * Put the newest backup back as the save and open it again. True when it opened; false (and a notice)
+ * when it still cannot be read. Pads with samples still need restoreSamples() afterwards.
  */
-export async function restoreSamples() {
+export function restoreBackup() {
+  const backup = latestBackup()
+  if (!backup) {
+    model.bootNotice = 'There is no backup to restore.'
+    touch(false)
+    return false
+  }
+  try {
+    localStorage.setItem(SAVE_KEY, backup.raw)
+  } catch {
+    model.bootNotice = 'The backup could not be put back: browser storage refused the write. Download it to keep it.'
+    touch(false)
+    return false
+  }
+  model.bootNotice = ''
+  boot()
+  const opened = !model.bootNotice
+  if (!opened) model.bootNotice = 'That backup still cannot be opened by this version. Download it to keep it.'
+  touch(false)
+  return opened
+}
+
+export function downloadBackup() {
+  const backup = latestBackup()
+  if (!backup || typeof document === 'undefined') return false
+  const link = document.createElement('a')
+  link.href = URL.createObjectURL(new Blob([backup.raw], { type: 'application/json' }))
+  link.download = 'miya-music-maker-backup.json'
+  link.click()
+  const href = link.href
+  setTimeout(() => URL.revokeObjectURL(href), 30000)
+  return true
+}
+
+export function dismissBootNotice() {
+  model.bootNotice = ''
+  touch(false)
+}
+
+/**
+ * Pads that say they hold a sample but have no audio in this session: their stored sample could not be read
+ * (or is not there). Saving, minting or uploading now would drop those samples for good, so those refuse
+ * until every one is read back (retryUnreadPads) or the pad is cleared.
+ */
+export function unreadPads() {
+  const out = []
+  model.pads.forEach((pad, i) => {
+    if (pad?.source === 'sample' && !audioBank.get(i)?.pcm?.length) out.push(i)
+  })
+  return out
+}
+
+export function padLabel(index) {
+  return `${BANKS[Math.floor(index / 16)] || '?'}${(index % 16) + 1}`
+}
+
+/** Throws a message naming the unreadable pads when there are any. `what` is the action refused. */
+export function assertPadsRead(what = 'Save') {
+  const unread = unreadPads()
+  if (!unread.length) return
+  const names = unread.slice(0, 8).map(padLabel).join(', ') + (unread.length > 8 ? ` and ${unread.length - 8} more` : '')
+  throw new Error(`${what} is off: the sample${unread.length > 1 ? 's' : ''} on pad${unread.length > 1 ? 's' : ''} ${names} could not be read from browser storage, and ${what.toLowerCase()} would drop ${unread.length > 1 ? 'them' : 'it'}. Retry reading them, or clear those pads.`)
+}
+
+/**
+ * Read each sample pad's audio back from IndexedDB. One unreadable pad does not stop the rest.
+ * Rejects after the others are in, with a message for the user, when any could not be read: a failed read
+ * and a sample pad with no stored record both count. `only` limits it to those pads (a retry).
+ */
+export async function restoreSamples(only = null) {
   const session = songId()
   let failed = 0
   await Promise.all(
     model.pads.map(async (pad, i) => {
       if (pad.source !== 'sample') return
+      if (only && !only.includes(i)) return
       try {
         const rec = await idbGet(`pad:${i}`)
-        if (rec && rec.pcm && sameSong(session)) {
-          audioBank.set(i, { pcm: rec.pcm, sr: rec.sr || 44100, rev: 1 })
+        if (!sameSong(session)) return
+        if (rec && rec.pcm instanceof Float32Array && rec.pcm.length) {
+          audioBank.set(i, { pcm: rec.pcm, sr: rec.sr || 44100, rev: (audioBank.get(i)?.rev || 0) + 1 })
+        } else {
+          failed += 1
+          console.warn(`pad ${i + 1} sample is missing from browser storage`)
         }
       } catch (err) {
         failed += 1
@@ -1247,8 +1399,59 @@ export async function restoreSamples() {
   )
   touch(false)
   if (failed) {
-    throw new Error(`${failed} sample${failed > 1 ? 's' : ''} could not be read from browser storage. Those pads are silent until reloaded.`)
+    const names = unreadPads().slice(0, 8).map(padLabel).join(', ')
+    throw new Error(`${failed} sample${failed > 1 ? 's' : ''} could not be read from browser storage${names ? ` (pad ${names})` : ''}. Those pads are silent, and Save is off until they load.`)
   }
+}
+
+/** Try the unreadable pads again. Resolves with how many are still unread. */
+export function retryUnreadPads() {
+  return exclusive(async () => {
+    const list = unreadPads()
+    if (!list.length) return 0
+    try {
+      await restoreSamples(list)
+    } catch {
+      /* counted below */
+    }
+    return unreadPads().length
+  })
+}
+
+/**
+ * Give up on the unreadable pads: they become empty pads (bus kept). The stored records are left alone,
+ * so nothing that might still be read later is deleted.
+ */
+export function clearUnreadPads() {
+  for (const i of unreadPads()) {
+    const bus = model.pads[i].bus
+    model.pads[i] = emptyPad(i)
+    model.pads[i].bus = bus
+  }
+  touch(true)
+}
+
+/** Samples a .m1ya can hold in all (base64 of 32-bit floats: about 10.7 MB of text). */
+export const PACK_SAMPLES = 2_000_000
+export const PACK_SECONDS = Math.round(PACK_SAMPLES / 44100)
+
+/** How much sample time the song's pads use and how much can still be saved. */
+export function sampleBudget(extra = 0, exceptPad = -1) {
+  let used = 0
+  model.pads.forEach((pad, i) => {
+    if (i === exceptPad || pad?.source !== 'sample') return
+    used += audioBank.get(i)?.pcm?.length || 0
+  })
+  used += Math.max(0, extra | 0)
+  const left = PACK_SAMPLES - used
+  return { used, limit: PACK_SAMPLES, over: left < 0, leftSeconds: Math.max(0, Math.floor(left / 44100)), overSeconds: left < 0 ? Math.ceil(-left / 44100) : 0 }
+}
+
+/** A short line for after an import or a take: time left, or how far over a saved song can hold. */
+export function budgetNote(budget = sampleBudget()) {
+  if (budget.over) return `Samples now run ${budget.overSeconds} s past the ${PACK_SECONDS} s a saved song holds: shorten or clear a pad before saving.`
+  if (budget.leftSeconds < 10) return `${budget.leftSeconds} s of sample time left in this song.`
+  return ''
 }
 
 export function padKeyLabel(localIndex) {

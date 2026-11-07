@@ -1,5 +1,8 @@
 import { stashUndo } from '../history.js'
-import { idbDelete, idbGet, idbKeys, idbSet, model, touch } from '../model.js'
+import { idbDelete, idbGet, idbKeys, idbSet, model, plainText, touch } from '../model.js'
+
+/** The library was missing or malformed and was reset: rebuildLibrary() puts the stored files back. */
+let needsRebuild = false
 
 export const MEDIA_RE = /\.(wav|mp3|m4a|aac|ogg|flac|aiff|aif|mp4|webm|mov|m4v)$/i
 
@@ -18,8 +21,9 @@ export function defaultLibrary() {
 
 export function ensureLibrary() {
   const raw = model.library
-  if (!raw || Array.isArray(raw) || !Array.isArray(raw.folders) || !Array.isArray(raw.files)) {
+  if (!raw || Array.isArray(raw) || typeof raw !== 'object' || !Array.isArray(raw.folders) || !Array.isArray(raw.files)) {
     model.library = defaultLibrary()
+    needsRebuild = true
   }
   for (const folder of defaultLibrary().folders) {
     if (model.library.folders.some((item) => item.id === folder.id)) continue
@@ -28,6 +32,52 @@ export function ensureLibrary() {
   }
   if (!Array.isArray(model.library.sliceSets)) model.library.sliceSets = []
   return model.library
+}
+
+export function libraryNeedsRebuild() {
+  return needsRebuild
+}
+
+/**
+ * The library index was reset: list every song, kit and sample still in IndexedDB again, so none are
+ * orphaned. Rows that are already listed stay as they are. Resolves with how many came back.
+ */
+export async function rebuildLibrary({ force = false } = {}) {
+  if (!needsRebuild && !force) return 0
+  needsRebuild = false
+  const library = ensureLibrary()
+  const known = new Set(library.files.map((file) => file.id))
+  const keys = await idbKeys()
+  let added = 0
+  for (const key of keys) {
+    if (typeof key !== 'string') continue
+    const match = /^(song|kit|lib):([a-z0-9]{1,40})$/i.exec(key)
+    if (!match || known.has(match[2])) continue
+    const [, kind, id] = match
+    let rec = null
+    try {
+      rec = await idbGet(key)
+    } catch {
+      rec = null
+    }
+    if (!rec) continue
+    if (kind === 'song') {
+      if (rec.type !== 'm1ya') continue
+      library.files.push({ id, folder: 'songs', name: plainText(rec.name, 48) || 'Song', ext: 'm1ya' })
+    } else if (kind === 'kit') {
+      library.files.push({ id, folder: 'kits', name: plainText(rec.name, 48) || 'Kit', ext: 'k1t' })
+    } else {
+      if (!rec.pcm) continue
+      library.files.push({ id, folder: 'imports', name: plainText(rec.name, 80) || 'sample', ext: 'wav' })
+    }
+    known.add(id)
+    added += 1
+  }
+  if (added) {
+    model.browserNote = `The library list was lost. ${added} stored file${added > 1 ? 's are' : ' is'} back in Songs, Kits and Imports.`
+    touch(true)
+  }
+  return added
 }
 
 export function newFolder(name, parent = '') {
@@ -43,6 +93,7 @@ export function newFolder(name, parent = '') {
 export async function cachePcm(folder, name, pcm, sr, ext = 'wav') {
   const library = ensureLibrary()
   const id = `s${Date.now().toString(36)}${Math.floor(Math.random() * 1000)}`
+  name = plainText(name, 80)
   // Storage first: a failed write must not leave a library row with no audio behind it.
   await idbSet(`lib:${id}`, { pcm, sr, name: name || 'sample' })
   stashUndo(`lib:${id}`, null)
@@ -84,6 +135,13 @@ export async function removeCached(id) {
     const doc = await idbGet(`song:${id}`)
     stashUndo(`song:${id}`, doc || null)
     await idbDelete(`song:${id}`)
+    // The copy kept under a wallet goes too, or the next wallet read would bring the song back.
+    for (const key of await idbKeys()) {
+      if (typeof key !== 'string' || !key.startsWith('profile:') || !key.endsWith(`:${id}`)) continue
+      const kept = await idbGet(key)
+      stashUndo(key, kept || null)
+      await idbDelete(key)
+    }
   } else if (file?.ext === 'k1t') {
     const doc = await idbGet(`kit:${id}`)
     stashUndo(`kit:${id}`, doc || null)
@@ -98,20 +156,36 @@ export async function removeCached(id) {
   touch(true)
 }
 
+/** Linked folders. Older ones were stored as the bare handle under dir:<name>; newer as { name, handle }. */
 export async function savedDirectories() {
   const keys = await idbKeys()
   const dirs = []
   for (const key of keys) {
     if (typeof key !== 'string' || !key.startsWith('dir:')) continue
-    const handle = await idbGet(key)
-    if (handle) dirs.push({ key, name: key.slice(4), handle })
+    const rec = await idbGet(key)
+    if (!rec) continue
+    const handle = rec.handle && typeof rec.handle === 'object' ? rec.handle : rec
+    const name = plainText(rec.handle ? rec.name : handle.name, 80) || plainText(key.slice(4), 80) || 'Folder'
+    dirs.push({ key, name, handle })
   }
   return dirs
 }
 
+/**
+ * Link a folder. Each gets its own id, so two folders that share a name do not replace each other.
+ * Linking the same folder again keeps the one entry.
+ */
 export async function rememberDirectory(handle) {
-  const name = handle.name || 'Folder'
-  await idbSet(`dir:${name}`, handle)
+  const name = plainText(handle.name, 80) || 'Folder'
+  for (const dir of await savedDirectories()) {
+    try {
+      if (dir.handle?.isSameEntry && (await dir.handle.isSameEntry(handle))) return name
+    } catch {
+      /* a handle that cannot be compared is treated as another folder */
+    }
+  }
+  const id = `${Date.now().toString(36)}${Math.floor(Math.random() * 1e6).toString(36)}`
+  await idbSet(`dir:${id}`, { name, handle })
   return name
 }
 

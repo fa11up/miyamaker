@@ -168,6 +168,9 @@ const Pages: Record<string, Page> = {
     path: '/music',
     label: 'MiyaMusicMaker',
     icon: MusicIcon[0],
+    // Draws inside a shadow root, which the drag trail's copies leave out, so it moves as one piece.
+    noTrail: true,
+    fixedSize: true,
     minSize: {
       width: 1180,
       height: 760,

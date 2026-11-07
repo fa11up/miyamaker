@@ -3,6 +3,7 @@ import type { Address, Hash, TransactionReceipt } from 'viem'
 import { parseEventLogs, zeroAddress, zeroHash } from 'viem'
 
 import { wagmiConfig } from '@/config/wagmi'
+import { settle, type TxReplaced } from '@/miyamints/txOutcome'
 import { erc1155FactoryAbi, erc1155InstanceAbi } from '@/music/abi'
 import { editionArgs, GATING_SCOPE_BOTH, makeSalt } from '@/music/drop'
 import { addKnownCollection } from '@/music/known'
@@ -13,10 +14,16 @@ import {
   batchEdition,
   batchLanded,
   type ChainReads,
+  CouldNotReadError,
+  SaidError,
   findEdition,
   findInstance,
+  type LaunchAsk,
   type LaunchProgress,
+  leftoverVerdict,
   nextLaunchStep,
+  type NonceRead,
+  sentVerdict,
 } from './mintPlan'
 
 type ChainId = (typeof wagmiConfig.chains)[number]['id']
@@ -90,31 +97,64 @@ export async function checkLaunch(
   await simulateContract(wagmiConfig, { account: input.account, chainId: input.chainId as ChainId, ...call } as never)
 }
 
+/** Said when an earlier wallet request may still be going out and can't be told apart yet: nothing is sent again. */
+export const CHECK_WALLET_WORDS =
+  "Your wallet may still be sending the earlier request. Check your wallet's activity. Check status looks again and sends nothing new."
+
+/** An earlier send may still be out. Carries `unconfirmed`, so it is kept and waited on, never sent again. */
+export class CheckWalletError extends Error {
+  unconfirmed = true
+
+  plain = true
+
+  constructor(message = CHECK_WALLET_WORDS) {
+    super(message)
+    this.name = 'CheckWalletError'
+  }
+}
+
+type Waited = { status: 'success'; receipt: TransactionReceipt } | { status: 'reverted' } | { status: 'dropped' }
+
 /**
- * Waits through the public client, which returns a reverted receipt rather than throwing. A lookup that fails or runs
- * out of time says nothing about the transaction, so that is unconfirmed and the hash is kept.
+ * Waits through the public client, which returns a reverted receipt rather than throwing. A wallet's cancel or a
+ * replacement resolves the wait with the other transaction's receipt, so `onReplaced` (through main's `settle`) tells
+ * them apart: a sped-up copy ('repriced') is the same transaction; a cancel or a replacement means ours did not run.
+ * A wait that runs out asks the nonce: mined with no receipt for our hash is dropped too. Anything else says nothing
+ * about the transaction, so that is unconfirmed and the hash is kept.
  */
-async function waitFor(
-  chainId: ChainId,
-  hash: Hash,
-  onReverted: () => void,
-  words: string
-): Promise<TransactionReceipt> {
+async function waitFor(chainId: ChainId, hash: Hash, account: Address, sentNonce: number | undefined): Promise<Waited> {
   const client = getPublicClient(wagmiConfig, { chainId })
   if (!client) throw new UnconfirmedError()
-  let receipt: TransactionReceipt
+  let reason: TxReplaced | undefined
   try {
-    receipt = await client.waitForTransactionReceipt({ hash, timeout: 180_000 })
-  } catch {
-    throw new UnconfirmedError()
+    const receipt = await settle((onReplaced) =>
+      client.waitForTransactionReceipt({
+        hash,
+        timeout: 180_000,
+        onReplaced: (r) => {
+          reason = r.reason
+          onReplaced(r)
+        },
+      })
+    )
+    return { status: 'success', receipt }
+  } catch (e) {
+    const end = e as { cancelled?: boolean; reverted?: boolean }
+    if (end.cancelled || reason === 'cancelled' || reason === 'replaced') return { status: 'dropped' }
+    if (end.reverted) return { status: 'reverted' }
   }
 
-  if (receipt.status !== 'success') {
-    onReverted()
-    throw new Error(words)
-  }
-
-  return receipt
+  // The wait ran out or failed: ask the chain directly.
+  const found = await client.getTransactionReceipt({ hash }).then(
+    (r) => r,
+    (err: { name?: string }) => (err?.name === 'TransactionReceiptNotFoundError' ? null : undefined)
+  )
+  if (found) return found.status === 'success' ? { status: 'success', receipt: found } : { status: 'reverted' }
+  if (found === undefined) throw new UnconfirmedError()
+  const latest = await client.getTransactionCount({ address: account, blockTag: 'latest' }).catch(() => undefined)
+  if (latest === undefined) throw new UnconfirmedError()
+  if (sentVerdict(sentNonce, latest, false) === 'dropped') return { status: 'dropped' }
+  throw new UnconfirmedError()
 }
 
 /**
@@ -123,12 +163,22 @@ async function waitFor(
  * timeout carries on from the deployed collection, and never sends again something that is still out. The collection
  * is always sent with the same salt, so even a send nobody heard back from can only ever make one.
  */
+export type LaunchHooks = {
+  onDeployed?: (instance: Address) => void
+  /**
+   * Called just before every wallet prompt, after the progress for it is recorded. Throws to stop the send: the
+   * dialog does when the release record could not be saved, since a reload would then send again.
+   */
+  beforeAsk?: () => void
+}
+
 export async function launchEdition(
   input: EditionLaunch,
   progress: LaunchProgress,
-  onDeployed?: (instance: Address) => void
+  { onDeployed, beforeAsk }: LaunchHooks = {}
 ): Promise<EditionResult> {
   const chainId = input.chainId as ChainId
+  if (!progress.salt) throw new SaidError('This release has no create salt yet. Close and reopen the window, then try again.')
   const editionCall = {
     abi: erc1155InstanceAbi,
     functionName: 'addEdition' as const,
@@ -145,7 +195,7 @@ export async function launchEdition(
   const client = getPublicClient(wagmiConfig, { chainId })
   const reads: ChainReads = {
     hasCode: async (address) => {
-      if (!client) throw new Error('No connection to the network')
+      if (!client) throw new SaidError('No connection to the network')
       const code = await client.getCode({ address })
       return !!code && code !== '0x'
     },
@@ -162,6 +212,40 @@ export async function launchEdition(
       }),
   }
 
+  const nonces = async (): Promise<NonceRead> => {
+    if (!client) throw new CouldNotReadError()
+    try {
+      const [pending, latest] = await Promise.all([
+        client.getTransactionCount({ address: input.account, blockTag: 'pending' }),
+        client.getTransactionCount({ address: input.account, blockTag: 'latest' }),
+      ])
+      return { pending, latest }
+    } catch {
+      throw new CouldNotReadError()
+    }
+  }
+
+  /**
+   * Records the wallet's pending nonce, then the prompt, so a reload can tell whether anything left the wallet while
+   * it was open. Then the dialog's last check (the record is saved) runs before anything is sent.
+   */
+  const ask = async (what: LaunchAsk | undefined) => {
+    progress.askNonce = (await nonces()).pending
+    progress.sentAt = Date.now()
+    progress.dropped = undefined
+    if (what) progress.asking = what
+    beforeAsk?.()
+  }
+
+  /** A hash we sent was cancelled, replaced or dropped. Our call may still have run under another hash (a speed-up the
+   * wait did not see), so the chain is checked on the next try, as for a prompt left open, before anything is sent. */
+  const droppedSend = (what: LaunchAsk, words: string) => {
+    progress.askNonce = progress.sentNonce
+    progress.asking = what
+    progress.dropped = true
+    return new SaidError(words)
+  }
+
   const deployed = (instance: Address) => {
     progress.instance = instance
     addKnownCollection(chainId, instance)
@@ -172,6 +256,23 @@ export async function launchEdition(
   // A wallet prompt that was open when the app went away: what it sent, if anything, is looked for on the chain
   // below, and it stays marked until then.
   const leftover = progress.asking
+
+  if (leftover) {
+    // Judge by the wallet's nonce whether anything left while the prompt was open. If something is still out, wait
+    // for it to be mined: the chain then says whether it was ours. Never send another while it is out.
+    const now = await nonces()
+    if (leftoverVerdict(progress.askNonce, now) === 'in-flight') {
+      const deadline = Date.now() + 120_000
+      let latest = now.latest
+      while (latest < now.pending) {
+        if (Date.now() > deadline) throw new CheckWalletError()
+        // eslint-disable-next-line no-await-in-loop
+        await reads.pause(4000)
+        // eslint-disable-next-line no-await-in-loop
+        latest = (await nonces()).latest
+      }
+    }
+  }
 
   /**
    * Something with this salt may have landed without a word back. If the collection is there, carry on from it, and
@@ -190,7 +291,6 @@ export async function launchEdition(
   let step = nextLaunchStep(progress, input.mintFirst)
 
   if (step === 'deploy') {
-    progress.salt ??= freshSalt(input.factory)
     progress.predicted ??= (await readContract(wagmiConfig, {
       address: input.factory,
       abi: instanceAddressAbi,
@@ -209,10 +309,9 @@ export async function launchEdition(
     try {
       if (progress.batchId) sent = await waitForBatch(progress.batchId)
       else {
-        const salt = progress.salt ?? freshSalt(input.factory)
-        progress.salt = salt
-        const create = createCall(input, salt)
+        const create = createCall(input, progress.salt)
         const { predicted } = progress
+        if (predicted) await ask(undefined)
         sent =
           (predicted &&
             (await tryBatch([create, { address: predicted, ...editionCall }], {
@@ -233,8 +332,9 @@ export async function launchEdition(
             chainId,
             ...create,
           } as never)
-          progress.asking = 'deploy'
+          await ask('deploy')
           progress.deployHash = (await writeContract(wagmiConfig, request as never)) as Hash
+          progress.sentNonce = progress.askNonce
           progress.asking = undefined
         }
       }
@@ -249,7 +349,7 @@ export async function launchEdition(
       // The wallet lost the id, so waiting on it would never end. The chain says whether the batch landed.
       progress.batchId = undefined
       if (!(await foundAt(true, 4))) {
-        throw new Error(
+        throw new SaidError(
           'Your wallet no longer knows that batch, and nothing is at the new collection’s address yet. Try again to send it again: it can only ever make the one collection.'
         )
       }
@@ -269,29 +369,40 @@ export async function launchEdition(
   }
 
   if (step === 'wait-deploy' && progress.deployHash) {
-    const receipt = await waitFor(
-      chainId,
-      progress.deployHash,
-      () => {
-        progress.deployHash = undefined
-      },
-      'The deploy transaction failed on the network. Nothing was created. You only paid the network fee.'
-    )
-    const logged = parseEventLogs({ abi: erc1155FactoryAbi, eventName: 'InstanceCreated', logs: receipt.logs })[0]?.args
-      .instance
-    const instance = logged ?? (await findInstance(progress, reads))
-    // The hash stays until the collection is known, so a retry reads it again rather than deploying again.
-    if (!instance)
-      throw new Error(
-        'Deployed, but the new collection address could not be read yet. Try again in a minute, or check the explorer.'
-      )
+    const waited = await waitFor(chainId, progress.deployHash, input.account, progress.sentNonce)
+    let instance: Address | undefined
+    if (waited.status === 'success') {
+      instance =
+        parseEventLogs({ abi: erc1155FactoryAbi, eventName: 'InstanceCreated', logs: waited.receipt.logs })[0]?.args
+          .instance ?? (await findInstance(progress, reads))
+      // The hash stays until the collection is known, so a retry reads it again rather than deploying again.
+      if (!instance)
+        throw new SaidError(
+          'Deployed, but the new collection address could not be read yet. Try again in a minute, or check the explorer.'
+        )
+    } else {
+      // A send with this salt that reverted or never ran: an earlier send with the same salt may have made the
+      // collection (the salt can make only one), so look before saying nothing was created.
+      instance = await findInstance(progress, reads, 2)
+      progress.deployHash = undefined
+      if (!instance) {
+        if (waited.status === 'dropped') {
+          throw droppedSend(
+            'deploy',
+            'Your wallet cancelled or replaced the deploy, so it did not run. Try again looks on the chain first, then sends it again.'
+          )
+        }
+        throw new SaidError('The deploy transaction failed on the network. Nothing was created. You only paid the network fee.')
+      }
+    }
     deployed(instance)
+    progress.sentNonce = undefined
     step = nextLaunchStep(progress, input.mintFirst)
   }
 
   const { instance } = progress
   if (!instance)
-    throw new Error('Deployed, but could not find the new collection address in the receipt. Check the explorer.')
+    throw new SaidError('Deployed, but could not find the new collection address in the receipt. Check the explorer.')
 
   if (step === 'find-edition') {
     await batchEdition(progress, instance, undefined, reads)
@@ -311,9 +422,10 @@ export async function launchEdition(
         address: instance,
         ...editionCall,
       })
-      progress.asking = 'edition'
+      await ask('edition')
       try {
         progress.editionHash = await writeContract(wagmiConfig, edition.request)
+        progress.sentNonce = progress.askNonce
       } finally {
         progress.asking = undefined
       }
@@ -323,32 +435,36 @@ export async function launchEdition(
   }
 
   if (step === 'wait-edition' && progress.editionHash) {
-    const receipt = await waitFor(
-      chainId,
-      progress.editionHash,
-      () => {
-        progress.editionHash = undefined
-      },
-      `The collection is live at ${instance}, but adding the edition failed. Try again to add it.`
-    )
-    const added = parseEventLogs({ abi: erc1155InstanceAbi, eventName: 'EditionAdded', logs: receipt.logs })[0]
+    const waited = await waitFor(chainId, progress.editionHash, input.account, progress.sentNonce)
+    if (waited.status !== 'success') {
+      progress.editionHash = undefined
+      if (waited.status === 'dropped') {
+        throw droppedSend(
+          'edition',
+          `The collection is live at ${instance}, but your wallet cancelled or replaced adding the edition, so it did not run. Try again looks on the chain first, then adds it.`
+        )
+      }
+      throw new SaidError(`The collection is live at ${instance}, but adding the edition failed. Try again to add it.`)
+    }
+    const added = parseEventLogs({ abi: erc1155InstanceAbi, eventName: 'EditionAdded', logs: waited.receipt.logs })[0]
     // A new collection's only edition. Read it back if the log is missing, rather than guess, and keep the hash
     // until it is found: the edition is there, so it is never added a second time.
     const editionId = added ? added.args.editionId : await findEdition(instance, reads)
     if (editionId === undefined) {
-      throw new Error(
+      throw new SaidError(
         `The edition was added to ${instance}, but it could not be read back yet. Try again in a minute: it sends nothing new.`
       )
     }
 
     progress.editionId = editionId
     progress.editionHash = undefined
+    progress.sentNonce = undefined
     step = nextLaunchStep(progress, input.mintFirst)
   }
 
   if (progress.editionId == null) {
     // Nothing found where an edition should be: say so instead of quietly skipping the first copy.
-    throw new Error(`The collection is live at ${instance}, but no edition was found on it. Check the explorer.`)
+    throw new SaidError(`The collection is live at ${instance}, but no edition was found on it. Check the explorer.`)
   }
 
   const { editionId } = progress
@@ -380,9 +496,10 @@ export async function launchEdition(
       args: [editionId, 1n, zeroHash, '', input.priceWei],
       value: input.priceWei,
     })
-    progress.asking = 'mint'
+    await ask('mint')
     try {
       progress.mintHash = (await writeContract(wagmiConfig, mint.request)) as Hash
+      progress.sentNonce = progress.askNonce
     } finally {
       progress.asking = undefined
     }
@@ -391,16 +508,20 @@ export async function launchEdition(
   }
 
   if (step === 'wait-mint' && progress.mintHash) {
-    await waitFor(
-      chainId,
-      progress.mintHash,
-      () => {
-        progress.mintHash = undefined
-      },
-      'The edition is live, but minting the first copy failed. Try again, or mint it from Music drops.'
-    )
+    const waited = await waitFor(chainId, progress.mintHash, input.account, progress.sentNonce)
+    if (waited.status !== 'success') {
+      progress.mintHash = undefined
+      if (waited.status === 'dropped') {
+        throw droppedSend(
+          'mint',
+          'The edition is live, but your wallet cancelled or replaced the first-copy mint, so it did not run. Try again checks this wallet first, then mints.'
+        )
+      }
+      throw new SaidError('The edition is live, but minting the first copy failed. Try again, or mint it from Music drops.')
+    }
     progress.minted = true
     progress.mintHash = undefined
+    progress.sentNonce = undefined
   }
 
   return { instance, editionId, minted: !!progress.minted }

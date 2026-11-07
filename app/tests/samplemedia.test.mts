@@ -2,10 +2,10 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { allowedMediaUrl, handleSampleMediaRequest, SAMPLE_MEDIA_LIMIT, SAMPLE_MEDIA_PATH } from '../api/_lib/samplemedia.ts'
+import { allowedMediaUrl, handleSampleMediaRequest, SAMPLE_MEDIA_LIMIT, SAMPLE_MEDIA_PATH, SAMPLE_MEDIA_RATE } from '../api/_lib/samplemedia.ts'
 import { allowedMediaUrl as appAllowedMediaUrl } from '../src/pages/MusicMaker/media/allow.js'
 import { cappedStream, mediaType } from '../src/pages/MusicMaker/media/serve.js'
-import { clientKey, sameOrigin } from '../api/_lib/zeroex.ts'
+import { clientKey, createRateLimiter, sameOrigin } from '../api/_lib/zeroex.ts'
 
 const open = { sameOrigin, clientKey, limiter: () => true }
 
@@ -155,4 +155,53 @@ test('the capped stream cuts at the limit when asked to truncate', async () => {
   assert.equal((await out.arrayBuffer()).byteLength, 6)
   const whole = new Response(cappedStream(chunks([3, 3]), 6))
   assert.equal((await whole.arrayBuffer()).byteLength, 6)
+})
+
+const never: typeof fetch = async () => {
+  throw new Error('no fetch expected')
+}
+
+test('a missing guard refuses every request instead of skipping the check', async () => {
+  for (const env of [{}, { sameOrigin, clientKey }, { clientKey, limiter: () => true }, { sameOrigin, limiter: () => true }]) {
+    const res = await handleSampleMediaRequest(ask(rave), { ...env, fetchImpl: never })
+    assert.equal(res.status, 500)
+    assert.match(await res.text(), /not configured/)
+  }
+})
+
+test('only GET is answered, with an Allow header', async () => {
+  const res = await handleSampleMediaRequest({ ...ask(rave), method: 'POST' }, { ...open, fetchImpl: never })
+  assert.equal(res.status, 405)
+  assert.equal(res.headers.get('allow'), 'GET')
+})
+
+test('the exact path only, like the Worker', async () => {
+  const slash = { ...ask(rave), url: `http://localhost${SAMPLE_MEDIA_PATH}/?url=${encodeURIComponent(rave)}` }
+  assert.equal((await handleSampleMediaRequest(slash, { ...open, fetchImpl: never })).status, 404)
+})
+
+test('a whole 64-pad kit loads in one burst, and the next read is a 429 before any fetch', async () => {
+  assert.ok(SAMPLE_MEDIA_RATE.capacity >= 64)
+  const limiter = createRateLimiter(SAMPLE_MEDIA_RATE)
+  let fetches = 0
+  const fetchImpl: typeof fetch = async () => {
+    fetches += 1
+    return new Response(new Uint8Array([1]), { status: 200, headers: { 'content-type': 'audio/wav' } })
+  }
+  const env = { sameOrigin, clientKey, limiter, fetchImpl }
+  for (let i = 0; i < SAMPLE_MEDIA_RATE.capacity; i += 1) assert.equal((await handleSampleMediaRequest(ask(rave), env)).status, 200)
+  const res = await handleSampleMediaRequest(ask(rave), env)
+  assert.equal(res.status, 429)
+  assert.ok(res.headers.get('retry-after'))
+  assert.equal(fetches, SAMPLE_MEDIA_RATE.capacity)
+})
+
+test('a second redirect is refused, even on the list', async () => {
+  const fetchImpl: typeof fetch = async (input) => {
+    const href = String(input)
+    if (href === rave) return new Response(null, { status: 302, headers: { location: 'https://gateway.pinata.cloud/ipfs/one' } })
+    return new Response(null, { status: 302, headers: { location: 'https://ipfs.io/ipfs/two' } })
+  }
+  const res = await handleSampleMediaRequest(ask(rave), { ...open, fetchImpl })
+  assert.equal(res.status, 400)
 })

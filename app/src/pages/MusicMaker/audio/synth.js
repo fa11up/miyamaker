@@ -58,17 +58,47 @@ export function defaultPatch() {
   }
 }
 
+/** Keys a file must never set on a plain object: they reach the prototype. */
+export const BAD_KEYS = new Set(['__proto__', 'constructor', 'prototype'])
+
+/** Own enumerable entries of a plain object, without prototype keys. */
+export function safeEntries(obj) {
+  if (!obj || typeof obj !== 'object') return []
+  return Object.keys(obj).filter((key) => !BAD_KEYS.has(key)).map((key) => [key, obj[key]])
+}
+
+function assignSafe(target, src) {
+  for (const [key, value] of safeEntries(src)) target[key] = value
+}
+
+function copyOscs(list, fallback) {
+  // The renderer reads three oscillators. A short or junk list keeps the defaults for the missing ones.
+  return fallback.map((base, i) => {
+    const osc = { ...base }
+    const src = Array.isArray(list) ? list[i] : null
+    if (src && typeof src === 'object' && !Array.isArray(src)) assignSafe(osc, src)
+    return osc
+  })
+}
+
 export function mergePatch(base, over) {
   const p = defaultPatch()
-  Object.assign(p, base || {})
-  if (base && base.oscs) p.oscs = base.oscs.map((o) => ({ ...o }))
-  if (base && base.partials) p.partials = base.partials.slice()
+  const oscs = p.oscs
+  assignSafe(p, base)
+  p.oscs = copyOscs(base?.oscs, oscs)
+  p.partials = Array.isArray(base?.partials) ? base.partials.slice(0, MAX_PARTIALS) : defaultPatch().partials
   if (!over) return p
-  Object.assign(p, over)
-  if (over.oscs) p.oscs = over.oscs.map((o) => ({ ...o }))
-  if (over.partials) p.partials = over.partials.slice()
+  const merged = p.oscs
+  assignSafe(p, over)
+  p.oscs = copyOscs(over.oscs, merged)
+  const partials = Array.isArray(over.partials) ? over.partials : Array.isArray(base?.partials) ? base.partials : defaultPatch().partials
+  p.partials = partials.slice(0, MAX_PARTIALS)
   return p
 }
+
+/** Partials past this are dropped: each one is a sine per sample per unison voice. */
+export const MAX_PARTIALS = 16
+export const MAX_UNISON = 4
 
 function clamp(v, a, b) {
   return Math.max(a, Math.min(b, v))
@@ -203,7 +233,7 @@ export function renderSynth(patch, sampleRate = SYNTH_SR) {
   const total = Math.min(4, ampTotal(p) + (p.repeat > 0 ? 0.4 : 0))
   const n = Math.max(8, Math.floor(total * sr))
   const pcm = new Float32Array(n)
-  const unison = clamp(Math.round(p.unison || 1), 1, 4)
+  const unison = clamp(Math.round(Number(p.unison) || 1), 1, MAX_UNISON)
   const phases = []
   for (let u = 0; u < unison; u++) phases.push([0, 0, 0])
   const filters = []

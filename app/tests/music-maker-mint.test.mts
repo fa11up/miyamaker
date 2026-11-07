@@ -75,8 +75,12 @@ test('the placeholder check catches a bad field before any upload', () => {
 })
 
 test('the first copy says what it costs', () => {
-  assert.equal(firstCopyLabel(10_000_000_000_000_000n), 'Mint the first copy to this wallet (costs 0.01 ETH)')
-  assert.equal(firstCopyLabel(undefined), 'Mint the first copy to this wallet (costs the edition price)')
+  assert.equal(
+    firstCopyLabel(10_000_000_000_000_000n),
+    'Mint the first copy to this wallet (costs 0.01 ETH). It uses one copy of the supply.'
+  )
+  assert.match(firstCopyLabel(undefined), /costs the edition price/)
+  assert.match(firstCopyLabel(1n, true), /raises the price for the next buyer/)
 })
 
 test('a blank artist is the wallet, not miya', () => {

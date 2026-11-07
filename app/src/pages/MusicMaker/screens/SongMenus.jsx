@@ -50,6 +50,10 @@ function closeWindow() {
   touch(false)
 }
 
+/** A song written to IndexedDB whose Songs list could not be saved is not kept: say so, never "saved". */
+const NOT_KEPT = (name, downloaded = false) =>
+  `${name}.m1ya not saved: browser storage refused the write.${downloaded ? ' The download started, so keep that file.' : ' Free some space, then save again.'}`
+
 export function NewMenu() {
   useModel()
   const root = useRef(null)
@@ -114,7 +118,7 @@ export function NewMenu() {
       const stored = await storeSongFile(doc.name, doc)
       if (!sameSong(song)) {
         // Another song was opened while this one was written. The copy is in Songs; the session stays put.
-        note(`${stored.doc.name}.m1ya saved in Songs`)
+        note(stored.persisted ? `${stored.doc.name}.m1ya saved in Songs` : NOT_KEPT(stored.doc.name))
         return
       }
       model.songName = stored.doc.name
@@ -318,7 +322,7 @@ export function SaveMenu() {
     try {
       const doc = await captureSong(model.songName || 'Song')
       const stored = await replaceSongFile(file, doc.name, doc)
-      note(`${stored.doc.name}.m1ya saved`)
+      note(stored.persisted ? `${stored.doc.name}.m1ya saved` : NOT_KEPT(stored.doc.name))
       // Only repoint the session if it still holds the song that was saved, in the same file.
       if (!sameSong(song) || model.songFile !== file) return
       model.songName = stored.doc.name
@@ -344,7 +348,7 @@ export function SaveMenu() {
       const stored = await storeSongFile(doc.name, doc)
       downloadSong(stored.doc)
       if (!sameSong(song)) {
-        note(`${stored.doc.name}.m1ya saved in Songs and downloaded`)
+        note(stored.persisted ? `${stored.doc.name}.m1ya saved in Songs, download started` : NOT_KEPT(stored.doc.name, true))
         closeWindow()
         return
       }
@@ -352,7 +356,7 @@ export function SaveMenu() {
       model.songFile = stored.id
       model.songOrder = stored.doc.order
       model.songPlay = true
-      note(`${stored.doc.name}.m1ya saved in Songs and downloaded`)
+      note(stored.persisted ? `${stored.doc.name}.m1ya saved in Songs, download started` : NOT_KEPT(stored.doc.name, true))
       touch(true)
       closeWindow()
     } catch (error) {
@@ -371,7 +375,7 @@ export function SaveMenu() {
     try {
       const doc = await captureSong(next)
       const stored = await storeSongFile(doc.name, doc, { folder: 'templates' })
-      note(`${stored.doc.name} saved as a template`)
+      note(stored.persisted ? `${stored.doc.name} saved as a template` : NOT_KEPT(stored.doc.name))
       touch(true)
       closeWindow()
     } catch (error) {
@@ -398,9 +402,9 @@ export function SaveMenu() {
           <button type="button" disabled={busy} onClick={saveOver}>Save</button>
           <button type="button" onClick={() => choose('save-as')}>Save as…</button>
           <button type="button" onClick={() => choose('save-template')}>Save as template</button>
-          <button type="button" disabled={busy} onClick={() => publish('upload-song')}>Save song to Arweave</button>
-          <button type="button" disabled={busy} onClick={() => publish('upload-kit')}>Save kit to Arweave</button>
-          <button type="button" disabled={busy} onClick={() => publish('upload-bounce')}>Upload bounce</button>
+          <button type="button" disabled={busy} onClick={() => publish('upload-song')}>Publish song to Arweave…</button>
+          <button type="button" disabled={busy} onClick={() => publish('upload-kit')}>Publish kit to Arweave…</button>
+          <button type="button" disabled={busy} onClick={() => publish('upload-bounce')}>Publish bounce to Arweave…</button>
           <button type="button" disabled={busy} onClick={() => publish('mint-song')}>Mint song…</button>
           <button type="button" disabled={busy} onClick={() => publish('mint-kit')}>Mint kit…</button>
         </div>

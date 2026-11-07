@@ -14,6 +14,11 @@ import { bumpSong, exclusive } from './jobs.js'
 
 const stack = []
 const CAP = 30
+/**
+ * Undo also holds the stored samples a step replaced. A few kit loads of long samples would pin hundreds
+ * of MB, so the oldest steps go once the held audio passes this. The newest step is always kept.
+ */
+export const CAP_BYTES = 48 * 1024 * 1024
 let baseline = null
 let pendingBlobs = []
 let armed = false
@@ -77,6 +82,33 @@ function applySnapshot(data) {
   ensurePattern(model.pattern || 0)
 }
 
+/** Bytes of audio a held value pins: decoded PCM, or the base64 of a stored song or kit. */
+export function heldBytes(value, depth = 0) {
+  if (!value || typeof value !== 'object' || depth > 3) return typeof value === 'string' ? value.length : 0
+  if (ArrayBuffer.isView(value)) return value.byteLength
+  let total = 0
+  if (value.pcm) total += heldBytes(value.pcm, depth + 1)
+  if (Array.isArray(value.samples)) for (const sample of value.samples) total += heldBytes(sample?.pcm, depth + 1)
+  return total
+}
+
+function entryBytes(entry) {
+  if (entry.bytes == null) entry.bytes = entry.blobs.reduce((sum, blob) => sum + heldBytes(blob.value), 0)
+  return entry.bytes
+}
+
+/** Drop the oldest steps past CAP steps or CAP_BYTES of held audio. */
+export function trimStack(list = stack, cap = CAP, capBytes = CAP_BYTES) {
+  while (list.length > cap) list.shift()
+  let total = list.reduce((sum, entry) => sum + entryBytes(entry), 0)
+  while (list.length > 1 && total > capBytes) total -= entryBytes(list.shift())
+  return total
+}
+
+export function historyBytes() {
+  return stack.reduce((sum, entry) => sum + entryBytes(entry), 0)
+}
+
 function commit() {
   if (!armed || restoring || !baseline) return
   const now = typeof performance !== 'undefined' ? performance.now() : Date.now()
@@ -98,7 +130,7 @@ function commit() {
   }
   stack.push({ json: baseline, blobs: pendingBlobs })
   pendingBlobs = []
-  while (stack.length > CAP) stack.shift()
+  trimStack()
   baseline = takeSnapshot()
   lastCommitAt = now
 }

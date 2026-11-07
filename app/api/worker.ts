@@ -6,13 +6,13 @@ import { mainnet } from 'viem/chains'
 import { edgeCache, handleMarketRequest, MARKET_PREFIX, openSeaReader } from './_lib/market'
 import { handleOpenSeaRequest, OPENSEA_PROXY_PATH, quoteBigInts } from './_lib/opensea'
 import { d1TapeStore, handlePublicAccessRequest, PUBLIC_ACCESS_PATH, youtubeLookup } from './_lib/publicaccess'
-import { handleSampleMediaRequest, SAMPLE_MEDIA_PATH } from './_lib/samplemedia'
-import { handleVideoAudioRequest, VIDEO_AUDIO_PATH } from '../src/pages/MusicMaker/media/videoaudio.js'
+import { handleSampleMediaRequest, SAMPLE_MEDIA_PATH, SAMPLE_MEDIA_RATE } from './_lib/samplemedia'
 import { serveRange } from './_lib/ranges'
 import type { D1Like } from './_lib/station'
 import { d1Store, gatewayContentType, handleStationRequest, STATION_PATH } from './_lib/station'
 import { kickOnAir, kickReader } from './_lib/tvkick'
 import { handleTvLiveRequest, TV_LIVE_PATH } from './_lib/tvlive'
+import { handleVideoAudioRequest, VIDEO_AUDIO_COST, VIDEO_AUDIO_PATH, VIDEO_AUDIO_RATE } from './_lib/videoaudio'
 import { CONTRACT_CHECK_PATH, etherscanReader, handleContractCheck } from './_lib/contractcheck'
 import { clientKey, createRateLimiter, handleZeroExRequest, PROXY_PREFIX, sameOrigin } from './_lib/zeroex'
 
@@ -48,7 +48,9 @@ const marketLimiter = createRateLimiter({ capacity: 120, perSecond: 2 })
 const contractCheckLimiter = createRateLimiter({ capacity: 30, perSecond: 0.5 })
 const stationLimiter = createRateLimiter({ capacity: 20, perSecond: 0.2 })
 const publicAccessLimiter = createRateLimiter({ capacity: 20, perSecond: 0.2 })
-const sampleMediaLimiter = createRateLimiter({ capacity: 8, perSecond: 0.2 })
+// A kit reads one sample per pad at once. A video link costs more: it makes three or more upstream fetches.
+const sampleMediaLimiter = createRateLimiter(SAMPLE_MEDIA_RATE)
+const videoAudioLimiter = createRateLimiter(VIDEO_AUDIO_RATE)
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -156,7 +158,7 @@ export default {
     if (url.pathname === VIDEO_AUDIO_PATH) {
       return handleVideoAudioRequest(
         { method: request.method, url: request.url, headers: request.headers },
-        { sameOrigin, clientKey, limiter: sampleMediaLimiter }
+        { sameOrigin, clientKey, limiter: videoAudioLimiter, cost: VIDEO_AUDIO_COST }
       )
     }
 

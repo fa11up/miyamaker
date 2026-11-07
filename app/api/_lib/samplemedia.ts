@@ -4,7 +4,7 @@
  * The host list is closed (media/allow.js, the same list the app checks). This is not an open proxy, and it never
  * sees a wallet key. What comes back is served as audio, video or plain bytes, never as a page (media/serve.js).
  * sameOrigin, clientKey and the limiter are passed in (see zeroex.ts) so this file
- * can load under `node --test` with only import-free modules.
+ * can load under `node --test` with only import-free modules. Without them every request is refused.
  */
 
 import { isMediaHost, SAMPLE_MEDIA_LIMIT } from '../../src/pages/MusicMaker/media/allow.js'
@@ -12,11 +12,13 @@ import { cappedStream, mediaHeaders } from '../../src/pages/MusicMaker/media/ser
 
 export { SAMPLE_MEDIA_LIMIT }
 export const SAMPLE_MEDIA_PATH = '/api/sample-media'
+/** A kit asks once per pad, all at once, so a whole 64-pad kit fits in one burst; then about one a second. */
+export const SAMPLE_MEDIA_RATE = { capacity: 64, perSecond: 1 }
 
 type Guard = {
-  sameOrigin: (headers: Headers | undefined, url: URL) => boolean
-  clientKey: (headers: Headers | undefined) => string
-  limiter: (key: string, now?: number) => boolean
+  sameOrigin?: (headers: Headers | undefined, url: URL) => boolean
+  clientKey?: (headers: Headers | undefined) => string
+  limiter?: (key: string, now?: number) => boolean
   fetchImpl?: typeof fetch
 }
 
@@ -48,9 +50,11 @@ export async function handleSampleMediaRequest(
   env: Guard
 ): Promise<Response> {
   const url = new URL(request.url, 'http://localhost')
-  // Dev middleware can leave a slash between the mount path and the query.
-  if (url.pathname.replace(/\/+$/, '') !== SAMPLE_MEDIA_PATH) return json(404, 'Not found.')
+  // The Worker routes this exact path only, so the handler answers the same one.
+  if (url.pathname !== SAMPLE_MEDIA_PATH) return json(404, 'Not found.')
   if (request.method !== 'GET') return json(405, 'GET only.', { allow: 'GET' })
+  // Fail closed: a caller that forgets a guard gets an error, never an open proxy.
+  if (!env?.sameOrigin || !env.clientKey || !env.limiter) return json(500, 'The sample reader is not configured.')
   if (!env.sameOrigin(request.headers, url)) return json(403, 'Same-origin only.')
   if (!env.limiter(env.clientKey(request.headers))) return json(429, 'Too many sample reads.', { 'retry-after': '5' })
 

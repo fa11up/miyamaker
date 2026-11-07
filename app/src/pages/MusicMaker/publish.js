@@ -1,12 +1,17 @@
-import { renderBounce } from './audio/engine.js'
+import { bounceOrder, bounceSeconds, renderBounce } from './audio/engine.js'
 import { captureKit, captureSong } from './audio/song.js'
-import { model, stepCount } from './model.js'
+import { assertPadsRead, model, unreadPads } from './model.js'
+
+/** Pads whose sample could not be read. The release dialog can check this before it offers anything. */
+export { unreadPads }
 
 function packedFile(doc, ext) {
   return new File([JSON.stringify(doc)], `${doc.name || 'Song'}.${ext}`, { type: 'application/json' })
 }
 
 export async function buildPublish(intent) {
+  // A pad whose sample did not load would be silent in the WAV and missing from the pack, for good.
+  assertPadsRead(intent.startsWith('mint') ? 'Mint' : 'Upload')
   const name = model.songName || 'Song'
   const bpm = model.bpm
   const packKind = intent === 'upload-kit' || intent === 'mint-kit' ? 'kit' : 'song'
@@ -15,12 +20,15 @@ export async function buildPublish(intent) {
   let audio
   let duration
   if (wantsAudio) {
+    // The length the bounce renders: the whole song order when the song plays, not the open pattern.
+    const order = bounceOrder()
+    duration = bounceSeconds(order, bpm)
     audio = new File([await renderBounce()], `${name}.wav`, { type: 'audio/wav' })
-    duration = stepCount() * (60 / Math.max(1, bpm) / 4) + 0.6
   }
   let pack
   if (wantsPack) {
-    const doc = packKind === 'kit' ? await captureKit(name) : await captureSong(name)
+    const what = intent.startsWith('mint') ? 'Mint' : 'Upload'
+    const doc = packKind === 'kit' ? await captureKit(name, what) : await captureSong(name, what)
     pack = packedFile(doc, packKind === 'kit' ? 'k1t' : 'm1ya')
   }
   return { intent, packKind, name, bpm, audio, duration, pack }

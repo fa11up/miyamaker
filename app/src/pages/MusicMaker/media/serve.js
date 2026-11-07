@@ -1,5 +1,5 @@
 /**
- * How the two media proxies (api/_lib/samplemedia.ts and videoaudio.js) hand bytes back on the site's own origin.
+ * How the two media proxies (api/_lib/samplemedia.ts and api/_lib/videoaudio.ts) hand bytes back on the site's own origin.
  * The bytes come from hosts nobody here controls, so they go out as audio, video, or plain bytes, never as a page:
  * no sniffing, no scripts, a download if opened directly. No imports, so the Worker and `node --test` load it.
  */

@@ -1,4 +1,4 @@
-import { useRef } from 'react'
+import { useEffect, useId, useRef } from 'react'
 
 function hexTop(bits) {
   if (bits >= 16) return 65535
@@ -127,14 +127,92 @@ export function ChromeGlyph({ kind }) {
   )
 }
 
-export function Dialog({ title, onClose, children }) {
+const FOCUSABLE = 'button:not(:disabled), [href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])'
+
+/** Dialogs open now, newest last: Escape closes only the top one. */
+const openDialogs = []
+
+/** Where focus really is: inside a shadow root, document.activeElement is only the host. */
+function deepActive(root = document) {
+  let el = root.activeElement
+  while (el?.shadowRoot?.activeElement) el = el.shadowRoot.activeElement
+  return el
+}
+
+/**
+ * A window of the app's own. Escape closes it (unless `busy`), focus moves in when it opens, Tab stays inside
+ * while it is open, and focus goes back to where it was when it closes.
+ */
+export function Dialog({ title, onClose, busy = false, children }) {
+  const box = useRef(null)
+  const titleId = useId()
+  const latest = useRef({ onClose, busy })
+  latest.current = { onClose, busy }
+
+  useEffect(() => {
+    const node = box.current
+    if (!node) return undefined
+    const back = deepActive()
+    openDialogs.push(node)
+    const first = node.querySelector('.body ' + FOCUSABLE.split(', ').join(', .body '))
+    ;(first || node).focus({ preventScroll: true })
+
+    // Only while the music window is the one on top: another app's Escape is not ours.
+    const frame = () => (node.getRootNode()?.host || node).closest?.('.react-draggable')
+    const down = (event) => {
+      if (openDialogs[openDialogs.length - 1] !== node) return
+      const win = frame()
+      if (win && !win.classList.contains('is-focused')) return
+      if (event.key === 'Escape') {
+        if (event.defaultPrevented) return
+        event.preventDefault()
+        event.stopPropagation()
+        if (!latest.current.busy) latest.current.onClose?.()
+        return
+      }
+      if (event.key !== 'Tab') return
+      const items = [...node.querySelectorAll(FOCUSABLE)].filter((el) => el.offsetParent !== null || el === deepActive())
+      if (!items.length) {
+        event.preventDefault()
+        node.focus({ preventScroll: true })
+        return
+      }
+      const active = deepActive()
+      const at = items.indexOf(active)
+      const inside = node.contains(active)
+      if (event.shiftKey && (at <= 0 || !inside)) {
+        event.preventDefault()
+        items[items.length - 1].focus()
+      } else if (!event.shiftKey && (at === items.length - 1 || !inside)) {
+        event.preventDefault()
+        items[0].focus()
+      }
+    }
+    window.addEventListener('keydown', down, true)
+    return () => {
+      window.removeEventListener('keydown', down, true)
+      const index = openDialogs.indexOf(node)
+      if (index >= 0) openDialogs.splice(index, 1)
+      if (back?.isConnected && typeof back.focus === 'function') back.focus({ preventScroll: true })
+    }
+  }, [])
+
   return (
-    <div className="dialog-back" onMouseDown={onClose}>
-      <div className="dialog" onMouseDown={(e) => e.stopPropagation()} role="dialog">
+    <div className="dialog-back" onMouseDown={() => { if (!busy) onClose() }}>
+      <div
+        ref={box}
+        className="dialog"
+        onMouseDown={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        aria-busy={busy || undefined}
+        tabIndex={-1}
+      >
         <div className="title-bar-root">
-          <div className="title-bar">{title}</div>
+          <div className="title-bar" id={titleId}>{title}</div>
           <div className="title-buttons">
-            <button type="button" className="chrome-btn close" aria-label="Close" onClick={onClose}>
+            <button type="button" className="chrome-btn close" aria-label="Close" disabled={busy} onClick={onClose}>
               <ChromeGlyph kind="close" />
             </button>
           </div>

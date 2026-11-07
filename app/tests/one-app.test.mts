@@ -10,7 +10,7 @@ const walk = (dir: string): string[] =>
   readdirSync(dir).flatMap((f) => {
     const p = join(dir, f)
     if (statSync(p).isDirectory()) return walk(p)
-    return /\.tsx?$/.test(p) ? [p] : []
+    return /\.[jt]sx?$/.test(p) ? [p] : []
   })
 
 /** The OS's own parts, and the one hook that hands a Start-menu press to Manager. */
@@ -27,7 +27,7 @@ test('nothing inside an app can open another window', () => {
 })
 
 test('no app navigates to another app', () => {
-  const other = /navigate\(\s*[`'"]\/(mint|launch|trade|tv|radio|drop-music|manage|upload|files|auction)\b/
+  const other = /navigate\(\s*[`'"]\/(mint|launch|trade|tv|radio|drop-music|manage|upload|files|auction|music)\b/
   const offenders = walk('src/pages').filter((p) => {
     const own = p.match(/pages\/([A-Za-z]+)/)?.[1]
     return own !== 'OperatingSystem' && other.test(readFileSync(p, 'utf8')) && own !== 'Mint' && own !== 'Swap'

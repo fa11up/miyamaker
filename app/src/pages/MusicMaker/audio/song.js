@@ -1,11 +1,17 @@
 import { parseMod, parseXm } from './module.js'
 import { defaultNumpadFx, normalizeNumpadFx } from './numpadFx.js'
 import { FACTORY, KIT_LAYOUT } from './presets.js'
+import { renderSynth } from './synth.js'
 import { beginUndo, endUndo, songSwitch, stashUndo } from '../history.js'
 import { bumpSong, exclusive, loadCurrent, loadTicket } from '../jobs.js'
 import { ensureLibrary } from '../media/library.js'
 import { allowedMediaUrl } from '../media/allow.js'
+import { fetchCapped, TooLarge } from '../media/capped.js'
 import {
+  LANES,
+  PACK_SAMPLES,
+  PACK_SECONDS,
+  assertPadsRead,
   audioBank,
   defaultComp,
   emptyPad,
@@ -19,11 +25,18 @@ import {
   model,
   normalizeBuses,
   normalizeComp,
-  renderPad,
+  normalizeEvent,
+  plainText,
+  saveNow,
   touch,
 } from '../model.js'
 
-const PACK_SAMPLES = 2_000_000
+export { PACK_SAMPLES }
+
+/** A packed song is base64 of its samples plus the arrangement: this is room for a full one. */
+export const PACK_BYTES = 16 * 1024 * 1024
+const FETCH_MS = 45000
+const PATTERN_NAME_MAX = 48
 
 /** Factory drum kit as pad settings only. Synth audio is rendered on load. */
 export function factoryPads() {
@@ -77,8 +90,19 @@ function pcmToB64(pcm) {
   return btoa(bin)
 }
 
-function b64ToPcm(text) {
+/** Samples a base64 sample holds, from its length alone (4 bytes a sample, 3 bytes per 4 characters). */
+export function b64Samples(text) {
+  return typeof text === 'string' ? Math.floor((text.length * 3) / 4 / 4) : 0
+}
+
+function samplesTooLong() {
+  return new Error(`That song’s samples are too long to pack (pads with samples hold more than ${PACK_SECONDS} s in all). Clear or shorten a pad.`)
+}
+
+function b64ToPcm(text, room = PACK_SAMPLES) {
   if (typeof text !== 'string') throw new Error('That song sample is damaged')
+  // Checked before decoding, so a huge string is refused without a huge allocation.
+  if (b64Samples(text) > room) throw samplesTooLong()
   let bin
   try {
     bin = atob(text)
@@ -91,32 +115,69 @@ function b64ToPcm(text) {
   return new Float32Array(bytes.buffer.slice(0))
 }
 
-function packSamples(samples) {
-  let total = 0
-  return (samples || []).map((sample) => {
-    if (!(sample.pcm instanceof Float32Array)) return sample
-    total += sample.pcm.length
-    if (total > PACK_SAMPLES) {
-      throw new Error(`That song’s samples are too long to pack (pads with samples hold more than ${Math.round(PACK_SAMPLES / 44100)} s in all). Clear or shorten a pad.`)
-    }
-    return { ...sample, pcm: pcmToB64(sample.pcm) }
-  })
+/** Samples in either form, decoded or base64. */
+export function sampleLength(sample) {
+  if (sample?.pcm instanceof Float32Array) return sample.pcm.length
+  return b64Samples(sample?.pcm)
 }
 
+/** Every sample counts toward PACK_SAMPLES, decoded or already base64. Only known fields are kept. */
+function packSamples(samples) {
+  if (samples != null && !Array.isArray(samples)) throw new Error('That kit’s sample list is damaged')
+  let total = 0
+  const out = []
+  for (const sample of samples || []) {
+    if (!sample || typeof sample !== 'object') continue
+    const pad = Number(sample.pad)
+    if (!Number.isInteger(pad) || pad < 0 || pad > 63) continue
+    total += sampleLength(sample)
+    if (total > PACK_SAMPLES) throw samplesTooLong()
+    const pcm = sample.pcm instanceof Float32Array ? pcmToB64(sample.pcm) : typeof sample.pcm === 'string' ? sample.pcm : null
+    if (pcm == null) continue
+    out.push({ pad, name: plainText(sample.name, 80), sr: Math.round(num(sample.sr, 44100, 3000, 192000)), pcm })
+  }
+  return out
+}
+
+/** Pads through normalizePad: unknown keys go, numbers are finite, patches are checked. */
 function clonePads(pads) {
-  return JSON.parse(JSON.stringify(pads || []))
+  if (!Array.isArray(pads)) return []
+  return JSON.parse(JSON.stringify(pads.slice(0, 64).map((pad, i) => normalizePad(pad, i))))
+}
+
+/** Patterns from a file: at most 256, one per index, names capped, steps cut to 256 rows of 16 lanes. */
+export function normalizePatterns(list) {
+  if (!Array.isArray(list)) return []
+  const seen = new Set()
+  const out = []
+  for (const pattern of list) {
+    if (out.length >= 256) break
+    if (!pattern || typeof pattern !== 'object') continue
+    const i = pattern.i
+    if (!Number.isInteger(i) || i < 0 || i > 255 || seen.has(i)) continue
+    seen.add(i)
+    const steps = Array.isArray(pattern.steps)
+      ? pattern.steps.slice(0, 256).map((cell) => (Array.isArray(cell)
+        ? cell.slice(0, LANES).map((ev) => (ev && typeof ev === 'object' && typeof ev.pad === 'number' ? normalizeEvent(ev) : null))
+        : null))
+      : []
+    const next = { i, name: plainText(pattern.name, PATTERN_NAME_MAX), bars: Math.round(num(pattern.bars, 1, 1, 16)), steps }
+    if (Number.isFinite(pattern.len)) next.len = Math.max(1, Math.min(256, pattern.len | 0))
+    out.push(next)
+  }
+  return out
 }
 
 export function packSong(doc) {
-  const name = String(doc.name || 'Song').replace(/\.m1ya$/i, '').slice(0, 48) || 'Song'
+  const name = plainText(doc.name, 80).replace(/\.m1ya$/i, '').slice(0, 48) || 'Song'
   const packed = {
     type: 'm1ya',
     v: 2,
     name,
     bpm: Math.round(num(doc.bpm, 184, 40, 240)),
     swing: num(doc.swing, 0, 0, 0.6),
-    order: (Array.isArray(doc.order) && doc.order.length ? doc.order : [0]).map((n) => n & 255).slice(0, 256),
-    patterns: doc.patterns || [],
+    order: (Array.isArray(doc.order) && doc.order.length ? doc.order : [0]).slice(0, 256).map((n) => n & 255),
+    patterns: normalizePatterns(doc.patterns),
     pads: clonePads(doc.pads),
     samples: packSamples(doc.samples),
   }
@@ -128,7 +189,7 @@ export function packSong(doc) {
 }
 
 export function packKit(doc) {
-  const name = String(doc.name || 'Kit').replace(/\.k1t$/i, '').slice(0, 48) || 'Kit'
+  const name = plainText(doc.name, 80).replace(/\.k1t$/i, '').slice(0, 48) || 'Kit'
   return {
     type: 'k1t',
     v: 1,
@@ -144,7 +205,7 @@ function moduleToDoc(parsed) {
   for (const inst of parsed.instruments) {
     if (!inst.pcm || inst.index > 63) continue
     const pad = pads[inst.index]
-    pad.name = inst.name || `Sample ${inst.index + 1}`
+    pad.name = plainText(inst.name, 80) || `Sample ${inst.index + 1}`
     pad.source = 'sample'
     pad.sampleName = pad.name
     pad.volume = inst.volume ?? 0.85
@@ -162,7 +223,7 @@ function moduleToDoc(parsed) {
   return {
     type: 'm1ya',
     v: 1,
-    name: parsed.title || 'Module',
+    name: plainText(parsed.title, 80) || 'Module',
     bpm: parsed.bpm || 125,
     swing: 0,
     order: parsed.order?.length ? parsed.order : [0],
@@ -265,7 +326,9 @@ export async function storeSongFile(name, doc, { quiet = false, folder = 'songs'
     stashUndo(key, null)
   }
   if (!quiet) touch(true)
-  return { id, doc: packed }
+  // The song is in IndexedDB, but the Songs list lives in the session save. If that write fails, the
+  // song is not really kept: `persisted` says so, and the caller must not say "saved".
+  return { id, doc: packed, persisted: saveNow() }
 }
 
 export async function replaceSongFile(id, name, doc) {
@@ -280,7 +343,7 @@ export async function replaceSongFile(id, name, doc) {
   const who = (model.wallet || '').trim().toLowerCase()
   if (/^0x[a-f0-9]{40}$/.test(who)) await idbSet(`profile:${who}:${id}`, packed)
   touch(true)
-  return { id, doc: packed }
+  return { id, doc: packed, persisted: saveNow() }
 }
 
 export async function storeKitFile(name, doc, { quiet = false } = {}) {
@@ -291,7 +354,7 @@ export async function storeKitFile(name, doc, { quiet = false } = {}) {
   stashUndo(`kit:${id}`, null)
   library.files.push({ id, folder: 'kits', name: packed.name, ext: 'k1t' })
   if (!quiet) touch(true)
-  return { id, doc: packed }
+  return { id, doc: packed, persisted: saveNow() }
 }
 
 function songHasKit(doc) {
@@ -313,7 +376,9 @@ export async function ensureBlankSong() {
   }
 }
 
-function liveSamples() {
+/** The pads' samples as they are now. Refuses while any sample pad is unread: it would drop out of the file. */
+function liveSamples(what = 'Save') {
+  assertPadsRead(what)
   const samples = []
   for (let i = 0; i < 64; i++) {
     const pad = model.pads[i]
@@ -325,7 +390,9 @@ function liveSamples() {
   return samples
 }
 
-export async function captureSong(name) {
+/** The session as a packed song. `what` names the action in the refusal when a pad is unread. */
+export async function captureSong(name, what = 'Save') {
+  assertPadsRead(what)
   const order = Array.isArray(model.songOrder) && model.songOrder.length
     ? model.songOrder.slice()
     : usedPatternIds()
@@ -338,7 +405,7 @@ export async function captureSong(name) {
       .map((pattern, i) => (pattern ? { i, name: pattern.name || '', bars: pattern.bars, len: pattern.len, steps: pattern.steps } : null))
       .filter((pattern) => pattern && (pattern.name || (pattern.len ?? pattern.bars * 16) !== 16 || pattern.steps.some((cell) => cell?.some(Boolean)))),
     pads: model.pads.map((pad) => ({ ...pad })),
-    samples: liveSamples(),
+    samples: liveSamples(what),
     master: model.master,
     buses: model.buses,
     numpadFx: model.numpadFx,
@@ -363,11 +430,11 @@ function usedPatternIds() {
   return ids
 }
 
-export async function captureKit(name) {
+export async function captureKit(name, what = 'Save') {
   return packKit({
     name: name || 'Kit',
     pads: model.pads.map((pad) => ({ ...pad })),
-    samples: liveSamples(),
+    samples: liveSamples(what),
   })
 }
 
@@ -396,9 +463,9 @@ export function downloadKit(doc) {
   revokeLater(link.href)
 }
 
+/** normalizePad alone: a file's patch goes through normalizePatch like every other field. */
 function clonePad(index, src) {
   const pad = normalizePad(src, index)
-  if (src?.patch) pad.patch = JSON.parse(JSON.stringify(src.patch))
   fitLoop(pad)
   return pad
 }
@@ -410,16 +477,20 @@ function clonePad(index, src) {
 export function decodeKitSamples(samples) {
   const out = new Map()
   if (samples != null && !Array.isArray(samples)) throw new Error('That kit’s sample list is damaged')
+  let total = 0
   for (const sample of samples || []) {
     if (!sample || typeof sample !== 'object') throw new Error('That song sample is damaged')
     const index = Number(sample.pad)
     if (!Number.isInteger(index) || index < 0 || index > 63) continue
-    const pcm = sample.pcm instanceof Float32Array ? sample.pcm : b64ToPcm(sample.pcm)
+    // The same total a save allows, counted before each decode.
+    const pcm = sample.pcm instanceof Float32Array ? sample.pcm : b64ToPcm(sample.pcm, PACK_SAMPLES - total)
+    total += pcm?.length || 0
+    if (total > PACK_SAMPLES) throw samplesTooLong()
     if (!(pcm instanceof Float32Array) || !pcm.length) throw new Error('That song sample is damaged')
     for (let i = 0; i < pcm.length; i++) {
       if (!Number.isFinite(pcm[i])) pcm[i] = 0
     }
-    const name = typeof sample.name === 'string' ? sample.name.slice(0, 80) : ''
+    const name = plainText(sample.name, 80)
     out.set(index, { pcm, sr: Math.round(num(sample.sr, 44100, 3000, 192000)), name })
   }
   return out
@@ -430,8 +501,21 @@ export function decodeKitSamples(samples) {
  * reads and before anything is replaced: a superseded load returns false and changes nothing.
  */
 async function applyKit(doc, stillWanted = () => true) {
+  // Everything is checked and built before the first pad record is touched: samples decoded, pads normalized,
+  // synth pads rendered. A damaged kit throws here and leaves the current kit and its storage as they were.
+  if (doc.pads != null && !Array.isArray(doc.pads)) throw new Error('That kit’s pad list is damaged')
   const decoded = decodeKitSamples(doc.samples)
   const pads = Array.from({ length: 64 }, (_, i) => clonePad(i, Array.isArray(doc.pads) ? doc.pads[i] : null))
+  const rendered = new Map()
+  pads.forEach((pad, i) => {
+    if (decoded.has(i) || pad.source !== 'synth' || !pad.patch) return
+    try {
+      const out = renderSynth(pad.patch)
+      rendered.set(i, { pcm: out.pcm, sr: out.sampleRate })
+    } catch (err) {
+      throw new Error(`That kit’s synth pad ${i + 1} is damaged${err?.message ? ` (${err.message})` : ''}`)
+    }
+  })
   const prevs = []
   for (let i = 0; i < 64; i++) {
     prevs.push(await idbGet(`pad:${i}`))
@@ -456,7 +540,8 @@ async function applyKit(doc, stillWanted = () => true) {
     else await idbDelete(`pad:${i}`)
   }
   model.pads.forEach((pad, i) => {
-    if (pad.source === 'synth' && pad.patch) renderPad(i)
+    const synth = rendered.get(i)
+    if (pad.source === 'synth' && synth) audioBank.set(i, { pcm: synth.pcm, sr: synth.sr, rev: Date.now() })
     if (pad.source !== 'sample') return
     if (!audioBank.get(i)) {
       pad.source = 'empty'
@@ -526,7 +611,8 @@ async function loadKitNow(doc) {
   beginUndo()
   try {
     await applyKit(doc)
-    model.browserNote = `${doc.name || 'Kit'} loaded`
+    model.kitName = plainText(doc.name, 48) || 'Kit'
+    model.browserNote = `${model.kitName} loaded`
     touch(true)
   } finally {
     endUndo()
@@ -553,21 +639,20 @@ async function loadSongNow(doc, fileId, ticket) {
     songSwitch()
     const mix = applySongMix(doc)
     model.patterns = Array.from({ length: 256 }, () => null)
-    for (const pattern of Array.isArray(doc.patterns) ? doc.patterns : []) {
-      if (!pattern || !Number.isInteger(pattern.i) || pattern.i < 0 || pattern.i > 255) continue
+    for (const pattern of normalizePatterns(doc.patterns)) {
       model.patterns[pattern.i] = {
-        name: typeof pattern.name === 'string' ? pattern.name : '',
+        name: pattern.name,
         bars: pattern.bars,
         len: Number.isFinite(pattern.len) ? pattern.len : undefined,
         steps: Array.isArray(pattern.steps) ? pattern.steps : [],
       }
       ensurePattern(pattern.i)
     }
-    const order = (Array.isArray(doc.order) && doc.order.length ? doc.order : [0]).map((n) => n & 255)
+    const order = (Array.isArray(doc.order) && doc.order.length ? doc.order : [0]).slice(0, 256).map((n) => n & 255)
     model.songOrder = order
     model.songCursor = 0
     model.songPlay = true
-    model.songName = doc.name || 'Song'
+    model.songName = plainText(doc.name, 80) || 'Song'
     model.songFile = fileId || ''
     model.pattern = order[0] || 0
     ensurePattern(model.pattern)
@@ -590,6 +675,7 @@ export async function importSongBytes(buffer, name = 'Song', ticket = loadTicket
   if (head === 'Extended Module:') doc = moduleToDoc(parseXm(buffer))
   else if (bytes.length >= 1084 && magicMod(bytes)) doc = moduleToDoc(parseMod(buffer))
   else {
+    if (bytes.length > PACK_BYTES) throw new TooLarge(PACK_BYTES)
     let json
     try {
       json = JSON.parse(new TextDecoder().decode(bytes))
@@ -599,16 +685,26 @@ export async function importSongBytes(buffer, name = 'Song', ticket = loadTicket
     if (json?.type !== 'm1ya') throw new Error('That file is not an .m1ya song')
     doc = json
   }
-  if (name && (!doc.name || doc.name === 'Module')) doc.name = name.replace(/\.(m1ya|mod|xm)$/i, '')
+  checkSongSamples(doc)
+  if (name && (!doc.name || doc.name === 'Module')) doc.name = plainText(name, 80).replace(/\.(m1ya|mod|xm)$/i, '')
   beginUndo()
   try {
     const stored = await storeSongFile(doc.name, doc)
     // A newer load won: the file stays in Songs, the session stays on the newer song.
-    if (!(await loadSong(stored.doc, stored.id, ticket))) model.browserNote = `${stored.doc.name}.m1ya saved in Songs`
+    if (!(await loadSong(stored.doc, stored.id, ticket))) model.browserNote = stored.persisted ? `${stored.doc.name}.m1ya saved in Songs` : `${stored.doc.name}.m1ya not saved: browser storage refused the Songs list`
     return stored.doc
   } finally {
     endUndo()
   }
+}
+
+/** Refuses up front, with the length, a song or module whose samples are more than a saved song holds. */
+export function checkSongSamples(doc) {
+  if (!Array.isArray(doc?.samples)) return
+  const total = doc.samples.reduce((sum, sample) => sum + sampleLength(sample), 0)
+  if (total <= PACK_SAMPLES) return
+  const seconds = Math.ceil(total / 44100)
+  throw new Error(`That song’s samples run about ${seconds} s; a song here holds ${PACK_SECONDS} s of samples in all. It was not imported.`)
 }
 
 function magicMod(bytes) {
@@ -619,9 +715,8 @@ function magicMod(bytes) {
 export async function openPackedUrl(job) {
   if (!job?.href) return
   const ticket = job.kind === 'kit' ? 0 : loadTicket()
-  const res = await fetch(job.href)
-  if (!res.ok) throw new Error('Could not download that file')
-  const buffer = await res.arrayBuffer()
+  const { res, buffer } = await fetchCapped(job.href, { limit: PACK_BYTES, timeoutMs: FETCH_MS })
+  if (!buffer) throw new Error(`Could not download that file (${res.status})`)
   if (job.kind === 'kit') {
     let json
     try {
@@ -630,7 +725,8 @@ export async function openPackedUrl(job) {
       throw new Error('That file is not a .k1t kit')
     }
     if (!json || json.type !== 'k1t') throw new Error('That file is not a .k1t kit')
-    const name = String(job.name || json.name || 'Kit').replace(/\.k1t$/i, '')
+    const name = (plainText(job.name, 80) || plainText(json.name, 80) || 'Kit').replace(/\.k1t$/i, '')
+    checkSongSamples(json)
     beginUndo()
     try {
       const stored = await storeKitFile(name, json)
@@ -640,15 +736,17 @@ export async function openPackedUrl(job) {
     }
     return
   }
-  await importSongBytes(buffer, job.name || 'Song', ticket)
+  await importSongBytes(buffer, plainText(job.name, 80) || 'Song', ticket)
 }
 
 export async function importSongFile(file, ticket = loadTicket()) {
+  if (file.size > PACK_BYTES) throw new TooLarge(PACK_BYTES)
   const buffer = await file.arrayBuffer()
   await importSongBytes(buffer, file.name.replace(/\.(m1ya|mod|xm)$/i, ''), ticket)
 }
 
 export async function importKitFile(file) {
+  if (file.size > PACK_BYTES) throw new TooLarge(PACK_BYTES)
   let json
   try {
     json = JSON.parse(new TextDecoder().decode(await file.arrayBuffer()))
@@ -656,11 +754,12 @@ export async function importKitFile(file) {
     throw new Error('That file is not a .k1t kit')
   }
   if (!json || json.type !== 'k1t') throw new Error('That file is not a .k1t kit')
-  const name = String(file.name || json.name || 'Kit').replace(/\.k1t$/i, '')
+  const name = (plainText(file.name, 80) || plainText(json.name, 80) || 'Kit').replace(/\.k1t$/i, '')
+  checkSongSamples(json)
   beginUndo()
   try {
     const stored = await storeKitFile(name, json)
-    model.browserNote = `${stored.doc.name}.k1t saved in Kits`
+    model.browserNote = stored.persisted ? `${stored.doc.name}.k1t saved in Kits` : `${stored.doc.name}.k1t not saved: browser storage refused the Kits list`
     touch(true)
   } finally {
     endUndo()
@@ -680,16 +779,27 @@ export async function importSongUrl(raw) {
   const url = gatewayUrl(raw)
   if (!allowedMediaUrl(url)) throw new Error('Use an ipfs:// URI or an allowed IPFS gateway link')
   const ticket = loadTicket()
-  const res = await fetch(url)
-  if (!res.ok) throw new Error('The gateway did not return that song')
-  const buffer = await res.arrayBuffer()
-  const leaf = decodeURIComponent(url.split('/').pop() || 'Song')
+  const { res, buffer } = await fetchCapped(url, { limit: PACK_BYTES, timeoutMs: FETCH_MS })
+  if (!buffer) throw new Error(res.status === 429 ? 'The gateway says too many requests: wait a moment and try again' : 'The gateway did not return that song')
+  const tail = url.split('/').pop() || 'Song'
+  let leaf = tail
+  try {
+    leaf = decodeURIComponent(tail)
+  } catch {
+    /* a stray % in the link: the name stays as typed */
+  }
+  leaf = plainText(leaf, 80) || 'Song'
   await importSongBytes(buffer, leaf, ticket)
   if (!loadCurrent(ticket)) return
   model.browserNote = `${model.songName} loaded from the gateway`
   touch(false)
 }
 
+/**
+ * Songs this browser kept under the wallet, back in Songs when the list lost them (a reset library).
+ * Each one keeps its own id, and nothing is written under the wallet again: a song deleted from Songs has
+ * its wallet copy deleted too (removeCached), so it does not come back.
+ */
 export async function syncProfileSongs(address) {
   const who = String(address || '').trim().toLowerCase()
   if (!/^0x[a-f0-9]{40}$/.test(who)) return 0
@@ -700,11 +810,13 @@ export async function syncProfileSongs(address) {
   const library = ensureLibrary()
   for (const key of keys) {
     if (typeof key !== 'string' || !key.startsWith(prefix)) continue
+    const id = key.slice(prefix.length)
+    if (!/^[a-z0-9]{1,40}$/i.test(id)) continue
+    if (library.files.some((file) => file.id === id)) continue
     const doc = await idbGet(key)
     if (!doc || doc.type !== 'm1ya') continue
-    const exists = library.files.some((file) => file.folder === 'songs' && file.name === doc.name && file.ext === 'm1ya')
-    if (exists) continue
-    await storeSongFile(doc.name, doc, { quiet: true })
+    if (!(await idbGet(`song:${id}`))) await idbSet(`song:${id}`, doc)
+    library.files.push({ id, folder: 'songs', name: plainText(doc.name, 48) || 'Song', ext: 'm1ya' })
     added += 1
   }
   if (added) touch(true)

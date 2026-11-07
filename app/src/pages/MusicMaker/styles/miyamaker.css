@@ -1,77 +1,65 @@
-/* Tokens and chrome copied from the live miyamaker.com bundle:
-   palette Z, bevels Ke, W95FA / Revalia, title bar, window frame,
-   taskbar, desktop icon, start button, scrollbar, wave desktop. */
+/* MiyaMusicMaker, inside its own shadow root. The window chrome around it is the OS's `music` skin
+   (components/TitleBar, components/WindowWrapper): brushed aluminium, graphite print, and tangerine
+   keys, like a groovebox of the time. The tokens below are that same skin, so the inside matches its frame.
+   W95FA and Revalia are declared once by the OS (theme/index.tsx). A font declared inside a shadow root is ignored,
+   while the document's fonts reach in here by name. */
 
-@font-face {
-  font-family: 'Revalia';
-  src: url('/fonts/Revalia/Revalia.ttf') format('truetype');
-  font-display: swap;
-}
-
-@font-face {
-  font-family: 'W95FA';
-  src: url('/fonts/w95fa/w95fa.woff') format('woff');
-  font-display: swap;
-}
-
-:root, :host {
-  --face: #a9a3c9;
-  --face-light: #c4bfe0;
-  --well: #f6f4ff;
+:host {
+  --face: #c9ccd2;
+  --face-light: #dcdfe4;
+  --well: #f7f8fa;
   --highlight: #ffffff;
-  --light: #dcd8f0;
-  --shadow: #6f6894;
-  --dark: #14101f;
-  --ink: #1b1530;
-  --ink-muted: #332d4d;
-  --accent: #d97ada;
-  --accent-dark: #a2479f;
-  --title-from: #d97ada;
-  --title-to: #8f5fd0;
-  --title-off-from: #8c86aa;
-  --title-off-to: #b3aecd;
+  --light: #e4e6ea;
+  --shadow: #7b8089;
+  --dark: #15171b;
+  --ink: #17191d;
+  --ink-muted: #3b4048;
+  --accent: #ff7a1f;
+  --accent-dark: #c44f00;
+  --accent-light: #ffd2b0;
+  --title-from: #2b2e34;
+  --title-to: #c44f00;
+  --title-off-from: #8a8e96;
+  --title-off-to: #b4b8bf;
   --success: #1f7a47;
   --danger: #b3261e;
   --warning: #8a5a00;
-  --link: #3b1fbf;
+  --link: #8a3200;
+  --metal: repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.16) 0 1px, transparent 1px 3px),
+    linear-gradient(180deg, #e3e5e9 0%, #c4c8ce 48%, #b3b7be 52%, #d2d5da 100%);
   --ui: 'W95FA', 'Hiragino Kaku Gothic Pro W3', Osaka, Meiryo, 'MS PGothic', arial, sans-serif;
   --display: 'Revalia', 'W95FA', sans-serif;
   --mono: ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
   --raised: inset -1px -1px var(--dark), inset 1px 1px var(--highlight), inset -2px -2px var(--shadow), inset 2px 2px var(--light);
   --pressed: inset 1px 1px var(--dark), inset -1px -1px var(--highlight), inset 2px 2px var(--shadow), inset -2px -2px var(--light);
   --sunken: inset 1px 1px var(--shadow), inset -1px -1px var(--highlight), inset 2px 2px var(--dark), inset -2px -2px var(--light);
-  --taskbar-h: 34px;
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
   --space-4: 16px;
+  /* Tap targets: 0 under a mouse, so each control keeps its own size. On a touch screen or in a phone-width
+     window, buttons are at least 36px and the dense controls (menus, tree, slots, selects) at least 32px. */
+  --touch: 0px;
+  --touch-sm: 0px;
+
+  display: block;
+  height: 100%;
+  color: var(--ink);
+  font-family: var(--ui);
+  font-size: 16px;
+  -webkit-font-smoothing: none;
+  -webkit-tap-highlight-color: transparent;
 }
 
-@media (max-width: 768px) {
-  :root { --taskbar-h: 48px; }
+@media (pointer: coarse) {
+  :host { --touch: 36px; --touch-sm: 32px; }
+}
+
+@container mmm (max-width: 600px) {
+  .mmm > * { --touch: 36px; --touch-sm: 32px; }
 }
 
 * { box-sizing: border-box; }
-
-html, body, #app {
-  height: 100%;
-  margin: 0;
-}
-
-html {
-  color: var(--ink);
-  -webkit-font-smoothing: none;
-  -webkit-tap-highlight-color: transparent;
-  font-size: 16px;
-  background: #85669f;
-}
-
-body {
-  margin: 0;
-  overflow: hidden;
-  font-family: var(--ui);
-  color: var(--ink);
-}
 
 button, input, select, textarea {
   font-family: var(--ui);
@@ -86,7 +74,7 @@ button, input, select, textarea {
 
 ::selection {
   background: var(--accent);
-  color: var(--highlight);
+  color: var(--ink);
 }
 
 h1, h2, h3, h4, p { margin: 0; }
@@ -104,120 +92,7 @@ h1, h2, h3, h4, p { margin: 0; }
   box-shadow: inset -1px -1px #0a0a0a, inset 1px 1px #fff, inset 1px 1px #818181, inset -2px -2px #818181, inset 1px 1px #dfdfdf;
 }
 
-.os {
-  position: relative;
-  height: 100%;
-  overflow: hidden;
-}
-
-.os-bg {
-  position: fixed;
-  inset: 0;
-  z-index: 0;
-  background: #85669f;
-  pointer-events: none;
-}
-
-.os-gradient {
-  position: absolute;
-  inset: 0;
-  z-index: 5;
-  background-image: linear-gradient(to bottom, #6873d3, #7c6ba0 45%, rgba(0, 0, 0, 0));
-}
-
-.wave-canvas {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  z-index: 1;
-  display: block;
-  pointer-events: none;
-}
-
-.os-info {
-  position: absolute;
-  right: 16px;
-  bottom: calc(var(--taskbar-h) + 12px);
-  z-index: 2;
-  color: #fff;
-  text-align: right;
-  text-shadow: 1px 1px 0 rgba(20, 16, 31, 0.45);
-  pointer-events: none;
-  line-height: 1.35;
-}
-
-.os-info .brand {
-  font-family: var(--display);
-  letter-spacing: 0.04em;
-}
-
-.desktop {
-  position: relative;
-  z-index: 1;
-  height: calc(100% - var(--taskbar-h));
-}
-
-.desk-icon {
-  position: absolute;
-  left: 16px;
-  top: 16px;
-  z-index: 3;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
-  width: 96px;
-  padding: 4px 2px;
-  border: none;
-  background: transparent;
-  cursor: pointer;
-  color: var(--ink);
-}
-
-.desk-icon .glyph {
-  height: 52px;
-  width: 60px;
-  display: grid;
-  place-items: center;
-  image-rendering: pixelated;
-}
-
-.desk-icon .label {
-  padding: 1px 4px;
-  font-size: 16px;
-  line-height: 1.25;
-  text-align: center;
-  border: 1px dotted transparent;
-  text-shadow: 0 0 2px rgba(255, 255, 255, 0.9), 0 0 4px rgba(255, 255, 255, 0.6);
-}
-
-.desk-icon:hover .label,
-.desk-icon:focus-visible .label,
-.desk-icon.on .label {
-  background: var(--accent);
-  color: var(--ink);
-  text-shadow: none;
-  border-color: var(--ink);
-}
-
-.window-slot {
-  position: absolute;
-  z-index: 4;
-  min-width: 320px;
-  min-height: 240px;
-}
-
-.window-frame {
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  padding: 3px;
-  background: linear-gradient(180deg, #ff9fd6, #9a5fe0);
-  box-shadow: inset 0 0 0 1px #5a1466, 4px 6px 0 rgba(20, 16, 31, 0.3);
-  color: var(--ink);
-}
-
+/* The app's own dialogs take the window's title bar: aluminium, graphite print, tangerine keys. */
 .title-bar-root {
   flex: 0 0 auto;
   display: flex;
@@ -226,15 +101,10 @@ h1, h2, h3, h4, p { margin: 0; }
   height: 28px;
   padding: 0 3px 0 8px;
   margin-bottom: 2px;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.45) 0%, rgba(255, 255, 255, 0.1) 46%, transparent 50%),
-    linear-gradient(90deg, #ff6fb5, #c04fd8 60%, #7a3fd0);
-  color: #fff;
+  background: var(--metal);
+  border-bottom: 2px solid var(--accent);
+  color: var(--ink);
   user-select: none;
-}
-
-.window-slot:not(.is-focused) .title-bar-root {
-  background: linear-gradient(90deg, var(--title-off-from), var(--title-off-to));
-  color: var(--light);
 }
 
 .title-bar {
@@ -247,14 +117,11 @@ h1, h2, h3, h4, p { margin: 0; }
   font-size: 16px;
   font-weight: 400;
   letter-spacing: 0.04em;
-  text-shadow: 1px 1px 0 #5a1466;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.7);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  cursor: grab;
 }
-
-.title-bar:active { cursor: grabbing; }
 
 .title-buttons {
   flex: 0 0 auto;
@@ -270,64 +137,23 @@ h1, h2, h3, h4, p { margin: 0; }
   height: 18px;
   padding: 0;
   border: none;
-  border-radius: 4px;
-  color: #5a1466;
-  background: linear-gradient(180deg, #fff, #ffc2e6);
-  box-shadow: 0 0 0 1px #5a1466;
+  border-radius: 3px;
+  color: #2a1204;
+  background: linear-gradient(180deg, #ffb27a, var(--accent) 55%, #e2600c);
+  box-shadow: 0 0 0 1px #3a1a06, inset 0 1px 0 rgba(255, 255, 255, 0.55);
   cursor: pointer;
 }
 
-.chrome-btn:hover { background: linear-gradient(180deg, #fff, #ff9fd6); }
-.chrome-btn:active { box-shadow: var(--pressed); }
+.chrome-btn:hover { filter: brightness(1.08); }
+.chrome-btn:active { box-shadow: 0 0 0 1px #3a1a06, inset 0 1px 2px rgba(0, 0, 0, 0.45); }
 .chrome-btn:active svg { transform: translate(1px, 1px); }
 .chrome-btn.close { margin-left: 2px; }
 .chrome-btn svg { display: block; }
 
-.window-body {
-  position: relative;
-  flex: 1 1 auto;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  background: transparent;
-}
-
-.taskbar {
-  position: relative;
-  z-index: 10;
-  background-color: var(--face);
-  height: var(--taskbar-h);
-  padding: 4px 4px 3px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 4px;
-  font-size: 16px;
-  box-shadow: inset 0 1px 0 var(--light), inset 0 2px 0 var(--highlight);
-  overflow-x: auto;
-  overflow-y: hidden;
-  padding-bottom: max(3px, env(safe-area-inset-bottom));
-}
-
-.task-row {
-  display: flex;
-  flex-shrink: 0;
-  flex-direction: row;
-  align-items: center;
-  gap: 4px;
-  height: 100%;
-}
-
-.tray {
-  display: flex;
-  flex-shrink: 0;
-  align-items: center;
-  justify-content: end;
-  height: 100%;
-  padding: 0 8px 0 12px;
-  box-shadow: var(--sunken);
-  font-size: 12px;
-  gap: 8px;
+@media (pointer: coarse) {
+  .title-bar-root { height: 40px; }
+  .chrome-btn { width: 36px; height: 32px; }
+  .chrome-btn svg { transform: scale(1.4); }
 }
 
 .btn {
@@ -341,7 +167,7 @@ h1, h2, h3, h4, p { margin: 0; }
   border: none;
   border-radius: 0;
   padding: 0 12px;
-  min-height: 26px;
+  min-height: max(26px, var(--touch));
   min-width: 75px;
   font-size: 16px;
   line-height: 1;
@@ -360,8 +186,8 @@ h1, h2, h3, h4, p { margin: 0; }
 .mmm .btn.on {
   background: var(--accent);
   color: var(--ink);
-  text-shadow: 1px 1px 0 #f5c6f6;
-  box-shadow: inset -2px -2px var(--accent-dark), inset 2px 2px #f5c6f6;
+  text-shadow: 1px 1px 0 var(--accent-light);
+  box-shadow: inset -2px -2px var(--accent-dark), inset 2px 2px var(--accent-light);
 }
 
 .mmm .btn.rec.on {
@@ -377,18 +203,9 @@ h1, h2, h3, h4, p { margin: 0; }
 .btn.primary {
   background-color: var(--accent);
   color: var(--ink);
-  text-shadow: 1px 1px 0 #f5c6f6;
+  text-shadow: 1px 1px 0 var(--accent-light);
 }
-.btn.primary:hover:not(:disabled) { background-color: #e48fe5; }
-
-.btn.focus-taskbar {
-  background-image: url('/desktop/bg_pattern.webp');
-  background-repeat: repeat;
-  box-shadow: var(--pressed);
-  font-weight: 700;
-  justify-content: flex-start;
-  max-width: 180px;
-}
+.btn.primary:hover:not(:disabled) { background-color: #ff9447; }
 
 .btn:disabled {
   cursor: not-allowed;
@@ -396,58 +213,18 @@ h1, h2, h3, h4, p { margin: 0; }
   text-shadow: 1px 1px 0 var(--highlight);
 }
 
-.start-menu {
-  position: absolute;
-  left: 4px;
-  bottom: calc(var(--taskbar-h) + 2px);
-  z-index: 20;
-  min-width: 220px;
-  padding: 3px;
-  background: var(--face);
-  box-shadow: var(--raised), 2px 3px 0 rgba(20, 16, 31, 0.25);
-  font-size: 16px;
-}
-
-.start-menu button {
-  display: block;
-  width: 100%;
-  padding: 4px 24px;
-  border: none;
-  background: transparent;
-  color: var(--ink);
-  text-align: left;
-  cursor: pointer;
-}
-
-.start-menu button:hover,
-.start-menu button:focus-visible {
-  background: var(--title-to);
-  color: var(--highlight);
-  outline: none;
-}
-
-.start-menu hr {
-  margin: 3px 2px;
-  border: none;
-  border-top: 1px solid var(--shadow);
-  border-bottom: 1px solid var(--highlight);
-}
-
-:host {
-  display: block;
-  height: 100%;
-  color: var(--ink);
-  font-family: var(--ui);
-}
-
 .mmm {
   position: relative;
   height: 100%;
   min-height: 0;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   padding: 8px;
-  background: linear-gradient(180deg, #ff9fd6, #9a5fe0);
+  /* The layout answers to the window's width, not the browser's: a window is often narrower than the screen. */
+  container: mmm / inline-size;
+  overflow-x: clip;
+  background: var(--metal);
   color: var(--ink);
 }
 
@@ -539,6 +316,7 @@ h1, h2, h3, h4, p { margin: 0; }
 .file-menu button {
   display: block;
   width: 100%;
+  min-height: max(0px, var(--touch-sm));
   padding: 4px 24px;
   border: none;
   background: transparent;
@@ -661,7 +439,7 @@ h1, h2, h3, h4, p { margin: 0; }
 .ctx-menu button {
   display: block;
   width: 100%;
-  min-height: 22px;
+  min-height: max(22px, var(--touch-sm));
   padding: 2px 8px;
   border: none;
   background: transparent;
@@ -687,8 +465,8 @@ h1, h2, h3, h4, p { margin: 0; }
 .browser-wallet { padding: 2px 4px 4px 16px; }
 
 .tree-btn {
-  min-width: 0;
-  min-height: 22px;
+  min-width: max(0px, var(--touch-sm));
+  min-height: max(22px, var(--touch-sm));
   padding: 0 6px;
   border: none;
   border-radius: 0;
@@ -769,7 +547,8 @@ h1, h2, h3, h4, p { margin: 0; }
 
 .fx-screen { gap: 8px; }
 
-@media (max-width: 800px) {
+/* A window narrower than the browser dock plus a screen: the dock goes on top. */
+@container mmm (max-width: 800px) {
   .mmm-body { flex-direction: column; }
   .browser-dock { width: auto; flex: 0 0 220px; }
 }
@@ -847,7 +626,7 @@ h1, h2, h3, h4, p { margin: 0; }
   box-shadow: var(--sunken);
   padding: 2px 6px;
   border-radius: 0;
-  min-height: 26px;
+  min-height: max(26px, var(--touch-sm));
 }
 
 .field.num { width: 64px; }
@@ -866,8 +645,8 @@ h1, h2, h3, h4, p { margin: 0; }
 }
 
 .screen > .hint {
-  color: #fff;
-  text-shadow: 1px 1px 0 #5a1466;
+  color: var(--ink-muted);
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.6);
 }
 
 .group {
@@ -1071,7 +850,7 @@ input[type='range']::-webkit-slider-thumb {
   background: var(--well);
   border: none;
   box-shadow: var(--sunken);
-  min-height: 26px;
+  min-height: max(26px, var(--touch-sm));
 }
 
 .seq-top, .edit-top, .synth-top {
@@ -1597,9 +1376,9 @@ input[type='range']::-webkit-slider-thumb {
   max-width: 7.2em;
 }
 .tracker td { background: var(--well); }
-.tracker tr.beat td { background: #e8e2f6; }
-.tracker tr.bar td { background: #d9d2ef; }
-.tracker tr.play td { background: #f6e4f4; }
+.tracker tr.beat td { background: #eceef1; }
+.tracker tr.bar td { background: #dfe2e6; }
+.tracker tr.play td { background: #ffe6d3; }
 .tracker td.edge,
 .tracker th.edge { box-shadow: inset 3px 0 0 var(--shadow); }
 .tracker td.note { text-align: center; min-width: 3.4em; }
@@ -1619,8 +1398,8 @@ input[type='range']::-webkit-slider-thumb {
 .tracker tr.beat td.st,
 .tracker tr.bar td.st,
 .tracker tr.play td.st { background: var(--face); }
-.tracker tr.beat td.st { background: #9e98c2; }
-.tracker tr.bar td.st { background: #8f89b0; }
+.tracker tr.beat td.st { background: #b3b7be; }
+.tracker tr.bar td.st { background: #a3a8b0; }
 .tracker tr.play td.st { background: var(--light); }
 .tracker td.cursor,
 .tracker tr.beat td.cursor,
@@ -1716,7 +1495,7 @@ input[type='range']::-webkit-slider-thumb {
 
 .synth-screen .group { padding: 4px 4px 2px; }
 
-@media (max-width: 800px) {
+@container mmm (max-width: 800px) {
   .synth-screen .synth-grid { grid-template-columns: 1fr; }
 }
 
@@ -1787,7 +1566,7 @@ input[type='range']::-webkit-slider-thumb {
 .dial .read.d3 { font-size: 12px; }
 .dial .read.d4 { font-size: 10px; }
 
-/* Pastel menu fills from the 2025 sheet. Selected buttons stay the mint accent. */
+/* Pastel menu fills from the 2025 sheet, keys on the aluminium. Selected buttons take the tangerine accent. */
 .mmm .transport { background: #fbe0e9; }
 .mmm .browser-dock { background: #f2efdc; }
 .mmm .btn { background: #fffef3; }
@@ -1824,7 +1603,7 @@ input[type='range']::-webkit-slider-thumb {
 }
 
 .edit-screen .slot {
-  min-height: 22px;
+  min-height: max(22px, var(--touch-sm));
   padding: 1px 2px;
   background: #fffef3;
 }
@@ -1966,7 +1745,7 @@ input[type='range']::-webkit-slider-thumb {
 }
 
 .mix-screen .fx-slot select {
-  min-height: 18px;
+  min-height: max(18px, var(--touch-sm));
   font-size: 11px;
 }
 
@@ -2039,20 +1818,40 @@ input[type='range']::-webkit-slider-thumb {
 
 .status-dot.hot { background: var(--danger); }
 
-@media (max-width: 768px) {
-  .title-bar-root { height: 40px; padding-left: 12px; margin-bottom: 0; }
-  .chrome-btn { width: 36px; height: 30px; }
-  .chrome-btn svg { transform: scale(1.4); }
-  .window-frame { padding: 0; box-shadow: none; }
-  .window-slot {
-    left: 0 !important;
-    top: 0 !important;
-    width: 100% !important;
-    height: 100% !important;
-  }
-  .pad-layout { grid-template-columns: 1fr; }
-  .desk-icon { width: 76px; }
-  .os-info { display: none; }
+/* Narrow windows, the phone among them (it shows each window full-screen): the side panels stack, every
+   screen scrolls down instead of sideways, and dense grids take fewer columns. */
+@container mmm (max-width: 900px) {
+  .edit-screen { overflow-y: auto; }
+  .edit-screen .synth-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .edit-screen .synth-grid > .group:nth-child(2) { grid-column: 1 / -1; order: 3; }
+  .mix { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .mix-screen { overflow-y: auto; }
+  .mix-screen .mix { flex: 0 0 auto; }
+}
+
+@container mmm (max-width: 600px) {
+  .mmm { padding: 4px; }
+  .mmm-bar { flex-wrap: wrap; }
+  .screen-tabs, .bank-row, .transport-group, .mix-pages { flex-wrap: wrap; }
+  .transport-row > * { min-width: 0; max-width: 100%; }
+  .transport-row em:empty { display: none; }
+  .browser-dock { flex-basis: 260px; }
+  .pad-layout { grid-template-columns: minmax(0, 1fr); }
+  .edit-screen .synth-grid,
+  .synth-grid,
+  .comp-grid { grid-template-columns: minmax(0, 1fr); }
+  .edit-screen .synth-grid > .group:nth-child(2) { grid-column: auto; order: 0; }
+  .mix { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .slot-grid { grid-template-columns: repeat(8, minmax(0, 1fr)); }
+  .song-name { max-width: 120px; }
+  .pattern-bar { flex-basis: 100%; }
+  .pattern-pick { min-width: 0; flex: 1 1 140px; }
+  .tracker-bar .pattern-bar { flex-wrap: wrap; min-width: 0; }
+  .env-line { flex-wrap: wrap; }
+  .image-settings { grid-template-columns: minmax(0, 1fr); }
+  /* A submenu opens under its row rather than past the window's edge. */
+  .file-menu.file-menu-sub { top: 100%; left: 12px; }
+  .file-menu { min-width: min(220px, calc(100cqw - 16px)); }
 }
 
 .save-error {
@@ -2062,3 +1861,5 @@ input[type='range']::-webkit-slider-thumb {
   color: #c0392b;
   white-space: nowrap;
 }
+
+.dialog:focus { outline: none; }

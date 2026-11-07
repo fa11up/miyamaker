@@ -14,6 +14,8 @@ const HOSTS = new Set([
 ])
 
 export const SAMPLE_MEDIA_LIMIT = 24 * 1024 * 1024
+/** Where the same-origin sample proxy answers. api/_lib/samplemedia.ts serves this path. */
+export const SAMPLE_MEDIA_PATH = '/api/sample-media'
 
 /** A host on the list, or a subdomain gateway under one that serves a CID per subdomain. */
 export function isMediaHost(hostname) {

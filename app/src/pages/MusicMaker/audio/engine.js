@@ -6,13 +6,14 @@ import { evenPoints, evenSlices } from './slice.js'
 import { workletSource } from './numpadFx.js'
 import { kneeWorkletSource } from './knee.js'
 import { cachePcm, ensureLibrary, newFolder } from '../media/library.js'
-import { allowedMediaUrl } from '../media/allow.js'
+import { allowedMediaUrl, SAMPLE_MEDIA_LIMIT, SAMPLE_MEDIA_PATH } from '../media/allow.js'
+import { fetchCapped } from '../media/capped.js'
 import { VIDEO_AUDIO_PATH, videoPage } from '../media/videoaudio.js'
 import { beginUndo, endUndo, stashUndo } from '../history.js'
 import { createBufferCache, finiteOr, heldForPort, liveVoices, locateStep, scrubPcm, stepSeconds, stepsBehind } from './voices.js'
 import { importKitFile, importSongFile } from './song.js'
 import { SongChanged, loadTicket, songId } from '../jobs.js'
-import { BUS_COUNT, TRACK_VEL, audioBank, model, currentSequence, ensurePattern, stepCount, writeEvent, commitTrackerNote, setUndoBatch, touch, rememberSample, idbSet, selectPad, flushSave } from '../model.js'
+import { BUS_COUNT, TRACK_VEL, audioBank, budgetNote, model, currentSequence, ensurePattern, stepCount, writeEvent, commitTrackerNote, setUndoBatch, touch, rememberSample, idbSet, selectPad, flushSave } from '../model.js'
 
 setUndoBatch({ begin: beginUndo, end: endUndo })
 
@@ -1310,7 +1311,20 @@ function scheduleGrains(context, dest, pcm, sr, rate, spec, t0, hold) {
 
 /** What the WAV bounce plays and what it leaves out. Shown after a bounce. */
 export const BOUNCE_NOTE = 'WAV has the song order, swing, volume and pan. Bus FX, pad FX and filters, envelopes, chokes and the master compressor are not in it.'
-const BOUNCE_MAX_SECONDS = 600
+export const BOUNCE_MAX_SECONDS = 600
+
+/** How long the bounce of `order` runs, in seconds: every pattern's steps at this tempo, plus the tail. */
+export function bounceSeconds(order = bounceOrder(), bpm = model.bpm) {
+  const base = stepSeconds(bpm)
+  let steps = 0
+  for (const id of order) steps += stepCount(ensurePattern(id))
+  return steps * base + 0.6
+}
+
+function clock(seconds) {
+  const s = Math.ceil(seconds)
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
+}
 
 /** The patterns a bounce plays: the song order when the song is playing, else the open pattern. */
 export function bounceOrder() {
@@ -1324,9 +1338,11 @@ export async function renderBounce() {
   const order = bounceOrder()
   const base = stepSeconds(model.bpm)
   const swing = clamp(finiteOr(model.swing, 0), 0, 0.75)
-  let steps = 0
-  for (const id of order) steps += stepCount(ensurePattern(id))
-  const seconds = Math.min(BOUNCE_MAX_SECONDS, steps * base + 0.6)
+  const seconds = bounceSeconds(order, model.bpm)
+  // A bounce cut short would be published or downloaded as if it were the song. Refuse it instead.
+  if (seconds > BOUNCE_MAX_SECONDS) {
+    throw new Error(`The song order runs ${clock(seconds)}; a WAV bounce holds ${clock(BOUNCE_MAX_SECONDS)}. Shorten the order (or play one pattern) and bounce again.`)
+  }
   const sr = 44100
   const off = new OfflineAudioContext(2, Math.ceil(seconds * sr), sr)
   const local = createBufferCache()
@@ -1482,12 +1498,13 @@ export function enableMidi() {
     access.onstatechange = refreshMidiPorts
     refreshMidiPorts()
     return midiState
-  }).catch(() => {
+  }).catch((err) => {
     midiPromise = null
+    const denied = err?.name === 'NotAllowedError' || err?.name === 'SecurityError'
     midiState.supported = true
     midiState.ready = true
-    midiState.denied = true
-    midiState.last = 'MIDI permission was blocked'
+    midiState.denied = denied
+    midiState.last = denied ? 'MIDI permission was blocked' : `MIDI did not start${err?.message ? `: ${err.message}` : ''}`
     touch(false)
     return midiState
   })
@@ -1636,7 +1653,7 @@ function startRecorder(stream, label, cleanup, target = { pad: model.selected, s
       const blob = new Blob(chunks, { type: rec.mimeType || 'audio/webm' })
       const arr = await blob.arrayBuffer()
       const audio = await ctx.decodeAudioData(arr.slice(0))
-      const pcm = new Float32Array(audio.length)
+      let pcm = new Float32Array(audio.length)
       const chs = audio.numberOfChannels
       for (let c = 0; c < chs; c++) {
         const data = audio.getChannelData(c)
@@ -1645,6 +1662,17 @@ function startRecorder(stream, label, cleanup, target = { pad: model.selected, s
       if (!pcm.length) throw new Error('That recording was empty')
       let trim = { start: 0, end: 1 }
       if (model.settings.autoTrim) trim = trimSilence(pcm, audio.sampleRate)
+      // A take is held to the same length as an import, so one long take cannot fill a song's sample room.
+      const cap = Math.floor(audio.sampleRate * TAKE_SECONDS)
+      const from = Math.floor(trim.start * pcm.length)
+      const to = Math.ceil(trim.end * pcm.length)
+      let cut = false
+      if (to - from > cap || pcm.length > cap * 2) {
+        const end = Math.min(pcm.length, from + cap, Math.max(from + 1, to))
+        pcm = pcm.slice(from, end)
+        trim = { start: 0, end: 1 }
+        cut = to - from > cap
+      }
       if (model.settings.autoNorm) {
         let peak = 0
         const a = Math.floor(trim.start * pcm.length)
@@ -1663,7 +1691,8 @@ function startRecorder(stream, label, cleanup, target = { pad: model.selected, s
           song: target.song,
           padPatch: { trimStart: trim.start, trimEnd: trim.end },
         })
-        model.browserNote = `${label} take on pad ${target.pad + 1}`
+        const left = budgetNote()
+        model.browserNote = `${label} take on pad ${target.pad + 1}${cut ? `, cut to ${TAKE_SECONDS} s` : ''}${left ? `. ${left}` : ''}`
       } catch (err) {
         if (!(err instanceof SongChanged)) throw err
         // Another song was opened during the take. It is kept in Imports, not written into that song.
@@ -1832,11 +1861,23 @@ function mixdown(audio) {
   return { pcm, sr: audio.sampleRate }
 }
 
+const VIDEO_EXT = /\.(mp4|m4v|mov|webm|mkv)(\?|#|$)/i
+
+/** A video container by name or by its first bytes (ISO BMFF ftyp, or the EBML header of WebM). */
+export function looksLikeVideo(arrayBuffer, name) {
+  if (VIDEO_EXT.test(String(name || ''))) return true
+  const b = new Uint8Array(arrayBuffer, 0, Math.min(12, arrayBuffer.byteLength))
+  if (b.length >= 8 && b[4] === 0x66 && b[5] === 0x74 && b[6] === 0x79 && b[7] === 0x70) return true
+  return b.length >= 4 && b[0] === 0x1a && b[1] === 0x45 && b[2] === 0xdf && b[3] === 0xa3
+}
+
 async function decodeAny(arrayBuffer, name) {
   try {
     const audio = await ctx.decodeAudioData(arrayBuffer.slice(0))
     return mixdown(audio)
   } catch {
+    // Only a video gets the slow path (play it and record the sound). Anything else fails now, not in 90 s.
+    if (!looksLikeVideo(arrayBuffer, name)) throw new Error('That file is not audio or video this browser can read')
     return decodeVideoBytes(arrayBuffer, name)
   }
 }
@@ -1926,21 +1967,27 @@ function decodeVideoBytes(arrayBuffer, name) {
   })
 }
 
-async function fetchMediaBytes(url) {
+const MEDIA_FETCH_MS = 45000
+
+/** Bytes of a remote sample, never more than SAMPLE_MEDIA_LIMIT, and given up on after MEDIA_FETCH_MS. */
+export async function fetchMediaBytes(url, fetchImpl = fetch) {
+  const opts = { limit: SAMPLE_MEDIA_LIMIT, timeoutMs: MEDIA_FETCH_MS, fetchImpl }
   try {
-    const direct = await fetch(url)
-    if (direct.ok) return direct.arrayBuffer()
-  } catch {
-    /* CORS or a network block: the same-origin proxy is the second try */
+    const direct = await fetchCapped(url, opts)
+    if (direct.buffer) return direct.buffer
+  } catch (err) {
+    // Too big is too big on the proxy as well. CORS or a network block: the proxy is the second try.
+    if (err?.name === 'TooLarge') throw err
   }
-  const proxied = await fetch(`/api/sample-media?url=${encodeURIComponent(url)}`)
-  if (!proxied.ok) {
+  const proxied = await fetchCapped(`${SAMPLE_MEDIA_PATH}?url=${encodeURIComponent(url)}`, opts)
+  if (!proxied.buffer) {
+    if (proxied.res.status === 429) throw new Error('Too many requests to the sample reader: wait a moment and try again.')
     const allowed = allowedMediaUrl(url)
     throw new Error(allowed
       ? 'That file is listed, but the host blocked the browser from reading it. Drop the file on the window, or link the folder that has it.'
       : 'Could not read that file')
   }
-  return proxied.arrayBuffer()
+  return proxied.buffer
 }
 
 /**
@@ -1960,7 +2007,8 @@ export async function placePcm(index, pcm, sr, name, { folder = 'imports', force
     }
     ensureLibrary()
     await cachePcm(folder, name, pcm, sr, ext)
-    model.browserNote = onPad ? `${name} on pad ${index + 1}` : `The song changed during the import. ${name} is in the library, not on a pad.`
+    const left = onPad ? budgetNote() : ''
+    model.browserNote = onPad ? `${name} on pad ${index + 1}${left ? `. ${left}` : ''}` : `The song changed during the import. ${name} is in the library, not on a pad.`
     touch(true)
   } finally {
     endUndo()
@@ -2001,6 +2049,7 @@ export async function importRemote(url, index = model.selected, name = 'nft') {
 }
 
 const SAMPLE_SECONDS = 16
+const TAKE_SECONDS = SAMPLE_SECONDS
 
 function fitSample(pcm, sr) {
   const rate = sr || 44100

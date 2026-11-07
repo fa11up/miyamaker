@@ -113,7 +113,10 @@ test('normalizePatch drops non-finite numbers and wrong types so defaults fill i
   assert.equal('aA' in p, false)
   assert.equal(p.aD, 0.3)
   assert.equal('filterType' in p, false)
-  assert.deepEqual(p.oscs, [{ type: 'saw', ratio: 2 }])
+  // Always the three oscillators the renderer reads: the first from the file (NaN level back to default).
+  assert.equal(p.oscs.length, 3)
+  assert.deepEqual(p.oscs[0], { type: 'saw', ratio: 2, detune: 0, level: 0.8, duty: 0.5 })
+  assert.equal(p.oscs[2].type, 'square')
   assert.deepEqual(p.partials, [0, 0.5])
   assert.equal(normalizePatch(null), null)
 })

@@ -1,4 +1,4 @@
-import { formatEther } from 'viem'
+import { formatEther, keccak256, stringToBytes } from 'viem'
 
 /**
  * The parts of minting from MiyaMusicMaker that need no wallet, so `node --test` can load them
@@ -28,6 +28,17 @@ export type LaunchProgress = {
   editionId?: bigint
   mintHash?: Hex
   minted?: boolean
+  /**
+   * The wallet's pending nonce read just before the open prompt. If the wallet's count has moved past it when the app
+   * comes back, something went out while the prompt was open, and it is waited for instead of sending again.
+   */
+  askNonce?: number
+  /** The nonce the kept hash went out at (the pending count before its prompt), so a dropped one can be told. */
+  sentNonce?: number
+  /** When the kept hash was sent. After a long time without an ending, Discard is offered anyway, with a warning. */
+  sentAt?: number
+  /** The kept hash's nonce was used by something else: what we sent never ran. */
+  dropped?: boolean
 }
 
 export type LaunchStep =
@@ -108,15 +119,46 @@ export type ChainReads = {
   pause: (ms: number) => Promise<void>
 }
 
-/** Reads until it finds something, a few times apart, since a node can be a block or two behind the wallet. */
+/** An error written for people here, shown as it is (plainTxError would hide one that names an address). */
+export class SaidError extends Error {
+  plain = true
+}
+
+/**
+ * The chain could not be read, so nothing is known: not "not there". A caller that took it for "not there" would send
+ * a second edition or mint. Carries `unconfirmed`, so the dialog's isUnconfirmed (utils/batch) treats it as one.
+ */
+export class CouldNotReadError extends Error {
+  unconfirmed = true
+
+  plain = true
+
+  constructor(message = 'The network could not be read just now, so nothing was sent. Try again in a minute: it looks again first.') {
+    super(message)
+    this.name = 'CouldNotReadError'
+  }
+}
+
+/**
+ * Reads until it finds something, a few times apart, since a node can be a block or two behind the wallet. Not found
+ * only when the last read answered; a read that failed last throws CouldNotReadError instead.
+ */
 async function lookAgain<T>(
   read: () => Promise<T | undefined>,
   reads: ChainReads,
   tries: number,
   gap: number
 ): Promise<T | undefined> {
-  const found = await read().catch(() => undefined)
-  if (found !== undefined || tries <= 1) return found
+  let failed = false
+  const found = await read().catch(() => {
+    failed = true
+    return undefined
+  })
+  if (found !== undefined) return found
+  if (tries <= 1) {
+    if (failed) throw new CouldNotReadError()
+    return undefined
+  }
   await reads.pause(gap)
   return lookAgain(read, reads, tries - 1, gap)
 }
@@ -140,7 +182,7 @@ export function findEdition(instance: Hex, reads: ChainReads, tries = 4, gap = 3
 export async function batchLanded(p: LaunchProgress, logged: Hex | undefined, reads: ChainReads): Promise<Hex> {
   const instance = logged ?? (await findInstance(p, reads))
   if (!instance) {
-    throw new Error(
+    throw new SaidError(
       'The batch went through, but the new collection could not be read back yet. Try again in a minute: it looks again and sends nothing new.'
     )
   }
@@ -155,7 +197,7 @@ export async function batchLanded(p: LaunchProgress, logged: Hex | undefined, re
 export async function batchEdition(p: LaunchProgress, instance: Hex, logged: bigint | undefined, reads: ChainReads) {
   const editionId = logged ?? (await findEdition(instance, reads))
   if (editionId === undefined) {
-    throw new Error(
+    throw new SaidError(
       `The collection is live at ${instance} and its edition came with it, but the edition could not be read yet. Check the explorer, or try again in a minute. Nothing new is sent.`
     )
   }
@@ -178,9 +220,77 @@ export function publishBpm(bpm: unknown): number | undefined {
   return Math.min(400, Math.max(20, Math.round(n)))
 }
 
-export function firstCopyLabel(priceWei: bigint | undefined): string {
+/**
+ * The first-copy box. The copy is a real mint: it is one of the supply, it pays the price into the collection (yours
+ * to withdraw, less the vault share and fee), and on a rising edition it raises the next buyer's price.
+ */
+export function firstCopyLabel(priceWei: bigint | undefined, rising = false): string {
   const cost = priceWei && priceWei > 0n ? `${formatEther(priceWei)} ETH` : 'the edition price'
-  return `Mint the first copy to this wallet (costs ${cost})`
+  const rise = rising ? ' and raises the price for the next buyer' : ''
+  return `Mint the first copy to this wallet (costs ${cost}). It uses one copy of the supply${rise}.`
+}
+
+/** A percent from basis points, without trailing zeros: 1000 is "10%", 250 is "2.5%". */
+export function pctWords(bps: number): string {
+  return `${Number((bps / 100).toFixed(2))}%`
+}
+
+/** Where each sale's money goes, said before Mint. The split happens when the creator withdraws from the collection. */
+export function moneyWords(alignmentBps: number, protocolFeeBps: number): string {
+  const keep = 10_000 - alignmentBps - protocolFeeBps
+  return `Sales stay in the collection until you withdraw them. On each withdrawal ${pctWords(alignmentBps)} goes to the community vault and ${pctWords(protocolFeeBps)} to miya. You keep the other ${pctWords(keep)}.`
+}
+
+/**
+ * The create salt, from the wallet, the chain and the exact content, so a reload (or a lost record) can't change it
+ * and the same content can only ever make the one collection. `round` moves on only when a live release of that
+ * content was discarded, so making it again gets a new address. Shaped like makeSalt (music/drop.ts): the factory,
+ * a zero byte, then 11 bytes, here from the hash.
+ */
+export function releaseSalt(factory: string, account: string, chainId: number, content: string, round = 0): Hex {
+  if (!/^0x[0-9a-fA-F]{40}$/.test(factory)) throw new Error('bad factory address')
+  const digest = keccak256(stringToBytes(`miya-music-salt:${account.toLowerCase()}:${chainId}:${content}:${round}`))
+  return `0x${factory.slice(2).toLowerCase()}00${digest.slice(2, 24)}`
+}
+
+/** The wallet's transaction counts: `pending` counts what it has sent, `latest` what is mined. */
+export type NonceRead = { pending: number; latest: number }
+
+/**
+ * A wallet prompt that was open when the app went away, judged by the wallet's nonce.
+ * - 'not-sent': nothing has left the wallet since the prompt opened, so nothing of ours is out.
+ * - 'in-flight': something has left and is not mined yet. It may be ours: wait for it, never send another.
+ * - 'mined': everything that left is mined, so the chain's state now says whether ours ran.
+ * Without a recorded nonce (an older record) only the last two can be told.
+ */
+export function leftoverVerdict(askNonce: number | undefined, now: NonceRead): 'not-sent' | 'in-flight' | 'mined' {
+  if (askNonce !== undefined && now.pending <= askNonce) return 'not-sent'
+  if (now.latest < now.pending) return 'in-flight'
+  return 'mined'
+}
+
+/**
+ * A kept hash with no receipt. Its nonce mined while the hash has no receipt means something else took that nonce
+ * (a cancel or a replacement): ours never ran. Otherwise it is still out.
+ */
+export function sentVerdict(sentNonce: number | undefined, latest: number, receiptFound: boolean): 'landed' | 'dropped' | 'waiting' {
+  if (receiptFound) return 'landed'
+  if (sentNonce !== undefined && latest > sentNonce) return 'dropped'
+  return 'waiting'
+}
+
+/** How long a sent transaction waits without an ending before Discard is offered anyway. */
+export const STALE_SEND_MS = 30 * 60_000
+
+/**
+ * Whether the release can be dropped: 'free' when nothing is out, 'anyway' (with a warning) when what is out was
+ * dropped or has had no ending for a long time, and 'no' while it may still land.
+ */
+export function discardChoice(p: LaunchProgress, now: number): 'free' | 'anyway' | 'no' {
+  if (!launchUnsettled(p)) return 'free'
+  if (p.dropped) return 'anyway'
+  if (p.sentAt !== undefined && now - p.sentAt > STALE_SEND_MS) return 'anyway'
+  return 'no'
 }
 
 export function shortAddress(address: string | undefined): string {

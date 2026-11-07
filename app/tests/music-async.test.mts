@@ -354,7 +354,7 @@ test('restoreSamples reads every pad it can, then reports the ones it could not'
   })
 })
 
-test('a new session clears undo, and a song switch keeps only the step back to the old song', async () => {
+test('a new session clears undo, and a song switch keeps only the step back to the old song', () => withIdb(memoryIdb(), async () => {
   loadFactoryKit()
   history.armHistory()
   model.buses[0].volume = 0.2
@@ -377,7 +377,7 @@ test('a new session clears undo, and a song switch keeps only the step back to t
   assert.equal(model.songName, '')
   assert.equal(model.bpm, 101, 'back to the song as it was just before the load')
   assert.equal(await history.undo(), false, 'no further into the other song’s history')
-})
+}))
 
 test('a second unreadable save never replaces the first backup, and extra backups stay bounded', () => {
   const map = new Map<string, string>()

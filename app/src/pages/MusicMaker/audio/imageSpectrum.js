@@ -88,9 +88,54 @@ export function imageToPcm(image, settings = {}) {
   return { pcm: out, sr: RATE }
 }
 
+const IMAGE_BYTES = 20 * 1024 * 1024
+export const IMAGE_PIXELS = 40_000_000
+
+/** Width and height from a PNG, GIF, BMP, WebP or JPEG header, or null when the format is not one of those. */
+export function imageSize(b) {
+  const u32 = (i) => ((b[i] << 24) | (b[i + 1] << 16) | (b[i + 2] << 8) | b[i + 3]) >>> 0
+  const le16 = (i) => b[i] | (b[i + 1] << 8)
+  const le32 = (i) => (b[i] | (b[i + 1] << 8) | (b[i + 2] << 16) | (b[i + 3] << 24)) >>> 0
+  if (b.length >= 24 && b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) return { width: u32(16), height: u32(20) }
+  if (b.length >= 10 && b[0] === 0x47 && b[1] === 0x49 && b[2] === 0x46) return { width: le16(6), height: le16(8) }
+  if (b.length >= 26 && b[0] === 0x42 && b[1] === 0x4d) return { width: le32(18), height: Math.abs(le32(22) | 0) }
+  if (b.length >= 30 && b[0] === 0x52 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x46 && b[8] === 0x57 && b[9] === 0x45) {
+    const kind = String.fromCharCode(b[12], b[13], b[14], b[15])
+    if (kind === 'VP8X') return { width: 1 + (b[24] | (b[25] << 8) | (b[26] << 16)), height: 1 + (b[27] | (b[28] << 8) | (b[29] << 16)) }
+    if (kind === 'VP8L') {
+      const bits = le32(21)
+      return { width: (bits & 0x3fff) + 1, height: ((bits >> 14) & 0x3fff) + 1 }
+    }
+    if (kind === 'VP8 ') return { width: le16(26) & 0x3fff, height: le16(28) & 0x3fff }
+  }
+  if (b.length >= 4 && b[0] === 0xff && b[1] === 0xd8) {
+    let i = 2
+    while (i + 9 < b.length) {
+      if (b[i] !== 0xff) return null
+      const marker = b[i + 1]
+      const len = (b[i + 2] << 8) | b[i + 3]
+      if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
+        return { width: (b[i + 7] << 8) | b[i + 8], height: (b[i + 5] << 8) | b[i + 6] }
+      }
+      i += 2 + len
+    }
+  }
+  return null
+}
+
 export async function importImageFile(file, settings) {
   if (!file) throw new Error('Choose an image first')
+  if (file.size > IMAGE_BYTES) throw new Error('That image is over 20 MB. Use a smaller one.')
+  // A small file can still decode to a huge bitmap. The size in its header is checked before decoding.
+  const size = imageSize(new Uint8Array(await file.slice(0, 256 * 1024).arrayBuffer()))
+  if (size && size.width * size.height > IMAGE_PIXELS) {
+    throw new Error(`That image is ${size.width}×${size.height}. Use one under ${Math.round(IMAGE_PIXELS / 1e6)} megapixels.`)
+  }
   const bmp = await createImageBitmap(file)
+  if (bmp.width * bmp.height > IMAGE_PIXELS) {
+    bmp.close?.()
+    throw new Error(`That image is ${bmp.width}×${bmp.height}. Use one under ${Math.round(IMAGE_PIXELS / 1e6)} megapixels.`)
+  }
   const maxW = 480
   const scale = bmp.width > maxW ? maxW / bmp.width : 1
   const width = Math.max(1, Math.round(bmp.width * scale))

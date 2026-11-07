@@ -21,7 +21,7 @@ import {
   openSliceSet,
   sliceSetForFolder,
 } from '../audio/song.js'
-import { audioBank, idbGet, model, rememberSample, touch } from '../model.js'
+import { audioBank, budgetNote, idbGet, model, plainText, rememberSample, touch } from '../model.js'
 import { loadTicket, songId } from '../jobs.js'
 import { useModel } from '../useModel.js'
 import { Dialog } from '../widgets.jsx'
@@ -44,8 +44,13 @@ export function SampleBrowser() {
   const [folderName, setFolderName] = useState('')
   const needle = query.trim().toLowerCase()
 
+  const [dirsFailed, setDirsFailed] = useState(false)
+
   useEffect(() => {
-    savedDirectories().then(setDirs).catch(() => {})
+    savedDirectories().then((list) => {
+      setDirs(list)
+      setDirsFailed(false)
+    }).catch(() => setDirsFailed(true))
   }, [model.dirTick])
 
   useEffect(() => {
@@ -110,14 +115,16 @@ export function SampleBrowser() {
         const song = songId()
         const at = model.selected
         const rec = await loadCached(pick.id)
-        if (!rec?.pcm) return
+        if (!rec?.pcm) throw new Error(`${pick.name}: file missing from browser storage`)
         await rememberSample(at, { pcm: rec.pcm, sr: rec.sr || 44100, name: pick.name, forceName: true, song })
-        model.browserNote = `${pick.name} on pad ${at + 1}`
+        const left = budgetNote()
+        model.browserNote = `${pick.name} on pad ${at + 1}${left ? `. ${left}` : ''}`
         touch(false)
       } else if (pick.kind === 'song') {
         const ticket = loadTicket()
         const doc = await idbGet(`song:${pick.id}`)
-        if (doc) await loadSong(doc, pick.folder === 'templates' ? '' : pick.id, ticket)
+        if (!doc) throw new Error(`${pick.name}: file missing from browser storage`)
+        await loadSong(doc, pick.folder === 'templates' ? '' : pick.id, ticket)
       } else if (pick.kind === 'kit') {
         model.browserNote = 'Right-click the kit and choose Load'
         touch(false)
@@ -143,7 +150,7 @@ export function SampleBrowser() {
     try {
       if (pick?.kind === 'cache') {
         const rec = await loadCached(pick.id)
-        if (!rec?.pcm) return
+        if (!rec?.pcm) throw new Error(`${pick.name}: file missing from browser storage`)
         await rememberSample(model.selected, { pcm: rec.pcm, sr: rec.sr || 44100, name: pick.name, forceName: true })
       } else if (pick?.kind === 'link') {
         const file = await readDirectoryFile(pick.handle)
@@ -176,13 +183,26 @@ export function SampleBrowser() {
         return
       }
     }
-    const rows = await walkHandle(dir.handle, '')
+    const count = { files: 0, capped: false }
+    let rows = []
+    try {
+      rows = await walkHandle(dir.handle, '', 1, count)
+    } catch (error) {
+      model.browserNote = `Could not read ${dir.name}: ${error?.message || 'the folder is gone or blocked'}`
+      touch(false)
+      return
+    }
+    if (count.capped) {
+      model.browserNote = `${dir.name}: showing the first ${WALK_MAX} files. Link a smaller folder for the rest.`
+      touch(false)
+    }
     setLinked((prev) => ({ ...prev, [dir.key]: rows }))
     toggle(dir.key)
   }
 
   const packs = model.nftPacks || []
   const locked = model.nftLocked || []
+  const unknown = model.nftUnknown || []
   const roots = library.folders.filter((folder) => !folder.parent && folderHits(folder, needle))
 
   return (
@@ -217,31 +237,39 @@ export function SampleBrowser() {
           <>
             {locked.map((pack) => (
               <div key={pack.id} className="browser-row locked" style={{ paddingLeft: 16 }}>
-                {pack.name} locked
+                {plainText(pack.name)} locked
               </div>
             ))}
+            {unknown.map((pack) => (
+              <div key={pack.id} className="browser-row quiet" style={{ paddingLeft: 16 }}>
+                {plainText(pack.name)}: not checked
+              </div>
+            ))}
+            {model.nftPartial && (
+              <div className="browser-row quiet" style={{ paddingLeft: 16 }}>More not loaded</div>
+            )}
             {packs.map((pack) => (
               <div key={pack.id}>
-                <Row id={pack.id} open={open} toggle={toggle} label={pack.name} depth={1} />
+                <Row id={pack.id} open={open} toggle={toggle} label={plainText(pack.name)} depth={1} />
                 {open.has(pack.id) && pack.tokens.map((token) => (
                   <div key={token.id}>
-                    <div className="browser-row quiet" style={{ paddingLeft: 28 }}>{token.name}</div>
+                    <div className="browser-row quiet" style={{ paddingLeft: 28 }}>{plainText(token.name)}</div>
                     {token.links.map((link) => (
                       <button
                         key={link.url}
                         type="button"
                         className={`browser-row ${pick?.url === link.url ? 'on' : ''}`}
                         style={{ paddingLeft: 40 }}
-                        onClick={() => showNft(link, token.name)}
+                        onClick={() => showNft(link, plainText(token.name))}
                         onDoubleClick={() => {
-                          showNft(link, token.name)
-                          importRemote(link.url, model.selected, token.name).catch((error) => {
+                          showNft(link, plainText(token.name))
+                          importRemote(link.url, model.selected, plainText(token.name) || 'nft').catch((error) => {
                             model.browserNote = error.message
                             touch(false)
                           })
                         }}
                       >
-                        {link.name}
+                        {plainText(link.name)}
                       </button>
                     ))}
                   </div>
@@ -251,6 +279,9 @@ export function SampleBrowser() {
           </>
         )}
         <Row id="linked" open={open} toggle={toggle} label="Linked folders" depth={0} />
+        {open.has('linked') && dirsFailed && (
+          <div className="browser-row quiet" style={{ paddingLeft: 16 }}>Linked folders could not be read from browser storage</div>
+        )}
         {open.has('linked') && dirs.map((dir) => (
           <div key={dir.key}>
             <button type="button" className="browser-row" style={{ paddingLeft: 16 }} onClick={() => expandDir(dir)}>
@@ -435,7 +466,6 @@ export function SampleBrowser() {
       const doc = await idbGet(`kit:${kit.id}`)
       if (!doc) throw new Error('That kit file is missing')
       await loadKit(doc)
-      setKitName(doc.name || kit.name)
     } catch (error) {
       model.browserNote = error.message || 'Could not load that kit'
       touch(false)
@@ -513,13 +543,14 @@ async function openLibraryFile(file) {
       // The ticket is taken on the click, so of two quick clicks the second song is the one that opens.
       const ticket = loadTicket()
       const doc = await idbGet(`song:${file.id}`)
-      if (doc) await loadSong(doc, file.folder === 'templates' ? '' : file.id, ticket)
+      if (!doc) throw new Error(`${file.name}: file missing from browser storage`)
+      await loadSong(doc, file.folder === 'templates' ? '' : file.id, ticket)
       return
     }
     const song = songId()
     const at = model.selected
     const rec = await loadCached(file.id)
-    if (!rec?.pcm) return
+    if (!rec?.pcm) throw new Error(`${file.name}: file missing from browser storage`)
     await rememberSample(at, { pcm: rec.pcm, sr: rec.sr || 44100, name: file.name, forceName: true, song })
   } catch (error) {
     model.browserNote = error.message || 'Could not open that file'
@@ -539,15 +570,25 @@ function sessionTree(files, needle) {
   return files.filter((file) => !needle || (file.webkitRelativePath || file.name).toLowerCase().includes(needle))
 }
 
-async function walkHandle(dirHandle, prefix, depth = 1) {
+/** Entries listed from one linked folder, files and subfolders together, across every level. */
+const WALK_MAX = 400
+
+/** `count` is shared by every level, so the cap holds for the whole tree, not one folder at a time. */
+async function walkHandle(dirHandle, prefix, depth = 1, count = { files: 0, capped: false }) {
   const rows = []
-  if (depth > 6 || rows.length > 400) return rows
+  if (depth > 6) return rows
   for await (const [name, handle] of dirHandle.entries()) {
+    if (count.files >= WALK_MAX) {
+      count.capped = true
+      break
+    }
     const path = prefix ? `${prefix}/${name}` : name
     if (handle.kind === 'directory') {
+      count.files += 1
       rows.push({ kind: 'dir', name, path, depth })
-      rows.push(...await walkHandle(handle, path, depth + 1))
+      rows.push(...await walkHandle(handle, path, depth + 1, count))
     } else if (MEDIA_RE.test(name) || SONG_RE.test(name) || KIT_RE.test(name)) {
+      count.files += 1
       rows.push({ kind: 'file', name, path, handle, depth })
     }
   }

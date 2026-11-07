@@ -70,6 +70,8 @@ export function useMusicChain() {
     protocolFeeBps: (feeBps?.result as number | undefined) ?? 100,
     vaultRegistered: vaultOk?.result as boolean | undefined,
     loading: registry.isLoading || rules.isLoading,
+    /** The minimum vault share and the fee were read from the registry, not the fallbacks above. */
+    rulesKnown: minBps?.status === 'success' && feeBps?.status === 'success',
   }
 }
 

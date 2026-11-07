@@ -57,6 +57,7 @@ export type TitleSkin =
   | 'aqua'
   | 'tv'
   | 'mint'
+  | 'music'
   | 'launch'
   | 'auction'
   | 'manager'
@@ -70,6 +71,7 @@ const MARK: Record<TitleSkin, string> = {
   aqua: '♪',
   tv: '✦',
   mint: '♥',
+  music: '♫',
   launch: '✦',
   auction: '♦',
   manager: '⚙',
@@ -246,6 +248,32 @@ const StyledTitleBar = styled.div`
     }
     ${ChromeButton}:hover {
       background: linear-gradient(180deg, #fff, #ff9fd6);
+    }
+  }
+
+  /* MiyaMusicMaker: a groovebox of the time, brushed aluminium, graphite print and tangerine rubber keys. */
+  &[data-skin='music'] {
+    background: repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.16) 0 1px, transparent 1px 3px),
+      linear-gradient(180deg, #eef0f3 0%, #c9ccd2 46%, #b3b7be 54%, #d6d9de 100%);
+    border-bottom: 2px solid #ff7a1f;
+    color: #17191d;
+    .mark {
+      color: #ff7a1f;
+      text-shadow: 0 0 5px rgba(255, 122, 31, 0.85);
+    }
+    .title-bar {
+      font-family: ${font.display};
+      letter-spacing: 0.06em;
+      text-shadow: 0 1px 0 rgba(255, 255, 255, 0.75);
+    }
+    ${ChromeButton} {
+      border-radius: 3px;
+      color: #2a1204;
+      background: linear-gradient(180deg, #ffb27a, #ff7a1f 55%, #e2600c);
+      box-shadow: 0 0 0 1px #3a1a06, inset 0 1px 0 rgba(255, 255, 255, 0.55);
+    }
+    ${ChromeButton}:hover {
+      filter: brightness(1.08);
     }
   }
 

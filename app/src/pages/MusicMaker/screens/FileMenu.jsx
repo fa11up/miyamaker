@@ -14,7 +14,7 @@ import {
 import { beginUndo, endUndo } from '../history.js'
 import { sameSong, songId } from '../jobs.js'
 import { MEDIA_RE, rememberDirectory } from '../media/library.js'
-import { isAddress, loadWalletPacks, requestAccount } from '../media/nft.js'
+import { isAddress, loadWalletPacks, plainName, requestAccount, walletSummary } from '../media/nft.js'
 import { model, touch } from '../model.js'
 import { useModel } from '../useModel.js'
 import { Dialog } from '../widgets.jsx'
@@ -22,6 +22,8 @@ import { Dialog } from '../widgets.jsx'
 const ACCEPT = 'audio/*,video/*,.wav,.mp3,.m4a,.ogg,.flac,.aiff,.mp4,.webm,.mov,.m1ya,.mod,.xm,.k1t'
 const SONG_RE = /\.(m1ya|mod|xm)$/i
 const KIT_RE = /\.k1t$/i
+/** Files kept from one Open folder pick. A bigger folder lists the first ones and says so. */
+const SESSION_FILES_MAX = 2000
 
 /** The newest wallet read. An older one that answers late is dropped. */
 let walletRequest = 0
@@ -31,6 +33,7 @@ let walletFor = ''
 function clearPacks() {
   model.nftPacks = []
   model.nftLocked = []
+  model.nftUnknown = []
 }
 
 export function FileMenu() {
@@ -38,7 +41,7 @@ export function FileMenu() {
   const root = useRef(null)
   const [menu, setMenu] = useState(false)
   const [songName, setSongName] = useState(() => model.songName || 'Song')
-  const [kitName, setKitName] = useState('Kit')
+  const [kitName, setKitName] = useState(() => model.kitName || 'Kit')
   const [ipfs, setIpfs] = useState('')
   const [videoUrl, setVideoUrl] = useState('')
   const [imageFile, setImageFile] = useState(null)
@@ -113,9 +116,11 @@ export function FileMenu() {
   async function onDirectory(event) {
     const files = [...event.target.files].filter((file) => MEDIA_RE.test(file.name) || SONG_RE.test(file.name) || KIT_RE.test(file.name))
     event.target.value = ''
-    model.sessionFiles = files
+    model.sessionFiles = files.slice(0, SESSION_FILES_MAX)
     model.dirTick = (model.dirTick || 0) + 1
-    note(`${files.length} files from that folder`)
+    note(files.length > SESSION_FILES_MAX
+      ? `Showing the first ${SESSION_FILES_MAX} of ${files.length} files from that folder. Open a smaller folder for the rest.`
+      : `${files.length} files from that folder`)
     closeWindow()
   }
 
@@ -126,7 +131,7 @@ export function FileMenu() {
         await rememberDirectory(handle)
         model.dirTick = (model.dirTick || 0) + 1
         touch(false)
-        note(`Linked ${handle.name}`)
+        note(`Linked ${plainName(handle.name) || 'that folder'}`)
         closeWindow()
         return
       }
@@ -145,9 +150,14 @@ export function FileMenu() {
       const doc = await captureSong(songName)
       const stored = await storeSongFile(doc.name, doc)
       downloadSong(doc)
+      if (!stored.persisted) {
+        // The song is in IndexedDB, but the Songs list could not be written, so it is not kept.
+        note(`${doc.name}.m1ya not saved: browser storage refused the write. The download started, so keep that file.`)
+        return
+      }
       if (!sameSong(song)) {
         // Another song was opened meanwhile: the file is saved, the session stays on the newer song.
-        note(`${doc.name}.m1ya saved in Songs and downloaded`)
+        note(`${doc.name}.m1ya saved in Songs, download started`)
         closeWindow()
         return
       }
@@ -155,7 +165,7 @@ export function FileMenu() {
       model.songName = doc.name
       model.songFile = stored.id
       model.songPlay = true
-      note(`${doc.name}.m1ya saved in Songs and downloaded`)
+      note(`${doc.name}.m1ya saved in Songs, download started`)
       touch(true)
       closeWindow()
     } catch (error) {
@@ -171,9 +181,13 @@ export function FileMenu() {
     beginUndo()
     try {
       const doc = await captureKit(kitName)
-      await storeKitFile(doc.name, doc)
+      const stored = await storeKitFile(doc.name, doc)
       downloadKit(doc)
-      note(`${doc.name}.k1t saved in Kits and downloaded`)
+      if (!stored.persisted) {
+        note(`${doc.name}.k1t not saved: browser storage refused the write. The download started, so keep that file.`)
+        return
+      }
+      note(`${doc.name}.k1t saved in Kits, download started`)
       touch(true)
       closeWindow()
     } catch (error) {
@@ -213,11 +227,11 @@ export function FileMenu() {
       if (request !== walletRequest) return
       model.nftPacks = result.packs
       model.nftLocked = result.locked
+      model.nftUnknown = result.unknown || []
+      model.nftPartial = !!result.partial
       const songs = await syncProfileSongs(who)
       if (request !== walletRequest) return
-      const count = result.packs.reduce((sum, pack) => sum + pack.tokens.length, 0)
-      const songNote = songs ? `, ${songs} songs` : ''
-      note(count ? `${count} tokens with media${songNote}` : songs ? `${songs} songs from this wallet` : 'No audio or video in this wallet yet')
+      note(walletSummary(result, songs))
     } catch (error) {
       if (request === walletRequest) note(error.message || 'Could not read that wallet')
     } finally {
@@ -269,6 +283,7 @@ export function FileMenu() {
 
   const packs = model.nftPacks || []
   const locked = model.nftLocked || []
+  const unknown = model.nftUnknown || []
 
   return (
     <div className="mmm-file" ref={root}>
@@ -306,7 +321,7 @@ export function FileMenu() {
         }}
       />
       {windowId === 'open' && (
-        <Dialog title="Open file" onClose={closeWindow}>
+        <Dialog title="Open file" onClose={closeWindow} busy={busy}>
           <p className="hint">Audio, video, a .m1ya song, or a .k1t kit. Songs and kits open into the project. A sound file lands on the selected pad and in Cache.</p>
           <div className="dialog-actions">
             <button type="button" className="btn" disabled={busy} onClick={() => document.getElementById('mmm-import')?.click()}>Choose files</button>
@@ -315,7 +330,7 @@ export function FileMenu() {
         </Dialog>
       )}
       {windowId === 'folder' && (
-        <Dialog title="Open folder" onClose={closeWindow}>
+        <Dialog title="Open folder" onClose={closeWindow} busy={busy}>
           <p className="hint">Link a folder of samples. The files stay where they are until you load one.</p>
           <div className="dialog-actions">
             <button type="button" className="btn" onClick={linkFolder}>Link folder</button>
@@ -324,7 +339,7 @@ export function FileMenu() {
         </Dialog>
       )}
       {windowId === 'link' && (
-        <Dialog title="Load song link" onClose={closeWindow}>
+        <Dialog title="Load song link" onClose={closeWindow} busy={busy}>
           <p className="hint">An ipfs:// song URI, or an allowed IPFS gateway link.</p>
           <input className="field" aria-label="IPFS song URI" placeholder="ipfs://" value={ipfs} onChange={(e) => setIpfs(e.target.value)} />
           <div className="dialog-actions">
@@ -334,7 +349,7 @@ export function FileMenu() {
         </Dialog>
       )}
       {windowId === 'wallet' && (
-        <Dialog title="Wallet" onClose={closeWindow}>
+        <Dialog title="Wallet" onClose={closeWindow} busy={busy}>
           <p className="hint">Read a wallet for audio and video on its tokens. Nothing is signed and nothing is sent.</p>
           <form
             className="dialog-actions"
@@ -371,20 +386,23 @@ export function FileMenu() {
             </button>
           </form>
           {locked.map((pack) => (
-            <div key={pack.id} className="hint">{pack.name} locked</div>
+            <div key={pack.id} className="hint">{plainName(pack.name)} locked</div>
+          ))}
+          {unknown.map((pack) => (
+            <div key={pack.id} className="hint">{plainName(pack.name)}: could not check this wallet</div>
           ))}
           <div className="lib-list">
             {packs.map((pack) => (
               <div key={pack.id}>
-                <div className="hint">{pack.name}</div>
+                <div className="hint">{plainName(pack.name)}</div>
                 {pack.tokens.map((token) => (
                   <div key={token.id}>
-                    <div>{token.name}</div>
+                    <div>{plainName(token.name)}</div>
                     {token.links.map((link) => (
                       <div key={link.url} className="dialog-actions">
-                        <span className="hint">{link.name}</span>
-                        <button type="button" className="btn free-width" disabled={busy} onClick={() => keepRemote(link.url, token.name, false)}>Cache</button>
-                        <button type="button" className="btn free-width" disabled={busy} onClick={() => keepRemote(link.url, token.name, true)}>Pad</button>
+                        <span className="hint">{plainName(link.name)}</span>
+                        <button type="button" className="btn free-width" disabled={busy} onClick={() => keepRemote(link.url, plainName(token.name), false)}>Cache</button>
+                        <button type="button" className="btn free-width" disabled={busy} onClick={() => keepRemote(link.url, plainName(token.name), true)}>Pad</button>
                       </div>
                     ))}
                   </div>
@@ -396,7 +414,7 @@ export function FileMenu() {
         </Dialog>
       )}
       {windowId === 'video' && (
-        <Dialog title="Video link" onClose={closeWindow}>
+        <Dialog title="Video link" onClose={closeWindow} busy={busy}>
           <p className="hint">Paste a YouTube, Odysee, LBRY, or X link. The app keeps the first 16 seconds, trims the silence, and stores a sample in Cache. It stays out of the song until you load it onto a pad and save.</p>
           <input
             className="field"
@@ -412,7 +430,7 @@ export function FileMenu() {
         </Dialog>
       )}
       {windowId === 'image' && (
-        <Dialog title="Image to sample" onClose={closeWindow}>
+        <Dialog title="Image to sample" onClose={closeWindow} busy={busy}>
           <p className="hint">Each column of the picture becomes a slice of the spectrum. The bottom is low and the top is high. Speed is columns per second. The sample stops at 16 seconds and lands in Cache.</p>
           <div className="dialog-actions">
             <button type="button" className="btn" disabled={busy} onClick={() => document.getElementById('mmm-image')?.click()}>Choose image</button>
@@ -442,7 +460,7 @@ export function FileMenu() {
         </Dialog>
       )}
       {windowId === 'song' && (
-        <Dialog title="Save song" onClose={closeWindow}>
+        <Dialog title="Save song" onClose={closeWindow} busy={busy}>
           <p className="hint">Writes a .m1ya into Songs and downloads it. The file keeps the kit, the arrangement, and the samples that are on pads.</p>
           <input className="field" aria-label="Song name" placeholder="Song" value={songName} onChange={(e) => setSongName(e.target.value)} />
           <div className="dialog-actions">
@@ -452,7 +470,7 @@ export function FileMenu() {
         </Dialog>
       )}
       {windowId === 'kit' && (
-        <Dialog title="Save kit" onClose={closeWindow}>
+        <Dialog title="Save kit" onClose={closeWindow} busy={busy}>
           <p className="hint">Writes a .k1t of the pads and their samples into Kits, and downloads it.</p>
           <input className="field" aria-label="Kit name" placeholder="Kit" value={kitName} onChange={(e) => setKitName(e.target.value)} />
           <div className="dialog-actions">

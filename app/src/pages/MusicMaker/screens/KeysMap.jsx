@@ -1,4 +1,3 @@
-import { useEffect } from 'react'
 import { model } from '../model.js'
 import { Dialog } from '../widgets.jsx'
 
@@ -53,16 +52,7 @@ function Board({ mode }) {
 }
 
 export function KeysMap({ onClose }) {
-  useEffect(() => {
-    const down = (event) => {
-      if (event.key !== 'Escape') return
-      event.preventDefault()
-      event.stopPropagation()
-      onClose()
-    }
-    window.addEventListener('keydown', down, true)
-    return () => window.removeEventListener('keydown', down, true)
-  }, [onClose])
+  // Escape, focus in and focus back are the Dialog's own (widgets.jsx).
 
   const oct = model.renoiseOct
   return (

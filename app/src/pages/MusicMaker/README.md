@@ -61,7 +61,9 @@ Right-click a column header and choose **Show/hide SL/LP columns** if you want t
 
 **NEW** starts a song, a folder, a kit, or a slice. **FILE** opens songs and kits from the disk, from a link, or from sounds in a wallet.
 
-On [miyamaker.com](https://www.miyamaker.com/) the same instrument can save a song or a kit to Arweave, upload a bounce, and mint either as a music drop. The copy you run yourself saves files on this computer.
+On [miyamaker.com](https://www.miyamaker.com/) the same instrument can **Publish to Arweave** a song, a kit, or a bounce, and mint the song or kit as a music drop. Publishing is public and permanent: anyone can download the file, it can never be deleted, and a song or kit carries every sample in it, mic recordings too. Storage is paid in real ETH on Ethereum mainnet (files under about 90 KB are free), and the dialog shows the price before you press anything.
+
+A copy you run yourself (`yarn dev`) does the same: it uploads to the real Arweave and pays real ETH. **SAVE** and **Save as** are the only ways to keep a file on this computer. Releasing on Sepolia uses test ETH for the collection, but storage is still paid in real ETH on mainnet.
 
 ## Plug in a controller
 
@@ -134,4 +136,4 @@ Yarn is the package manager this app ships with (`app/yarn.lock`). Node 18 or ne
 
 Chrome, Edge, Brave, Arc, and Opera can see a USB MIDI controller on Mac, Windows, Linux, and ChromeOS. Use localhost or https. The computer keyboard plays in every browser, including Safari and Firefox.
 
-The instrument is the files in this folder. Songs and kits stay in the browser until you save a `.m1ya` or `.k1t`. On miyamaker.com, Save can also store them on Arweave or mint them as a music drop.
+The instrument is the files in this folder. Songs and kits stay in the browser until you save a `.m1ya` or `.k1t`. Save can also publish them to Arweave (public and permanent, paid in ETH on Ethereum) or mint them as a music drop.
