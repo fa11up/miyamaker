@@ -64,6 +64,66 @@ const Inner = styled.div`
   margin: 0 auto;
 `
 
+/* The picker fits its window exactly: nothing scrolls but the launches, and nothing moves when the address form opens. */
+const Picker = styled.div`
+  height: 100%;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: ${space[3]};
+  padding: ${space[3]};
+  max-width: 920px;
+  margin: 0 auto;
+  > * {
+    flex: none;
+  }
+  > .launches {
+    flex: 1 1 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .launches [role='menu'] {
+    flex: 1 1 0;
+    min-height: 0;
+    overflow-y: auto;
+  }
+  /* A phone's window is only as tall as its content, so the list needs a limit of its own. */
+  @media (max-width: 768px), (max-height: 500px) {
+    height: auto;
+    > .launches {
+      flex: none;
+    }
+    .launches [role='menu'] {
+      flex: none;
+      max-height: 30dvh;
+    }
+  }
+`
+
+const AddressToggle = styled.button`
+  all: unset;
+  align-self: flex-start;
+  min-height: 24px;
+  cursor: pointer;
+  font-size: ${text.sm};
+  &:focus-visible {
+    outline: 1px dotted currentColor;
+  }
+  @media (max-width: 768px) {
+    min-height: 44px;
+  }
+`
+
+const AddressPanel = styled(Panel)`
+  height: 176px;
+  box-sizing: border-box;
+  overflow: hidden;
+  @media (max-width: 768px) {
+    height: 214px;
+  }
+`
+
 const Head = styled.header`
   display: flex;
   align-items: flex-end;
@@ -150,6 +210,7 @@ export default function ManagePage() {
   }
 
   const [paste, setPaste] = useState('')
+  const [addressOpen, setAddressOpen] = useState(false)
   const pasteOk = isAddress(paste.trim())
 
   const explorer = explorerUrl(chainId)
@@ -175,18 +236,16 @@ export default function ManagePage() {
       >
         {Pages.manager?.label}
       </TitleBar>
-      <Layout data-manage>
-        {/* The list of launches is short, so it sits in the middle of the window, not at the top of an empty one. */}
-        <Inner style={collection ? undefined : { minHeight: '100%', boxSizing: 'border-box', justifyContent: 'center' }}>
-          {!collection ? (
-            <>
+      <Layout data-manage style={collection ? undefined : { overflowY: 'hidden' }}>
+        {!collection ? (
+            <Picker>
               <Head>
                 <div>
                   <Eyebrow style={{ color: color.highlight, textShadow: `1px 1px 0 ${color.dark}` }}>Manage</Eyebrow>
                   <DisplayTitle>Pick a collection</DisplayTitle>
                 </div>
               </Head>
-              <Panel aria-label="My launches">
+              <Panel className="launches" aria-label="My launches">
                 <Eyebrow>My launches</Eyebrow>
                 {isConnected ? (
                   <div role="menu" aria-label="My launches">
@@ -215,9 +274,11 @@ export default function ManagePage() {
                   </>
                 )}
               </Panel>
-              <details>
-                <summary style={{ cursor: 'pointer', fontSize: text.sm }}>Manage a collection by its address</summary>
-                <Panel style={{ marginTop: space[2] }}>
+              <AddressToggle type="button" aria-expanded={addressOpen} onClick={() => setAddressOpen((o) => !o)}>
+                {addressOpen ? '▼' : '▶'} Manage a collection by its address
+              </AddressToggle>
+              {/* Its room is always kept, and hidden until asked for, so opening it moves nothing. */}
+              <AddressPanel style={{ visibility: addressOpen ? 'visible' : 'hidden' }}>
                   <Field>
                     Collection address on {chain.name}
                     <input
@@ -240,11 +301,10 @@ export default function ManagePage() {
                       Open
                     </SmallButton>
                   </div>
-                </Panel>
-              </details>
-            </>
+              </AddressPanel>
+            </Picker>
           ) : (
-            <>
+          <Inner>
               <Head>
                 <div style={{ minWidth: 0 }}>
                   <Eyebrow style={{ color: color.highlight, textShadow: `1px 1px 0 ${color.dark}` }}>
@@ -313,9 +373,8 @@ export default function ManagePage() {
                   />
                 )}
               </Panel>
-            </>
-          )}
-        </Inner>
+          </Inner>
+        )}
       </Layout>
     </WindowWrapper>
   )

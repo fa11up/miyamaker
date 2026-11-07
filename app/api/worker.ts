@@ -1,6 +1,7 @@
 // Cloudflare Worker: the 0x and OpenSea proxies (keys injected server-side, see api/_lib), the apex -> www redirect,
 // and everything else from the static build in dist/ (wrangler.jsonc).
-import { verifyMessage } from 'viem'
+import { createPublicClient, http } from 'viem'
+import { mainnet } from 'viem/chains'
 
 import { edgeCache, handleMarketRequest, MARKET_PREFIX, openSeaReader } from './_lib/market'
 import { handleOpenSeaRequest, OPENSEA_PROXY_PATH, quoteBigInts } from './_lib/opensea'
@@ -12,6 +13,12 @@ import { kickOnAir, kickReader } from './_lib/tvkick'
 import { handleTvLiveRequest, TV_LIVE_PATH } from './_lib/tvlive'
 import { CONTRACT_CHECK_PATH, etherscanReader, handleContractCheck } from './_lib/contractcheck'
 import { clientKey, createRateLimiter, handleZeroExRequest, PROXY_PREFIX, sameOrigin } from './_lib/zeroex'
+
+/** Checks wallet signatures: plain wallets locally, and passkey smart wallets by asking the chain. */
+const signatureClient = createPublicClient({
+  chain: mainnet,
+  transport: http('https://ethereum-rpc.publicnode.com', { timeout: 8_000 }),
+})
 
 type Env = {
   ASSETS: { fetch: (request: Request) => Promise<Response> }
@@ -86,7 +93,7 @@ export default {
             .filter(Boolean),
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           verify: (address, message, signature) =>
-            verifyMessage({ address: address as any, message, signature: signature as any }).catch(() => false),
+            signatureClient.verifyMessage({ address: address as any, message, signature: signature as any }).catch(() => false),
           contentType: gatewayContentType,
           sameOrigin,
           clientKey,
@@ -127,7 +134,7 @@ export default {
             .filter(Boolean),
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           verify: (address, message, signature) =>
-            verifyMessage({ address: address as any, message, signature: signature as any }),
+            signatureClient.verifyMessage({ address: address as any, message, signature: signature as any }),
           lookup: youtubeLookup,
           sameOrigin,
           clientKey,
