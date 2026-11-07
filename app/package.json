@@ -110,5 +110,8 @@
     "vite-plugin-pwa": "^1",
     "vite-plugin-svgr": "^2.4.0",
     "wrangler": "^4"
+  },
+  "resolutions": {
+    "qr": "0.5.5"
   }
 }
