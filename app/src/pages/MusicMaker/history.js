@@ -20,6 +20,9 @@ let restoring = false
 let depth = 0
 let dirty = false
 let lastCommitAt = 0
+let settleTimer = 0
+/** A fader drag fires many edits. One snapshot when it settles, not one per move. */
+const SETTLE_MS = 180
 
 function takeSnapshot() {
   return JSON.parse(JSON.stringify({
@@ -86,13 +89,35 @@ function commit() {
   lastCommitAt = now
 }
 
+function cancelSettle() {
+  if (!settleTimer) return
+  clearTimeout(settleTimer)
+  settleTimer = 0
+}
+
+/** Commit an edit that is still settling. Undo calls this first, so the last move is undoable. */
+export function flushHistory() {
+  if (!settleTimer) return
+  cancelSettle()
+  commit()
+}
+
 function notePersist() {
   if (!armed || restoring) return
   if (depth > 0) {
     dirty = true
     return
   }
-  commit()
+  if (pendingBlobs.length) {
+    cancelSettle()
+    commit()
+    return
+  }
+  cancelSettle()
+  settleTimer = setTimeout(() => {
+    settleTimer = 0
+    commit()
+  }, SETTLE_MS)
 }
 
 setPersistHook(notePersist)
@@ -104,6 +129,7 @@ export function stashUndo(key, value) {
 }
 
 export function beginUndo() {
+  if (depth === 0) flushHistory()
   depth += 1
 }
 
@@ -111,11 +137,17 @@ export function endUndo() {
   depth = Math.max(0, depth - 1)
   if (depth === 0 && dirty) {
     dirty = false
+    cancelSettle()
     commit()
   }
 }
 
+export function historyDepth() {
+  return depth
+}
+
 export function armHistory() {
+  cancelSettle()
   pendingBlobs = []
   depth = 0
   dirty = false
@@ -125,6 +157,7 @@ export function armHistory() {
 }
 
 export async function withoutHistory(fn) {
+  flushHistory()
   const was = armed
   armed = false
   try {
@@ -136,13 +169,19 @@ export async function withoutHistory(fn) {
 }
 
 export function canUndo() {
-  return stack.length > 0
+  return stack.length > 0 || !!settleTimer
+}
+
+function synthSig(pad) {
+  return pad?.source === 'synth' && pad.patch ? JSON.stringify(pad.patch) : ''
 }
 
 export async function undo() {
+  flushHistory()
   const entry = stack.pop()
   if (!entry) return false
   restoring = true
+  const before = model.pads.map(synthSig)
   try {
     applySnapshot(entry.json)
     for (const blob of entry.blobs) {
@@ -157,8 +196,10 @@ export async function undo() {
         }
       }
     }
+    // Rendering a synth pad is heavy. Only pads whose patch changed (or lost their audio) are redone.
     model.pads.forEach((pad, i) => {
-      if (pad?.source === 'synth' && pad.patch) renderPad(i)
+      const sig = synthSig(pad)
+      if (sig && (sig !== before[i] || !audioBank.has(i))) renderPad(i)
     })
     if (model.sliceView) {
       const sets = model.library?.sliceSets || []

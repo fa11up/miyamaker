@@ -2,7 +2,9 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { allowedMediaUrl, handleSampleMediaRequest, SAMPLE_MEDIA_PATH } from '../api/_lib/samplemedia.ts'
+import { allowedMediaUrl, handleSampleMediaRequest, SAMPLE_MEDIA_LIMIT, SAMPLE_MEDIA_PATH } from '../api/_lib/samplemedia.ts'
+import { allowedMediaUrl as appAllowedMediaUrl } from '../src/pages/MusicMaker/media/allow.js'
+import { cappedStream, mediaType } from '../src/pages/MusicMaker/media/serve.js'
 import { clientKey, sameOrigin } from '../api/_lib/zeroex.ts'
 
 const open = { sameOrigin, clientKey, limiter: () => true }
@@ -17,6 +19,25 @@ test('only https hosts on the list are readable', () => {
   assert.equal(allowedMediaUrl('http://api.ravepigs.dev/a.mp4'), null)
   assert.equal(allowedMediaUrl('https://user:pass@api.ravepigs.dev/a.mp4'), null)
   assert.equal(allowedMediaUrl('not a url'), null)
+  assert.equal(allowedMediaUrl('https://cloudflare-ipfs.com/ipfs/abc'), null, 'the retired gateway is off the list')
+})
+
+test('the app and the proxy agree on every host', () => {
+  const cases = [
+    rave,
+    'https://gateway.pinata.cloud/ipfs/abc',
+    'https://ipfs.io/ipfs/abc',
+    'https://dweb.link/ipfs/abc',
+    'https://bafy.ipfs.dweb.link/a.wav',
+    'https://bafy.ipfs.nftstorage.link/a.wav',
+    'https://nftstorage.link/ipfs/abc',
+    'https://w3s.link/ipfs/abc',
+    'https://cloudflare-ipfs.com/ipfs/abc',
+    'https://example.com/a.mp4',
+    'https://evil.ipfs.io.example.com/a.mp4',
+    'http://ipfs.io/ipfs/abc',
+  ]
+  for (const href of cases) assert.equal(allowedMediaUrl(href)?.href ?? null, appAllowedMediaUrl(href)?.href ?? null, href)
 })
 
 test('a relative redirect stays on the host it came from', () => {
@@ -71,4 +92,67 @@ test('a file over 24 MB is refused from its length', async () => {
   const fetchImpl: typeof fetch = async () => new Response(new Uint8Array(8), { status: 200, headers: { 'content-length': String(25 * 1024 * 1024) } })
   const res = await handleSampleMediaRequest(ask(rave), { ...open, fetchImpl })
   assert.equal(res.status, 413)
+})
+
+const page = 'https://ipfs.io/ipfs/bafyhtml'
+
+test('an html file comes back as plain bytes that cannot run as a page', async () => {
+  const html = '<script>alert(document.domain)</script>'
+  const fetchImpl: typeof fetch = async () => new Response(html, { status: 200, headers: { 'content-type': 'text/html; charset=utf-8' } })
+  const res = await handleSampleMediaRequest(ask(page), { ...open, fetchImpl })
+  assert.equal(res.status, 200)
+  assert.equal(res.headers.get('content-type'), 'application/octet-stream')
+  assert.equal(res.headers.get('x-content-type-options'), 'nosniff')
+  assert.match(res.headers.get('content-security-policy') || '', /default-src 'none'; sandbox/)
+  assert.equal(res.headers.get('content-disposition'), 'attachment')
+  assert.equal(await res.text(), html)
+})
+
+test('svg, xml and a missing type are plain bytes too', async () => {
+  for (const type of ['image/svg+xml', 'application/xhtml+xml', 'text/xml', '', 'audio/x-<script>', 'video/']) {
+    const fetchImpl: typeof fetch = async () => new Response('x', { status: 200, headers: type ? { 'content-type': type } : {} })
+    const res = await handleSampleMediaRequest(ask(page), { ...open, fetchImpl })
+    assert.equal(res.headers.get('content-type'), 'application/octet-stream', type)
+  }
+})
+
+test('audio/mpeg passes through, without its parameters, still as an attachment', async () => {
+  const fetchImpl: typeof fetch = async () => new Response(new Uint8Array([9, 9]), { status: 200, headers: { 'content-type': 'Audio/MPEG; foo=bar' } })
+  const res = await handleSampleMediaRequest(ask('https://ipfs.io/ipfs/bafy/a.mp3'), { ...open, fetchImpl })
+  assert.equal(res.status, 200)
+  assert.equal(res.headers.get('content-type'), 'audio/mpeg')
+  assert.equal(res.headers.get('x-content-type-options'), 'nosniff')
+  assert.equal(res.headers.get('content-disposition'), 'attachment')
+  assert.deepEqual([...new Uint8Array(await res.arrayBuffer())], [9, 9])
+})
+
+test('media types: only audio/* and video/* get through', () => {
+  assert.equal(mediaType('video/mp4'), 'video/mp4')
+  assert.equal(mediaType('audio/ogg; codecs=opus'), 'audio/ogg')
+  assert.equal(mediaType('text/html'), 'application/octet-stream')
+  assert.equal(mediaType(undefined), 'application/octet-stream')
+})
+
+function chunks(sizes: number[]) {
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const n of sizes) controller.enqueue(new Uint8Array(n))
+      controller.close()
+    },
+  })
+}
+
+test('a stream with no length that runs past the cap fails instead of passing on', async () => {
+  const fetchImpl: typeof fetch = async () =>
+    new Response(chunks([SAMPLE_MEDIA_LIMIT - 1, 2]), { status: 200, headers: { 'content-type': 'audio/wav' } })
+  const res = await handleSampleMediaRequest(ask(rave), { ...open, fetchImpl })
+  assert.equal(res.status, 200)
+  await assert.rejects(res.arrayBuffer())
+})
+
+test('the capped stream cuts at the limit when asked to truncate', async () => {
+  const out = new Response(cappedStream(chunks([3, 0, 4, 5]), 6, { truncate: true }))
+  assert.equal((await out.arrayBuffer()).byteLength, 6)
+  const whole = new Response(cappedStream(chunks([3, 3]), 6))
+  assert.equal((await whole.arrayBuffer()).byteLength, 6)
 })

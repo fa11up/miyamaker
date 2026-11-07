@@ -241,6 +241,8 @@ export function parseXm(buffer) {
         let vel = 0.9
         if (vol >= 0x10 && vol <= 0x50) vel = (vol - 0x10) / 64
         if (effect === 0x0c) vel = Math.max(0, Math.min(1, param / 64))
+        // Rows past the 256-step pattern limit are read (to keep the cursor right) but not kept.
+        if (row >= steps.length) continue
         const pitch = clampPitch(note - 49)
         steps[row][ch] = { pad: last[ch] - 1, vel, pitch, nudge: 0 }
       }

@@ -179,9 +179,13 @@ function sampleMediaDevProxy(): Plugin {
           { sameOrigin, clientKey, limiter }
         )
         res.statusCode = response.status
-        const type = response.headers.get('content-type')
-        if (type) res.setHeader('content-type', type)
-        res.end(Buffer.from(await response.arrayBuffer()))
+        // Every header, so dev serves the same nosniff / sandbox / attachment answer as the Worker.
+        response.headers.forEach((value, key) => res.setHeader(key, value))
+        try {
+          res.end(Buffer.from(await response.arrayBuffer()))
+        } catch {
+          res.destroy()
+        }
       })
     },
   }
@@ -203,11 +207,13 @@ function videoAudioDevProxy(): Plugin {
           { sameOrigin, clientKey, limiter }
         )
         res.statusCode = response.status
-        const type = response.headers.get('content-type')
-        if (type) res.setHeader('content-type', type)
-        const sampleName = response.headers.get('x-sample-name')
-        if (sampleName) res.setHeader('x-sample-name', sampleName)
-        res.end(Buffer.from(await response.arrayBuffer()))
+        // Every header, so dev serves the same nosniff / sandbox / attachment answer as the Worker.
+        response.headers.forEach((value, key) => res.setHeader(key, value))
+        try {
+          res.end(Buffer.from(await response.arrayBuffer()))
+        } catch {
+          res.destroy()
+        }
       })
     },
   }

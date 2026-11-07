@@ -9,8 +9,9 @@ import { cachePcm, ensureLibrary, newFolder } from '../media/library.js'
 import { allowedMediaUrl } from '../media/allow.js'
 import { VIDEO_AUDIO_PATH, videoPage } from '../media/videoaudio.js'
 import { beginUndo, endUndo, stashUndo } from '../history.js'
+import { createBufferCache, finiteOr, heldForPort, liveVoices, locateStep, scrubPcm, stepSeconds, stepsBehind } from './voices.js'
 import { importKitFile, importSongFile } from './song.js'
-import { BUS_COUNT, TRACK_VEL, audioBank, model, currentSequence, stepCount, writeEvent, commitTrackerNote, setUndoBatch, touch, rememberSample, fitLoop, idbSet, selectPad } from '../model.js'
+import { BUS_COUNT, TRACK_VEL, audioBank, model, currentSequence, ensurePattern, stepCount, writeEvent, commitTrackerNote, setUndoBatch, touch, rememberSample, fitLoop, idbSet, selectPad, flushSave } from '../model.js'
 
 setUndoBatch({ begin: beginUndo, end: endUndo })
 
@@ -33,11 +34,14 @@ let held = new Map()
 let timer = 0
 let nextTime = 0
 let nextStep = 0
-let origin = 0
 let started = false
 const meters = { bus: Array(BUS_COUNT).fill(0), master: 0, gr: 0, compGr: 0 }
 let meterTimer = 0
 let recording = null
+let ensuring = null
+let active = true
+let anchor = null
+const buffers = createBufferCache()
 
 function clamp(v, a, b) {
   return Math.max(a, Math.min(b, v))
@@ -49,37 +53,49 @@ export function getMeters() {
 
 export async function resume() {
   await ensure()
+  active = true
+  if (!meterTimer) meterTimer = window.setInterval(readMeters, 80)
   if (ctx.state !== 'running') await ctx.resume()
 }
 
-async function ensure() {
-  if (ctx) return ctx
+/** One build at a time. `ctx` is only set once the whole graph is wired, so no caller sees half of it. */
+function ensure() {
+  if (ctx) return Promise.resolve(ctx)
+  if (!ensuring) {
+    ensuring = build().finally(() => {
+      ensuring = null
+    })
+  }
+  return ensuring
+}
+
+async function build() {
   const AC = window.AudioContext || window.webkitAudioContext
-  ctx = new AC()
-  master = ctx.createGain()
+  const c = new AC()
+  master = c.createGain()
   master.channelCount = 2
   master.channelCountMode = 'explicit'
   master.gain.value = model.master
-  analyser = ctx.createAnalyser()
+  analyser = c.createAnalyser()
   analyser.fftSize = 256
   analyser.smoothingTimeConstant = 0.6
   try {
-    await ctx.audioWorklet.addModule('/worklets/limiter.js')
-    limiter = new AudioWorkletNode(ctx, 'miya-limiter', { outputChannelCount: [2] })
+    await c.audioWorklet.addModule('/worklets/limiter.js')
+    limiter = new AudioWorkletNode(c, 'miya-limiter', { outputChannelCount: [2] })
     limiter.port.onmessage = (e) => {
       if (e.data && typeof e.data.gr === 'number') meters.gr = e.data.gr
     }
     limiterReady = true
   } catch (err) {
     console.warn('limiter worklet failed, hard clip fallback', err)
-    limiter = hardClip(ctx)
+    limiter = hardClip(c)
     limiterReady = false
   }
   try {
     const url = URL.createObjectURL(new Blob([workletSource()], { type: 'text/javascript' }))
-    await ctx.audioWorklet.addModule(url)
+    await c.audioWorklet.addModule(url)
     URL.revokeObjectURL(url)
-    numpadFx = new AudioWorkletNode(ctx, 'miya-numpad-fx', { outputChannelCount: [2], numberOfInputs: 1, numberOfOutputs: 1 })
+    numpadFx = new AudioWorkletNode(c, 'miya-numpad-fx', { outputChannelCount: [2], numberOfInputs: 1, numberOfOutputs: 1 })
     numpadFx.channelCount = 2
     numpadFx.channelCountMode = 'explicit'
   } catch (err) {
@@ -90,14 +106,14 @@ async function ensure() {
     numpadFx.connect(limiter)
     pushNumpadFx()
   }
-  stockComp = ctx.createDynamicsCompressor()
-  makeup = ctx.createGain()
+  stockComp = c.createDynamicsCompressor()
+  makeup = c.createGain()
   makeup.gain.value = model.comp?.makeup ?? 1
   try {
     const kneeUrl = URL.createObjectURL(new Blob([kneeWorkletSource()], { type: 'text/javascript' }))
-    await ctx.audioWorklet.addModule(kneeUrl)
+    await c.audioWorklet.addModule(kneeUrl)
     URL.revokeObjectURL(kneeUrl)
-    kneeNode = new AudioWorkletNode(ctx, 'miya-knee', { outputChannelCount: [2], numberOfInputs: 1, numberOfOutputs: 1 })
+    kneeNode = new AudioWorkletNode(c, 'miya-knee', { outputChannelCount: [2], numberOfInputs: 1, numberOfOutputs: 1 })
     kneeNode.channelCount = 2
     kneeNode.channelCountMode = 'explicit'
     kneeNode.port.onmessage = (e) => {
@@ -107,13 +123,16 @@ async function ensure() {
     console.warn('knee compressor worklet failed', err)
     kneeNode = null
   }
+  // Synchronous from here on: the graph is complete before anything else can read ctx.
+  ctx = c
   syncMasterComp()
   limiter.connect(analyser)
   analyser.connect(ctx.destination)
   ensureBuses()
   syncMixer(true)
   window.clearInterval(meterTimer)
-  meterTimer = window.setInterval(readMeters, 80)
+  meterTimer = active ? window.setInterval(readMeters, 80) : 0
+  if (!active) ctx.suspend().catch(() => {})
   return ctx
 }
 
@@ -354,9 +373,9 @@ function connectChain(bus, context) {
   } catch {
     /* first connect */
   }
-  const spec = model.buses.map((b) => b.fx.map((s) => s.type).join('.')).join('|')
   const index = busNodes.indexOf(bus)
   const types = model.buses[index].fx.map((s) => s.type)
+  const spec = types.join('.')
   const nodes = types.map((type) => makeFx(context, type))
   let prev = bus.input
   nodes.forEach((node) => {
@@ -424,19 +443,35 @@ export function getCompReduction() {
   return 0
 }
 
+/** Ramp a param instead of jumping, so a mute or fader move does not click. */
+function glideParam(param, value, t) {
+  const v = finiteOr(value, 0)
+  if (Math.abs(param.value - v) < 1e-6) return
+  param.cancelScheduledValues(t)
+  param.setTargetAtTime(v, t, 0.012)
+}
+
 export function syncMixer(force = false) {
   if (!ctx) return
   ensureBuses()
-  master.gain.value = model.master
-  const sig = model.buses.map((b) => b.fx.map((s) => s.type).join('.')).join('|')
+  const t = ctx.currentTime
+  glideParam(master.gain, model.master, t)
   const anySolo = model.buses.some((b) => b.solo)
   model.buses.forEach((b, i) => {
     const node = busNodes[i]
+    // Only the bus whose FX list changed is rebuilt. The others keep playing through.
+    const sig = b.fx.map((s) => s.type).join('.')
     if (force || node.sig !== sig) connectChain(node, ctx)
-    node.fx.forEach((fx, slot) => fx.update(b.fx[slot].amount))
+    node.fx.forEach((fx, slot) => {
+      const amount = finiteOr(b.fx[slot]?.amount, 0)
+      const key = `${amount}:${model.bpm}`
+      if (fx.key === key) return
+      fx.key = key
+      fx.update(amount)
+    })
     const audible = !b.mute && (!anySolo || b.solo)
-    node.fader.gain.value = audible ? b.volume : 0
-    node.panner.pan.value = clamp(b.pan, -1, 1)
+    glideParam(node.fader.gain, audible ? clamp(finiteOr(b.volume, 0), 0, 1) : 0, t)
+    glideParam(node.panner.pan, clamp(finiteOr(b.pan, 0), -1, 1), t)
   })
 }
 
@@ -464,6 +499,10 @@ function padAudible(pad) {
 
 function getEntry(index) {
   return audioBank.get(index) || null
+}
+
+function padBuffer(context, entry, reverse) {
+  return buffers.get(context, entry, reverse, makeBuffer)
 }
 
 function makeBuffer(context, entry, reverse) {
@@ -509,11 +548,11 @@ function fxEnv(pad, target) {
 
 function scheduleFilter(filter, pad, t) {
   const env = fxEnv(pad, 'filter')
-  const base = clamp(pad.filter.cutoff, 40, 18000)
-  const depth = env ? Number(env.depth) || 0 : 0
-  const attack = Math.max(0.001, env ? env.a : 0.004)
-  const decay = Math.max(0.001, env ? env.d : 0.12)
-  const sustain = env ? env.s : 0
+  const base = clamp(finiteOr(pad.filter?.cutoff, 18000), 40, 18000)
+  const depth = env ? finiteOr(env.depth, 0) : 0
+  const attack = Math.max(0.001, env ? finiteOr(env.a, 0.004) : 0.004)
+  const decay = Math.max(0.001, env ? finiteOr(env.d, 0.12) : 0.12)
+  const sustain = env ? clamp(finiteOr(env.s, 0), 0, 1) : 0
   const peak = clamp(base * Math.pow(2, depth / 12), 40, 18000)
   const susHz = clamp(base + (peak - base) * (sustain ?? 0), 40, 18000)
   filter.frequency.cancelScheduledValues(t)
@@ -765,17 +804,19 @@ export function playPad(index, velocity = TRACK_VEL, when = 0, opts = {}) {
   const pad = model.pads[index]
   if (!pad || pad.source === 'empty') return
   if (!padAudible(pad) && !opts.ignoreMute) return
-  if (!ctx) {
-    resume().then(() => playPad(index, velocity, 0, opts))
+  if (!ctx || (ctx.state === 'suspended' && !opts.resumed && !opts.pattern)) {
+    resume().then(() => playPad(index, velocity, 0, { ...opts, resumed: true })).catch(() => {})
     return
   }
   const entry = getEntry(index)
-  if (!entry || !entry.pcm) return
+  if (!entry || !entry.pcm || !entry.pcm.length) return
+  // A second press on the same key or note must not orphan the first, which may be looping.
+  if (opts.holdId && held.has(opts.holdId)) releaseHeld(opts.holdId)
   const t = when || ctx.currentTime
   if (groupId(pad.choke)) choke(pad.choke, t)
-  const buffer = makeBuffer(ctx, entry, pad.reverse)
-  const semi = (pad.pitch || 0) + (opts.pitch || 0) + (pad.fine || 0) / 100
-  const rate = Math.pow(2, semi / 12)
+  const buffer = padBuffer(ctx, entry, pad.reverse)
+  const semi = finiteOr(pad.pitch, 0) + finiteOr(opts.pitch, 0) + finiteOr(pad.fine, 0) / 100
+  const rate = clamp(Math.pow(2, semi / 12), 1 / 64, 64)
   const spec = sampleWindow(buffer.length, pad, opts)
   const grainLoop = !!spec?.loop
   const input = ctx.createGain()
@@ -790,16 +831,16 @@ export function playPad(index, velocity = TRACK_VEL, when = 0, opts = {}) {
 
   const filter = ctx.createBiquadFilter()
   filter.type = pad.filter.type || 'lowpass'
-  filter.Q.value = clamp(pad.filter.q || 0.7, 0.1, 18)
+  filter.Q.value = clamp(finiteOr(pad.filter.q, 0.7) || 0.7, 0.1, 18)
   const amp = ctx.createGain()
   const gate = ctx.createGain()
   gate.gain.value = 1
   const pan = ctx.createStereoPanner()
-  pan.pan.value = clamp(pad.pan || 0, -1, 1)
+  pan.pan.value = clamp(finiteOr(pad.pan, 0), -1, 1)
 
-  const startF = clamp(pad.trimStart, 0, 0.98)
-  const endF = clamp(pad.trimEnd, startF + 0.01, 1)
-  let loopF = typeof pad.loopPoint === 'number' ? pad.loopPoint : (startF + endF) / 2
+  const startF = clamp(finiteOr(pad.trimStart, 0), 0, 0.98)
+  const endF = clamp(finiteOr(pad.trimEnd, 1), startF + 0.01, 1)
+  let loopF = Number.isFinite(pad.loopPoint) ? pad.loopPoint : (startF + endF) / 2
   loopF = clamp(loopF, startF, endF - 0.004)
   const sr = buffer.sampleRate
   let offset = startF * buffer.duration
@@ -813,7 +854,7 @@ export function playPad(index, velocity = TRACK_VEL, when = 0, opts = {}) {
   if (end - loopAt < 0.004) loopAt = Math.max(offset, end - 0.004)
   const region = Math.max(grainLoop ? 0.03 : 0.01, end - offset)
   const regionDur = region / rate
-  const vel = clamp(velocity, 0, 1) * pad.volume
+  const vel = clamp(finiteOr(velocity, 0), 0, 1) * clamp(finiteOr(pad.volume, 0.85), 0, 1)
   const heldLive = !!opts.holdId && !opts.pattern
   const envTotal = grainLoop ? 3600 : (heldLive || pad.mode !== 'oneshot' ? Math.max(regionDur, 32) : regionDur)
   const stops = []
@@ -888,17 +929,19 @@ export function playPad(index, velocity = TRACK_VEL, when = 0, opts = {}) {
     nextAt: t,
   }
   voices.push(voice)
-  if (voices.length > 64) {
-    const now = ctx.currentTime
-    voices = voices.filter((v) => v.quietAt == null || v.quietAt > now - 0.03)
+  if (voices.length > 64) voices = liveVoices(voices, ctx.currentTime)
+  if (opts.pattern) {
+    patternVoices.push(voice)
+    if (patternVoices.length > 32) patternVoices = liveVoices(patternVoices, ctx.currentTime)
   }
-  if (opts.pattern) patternVoices.push(voice)
   if (opts.holdId) held.set(opts.holdId, voice)
   if (src) {
     src.onended = () => {
       voice.dead = true
-      if (voice.quietAt == null) voice.quietAt = ctx.currentTime
-      stopExtras(voice, ctx.currentTime)
+      voice.ended = true
+      const now = ctx ? ctx.currentTime : 0
+      if (voice.quietAt == null) voice.quietAt = now
+      stopExtras(voice, now)
     }
   }
   if (grainLoop) pumpGrains()
@@ -935,12 +978,13 @@ function captureHit(index, velocity, pitch, when) {
 }
 
 function scheduleAmp(amp, env, vel, t, total) {
-  const a = Math.max(0.001, env.a || 0.001)
-  const d = Math.max(0.001, env.d || 0.001)
-  const s = clamp(env.s ?? 1, 0, 1)
-  const r = Math.max(0.005, env.r || 0.02)
-  const peak = Math.max(0.0001, vel)
-  const sus = Math.max(0.0001, vel * s)
+  const a = Math.max(0.001, finiteOr(env?.a, 0.001))
+  const d = Math.max(0.001, finiteOr(env?.d, 0.001))
+  const s = clamp(finiteOr(env?.s, 1), 0, 1)
+  const r = Math.max(0.005, finiteOr(env?.r, 0.02))
+  const peak = Math.max(0.0001, finiteOr(vel, 0.0001))
+  const sus = Math.max(0.0001, peak * s)
+  total = Math.max(0, finiteOr(total, 0))
   const g = amp.gain
   g.cancelScheduledValues(t)
   g.setValueAtTime(0.0001, t)
@@ -958,16 +1002,10 @@ function flash(index) {
   window.setTimeout(() => el.classList.remove('lit'), 80)
 }
 
+/** Anchored to the last fired step, so a tempo change mid-take does not shift the grid. */
 function locateHit(time) {
   if (!started) return null
-  const n = stepCount()
-  const base = 60 / model.bpm / 4
-  const exact = (time - origin) / base
-  let step = Math.round(exact)
-  let nudge = 0
-  if (model.recNatural) nudge = clamp(Math.round((exact - step) * 100), -50, 50)
-  step = ((step % n) + n) % n
-  return { step, nudge }
+  return locateStep(time, anchor, stepSeconds(model.bpm), stepCount(), !!model.recNatural)
 }
 
 function click(time, accent) {
@@ -985,30 +1023,35 @@ function click(time, accent) {
 }
 
 function silenceLane(lane, when) {
-  patternVoices.forEach((v) => {
-    if (v.lane === lane) silence(v, when, 0.012)
-  })
+  for (const v of patternVoices) {
+    if (v.lane === lane && !v.ended) silence(v, when, 0.012)
+  }
 }
 
 function fireStep(step, time) {
   const seq = currentSequence()
   const events = seq.steps[step] || []
-  const base = 60 / model.bpm / 4
+  const base = stepSeconds(model.bpm)
   events.forEach((ev, lane) => {
     if (!ev) return
-    const nudge = (clamp(ev.nudge || 0, -50, 50) / 100) * base
-    const when = time + nudge
-    silenceLane(lane, when)
-    if (ev.off) return
-    playPad(ev.pad, ev.vel ?? 0.9, when, {
-      pitch: ev.pitch || 0,
-      fromSeq: true,
-      pattern: true,
-      lane,
-      sl: ev.sl,
-      move: ev.move,
-      len: ev.len,
-    })
+    // One bad event (from a hand-edited or damaged file) must not stop the clock.
+    try {
+      const nudge = (clamp(finiteOr(ev.nudge, 0), -50, 50) / 100) * base
+      const when = time + nudge
+      silenceLane(lane, when)
+      if (ev.off) return
+      playPad(ev.pad, clamp(finiteOr(ev.vel, 0.9), 0, 1), when, {
+        pitch: finiteOr(ev.pitch, 0),
+        fromSeq: true,
+        pattern: true,
+        lane,
+        sl: ev.sl,
+        move: ev.move,
+        len: ev.len,
+      })
+    } catch (err) {
+      console.warn('skipped a step event', err)
+    }
   })
   if (model.metro && step % 4 === 0) click(time, step % 16 === 0)
   model.playhead = step
@@ -1054,14 +1097,33 @@ function pumpGrains() {
 function scheduler() {
   if (!ctx || !model.playing) return
   pumpGrains()
-  const horizon = ctx.currentTime + 0.12
-  const base = 60 / model.bpm / 4
-  while (nextTime < horizon) {
+  const now = ctx.currentTime
+  patternVoices = liveVoices(patternVoices, now)
+  const horizon = now + 0.12
+  const base = stepSeconds(model.bpm)
+  const swing = clamp(finiteOr(model.swing, 0), 0, 0.75)
+  // A throttled background tab can fall seconds behind: skip to now instead of firing every missed step at once.
+  const skip = stepsBehind(nextTime, now, base)
+  if (skip) {
+    const n = Math.max(1, stepCount(currentSequence()))
+    const total = nextStep + skip
+    nextStep = total % n
+    if (total >= n) advanceSong()
+    nextTime += skip * base
+  }
+  let guard = 0
+  while (nextTime < horizon && guard < 64) {
+    guard += 1
     const seq = currentSequence()
     const n = Math.max(1, stepCount(seq))
     if (nextStep >= n) nextStep = 0
-    const swung = nextTime + (nextStep % 2 === 1 ? base * model.swing : 0)
-    fireStep(nextStep, swung)
+    const swung = nextTime + (nextStep % 2 === 1 ? base * swing : 0)
+    anchor = { step: nextStep, time: nextTime }
+    try {
+      fireStep(nextStep, swung)
+    } catch (err) {
+      console.warn('step failed', err)
+    }
     nextStep += 1
     if (nextStep >= n) {
       nextStep = 0
@@ -1084,9 +1146,9 @@ export function startTransport() {
   patternVoices = []
   model.playing = true
   started = true
-  origin = ctx.currentTime + 0.05
-  nextTime = origin
+  nextTime = ctx.currentTime + 0.05
   nextStep = 0
+  anchor = { step: 0, time: nextTime }
   if (model.songPlay && Array.isArray(model.songOrder) && model.songOrder.length) {
     model.songCursor = 0
     model.pattern = model.songOrder[0] | 0
@@ -1133,7 +1195,7 @@ export async function previewPcm(pcm, sr = 44100) {
 export function noteOn(index, velocity, holdId, pitch) {
   const pad = model.pads[index]
   if (!pad) return
-  if (pad.mode !== 'oneshot' && holdId && held.has(holdId)) return
+  if (holdId && held.has(holdId)) releaseHeld(holdId)
   const opts = { holdId }
   if (typeof pitch === 'number') opts.pitch = pitch
   playPad(index, velocity, 0, opts)
@@ -1198,70 +1260,103 @@ function scheduleGrains(context, dest, pcm, sr, rate, spec, t0, hold) {
   }
 }
 
+/** What the WAV bounce plays and what it leaves out. Shown after a bounce. */
+export const BOUNCE_NOTE = 'WAV has the song order, swing, volume and pan. Bus FX, pad FX and filters, envelopes, chokes and the master compressor are not in it.'
+const BOUNCE_MAX_SECONDS = 600
+
+/** The patterns a bounce plays: the song order when the song is playing, else the open pattern. */
+export function bounceOrder() {
+  const order = Array.isArray(model.songOrder) ? model.songOrder.map((n) => (n | 0) & 255) : []
+  if (model.songPlay && order.length) return order
+  return [model.pattern | 0]
+}
+
 export async function renderBounce() {
   await resume()
-  const seq = currentSequence()
-  const seconds = stepCount(seq) * (60 / model.bpm / 4) + 0.6
+  const order = bounceOrder()
+  const base = stepSeconds(model.bpm)
+  const swing = clamp(finiteOr(model.swing, 0), 0, 0.75)
+  let steps = 0
+  for (const id of order) steps += stepCount(ensurePattern(id))
+  const seconds = Math.min(BOUNCE_MAX_SECONDS, steps * base + 0.6)
   const sr = 44100
   const off = new OfflineAudioContext(2, Math.ceil(seconds * sr), sr)
+  const local = createBufferCache()
   const dest = off.createGain()
-  dest.gain.value = model.master
-  const gains = model.buses.map((b) => {
+  dest.gain.value = clamp(finiteOr(model.master, 0.9), 0, 1)
+  const anySolo = model.buses.some((x) => x.solo)
+  const buses = model.buses.map((b) => {
     const g = off.createGain()
-    const anySolo = model.buses.some((x) => x.solo)
     const audible = !b.mute && (!anySolo || b.solo)
-    g.gain.value = audible ? b.volume : 0
-    g.connect(dest)
+    g.gain.value = audible ? clamp(finiteOr(b.volume, 0), 0, 1) : 0
+    const pan = off.createStereoPanner()
+    pan.pan.value = clamp(finiteOr(b.pan, 0), -1, 1)
+    g.connect(pan)
+    pan.connect(dest)
     return g
   })
   dest.connect(off.destination)
-  const base = 60 / model.bpm / 4
   let time = 0.05
-  for (let step = 0; step < stepCount(seq); step++) {
-    const when = time + (step % 2 === 1 ? base * model.swing : 0)
-    ;(seq.steps[step] || []).forEach((ev, lane) => {
-      if (!ev) return
-      const pad = model.pads[ev.pad]
-      const nudge = (clamp(ev.nudge || 0, -50, 50) / 100) * base
-      const entry = audioBank.get(ev.pad)
-      if (!pad || !entry || pad.source === 'empty' || !padAudible(pad)) return
-      const buffer = off.createBuffer(1, entry.pcm.length, entry.sr || 44100)
-      const ch = buffer.getChannelData(0)
-      if (pad.reverse) {
-        for (let i = 0; i < entry.pcm.length; i++) ch[i] = entry.pcm[entry.pcm.length - 1 - i]
-      } else ch.set(entry.pcm)
-      const spec = sampleWindow(buffer.length, pad, ev)
-      const semi = (pad.pitch || 0) + (ev.pitch || 0) + (pad.fine || 0) / 100
-      const rate = Math.pow(2, semi / 12)
-      const amp = off.createGain()
-      amp.gain.value = (ev.vel ?? 0.9) * pad.volume
-      amp.connect(gains[pad.bus] || dest)
-      const at = Math.max(0, when + nudge)
-      if (spec?.loop) {
-        scheduleGrains(off, amp, ch, buffer.sampleRate, rate, spec, at, laneHold(seq, step, lane, base))
-        return
-      }
-      const src = off.createBufferSource()
-      src.buffer = buffer
-      src.playbackRate.value = rate
-      src.connect(amp)
-      if (spec) {
-        const offset = spec.start / buffer.sampleRate
-        const region = Math.max(1 / buffer.sampleRate, Math.min(spec.lenSamples / buffer.sampleRate, buffer.duration - offset))
-        src.start(at, offset, region)
-      } else {
-        const offset = clamp(pad.trimStart, 0, 0.99) * buffer.duration
-        const end = clamp(pad.trimEnd, pad.trimStart + 0.01, 1) * buffer.duration
-        src.start(at, offset, Math.max(0.01, end - offset))
-      }
-    })
-    time += base
+  for (const id of order) {
+    const seq = ensurePattern(id)
+    const count = stepCount(seq)
+    for (let step = 0; step < count; step++) {
+      if (time > seconds) break
+      const when = time + (step % 2 === 1 ? base * swing : 0)
+      ;(seq.steps[step] || []).forEach((ev, lane) => {
+        if (!ev || ev.off) return
+        try {
+          bounceHit(off, local, buses, dest, seq, step, lane, ev, when, base)
+        } catch (err) {
+          console.warn('bounce skipped an event', err)
+        }
+      })
+      time += base
+    }
   }
   const rendered = await off.startRendering()
   const left = rendered.getChannelData(0).slice()
   const right = rendered.getChannelData(1).slice()
   const limited = limitStereo(left, right, rendered.sampleRate)
+  model.browserNote = BOUNCE_NOTE
+  touch(false)
   return encodeWav([limited.left, limited.right], rendered.sampleRate)
+}
+
+function bounceHit(off, cache, buses, dest, seq, step, lane, ev, when, base) {
+  const pad = model.pads[ev.pad]
+  const entry = audioBank.get(ev.pad)
+  if (!pad || !entry?.pcm?.length || pad.source === 'empty' || !padAudible(pad)) return
+  const buffer = cache.get(off, entry, pad.reverse, makeBuffer)
+  const nudge = (clamp(finiteOr(ev.nudge, 0), -50, 50) / 100) * base
+  const spec = sampleWindow(buffer.length, pad, ev)
+  const semi = finiteOr(pad.pitch, 0) + finiteOr(ev.pitch, 0) + finiteOr(pad.fine, 0) / 100
+  const rate = clamp(Math.pow(2, semi / 12), 1 / 64, 64)
+  const amp = off.createGain()
+  amp.gain.value = clamp(finiteOr(ev.vel, 0.9), 0, 1) * clamp(finiteOr(pad.volume, 0.85), 0, 1)
+  const pan = off.createStereoPanner()
+  pan.pan.value = clamp(finiteOr(pad.pan, 0), -1, 1)
+  amp.connect(pan)
+  pan.connect(buses[pad.bus] || dest)
+  const at = Math.max(0, when + nudge)
+  if (spec?.loop) {
+    scheduleGrains(off, amp, buffer.getChannelData(0), buffer.sampleRate, rate, spec, at, laneHold(seq, step, lane, base))
+    return
+  }
+  const src = off.createBufferSource()
+  src.buffer = buffer
+  src.playbackRate.value = rate
+  src.connect(amp)
+  if (spec) {
+    const offset = spec.start / buffer.sampleRate
+    const region = Math.max(1 / buffer.sampleRate, Math.min(spec.lenSamples / buffer.sampleRate, buffer.duration - offset))
+    src.start(at, offset, region)
+  } else {
+    const startF = clamp(finiteOr(pad.trimStart, 0), 0, 0.99)
+    const offset = startF * buffer.duration
+    const end = clamp(finiteOr(pad.trimEnd, 1), startF + 0.01, 1) * buffer.duration
+    src.start(at, offset, Math.max(0.01, end - offset))
+  }
 }
 
 export async function bounceWav() {
@@ -1270,7 +1365,8 @@ export async function bounceWav() {
   a.href = URL.createObjectURL(blob)
   a.download = 'miya-music-maker.wav'
   a.click()
-  URL.revokeObjectURL(a.href)
+  const href = a.href
+  window.setTimeout(() => URL.revokeObjectURL(href), 30000)
 }
 
 let midiAccess = null
@@ -1281,11 +1377,31 @@ export function getMidiState() {
   return midiState
 }
 
-function refreshMidiPorts() {
+function portKey(port) {
+  return port?.id || port?.name || 'midi'
+}
+
+/** Notes held from a controller that was unplugged would otherwise loop forever. */
+function releaseMidiPort(portId) {
+  for (const id of heldForPort([...held.keys()], portId)) releaseHeld(id)
+}
+
+function refreshMidiPorts(event) {
   if (!midiAccess) return
-  midiState.inputs = [...midiAccess.inputs.values()].map((input) => {
+  const gone = event?.port
+  if (gone && gone.type === 'input' && gone.state === 'disconnected') {
+    releaseMidiPort(portKey(gone))
+    try { gone.onmidimessage = null } catch { /* port is gone */ }
+  }
+  const before = midiState.inputs.map((input) => input.key)
+  const live = [...midiAccess.inputs.values()].filter((input) => input.state !== 'disconnected')
+  midiState.inputs = live.map((input) => {
     input.onmidimessage = onMidi
-    return { id: input.id, name: input.name || 'MIDI in', layout: midiLayout(input.name || '') }
+    return { id: input.id, key: portKey(input), name: input.name || 'MIDI in', layout: midiLayout(input.name || '') }
+  })
+  const now = new Set(midiState.inputs.map((input) => input.key))
+  before.forEach((key) => {
+    if (!now.has(key)) releaseMidiPort(key)
   })
   midiState.ready = true
   midiState.supported = true
@@ -1303,11 +1419,16 @@ export function enableMidi() {
     return Promise.resolve(midiState)
   }
   if (midiAccess) {
+    midiAccess.onstatechange = refreshMidiPorts
     refreshMidiPorts()
     return Promise.resolve(midiState)
   }
   if (midiPromise) return midiPromise
   midiPromise = navigator.requestMIDIAccess({ sysex: false }).then((access) => {
+    if (!active) {
+      midiPromise = null
+      return midiState
+    }
     midiAccess = access
     midiState.denied = false
     access.onstatechange = refreshMidiPorts
@@ -1334,7 +1455,7 @@ export function onMidi(event) {
   const cmd = status & 0xf0
   if (cmd !== 0x80 && cmd !== 0x90) return
   const port = event.target
-  const portId = port?.id || port?.name || 'midi'
+  const portId = portKey(port)
   const holdId = `midi:${portId}:${note}`
   if (cmd === 0x80 || velocityByte === 0) {
     releaseHeld(holdId)
@@ -1386,49 +1507,84 @@ export async function resample(which = 'main') {
   })
 }
 
+function stopTracks(stream) {
+  stream?.getTracks?.().forEach((tr) => {
+    try { tr.stop() } catch { /* already ended */ }
+  })
+}
+
 function startRecorder(stream, label, cleanup) {
   const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : ''
-  const rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined)
+  let rec
+  try {
+    rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined)
+  } catch (err) {
+    if (label === 'mic') stopTracks(stream)
+    if (cleanup) cleanup()
+    throw err
+  }
   const chunks = []
+  const current = { rec, label, stream, cleanup, done: null, finish: null, discard: false, released: false }
+  const release = () => {
+    if (current.released) return
+    current.released = true
+    if (label === 'mic') stopTracks(stream)
+    if (cleanup) {
+      try { cleanup() } catch { /* tap already gone */ }
+    }
+  }
+  current.release = release
   rec.ondataavailable = (e) => {
     if (e.data.size) chunks.push(e.data)
   }
   rec.onstop = async () => {
-    stream.getTracks().forEach((tr) => {
-      if (tr.readyState === 'live' && tr.kind === 'audio' && label === 'mic') tr.stop()
-    })
-    if (cleanup) cleanup()
-    const blob = new Blob(chunks, { type: rec.mimeType || 'audio/webm' })
-    const arr = await blob.arrayBuffer()
-    const audio = await ctx.decodeAudioData(arr.slice(0))
-    const pcm = new Float32Array(audio.length)
-    const chs = audio.numberOfChannels
-    for (let c = 0; c < chs; c++) {
-      const data = audio.getChannelData(c)
-      for (let i = 0; i < pcm.length; i++) pcm[i] += data[i] / chs
-    }
-    let trim = { start: 0, end: 1 }
-    if (model.settings.autoTrim) trim = trimSilence(pcm, audio.sampleRate)
-    const pad = model.pads[model.selected]
-    pad.trimStart = trim.start
-    pad.trimEnd = trim.end
-    fitLoop(pad)
-    if (model.settings.autoNorm) {
-      let peak = 0
-      const a = Math.floor(trim.start * pcm.length)
-      const b = Math.floor(trim.end * pcm.length)
-      for (let i = a; i < b; i++) peak = Math.max(peak, Math.abs(pcm[i]))
-      if (peak > 0.001) {
-        const g = 0.89 / peak
-        for (let i = 0; i < pcm.length; i++) pcm[i] *= g
+    try {
+      release()
+      if (current.discard || !ctx) return
+      const blob = new Blob(chunks, { type: rec.mimeType || 'audio/webm' })
+      const arr = await blob.arrayBuffer()
+      const audio = await ctx.decodeAudioData(arr.slice(0))
+      const pcm = new Float32Array(audio.length)
+      const chs = audio.numberOfChannels
+      for (let c = 0; c < chs; c++) {
+        const data = audio.getChannelData(c)
+        for (let i = 0; i < pcm.length; i++) pcm[i] += data[i] / chs
       }
+      if (!pcm.length) throw new Error('That recording was empty')
+      let trim = { start: 0, end: 1 }
+      if (model.settings.autoTrim) trim = trimSilence(pcm, audio.sampleRate)
+      const pad = model.pads[model.selected]
+      pad.trimStart = trim.start
+      pad.trimEnd = trim.end
+      fitLoop(pad)
+      if (model.settings.autoNorm) {
+        let peak = 0
+        const a = Math.floor(trim.start * pcm.length)
+        const b = Math.floor(trim.end * pcm.length)
+        for (let i = a; i < b; i++) peak = Math.max(peak, Math.abs(pcm[i]))
+        if (peak > 0.001) {
+          const g = 0.89 / peak
+          for (let i = 0; i < pcm.length; i++) pcm[i] *= g
+        }
+      }
+      await rememberSample(model.selected, { pcm, sr: audio.sampleRate, name: label })
+    } catch (err) {
+      console.warn('recording failed', err)
+      model.browserNote = err?.message ? `Recording not kept: ${err.message}` : 'Recording not kept'
+    } finally {
+      // Whatever happened above, the next Rec press must start a fresh take.
+      if (recording === current) recording = null
+      if (current.finish) current.finish()
+      touch(false)
     }
-    await rememberSample(model.selected, { pcm, sr: audio.sampleRate, name: label })
-    recording = null
-    touch(true)
+  }
+  rec.onerror = () => {
+    try {
+      if (rec.state !== 'inactive') rec.stop()
+    } catch { /* onstop still runs */ }
   }
   rec.start()
-  recording = { rec, label }
+  recording = current
   touch(false)
 }
 
@@ -1441,29 +1597,90 @@ export function audioRecordLabel() {
 }
 
 function stopRecorder() {
-  if (!recording) return Promise.resolve()
-  if (recording.done) return recording.done
   const current = recording
+  if (!current) return Promise.resolve()
+  if (current.done) return current.done
   current.done = new Promise((resolve) => {
-    const prev = current.rec.onstop
-    current.rec.onstop = async (event) => {
-      try {
-        await prev(event)
-      } finally {
-        resolve()
-      }
-    }
-    try {
-      current.rec.stop()
-    } catch {
-      resolve()
-    }
+    current.finish = resolve
   })
+  let stopped = false
+  try {
+    if (current.rec.state !== 'inactive') {
+      current.rec.stop()
+      stopped = true
+    }
+  } catch {
+    /* recorder already broke */
+  }
+  if (!stopped) {
+    // No onstop is coming. Clear it here so the next take is not blocked by a dead recorder.
+    current.release()
+    if (recording === current) recording = null
+    current.finish()
+    touch(false)
+  }
   return current.done
 }
 
 export function stopAudioRecord() {
   return stopRecorder()
+}
+
+/** The window is open again. The context itself is resumed on the next sound. */
+export function wakeEngine() {
+  active = true
+}
+
+/**
+ * Window closed: stop the clock, every voice, the recorder and the mic, unhook MIDI, and park the
+ * context. The graph is kept, so reopening only needs resume().
+ */
+export function shutdown() {
+  active = false
+  try {
+    stopTransport()
+  } catch { /* nothing was playing */ }
+  model.playing = false
+  model.recording = false
+  window.clearInterval(timer)
+  timer = 0
+  window.clearInterval(meterTimer)
+  meterTimer = 0
+  const current = recording
+  if (current) {
+    current.discard = true
+    current.release()
+    try {
+      if (current.rec.state !== 'inactive') current.rec.stop()
+    } catch { /* already stopped */ }
+    recording = null
+    current.finish?.()
+  }
+  for (const id of [...held.keys()]) {
+    try { releaseHeld(id) } catch { /* ended */ }
+  }
+  held.clear()
+  if (ctx) {
+    const now = ctx.currentTime
+    for (const v of voices) {
+      try { silence(v, now, 0.005) } catch { /* ended */ }
+    }
+  }
+  voices = []
+  patternVoices = []
+  anchor = null
+  started = false
+  model.fxHeld = -1
+  pushNumpadFx(-1)
+  if (midiAccess) {
+    midiAccess.onstatechange = null
+    for (const input of midiAccess.inputs.values()) {
+      try { input.onmidimessage = null } catch { /* port is gone */ }
+    }
+  }
+  midiState.inputs = []
+  flushSave()
+  if (ctx && ctx.state !== 'closed') ctx.suspend().catch(() => {})
 }
 
 export function pushNumpadFx(held = model.fxHeld) {
@@ -1519,6 +1736,8 @@ function mimeFromName(name) {
   return 'video/mp4'
 }
 
+const VIDEO_DECODE_MS = 90000
+
 function decodeVideoBytes(arrayBuffer, name) {
   return new Promise((resolve, reject) => {
     const blob = new Blob([arrayBuffer], { type: mimeFromName(name) })
@@ -1527,9 +1746,28 @@ function decodeVideoBytes(arrayBuffer, name) {
     video.src = url
     video.playsInline = true
     video.volume = 0
+    let settled = false
+    let rec = null
+    // A file the browser half-understands can sit forever without loadeddata or error.
+    const timeout = window.setTimeout(() => {
+      fail(new Error('Reading audio from that file took too long'))
+    }, VIDEO_DECODE_MS)
     const fail = (error) => {
+      if (settled) return
+      settled = true
+      window.clearTimeout(timeout)
+      try { video.pause() } catch { /* not playing */ }
+      try { if (rec && rec.state !== 'inactive') rec.stop() } catch { /* already stopped */ }
+      video.removeAttribute('src')
       URL.revokeObjectURL(url)
       reject(error instanceof Error ? error : new Error('Could not read audio from that file'))
+    }
+    const done = (value) => {
+      if (settled) return
+      settled = true
+      window.clearTimeout(timeout)
+      URL.revokeObjectURL(url)
+      resolve(value)
     }
     video.onerror = () => fail(new Error('Could not read audio from that file'))
     video.onloadeddata = async () => {
@@ -1540,17 +1778,17 @@ function decodeVideoBytes(arrayBuffer, name) {
           return
         }
         const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : ''
-        const rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined)
+        rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined)
         const chunks = []
         rec.ondataavailable = (event) => {
           if (event.data.size) chunks.push(event.data)
         }
         rec.onstop = async () => {
+          if (settled) return
           try {
             const recorded = await new Blob(chunks, { type: rec.mimeType || 'audio/webm' }).arrayBuffer()
             const audio = await ctx.decodeAudioData(recorded.slice(0))
-            URL.revokeObjectURL(url)
-            resolve(mixdown(audio))
+            done(mixdown(audio))
           } catch (error) {
             fail(error)
           }
@@ -1621,7 +1859,10 @@ export async function importFile(file, index = model.selected) {
   const arr = await file.arrayBuffer()
   const decoded = await decodeAny(arr, file.name)
   const name = file.name.replace(/\.[^.]+$/, '')
-  await placePcm(index, decoded.pcm, decoded.sr, name, { forceName: true, ext })
+  // Same trim and length cap as the cache, so a long file still fits in a saved song.
+  const fitted = fitSample(decoded.pcm, decoded.sr)
+  if (!fitted.pcm.length) throw new Error('That file has no audio')
+  await placePcm(index, fitted.pcm, fitted.sr, name, { forceName: true, ext })
 }
 
 export async function importRemote(url, index = model.selected, name = 'nft') {
@@ -1630,7 +1871,9 @@ export async function importRemote(url, index = model.selected, name = 'nft') {
   touch(false)
   const bytes = await fetchMediaBytes(url)
   const decoded = await decodeAny(bytes, url)
-  await placePcm(index, decoded.pcm, decoded.sr, name, { forceName: true, ext: 'wav' })
+  const fitted = fitSample(decoded.pcm, decoded.sr)
+  if (!fitted.pcm.length) throw new Error('That file has no audio')
+  await placePcm(index, fitted.pcm, fitted.sr, name, { forceName: true, ext: 'wav' })
 }
 
 const SAMPLE_SECONDS = 16
@@ -1652,6 +1895,7 @@ function fitSample(pcm, sr) {
   }
   const out = new Float32Array(Math.max(0, end - start))
   if (out.length) out.set(pcm.subarray(start, end))
+  scrubPcm(out)
   if (model.settings.autoNorm && out.length) {
     let peak = 0
     for (let i = 0; i < out.length; i++) peak = Math.max(peak, Math.abs(out[i]))

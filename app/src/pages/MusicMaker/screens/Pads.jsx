@@ -41,6 +41,7 @@ export function Pads() {
                 onPointerDown={(e) => hit(index, e)}
                 onPointerUp={() => noteOff(`ptr:${index}`)}
                 onPointerCancel={() => noteOff(`ptr:${index}`)}
+                onLostPointerCapture={() => noteOff(`ptr:${index}`)}
               >
                 <span className="key">{padKeyLabel(local)}</span>
                 <span className="name">{pad.name}</span>
@@ -60,6 +61,12 @@ export function Pads() {
 
 function hit(index, e) {
   e.preventDefault()
+  // Keep the pointer on this pad, so the release lands here even if the finger slides off.
+  try {
+    e.currentTarget.setPointerCapture(e.pointerId)
+  } catch {
+    /* no capture for this pointer */
+  }
   if (e.shiftKey || model.hold === 'edit') selectPad(index, 'edit')
   else if (model.hold === 'solo') selectPad(index, 'solo')
   else if (model.hold === 'mute') selectPad(index, 'mute')

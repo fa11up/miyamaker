@@ -2054,3 +2054,11 @@ input[type='range']::-webkit-slider-thumb {
   .desk-icon { width: 76px; }
   .os-info { display: none; }
 }
+
+.save-error {
+  font-size: 12px;
+  padding: 1px 6px;
+  border: 1px solid currentColor;
+  color: #c0392b;
+  white-space: nowrap;
+}

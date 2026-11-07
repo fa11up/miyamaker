@@ -56,17 +56,33 @@ export function MiyaMusicMaker() {
       if (e.key === 'Shift' || low === 'n' || low === 'b') model.hold = null
       noteOff(`key:${e.code}`)
     }
+    // A key held while focus leaves never sends its keyup here, so its note would loop forever.
     const blur = () => {
       model.hold = null
       releaseNumpadFx()
+      releaseKeyboardNotes()
+    }
+    const hidden = () => {
+      if (document.visibilityState === 'hidden') blur()
     }
     window.addEventListener('keydown', down)
     window.addEventListener('keyup', up)
     window.addEventListener('blur', blur)
+    document.addEventListener('visibilitychange', hidden)
+    const frame = document.querySelector('[data-miya-music]')?.closest('.react-draggable')
+    let watch = null
+    if (frame && typeof MutationObserver !== 'undefined') {
+      watch = new MutationObserver(() => {
+        if (!frame.classList.contains('is-focused')) blur()
+      })
+      watch.observe(frame, { attributes: true, attributeFilter: ['class'] })
+    }
     return () => {
       window.removeEventListener('keydown', down)
       window.removeEventListener('keyup', up)
       window.removeEventListener('blur', blur)
+      document.removeEventListener('visibilitychange', hidden)
+      watch?.disconnect()
     }
   }, [])
 
@@ -178,6 +194,11 @@ function Transport() {
             <em />
           </label>
           <span className="song-name" title={model.songName || 'No song'}>{model.songName || 'No song'}</span>
+          {model.saveError && (
+            <span className="save-error" role="status" title={model.saveError}>
+              Not saved
+            </span>
+          )}
         </div>
         <div className="bank-row">
           {['A', 'B', 'C', 'D'].map((name, i) => (
@@ -271,12 +292,14 @@ function onTrackerNote(e) {
   const low = key.length === 1 ? key.toLowerCase() : key
   if (low === 'a' || key === 'CapsLock') {
     e.preventDefault()
-    if (model.tracker.edit) recordTrackerOff()
+    if (model.tracker.edit && !e.repeat) recordTrackerOff()
     return true
   }
   const note = renoiseNote(key, model.renoiseOct)
   if (note == null) return false
   e.preventDefault()
+  // Auto-repeat would restart the held note and write it again on every repeat.
+  if (e.repeat) return true
   noteOn(model.selected, TRACK_VEL, `key:${e.code}`, note - 60)
   return true
 }

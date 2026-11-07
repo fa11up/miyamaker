@@ -6,6 +6,22 @@ import { wagmiConfig } from '@/config/wagmi'
 
 import { batchRefused, type BatchStep, canBatch, toCall } from './batchCalls'
 
+/**
+ * A batch or transaction that was sent, but whose ending could not be read: the wait ran out or the connection dropped.
+ * It may yet land, so a caller keeps what it sent and waits on it again rather than sending it a second time.
+ */
+export class UnconfirmedError extends Error {
+  unconfirmed = true
+
+  constructor(
+    message = 'We could not confirm this yet. It may still go through. Check your wallet before trying again.'
+  ) {
+    super(message)
+  }
+}
+
+export const isUnconfirmed = (e: unknown) => !!(e as UnconfirmedError | undefined)?.unconfirmed
+
 // Wallets that said they could batch and then would not: this session they get the separate steps.
 const refused = new Set<string>()
 
@@ -21,12 +37,37 @@ export function useCanBatch(chainId: number | undefined) {
 }
 
 /**
+ * Waits for a batch already sent. Only the wallet reporting it failed counts as failed: running out of time or losing
+ * the connection says nothing about how it ended, so that throws an UnconfirmedError and nothing should send it again.
+ */
+export async function waitForBatch(id: string) {
+  let result
+  try {
+    result = await waitForCallsStatus(wagmiConfig, { id, timeout: 180_000 })
+  } catch {
+    throw new UnconfirmedError()
+  }
+
+  if (result.status !== 'success') {
+    throw new Error('The batch did not go through. It is all or nothing, so none of its steps were applied.')
+  }
+
+  const receipts = result.receipts ?? []
+  return { hash: receipts[receipts.length - 1]?.transactionHash as Hash | undefined, receipts }
+}
+
+/**
  * Sends the steps as one signature, all or nothing, the way the imdUSD terminal does. Resolves to undefined when the
  * wallet cannot batch, and nothing has been sent: the caller goes on with separate steps.
  */
 export async function tryBatch(
   steps: BatchStep[],
-  { account, chainId, onAsk, onSent }: { account: Address; chainId: number; onAsk?: () => void; onSent?: () => void }
+  {
+    account,
+    chainId,
+    onAsk,
+    onSent,
+  }: { account: Address; chainId: number; onAsk?: () => void; onSent?: (id: string) => void }
 ) {
   if (refused.has(account.toLowerCase())) return undefined
   const capabilities = await getCapabilities(wagmiConfig, { account, chainId: chainId as never }).catch(() => undefined)
@@ -53,12 +94,6 @@ export async function tryBatch(
     return undefined
   }
 
-  onSent?.()
-  const result = await waitForCallsStatus(wagmiConfig, { id, timeout: 180_000 })
-  if (result.status !== 'success') {
-    throw new Error('The batch did not go through. It is all or nothing, so none of its steps were applied.')
-  }
-
-  const receipts = result.receipts ?? []
-  return { hash: receipts[receipts.length - 1]?.transactionHash as Hash | undefined, receipts }
+  onSent?.(id)
+  return waitForBatch(id)
 }

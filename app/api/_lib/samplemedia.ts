@@ -1,23 +1,17 @@
 /**
  * Same-origin reader for sample audio and video that a collection host will not
  * let the browser fetch directly (Ravepigs animations, public IPFS gateways).
- * The host list is closed. This is not an open proxy, and it never sees a wallet key.
+ * The host list is closed (media/allow.js, the same list the app checks). This is not an open proxy, and it never
+ * sees a wallet key. What comes back is served as audio, video or plain bytes, never as a page (media/serve.js).
  * sameOrigin, clientKey and the limiter are passed in (see zeroex.ts) so this file
- * can load under `node --test` with no imports.
+ * can load under `node --test` with only import-free modules.
  */
 
-export const SAMPLE_MEDIA_PATH = '/api/sample-media'
-export const SAMPLE_MEDIA_LIMIT = 24 * 1024 * 1024
+import { isMediaHost, SAMPLE_MEDIA_LIMIT } from '../../src/pages/MusicMaker/media/allow.js'
+import { cappedStream, mediaHeaders } from '../../src/pages/MusicMaker/media/serve.js'
 
-const HOSTS = new Set([
-  'api.ravepigs.dev',
-  'gateway.pinata.cloud',
-  'ipfs.io',
-  'cloudflare-ipfs.com',
-  'dweb.link',
-  'nftstorage.link',
-  'w3s.link',
-])
+export { SAMPLE_MEDIA_LIMIT }
+export const SAMPLE_MEDIA_PATH = '/api/sample-media'
 
 type Guard = {
   sameOrigin: (headers: Headers | undefined, url: URL) => boolean
@@ -35,11 +29,10 @@ export function allowedMediaUrl(raw: string | null | undefined, base?: string): 
   } catch {
     return null
   }
+
   if (url.protocol !== 'https:') return null
   if (url.username || url.password) return null
-  const host = url.hostname.toLowerCase()
-  const suffix = host.endsWith('.ipfs.dweb.link') || host.endsWith('.ipfs.nftstorage.link')
-  if (!HOSTS.has(host) && !suffix) return null
+  if (!isMediaHost(url.hostname)) return null
   return url
 }
 
@@ -48,37 +41,6 @@ function json(status: number, message: string, extra?: Record<string, string>) {
     status,
     headers: { 'content-type': 'application/json; charset=utf-8', ...extra },
   })
-}
-
-async function readCapped(response: Response): Promise<Uint8Array | 'too-large'> {
-  const length = Number(response.headers.get('content-length') || 0)
-  if (Number.isFinite(length) && length > SAMPLE_MEDIA_LIMIT) return 'too-large'
-  if (!response.body) {
-    const buf = new Uint8Array(await response.arrayBuffer())
-    return buf.byteLength > SAMPLE_MEDIA_LIMIT ? 'too-large' : buf
-  }
-  const reader = response.body.getReader()
-  const chunks: Uint8Array[] = []
-  let total = 0
-  for (;;) {
-    const step = await reader.read()
-    if (step.done) break
-    const value = step.value
-    if (!value) continue
-    total += value.byteLength
-    if (total > SAMPLE_MEDIA_LIMIT) {
-      await reader.cancel()
-      return 'too-large'
-    }
-    chunks.push(value)
-  }
-  const out = new Uint8Array(total)
-  let offset = 0
-  for (const chunk of chunks) {
-    out.set(chunk, offset)
-    offset += chunk.byteLength
-  }
-  return out
 }
 
 export async function handleSampleMediaRequest(
@@ -111,18 +73,22 @@ export async function handleSampleMediaRequest(
     } catch {
       return json(502, 'The sample host did not answer.')
     }
+
     if (upstream.status >= 300 && upstream.status < 400) return json(400, 'That redirect is not allowed.')
   }
 
   if (!upstream.ok) return json(502, 'The sample host refused the file.')
-  const body = await readCapped(upstream)
-  if (body === 'too-large') return json(413, 'That file is over 24 MB.')
-  return new Response(body, {
-    status: 200,
-    headers: {
-      'content-type': upstream.headers.get('content-type') || 'application/octet-stream',
-      'content-length': String(body.byteLength),
-      'cache-control': 'private, max-age=300',
-    },
-  })
+  const length = Number(upstream.headers.get('content-length') || 0)
+  if (Number.isFinite(length) && length > SAMPLE_MEDIA_LIMIT) {
+    await upstream.body?.cancel().catch(() => undefined)
+    return json(413, 'That file is over 24 MB.')
+  }
+
+  // Passed on as it arrives rather than held whole. A file that runs past the cap without saying its length fails.
+  const body = upstream.body ? cappedStream(upstream.body, SAMPLE_MEDIA_LIMIT) : null
+  try {
+    return new Response(body, { status: 200, headers: mediaHeaders(upstream.headers.get('content-type')) })
+  } catch {
+    return json(502, 'The sample host sent a file this site cannot pass on.')
+  }
 }

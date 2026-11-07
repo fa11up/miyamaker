@@ -61,6 +61,22 @@ export function createFx(sampleRate) {
   let lowR = 0
   let bandR = 0
 
+  /** Fresh repeat buffer and phases, so a press never replays audio from an old one. */
+  function reset() {
+    repeatL.fill(0)
+    repeatR.fill(0)
+    repeatWrite = 0
+    repeatPhase = 0
+    bufL.fill(0)
+    bufR.fill(0)
+    write = 0
+    phase = 0
+    lowL = 0
+    bandL = 0
+    lowR = 0
+    bandR = 0
+  }
+
   function beatRepeat(amount, mixByte, bpm, left, right) {
     const beat = sr * 60 / Math.max(20, bpm || 96)
     const divisor = 2 << clamp((amount * 7 / 256) | 0, 0, 6)
@@ -138,8 +154,10 @@ export function createFx(sampleRate) {
   function process(inL, inR, outL, outR, slot, bpm) {
     const n = inL.length
     for (let i = 0; i < n; i++) {
-      let l = inL[i] || 0
-      let r = inR[i] || 0
+      let l = inL[i]
+      let r = inR[i]
+      if (!(l > -Infinity && l < Infinity)) l = 0
+      if (!(r > -Infinity && r < Infinity)) r = 0
       if (slot && slot.type && slot.type !== 'off') {
         if (slot.type === 'repeat') {
           const wet = beatRepeat(slot.a, slot.b, bpm, l, r)
@@ -160,12 +178,17 @@ export function createFx(sampleRate) {
           }
         }
       }
+      if (!(l > -Infinity && l < Infinity) || !(r > -Infinity && r < Infinity)) {
+        reset()
+        l = 0
+        r = 0
+      }
       outL[i] = l
       outR[i] = r
     }
   }
 
-  return { process }
+  return { process, reset }
 }
 
 export function workletSource() {
@@ -181,8 +204,11 @@ export function workletSource() {
         this.port.onmessage = (event) => {
           const data = event.data || {}
           if (data.slots) this.slots = data.slots
-          if (typeof data.bpm === 'number') this.bpm = data.bpm
-          if (typeof data.held === 'number') this.held = data.held
+          if (typeof data.bpm === 'number' && data.bpm > 0 && data.bpm < 1000) this.bpm = data.bpm
+          if (typeof data.held === 'number') {
+            if (data.held >= 0 && data.held !== this.held) this.fx.reset()
+            this.held = data.held
+          }
         }
       }
       process(inputs, outputs) {

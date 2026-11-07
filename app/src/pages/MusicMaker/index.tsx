@@ -11,6 +11,7 @@ import { useFullscreen } from '@/store/windows/hooks'
 import { MiyaMusicMaker } from './MiyaMusicMaker.jsx'
 import { armHistory, withoutHistory } from './history.js'
 import { ensureBlankSong, openPackedUrl } from './audio/song.js'
+import { shutdown, wakeEngine } from './audio/engine.js'
 import { boot, model, restoreSamples, touch } from './model.js'
 import PublishDialog, { type PublishJob } from './PublishDialog'
 import { subscribeRemoteOpen, takeRemoteOpen } from './remoteOpen.js'
@@ -56,6 +57,7 @@ export default function MusicMakerPage() {
       mount.style.minHeight = '0'
       shadow.append(style, mount)
     }
+    wakeEngine()
     boot()
     const root = createRoot(mount)
     root.render(<MiyaMusicMaker />)
@@ -87,6 +89,8 @@ export default function MusicMakerPage() {
       cancel = true
       unsub()
       root.unmount()
+      // Closing the window must stop the sound, the clock, the mic, and MIDI, not just React.
+      shutdown()
     }
   }, [])
 

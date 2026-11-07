@@ -143,21 +143,44 @@ export function createKnee(sampleRate) {
     return p
   }
 
+  function ok(v) {
+    return typeof v === 'number' && Number.isFinite(v)
+  }
+
+  /** Clear every bit of state. One NaN in a feedback path would otherwise stay there for good. */
+  function reset() {
+    cL.fill(0)
+    cR.fill(0)
+    apL.fill(0)
+    apR.fill(0)
+    pL.fill(0)
+    pR.fill(0)
+    env = 0
+    pdL = 0
+    pdR = 1.3
+    foldY = 0
+    grDb = 0
+    if (!ok(knee)) knee = kneeT
+    if (!ok(police)) police = policeT
+    if (!ok(fold)) fold = foldT
+    if (!ok(pitch)) pitch = pitchT
+  }
+
   function set(p) {
     if (!p) return
-    if (typeof p.knee === 'number') kneeT = clamp(p.knee, 0, 1)
-    if (typeof p.police === 'number') policeT = clamp(p.police, 0, 1)
-    if (typeof p.fold === 'number') foldT = clamp(p.fold, 0, 1)
-    if (typeof p.pitch === 'number') pitchT = clamp(p.pitch, -2, 2)
+    if (ok(p.knee)) kneeT = clamp(p.knee, 0, 1)
+    if (ok(p.police)) policeT = clamp(p.police, 0, 1)
+    if (ok(p.fold)) foldT = clamp(p.fold, 0, 1)
+    if (ok(p.pitch)) pitchT = clamp(p.pitch, -2, 2)
     if (p.policeLfo) {
       policeLfo = p.policeLfo.on ? 1 : 0
-      if (typeof p.policeLfo.rate === 'number') policeHz = clamp(p.policeLfo.rate, 0.05, 12)
-      if (typeof p.policeLfo.depth === 'number') policeDepth = clamp(p.policeLfo.depth, 0, 1)
+      if (ok(p.policeLfo.rate)) policeHz = clamp(p.policeLfo.rate, 0.05, 12)
+      if (ok(p.policeLfo.depth)) policeDepth = clamp(p.policeLfo.depth, 0, 1)
     }
     if (p.foldLfo) {
       foldLfo = p.foldLfo.on ? 1 : 0
-      if (typeof p.foldLfo.rate === 'number') foldHz = clamp(p.foldLfo.rate, 0.05, 12)
-      if (typeof p.foldLfo.depth === 'number') foldDepth = clamp(p.foldLfo.depth, 0, 1)
+      if (ok(p.foldLfo.rate)) foldHz = clamp(p.foldLfo.rate, 0.05, 12)
+      if (ok(p.foldLfo.depth)) foldDepth = clamp(p.foldLfo.depth, 0, 1)
     }
   }
 
@@ -176,7 +199,9 @@ export function createKnee(sampleRate) {
       const foldHeard = foldLfo ? clamp(fold + Math.sin(foldPhase) * foldDepth, 0, 1) : fold
 
       let l = inL[i]
-      let r = inR[i] || 0
+      let r = inR[i]
+      if (!(l > -Infinity && l < Infinity)) l = 0
+      if (!(r > -Infinity && r < Infinity)) r = 0
 
       cL[cw] = l
       cR[cw] = r
@@ -258,6 +283,11 @@ export function createKnee(sampleRate) {
       else if (l < -1.8) l = -1.8
       if (r > 1.8) r = 1.8
       else if (r < -1.8) r = -1.8
+      if (!(l > -Infinity && l < Infinity) || !(r > -Infinity && r < Infinity) || !(env > -Infinity && env < Infinity)) {
+        reset()
+        l = 0
+        r = 0
+      }
       outL[i] = l
       outR[i] = r
     }
@@ -270,7 +300,7 @@ export function createKnee(sampleRate) {
     return grDb
   }
 
-  return { process, set, takeGr }
+  return { process, set, takeGr, reset }
 }
 
 export function kneeWorkletSource() {

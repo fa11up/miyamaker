@@ -2,12 +2,29 @@
  * Turn a YouTube, Odysee, LBRY, or X link into a short audio file.
  * The page URL is checked here. The bytes are fetched only from the stream
  * host that the page's own API names (googlevideo, odycdn, or twimg).
+ * The content type sent back is picked here from the format this file chose, never from what a page or a
+ * claim says about itself (a publisher writes an Odysee claim's media_type), see media/serve.js.
  */
+
+import { cappedStream, mediaHeaders, peekStream } from './serve.js'
 
 export const VIDEO_AUDIO_PATH = '/api/video-audio'
 export const VIDEO_AUDIO_LIMIT = 8 * 1024 * 1024
 
 const PAGE_UA = 'Mozilla/5.0'
+
+/** The only types this route answers with, keyed on the container it picked. */
+const STREAM_TYPES = {
+  'audio-webm': 'audio/webm',
+  'audio-mp4': 'audio/mp4',
+  webm: 'video/webm',
+  ogg: 'audio/ogg',
+  mp4: 'video/mp4',
+}
+
+export function streamType(format) {
+  return Object.prototype.hasOwnProperty.call(STREAM_TYPES, format) ? STREAM_TYPES[format] : 'application/octet-stream'
+}
 
 export function videoPage(raw) {
   const text = String(raw || '').trim()
@@ -58,7 +75,11 @@ function odyseePathToLbry(pathname) {
   const parts = pathname.split('/').filter(Boolean)
   const embed = parts[0] === '$' && parts[1] === 'embed' ? parts.slice(2) : parts
   if (!embed.length) return null
-  return `lbry://${embed.map((part) => decodeURIComponent(part)).join('/')}`
+  try {
+    return `lbry://${embed.map((part) => decodeURIComponent(part)).join('/')}`
+  } catch {
+    return null
+  }
 }
 
 export function allowedStream(raw) {
@@ -89,7 +110,8 @@ export function pickYoutubeAudio(data) {
   }
   const pick = audio[0]
   const title = data?.videoDetails?.title || 'youtube'
-  return { name: title, url: pick.url, mime: String(pick.mimeType || 'audio/webm').split(';')[0] }
+  const format = String(pick.mimeType || '').toLowerCase().includes('mp4') ? 'audio-mp4' : 'audio-webm'
+  return { name: title, url: pick.url, format, mime: streamType(format) }
 }
 
 function rankAudio(fmt) {
@@ -102,10 +124,10 @@ function rankAudio(fmt) {
 export function pickOdyseeAudio(claim) {
   if (!claim || claim.error) throw new Error(claim?.error?.message || claim?.error || 'That LBRY claim was not found')
   const name = claim.value?.title || claim.name || 'odysee'
-  const mime = claim.value?.source?.media_type || 'video/mp4'
+  const format = odyseeFormat(claim.value?.source?.media_type)
   const direct = odyseeStreamUrl(claim)
   if (!direct || !allowedStream(direct)) throw new Error('That LBRY claim has no audio this app can read')
-  return { name, url: direct, mime }
+  return { name, url: direct, format, mime: streamType(format) }
 }
 
 function odyseeStreamUrl(claim) {
@@ -114,18 +136,17 @@ function odyseeStreamUrl(claim) {
   if (!claimName || !claimId) return null
   const source = claim.value?.source
   const hash = source?.sd_hash ? String(source.sd_hash).slice(0, 6) : ''
-  const ext = extensionFor(source?.media_type)
+  const ext = `.${odyseeFormat(source?.media_type)}`
   const base = `https://player.odycdn.com/api/v3/streams/free/${encodeURIComponent(claimName)}/${claimId}`
   return hash ? `${base}/${hash}${ext}` : base
 }
 
-function extensionFor(mime) {
+/** The claim's media_type only steers which container is asked for: webm, ogg, or mp4 for everything else. */
+function odyseeFormat(mime) {
   const type = String(mime || '').toLowerCase()
-  if (type.includes('webm')) return '.webm'
-  if (type.includes('ogg')) return '.ogg'
-  if (type.includes('mp4') || type.includes('mpeg')) return '.mp4'
-  if (type.includes('audio')) return '.mp4'
-  return '.mp4'
+  if (type.includes('webm')) return 'webm'
+  if (type.includes('ogg')) return 'ogg'
+  return 'mp4'
 }
 
 export function pickXAudio(data, id) {
@@ -138,7 +159,7 @@ export function pickXAudio(data, id) {
   clips.sort((a, b) => (a.bitrate || 0) - (b.bitrate || 0))
   if (!clips.length) throw new Error('That post has no video audio')
   const text = String(data?.text || data?.full_text || `Post ${id}`).replace(/\s+/g, ' ').trim()
-  return { name: text.slice(0, 80) || `Post ${id}`, url: clips[0].url, mime: 'video/mp4' }
+  return { name: text.slice(0, 80) || `Post ${id}`, url: clips[0].url, format: 'mp4', mime: streamType('mp4') }
 }
 
 function collectVariants(node, out) {
@@ -239,10 +260,10 @@ async function odyseeAudio(lbry, fetchImpl) {
   const resolved = await odyseeCall('resolve', { urls: [lbry] }, fetchImpl)
   const claim = claimFrom(resolved, lbry)
   const name = claim?.value?.title || claim?.name || 'odysee'
-  const mime = claim?.value?.source?.media_type || 'video/mp4'
+  const format = odyseeFormat(claim?.value?.source?.media_type)
   const got = await odyseeCall('get', { uri: lbry }, fetchImpl)
   const streaming = got?.result?.streaming_url || got?.streaming_url
-  if (allowedStream(streaming)) return { name, url: streaming, mime }
+  if (allowedStream(streaming)) return { name, url: streaming, format, mime: streamType(format) }
   return pickOdyseeAudio(claim)
 }
 
@@ -277,42 +298,6 @@ function json(status, message) {
     status,
     headers: { 'content-type': 'application/json; charset=utf-8' },
   })
-}
-
-async function readPrefix(response) {
-  if (!response.body) {
-    const buf = new Uint8Array(await response.arrayBuffer())
-    return buf.byteLength > VIDEO_AUDIO_LIMIT ? buf.slice(0, VIDEO_AUDIO_LIMIT) : buf
-  }
-  const reader = response.body.getReader()
-  const chunks = []
-  let total = 0
-  for (;;) {
-    const step = await reader.read()
-    if (step.done) break
-    const value = step.value
-    if (!value?.byteLength) continue
-    const room = VIDEO_AUDIO_LIMIT - total
-    if (value.byteLength > room) {
-      chunks.push(value.slice(0, room))
-      total += room
-      await reader.cancel()
-      break
-    }
-    chunks.push(value)
-    total += value.byteLength
-    if (total >= VIDEO_AUDIO_LIMIT) {
-      await reader.cancel()
-      break
-    }
-  }
-  const out = new Uint8Array(total)
-  let offset = 0
-  for (const chunk of chunks) {
-    out.set(chunk, offset)
-    offset += chunk.byteLength
-  }
-  return out
 }
 
 function refererFor(page) {
@@ -363,16 +348,31 @@ export async function handleVideoAudioRequest(request, env = {}) {
   }
   if (upstream.status === 429) return json(429, 'The video host is busy. Try that link again.')
   if (!upstream.ok && upstream.status !== 206) return json(502, 'The video host refused the audio.')
-  const body = await readPrefix(upstream)
-  if (!body.byteLength) return json(502, 'The video host sent no audio.')
+  // Passed on as it arrives, cut at the cap, rather than held whole. The first chunk is read so an empty answer is caught.
+  let body
+  try {
+    body = upstream.body ? await peekStream(cappedStream(upstream.body, VIDEO_AUDIO_LIMIT, { truncate: true })) : null
+  } catch {
+    return json(502, 'The video host did not answer.')
+  }
+  if (!body) return json(502, 'The video host sent no audio.')
   const name = String(resolved.name || 'video').replace(/\s+/g, ' ').trim().slice(0, 80) || 'video'
-  return new Response(body, {
-    status: 200,
-    headers: {
-      'content-type': resolved.mime || 'application/octet-stream',
-      'content-length': String(body.byteLength),
-      'x-sample-name': encodeURIComponent(name),
-      'cache-control': 'private, max-age=300',
-    },
-  })
+  try {
+    return new Response(body, {
+      status: 200,
+      headers: mediaHeaders(streamType(resolved.format), { 'x-sample-name': sampleName(name) }),
+    })
+  } catch {
+    await body.cancel().catch(() => undefined)
+    return json(502, 'The video host sent audio this site cannot pass on.')
+  }
+}
+
+/** A header-safe name. encodeURIComponent throws on a broken surrogate pair, which a title can carry. */
+function sampleName(name) {
+  try {
+    return encodeURIComponent(name)
+  } catch {
+    return 'video'
+  }
 }

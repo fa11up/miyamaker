@@ -10,6 +10,7 @@ import {
   emptyPad,
   ensurePattern,
   normalizePad,
+  num,
   fitLoop,
   idbDelete,
   idbGet,
@@ -76,7 +77,13 @@ function pcmToB64(pcm) {
 }
 
 function b64ToPcm(text) {
-  const bin = atob(text)
+  if (typeof text !== 'string') throw new Error('That song sample is damaged')
+  let bin
+  try {
+    bin = atob(text)
+  } catch {
+    throw new Error('That song sample is damaged')
+  }
   const bytes = new Uint8Array(bin.length)
   for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i) & 255
   if (bytes.byteLength % 4) throw new Error('That song sample is damaged')
@@ -88,7 +95,9 @@ function packSamples(samples) {
   return (samples || []).map((sample) => {
     if (!(sample.pcm instanceof Float32Array)) return sample
     total += sample.pcm.length
-    if (total > PACK_SAMPLES) throw new Error('That song’s samples are too long to pack')
+    if (total > PACK_SAMPLES) {
+      throw new Error(`That song’s samples are too long to pack (pads with samples hold more than ${Math.round(PACK_SAMPLES / 44100)} s in all). Clear or shorten a pad.`)
+    }
     return { ...sample, pcm: pcmToB64(sample.pcm) }
   })
 }
@@ -103,9 +112,9 @@ export function packSong(doc) {
     type: 'm1ya',
     v: 2,
     name,
-    bpm: Math.max(40, Math.min(240, Math.round(doc.bpm || 184))),
-    swing: doc.swing || 0,
-    order: (doc.order || [0]).map((n) => n & 255).slice(0, 256),
+    bpm: Math.round(num(doc.bpm, 184, 40, 240)),
+    swing: num(doc.swing, 0, 0, 0.6),
+    order: (Array.isArray(doc.order) && doc.order.length ? doc.order : [0]).map((n) => n & 255).slice(0, 256),
     patterns: doc.patterns || [],
     pads: clonePads(doc.pads),
     samples: packSamples(doc.samples),
@@ -356,6 +365,11 @@ export async function captureKit(name) {
   })
 }
 
+/** Some browsers start the download after click() returns, so the URL must outlive it. */
+function revokeLater(href) {
+  setTimeout(() => URL.revokeObjectURL(href), 30000)
+}
+
 export function downloadSong(doc) {
   const packed = doc.samples?.[0]?.pcm instanceof Float32Array ? packSong(doc) : doc
   const blob = new Blob([JSON.stringify(packed)], { type: 'application/octet-stream' })
@@ -363,7 +377,7 @@ export function downloadSong(doc) {
   link.href = URL.createObjectURL(blob)
   link.download = `${packed.name || 'Song'}.m1ya`
   link.click()
-  URL.revokeObjectURL(link.href)
+  revokeLater(link.href)
 }
 
 export function downloadKit(doc) {
@@ -373,7 +387,7 @@ export function downloadKit(doc) {
   link.href = URL.createObjectURL(blob)
   link.download = `${packed.name || 'Kit'}.k1t`
   link.click()
-  URL.revokeObjectURL(link.href)
+  revokeLater(link.href)
 }
 
 function clonePad(index, src) {
@@ -383,27 +397,51 @@ function clonePad(index, src) {
   return pad
 }
 
+/**
+ * Every sample in a kit or song, decoded and checked before anything is replaced.
+ * Throws on the first damaged one, so a bad file leaves the current kit as it was.
+ */
+export function decodeKitSamples(samples) {
+  const out = new Map()
+  if (samples != null && !Array.isArray(samples)) throw new Error('That kit’s sample list is damaged')
+  for (const sample of samples || []) {
+    if (!sample || typeof sample !== 'object') throw new Error('That song sample is damaged')
+    const index = Number(sample.pad)
+    if (!Number.isInteger(index) || index < 0 || index > 63) continue
+    const pcm = sample.pcm instanceof Float32Array ? sample.pcm : b64ToPcm(sample.pcm)
+    if (!(pcm instanceof Float32Array) || !pcm.length) throw new Error('That song sample is damaged')
+    for (let i = 0; i < pcm.length; i++) {
+      if (!Number.isFinite(pcm[i])) pcm[i] = 0
+    }
+    const name = typeof sample.name === 'string' ? sample.name.slice(0, 80) : ''
+    out.set(index, { pcm, sr: Math.round(num(sample.sr, 44100, 3000, 192000)), name })
+  }
+  return out
+}
+
 async function applyKit(doc) {
+  const decoded = decodeKitSamples(doc.samples)
+  const pads = Array.from({ length: 64 }, (_, i) => clonePad(i, Array.isArray(doc.pads) ? doc.pads[i] : null))
   for (let i = 0; i < 64; i++) {
     const prev = await idbGet(`pad:${i}`)
     stashUndo(`pad:${i}`, prev || null)
   }
   for (let i = 0; i < 64; i++) {
-    model.pads[i] = clonePad(i, doc.pads?.[i])
+    model.pads[i] = pads[i]
     audioBank.delete(i)
-    await idbDelete(`pad:${i}`)
   }
-  for (const sample of doc.samples || []) {
-    const pcm = sample.pcm instanceof Float32Array ? sample.pcm : b64ToPcm(sample.pcm)
-    const index = sample.pad | 0
-    if (index < 0 || index > 63 || !(pcm instanceof Float32Array)) continue
+  for (const [index, sample] of decoded) {
     const pad = model.pads[index]
     pad.source = 'sample'
     pad.patch = null
     pad.sampleName = sample.name || pad.name
     if (!pad.name || pad.name === 'Empty') pad.name = sample.name || 'sample'
-    audioBank.set(index, { pcm, sr: sample.sr || 44100, rev: Date.now() })
-    await idbSet(`pad:${index}`, { pcm, sr: sample.sr || 44100, name: pad.sampleName })
+    audioBank.set(index, { pcm: sample.pcm, sr: sample.sr, rev: Date.now() })
+  }
+  for (let i = 0; i < 64; i++) {
+    const sample = decoded.get(i)
+    if (sample) await idbSet(`pad:${i}`, { pcm: sample.pcm, sr: sample.sr, name: model.pads[i].sampleName })
+    else await idbDelete(`pad:${i}`)
   }
   model.pads.forEach((pad, i) => {
     if (pad.source === 'synth' && pad.patch) renderPad(i)
@@ -480,12 +518,17 @@ export async function loadSong(doc, fileId = '') {
     if (songHasKit(doc)) await applyKit(doc)
     const mix = applySongMix(doc)
     model.patterns = Array.from({ length: 256 }, () => null)
-    for (const pattern of doc.patterns || []) {
-      if (!pattern || pattern.i < 0 || pattern.i > 255) continue
-      model.patterns[pattern.i] = { name: pattern.name || '', bars: pattern.bars || 1, len: pattern.len, steps: pattern.steps || [] }
+    for (const pattern of Array.isArray(doc.patterns) ? doc.patterns : []) {
+      if (!pattern || !Number.isInteger(pattern.i) || pattern.i < 0 || pattern.i > 255) continue
+      model.patterns[pattern.i] = {
+        name: typeof pattern.name === 'string' ? pattern.name : '',
+        bars: pattern.bars,
+        len: Number.isFinite(pattern.len) ? pattern.len : undefined,
+        steps: Array.isArray(pattern.steps) ? pattern.steps : [],
+      }
       ensurePattern(pattern.i)
     }
-    const order = (doc.order || [0]).map((n) => n & 255)
+    const order = (Array.isArray(doc.order) && doc.order.length ? doc.order : [0]).map((n) => n & 255)
     model.songOrder = order
     model.songCursor = 0
     model.songPlay = true
@@ -493,8 +536,8 @@ export async function loadSong(doc, fileId = '') {
     model.songFile = fileId || ''
     model.pattern = order[0] || 0
     ensurePattern(model.pattern)
-    model.bpm = Math.max(40, Math.min(240, Math.round(doc.bpm || 184)))
-    model.swing = doc.swing || 0
+    model.bpm = Math.round(num(doc.bpm, 184, 40, 240))
+    model.swing = num(doc.swing, 0, 0, 0.6)
     model.browserNote = `${model.songName} ready at ${model.bpm} bpm`
     touch(true)
     if (mix) await pushMix()
