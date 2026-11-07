@@ -7,7 +7,6 @@ import { SmallButton } from '@/components/LaunchKit'
 import { Well } from '@/components/Retro'
 import Pages from '@/constants/pages'
 import { fetchStation } from '@/music/community'
-import { useOpenApp } from '@/music/useOpenApp'
 import { space, text } from '@/theme/tokens'
 import type { FolderFile, Upload, UploadKind } from '@/utils/myUploads'
 import { fetchUploads, parseManifest } from '@/utils/myUploads'
@@ -198,7 +197,6 @@ export default function MyUploads({
   onPick: (picked: Picked) => void
 }) {
   const { address } = useAccount()
-  const openApp = useOpenApp()
   const uploads = useQuery({
     queryKey: ['my-uploads', address],
     enabled: !!address,
@@ -236,10 +234,7 @@ export default function MyUploads({
       )}
       {uploads.isSuccess && !rows.length && (
         <Note>
-          Nothing here from this wallet yet.{' '}
-          <SmallButton type="button" onClick={() => openApp('uploader')}>
-            Open Infinite Upload
-          </SmallButton>
+          Nothing here from this wallet yet.
         </Note>
       )}
       {rows.map((u) => {

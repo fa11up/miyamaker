@@ -1,3 +1,6 @@
+import latheArt from 'assets/imd/lathe.webp'
+import networkArt from 'assets/imd/network.webp'
+import rosetteArt from 'assets/imd/rosette.webp'
 import Miya from 'assets/miya.png?preset=avatar&resize=true'
 import type { ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
@@ -45,6 +48,7 @@ const Layout = styled.div`
   height: 100%;
   overflow-y: auto;
   overflow-x: hidden;
+  scrollbar-color: ${y2k.headTo} ${y2k.night};
   ${starfield}
   color: ${color.ink};
 `
@@ -131,9 +135,11 @@ const Start = styled.div`
   max-width: 720px;
   margin: 0 auto;
   padding: ${space[3]};
-  background: ${color.faceLight};
-  color: ${color.ink};
-  box-shadow: ${bevel.raised};
+  /* imdUSD's guilloché rosette, from its site, over the portal's title strip. */
+  background: url(${rosetteArt}) right -70px center / 300px no-repeat,
+    linear-gradient(90deg, ${y2k.headFrom}, ${y2k.headTo});
+  color: ${color.highlight};
+  box-shadow: inset 1px 1px #a98bf0, inset -1px -1px ${y2k.night}, 0 0 0 1px ${y2k.night};
   text-align: left;
   font-size: ${text.sm};
   line-height: 1.45;
@@ -143,6 +149,7 @@ const Start = styled.div`
     font-family: ${font.display};
     font-weight: 400;
     font-size: ${text.lg};
+    text-shadow: 1px 1px 0 ${color.dark};
   }
   .actions {
     display: flex;
@@ -298,7 +305,7 @@ const Upgrade = styled.div`
   flex-direction: column;
   gap: ${space[2]};
   padding: ${space[3]};
-  border: 2px dashed ${color.shadow};
+  border: 2px dashed ${y2k.headTo};
   background: ${y2k.paperAlt};
 `
 
@@ -431,7 +438,6 @@ export default function Home() {
     { id: SECTIONS.map, label: 'How it fits', note: 'the big picture' },
     { id: SECTIONS.ring, label: 'Webring', note: 'more miya sites' },
     { label: 'Build', note: 'with the swarm', onClick: () => navigate(BUILD_PATH) },
-    { label: 'Guestbook', note: 'chat on miyatv', onClick: () => navigate('/tv') },
   ]
 
   return (
@@ -452,15 +458,7 @@ export default function Home() {
         <Start>
           <div>
             <b>Make and collect NFTs</b>
-            An NFT is a piece of art or music you own, recorded on Ethereum. Collect one, or sell your own.
-          </div>
-          <div className="actions">
-            <PushButton type="button" className="primary" onClick={() => navigate('/mint')}>
-              Mint an NFT
-            </PushButton>
-            <PushButton type="button" onClick={() => navigate('/launch')}>
-              Launch my art
-            </PushButton>
+            An NFT is a piece of art or music you own, recorded on Ethereum. Collect one in Mint, or sell your own with Launch.
           </div>
         </Start>
         <SwarmSearch />
@@ -503,7 +501,8 @@ export default function Home() {
           </div>
           <Claim id={SECTIONS.claim} style={{ gridArea: 'claim' }} />
 
-          <PortalBox id={SECTIONS.infer} title="INFER" label="INFER" style={{ gridArea: 'infer' }}>
+          <PortalBox id={SECTIONS.infer}
+          art={networkArt} title="INFER" label="INFER" style={{ gridArea: 'infer' }}>
             <Prose>
               <p>
                 INFER is the main token of miyamaker and of imdUSD. There will only ever be{' '}
@@ -513,9 +512,6 @@ export default function Home() {
             </Prose>
             <Contract label="INFER contract" address={INFER} />
             <LinkRow>
-              <PushButton type="button" onClick={() => navigate('/trade')}>
-                Swap for INFER
-              </PushButton>
               <a {...ext} href={LINKS.tokenomics}>
                 Tokenomics
               </a>
@@ -525,7 +521,8 @@ export default function Home() {
             </LinkRow>
           </PortalBox>
 
-          <PortalBox id={SECTIONS.imdusd} title="imdUSD" label="imdUSD" style={{ gridArea: 'imdusd' }}>
+          <PortalBox id={SECTIONS.imdusd}
+          art={latheArt} title="imdUSD" label="imdUSD" style={{ gridArea: 'imdusd' }}>
             <Prose>
               <p>
                 <strong>imdUSD is a dollar, not an investment.</strong> It is the steady part of the miyanet. miyamaker

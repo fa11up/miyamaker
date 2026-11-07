@@ -1,5 +1,5 @@
-import { useCallback, useRef, useState } from 'react'
-import styled from 'styled-components/macro'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import styled, { keyframes } from 'styled-components/macro'
 
 import ProgressBarUploader from '@/components/ProgressUploader'
 import { Panel, StatusBox } from '@/components/Retro'
@@ -16,6 +16,19 @@ import { space } from '@/theme/tokens'
 import { gel } from '../DropMusic/y2k'
 
 /** Infinite Upload's own material: the rainbow sheen of a blank CD on a night-blue burner. */
+const BOOT_MS = 2300
+const discBoot = keyframes`
+  0% { right: calc(50% - 150px); bottom: calc(50% - 150px); transform: scale(0.1) rotate(0deg); opacity: 0; }
+  14% { opacity: 1; }
+  30% { right: calc(50% - 150px); bottom: calc(50% - 150px); transform: scale(1.15) rotate(540deg); }
+  62% { right: calc(50% - 150px); bottom: calc(50% - 150px); transform: scale(1.15) rotate(1440deg); }
+  100% { right: -66px; bottom: -78px; transform: scale(1) rotate(2160deg); }
+`
+const panelBoot = keyframes`
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: none; }
+`
+
 const Layout = styled.div`
   display: flex;
   align-items: center;
@@ -40,6 +53,15 @@ const Layout = styled.div`
     link: '#0b3fd1',
   })}
   position: relative;
+
+  /* Its boot: the disc spins up in the middle of the window, then slows and settles into place as the background. */
+  &.booting::before {
+    animation: ${discBoot} ${BOOT_MS}ms cubic-bezier(0.3, 0.1, 0.25, 1) both;
+  }
+  &.booting ${Panel} {
+    pointer-events: none;
+    animation: ${panelBoot} 0.45s ease-out ${BOOT_MS - 520}ms both;
+  }
 
   /* A blank disc, half out of the window. */
   &::before {
@@ -121,6 +143,11 @@ export default function MintPage() {
   const dispatch = useAppDispatch()
   const dropArea = useRef<HTMLDivElement>(null)
   const [busy, setBusy] = useState(false)
+  const [booting, setBooting] = useState(() => !window.matchMedia('(prefers-reduced-motion: reduce)').matches)
+  useEffect(() => {
+    const t = setTimeout(() => setBooting(false), BOOT_MS)
+    return () => clearTimeout(t)
+  }, [])
   const [checkingClose, setCheckingClose] = useState(false)
   const onBusyChange = useCallback((value: boolean) => {
     setBusy(value)
@@ -166,7 +193,11 @@ export default function MintPage() {
       >
         {page?.label}
       </TitleBar>
-      <Layout ref={dropArea}>
+      <Layout
+        ref={dropArea}
+        className={booting ? 'booting' : undefined}
+        onPointerDown={() => setBooting(false)}
+      >
         <Panel>
           <ProgressBarUploader
             request={uploadRequest}

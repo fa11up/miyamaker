@@ -107,7 +107,8 @@ export default function LaunchList({
   loading: boolean
   error?: Error | null
   onPick: (l: MyLaunch) => void
-  onLaunch: () => void
+  /** Only the Start menu has this: an app does not open another app. */
+  onLaunch?: () => void
   onRetry?: () => void
   currentKey?: string
 }) {
@@ -138,9 +139,11 @@ export default function LaunchList({
     return (
       <Empty>
         <p>No launches yet. Collections you create with Launch show up here.</p>
-        <SmallButton type="button" onClick={onLaunch} role="menuitem">
-          Launch one
-        </SmallButton>
+        {onLaunch && (
+          <SmallButton type="button" onClick={onLaunch} role="menuitem">
+            Launch one
+          </SmallButton>
+        )}
       </Empty>
     )
   }

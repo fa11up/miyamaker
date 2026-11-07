@@ -1,19 +1,18 @@
-import { useNavigate } from 'react-router-dom'
 import styled from 'styled-components/macro'
 
 import ComputerIcon from '@/assets/computer.png'
 import AuctionIcon from '@/assets/icon/auction.png'
 import DropMusicIcon from '@/assets/icon/drop_music.png'
 import NftImage from '@/components/NftImage'
-import { BigButton, Chip, ProgressMeter, Skeleton } from '@/components/Retro'
+import { Chip, ProgressMeter, Skeleton } from '@/components/Retro'
 import { useLaunchChain } from '@/miyamints/useMiyamints'
 import { StatusChip } from '@/pages/Mint/Home'
 import type { LiveMintCard } from '@/pages/Mint/liveMints'
-import { formatEthShort, mintPath } from '@/pages/Mint/liveMints'
+import { formatEthShort } from '@/pages/Mint/liveMints'
 import { useContractImage, useLiveMints } from '@/pages/Mint/useLiveMints'
 import { bevel, color, font, space, text } from '@/theme/tokens'
 
-import { PortalBox, PushButton } from './y2k'
+import { PortalBox } from './y2k'
 
 /**
  * miyanet as the way in (user, 2026-11-05): what is minting right now, and how to launch your own. Both open the
@@ -78,7 +77,7 @@ const Kinds = styled.div`
   display: flex;
   flex-direction: column;
   gap: ${space[2]};
-  button {
+  .kind {
     display: grid;
     grid-template-columns: 32px minmax(0, 1fr);
     gap: ${space[2]};
@@ -92,17 +91,6 @@ const Kinds = styled.div`
     color: ${color.ink};
     font-family: ${font.ui};
     text-align: left;
-    cursor: pointer;
-  }
-  button:hover {
-    background: #fff6fe;
-  }
-  button:active {
-    box-shadow: ${bevel.pressed};
-  }
-  button:focus-visible {
-    outline: 1px dotted ${color.dark};
-    outline-offset: -5px;
   }
   img {
     width: 32px;
@@ -123,7 +111,6 @@ const Kinds = styled.div`
   }
 `
 
-const openPath = (card: LiveMintCard) => (card.view === 'miyamini' ? mintPath('miyamini') : mintPath(card.slug))
 
 function Cover({ card }: { card: LiveMintCard }) {
   const fromContract = useContractImage(card.image ? undefined : card.contractURI)
@@ -131,7 +118,6 @@ function Cover({ card }: { card: LiveMintCard }) {
 }
 
 export function NowMinting({ id }: { id?: string }) {
-  const navigate = useNavigate()
   const { cards, isLoading } = useLiveMints()
   const live = cards.filter((c) => c.clickable)
   const featured = live.find((c) => c.status === 'open') ?? live[0]
@@ -148,15 +134,9 @@ export function NowMinting({ id }: { id?: string }) {
         <Skeleton h="148px" />
       ) : (
         <Feature>
-          <button
-            type="button"
-            className="art"
-            style={{ border: 'none', cursor: 'pointer' }}
-            onClick={() => navigate(openPath(featured))}
-            aria-label={`Open ${featured.name}`}
-          >
+          <div className="art">
             <Cover card={featured} />
-          </button>
+          </div>
           <div className="meta">
             <h3>{featured.name}</h3>
             {featured.blurb && <span style={{ fontSize: text.sm }}>{featured.blurb}</span>}
@@ -175,22 +155,14 @@ export function NowMinting({ id }: { id?: string }) {
             {featured.supply !== undefined && (
               <ProgressMeter value={featured.minted ?? 0} max={featured.supply} label={`${featured.name} minted`} />
             )}
-            <BigButton type="button" onClick={() => navigate(openPath(featured))}>
-              Mint now
-            </BigButton>
           </div>
         </Feature>
       )}
       <Others>
         {more.length > 0 && <span>Also live:</span>}
         {more.map((c) => (
-          <PushButton key={c.key} type="button" onClick={() => navigate(openPath(c))}>
-            {c.name}
-          </PushButton>
+          <span key={c.key}>{c.name}</span>
         ))}
-        <PushButton type="button" onClick={() => navigate(mintPath())} style={{ marginLeft: 'auto' }}>
-          Every mint →
-        </PushButton>
       </Others>
     </PortalBox>
   )
@@ -218,7 +190,6 @@ const KINDS = [
 ] as const
 
 export function LaunchYourOwn({ id }: { id?: string }) {
-  const navigate = useNavigate()
   const net = useLaunchChain()
   return (
     <PortalBox
@@ -233,21 +204,21 @@ export function LaunchYourOwn({ id }: { id?: string }) {
       </span>
       <Kinds>
         {KINDS.map((k) => (
-          <button key={k.type} type="button" onClick={() => navigate(`/launch?type=${k.type}`)}>
+          <div key={k.type} className="kind">
             <img src={k.icon} alt="" />
             <span>
               <b>{k.title}</b>
               <small>{k.body}</small>
             </span>
-          </button>
+          </div>
         ))}
-        <button type="button" onClick={() => navigate('/drop-music')}>
+        <div className="kind">
           <img src={DropMusicIcon} alt="" />
           <span>
             <b>A song</b>
             <small>Releasing music? Drop Music turns a track into editions people can collect and play.</small>
           </span>
-        </button>
+        </div>
       </Kinds>
     </PortalBox>
   )

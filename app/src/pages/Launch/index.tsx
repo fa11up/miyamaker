@@ -31,11 +31,9 @@ import {
 } from '@/miyamints/launch'
 import { pctLabel } from '@/miyamints/split'
 import { useLaunchChain, useRegistryRules, useVaultInfo } from '@/miyamints/useMiyamints'
-import { useOpenManage } from '@/miyamints/useOpenManage'
 import { validateAudioFile, validateImageFile } from '@/music/audio'
 import { nextStepsWords, storageWords, storedBytes } from '@/music/creatorWords'
 import { readAudioDuration } from '@/music/readDuration'
-import { useOpenApp } from '@/music/useOpenApp'
 import { useAppDispatch } from '@/store/hooks'
 import { closeWindow, minimizeWindow } from '@/store/windows/actions'
 import { useFullscreen } from '@/store/windows/hooks'
@@ -349,8 +347,6 @@ export default function LaunchPage() {
   const { address, isConnected, chainId: walletChainId } = useAccount()
   const { openConnectModal } = useConnectModal()
   const { switchChain } = useSwitchChain()
-  const openApp = useOpenApp()
-  const openManage = useOpenManage()
 
   const net = useLaunchChain()
   const rules = useRegistryRules(net.chainId, net.addresses.registry)
@@ -681,18 +677,7 @@ export default function LaunchPage() {
                   </span>
                 </StatusBox>
                 <TxSteps steps={pipeline} label="What happened" />
-                <BigButton
-                  type="button"
-                  onClick={() =>
-                    openManage({ chainId: success.chainId, address: success.instance, kind: success.type })
-                  }
-                >
-                  Open in Manager
-                </BigButton>
                 <div style={{ display: 'flex', gap: space[2], flexWrap: 'wrap' }}>
-                  <SmallButton type="button" onClick={() => openApp('mint')}>
-                    Open in Mint
-                  </SmallButton>
                   <SmallButton
                     as="a"
                     href={`${explorer}/address/${success.instance}`}

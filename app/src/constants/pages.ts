@@ -1,7 +1,6 @@
 import MiyaLogo from 'assets/134321870.png?preset=icon&resize=true'
 import DisplayIcon from 'assets/computer.png?preset=icon&resize=true'
 import ExecutableIcon from 'assets/create_new.png?preset=icon&resize=true'
-import GearIcon from 'assets/executable_gear.png?preset=icon&resize=true'
 import FilesIcon from 'assets/folder.png?preset=icon&resize=true'
 import AuctionIcon from 'assets/icon/auction.png?preset=icon&resize=true'
 import DropMusicIcon from 'assets/icon/drop_music.png?preset=icon&resize=true'
@@ -23,10 +22,14 @@ export type Page = {
   }
   /** Draws its own shape with no window behind it: only what it paints takes clicks. */
   shaped?: boolean
+  /** Moves as one piece when dragged, without the trail of window copies. For windows too heavy to copy. */
+  noTrail?: boolean
   /** Always opens at minSize and can't be dragged to another size (maximize still works). */
   fixedSize?: boolean
   /** Rounds the whole window to this radius, in px. */
   corner?: number
+  /** On a phone, a window the size of its content over the desktop, not the whole screen. */
+  phoneCard?: boolean
 }
 
 const Pages: Record<string, Page> = {
@@ -45,9 +48,11 @@ const Pages: Record<string, Page> = {
     path: '/mint',
     label: 'Mint',
     icon: MintIcon[0],
+    shaped: true,
+    noTrail: true,
     minSize: {
-      width: 800,
-      height: 720,
+      width: 476,
+      height: 710,
     },
   },
   launch: {
@@ -58,16 +63,6 @@ const Pages: Record<string, Page> = {
     minSize: {
       width: 920,
       height: 760,
-    },
-  },
-  components: {
-    id: 'components',
-    path: '/components',
-    label: 'ComponentZ',
-    icon: GearIcon[0],
-    minSize: {
-      width: 600,
-      height: 475,
     },
   },
   uploader: {
@@ -82,6 +77,7 @@ const Pages: Record<string, Page> = {
   },
   manager: {
     id: 'manager',
+    phoneCard: true,
     path: '/manage',
     label: 'Manager',
     icon: ManageIcon[0],
@@ -124,6 +120,7 @@ const Pages: Record<string, Page> = {
   },
   display: {
     id: 'display',
+    phoneCard: true,
     path: '/display',
     label: 'Display Properties',
     icon: DisplayIcon[0],

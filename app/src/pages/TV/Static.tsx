@@ -25,10 +25,10 @@ const Canvas = styled.canvas`
   z-index: 3;
 `
 
-const W = 160
-const H = 90
+export const W = 160
+export const H = 90
 
-function paint(ctx: CanvasRenderingContext2D, img: ImageData, roll: number) {
+export function paint(ctx: CanvasRenderingContext2D, img: ImageData, roll: number) {
   const d = img.data
   for (let y = 0; y < H; y++) {
     // A brighter rolling band, like a detuned set.

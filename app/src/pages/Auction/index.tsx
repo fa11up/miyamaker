@@ -5,6 +5,8 @@ import type { Address } from 'viem'
 
 import { NormalButton } from '@/components/Button/NormalButton'
 import { ErrorButtonWrapper, ErrorContent, ErrorMessage, ErrorWindow, ErrorWrapper } from '@/components/Errors'
+import { ScenePlayer } from '@/components/AppBoot'
+import { auctionBanner } from '@/components/AppBoot/scenes'
 import TitleBar from '@/components/TitleBar'
 import WindowWrapper from '@/components/WindowWrapper'
 import { AUCTION_CHAIN_ID, AUCTION_CONTRACT } from '@/constants/contracts'
@@ -27,6 +29,7 @@ import type { PageKey } from '@/store/windows/reducer'
 /* Desktop: the window is a fixed size and the two panels share it. Phones: the panels take their natural height and
    the window body is the one scrolling surface (no scroll boxes inside it). */
 const Body = styled.div`
+  position: relative;
   display: flex;
   flex-direction: column;
   padding: 0.5rem;
@@ -48,6 +51,28 @@ const Body = styled.div`
       flex: none !important;
       height: auto !important;
     }
+  }
+`
+
+/* The sale room before it opens: its wallpaper, and a small banner on it. Any press skips. */
+const Opening = styled.button`
+  all: unset;
+  position: absolute;
+  inset: 0;
+  z-index: 11;
+  display: grid;
+  place-items: center;
+  cursor: progress;
+  pointer-events: auto;
+  background: #3f0a12 url(${damaskSkin}) 0 0 / 360px 360px;
+  > div {
+    width: min(400px, 86%);
+    aspect-ratio: 200 / 84;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.6);
+  }
+  &:focus-visible > div {
+    outline: 2px dashed #fff35c;
+    outline-offset: 3px;
   }
 `
 
@@ -79,6 +104,7 @@ const page = Pages.auction
 const pageId = page?.id as PageKey
 
 export default function AuctionPage() {
+  const [opening, setOpening] = useState(true)
   const [fullscreen, toggleFullscreen] = useFullscreen('auction')
   // Window mgmt
   const dispatch = useAppDispatch()
@@ -165,6 +191,18 @@ export default function AuctionPage() {
         {page?.label}
       </TitleBar>
       <Body ref={bodyRef}>
+        {opening && (
+          <Opening
+            type="button"
+            aria-label="Auction is opening. Press to skip."
+            data-testid="auction-opening"
+            onClick={() => setOpening(false)}
+          >
+            <div>
+              <ScenePlayer scene={auctionBanner} onDone={() => setOpening(false)} />
+            </div>
+          </Opening>
+        )}
         {renderSection()}
         {errorMessage && (
           <Popup

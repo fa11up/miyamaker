@@ -33,6 +33,7 @@ import { focusLabel, newFocusTimer, resetFocus, tickFocus, toggleFocus } from '.
 import Guide from './Guide'
 import { FocusPanel, IssPanel, PublicPanel, RadioPanel, SpottingPanel, SqueekPanel } from './panels'
 import { fetchTapes } from './publicAccess'
+import PowerOn from './PowerOn'
 import Screen from './Screen'
 import goldSkin from './skin/gold.webp'
 import woodSkin from './skin/wood.webp'
@@ -104,8 +105,9 @@ const TvColumn = styled.div`
     overflow: visible;
     flex: 0 0 auto;
   }
+  /* A phone with the sidebar in: the set stands in the middle of the cabinet. */
   .narrow.no-chat & {
-    flex: 1 1 auto;
+    margin: auto 0;
   }
 `
 
@@ -121,9 +123,6 @@ const Bezel = styled.div`
     flex: 0 0 auto;
     gap: 6px;
   }
-  .narrow.no-chat & {
-    flex: 1 1 auto;
-  }
 `
 /** With chat hidden: whatever room the set has, and the glass is the biggest 16:9 that fits in it. */
 const Stage = styled.div`
@@ -136,6 +135,12 @@ const Stage = styled.div`
     border-radius: 9px;
     background: ${SLATS};
     box-shadow: ${SLATS_EDGE};
+  }
+  /* Sizing against this box would make it the frame the tilted picture fills. */
+  @media (orientation: landscape) and (max-height: 500px) and (pointer: coarse) {
+    .fit & {
+      container-type: normal;
+    }
   }
 `
 
@@ -174,6 +179,20 @@ const Glass = styled.div`
   box-shadow: 0 0 0 1px #2a1a04;
   .narrow & {
     border-radius: 10px;
+  }
+  /* Tilted on its side, a phone is the screen: nothing but the picture, edge to edge. */
+  @media (orientation: landscape) and (max-height: 500px) and (pointer: coarse) {
+    && {
+      position: fixed;
+      left: 0;
+      top: 0;
+      z-index: 5;
+      width: 100vw;
+      height: 100dvh;
+      aspect-ratio: auto;
+      border-radius: 0;
+      box-shadow: none;
+    }
   }
 `
 const Osd = styled.div`
@@ -356,9 +375,10 @@ const Grille = styled.div`
   .narrow & {
     display: none;
   }
-  /* A phone with chat hidden: the speaker takes the room. */
+  /* A phone with the sidebar in: a strip of speaker under the controls. */
   .narrow.no-chat & {
     display: block;
+    flex: 0 0 48px;
   }
 `
 /** Where the open tab sits on the sidebar's border, which its texture has to line up with. */
@@ -539,7 +559,9 @@ function initialVolume(): number {
 
 function initialChat(): boolean {
   try {
-    return window.localStorage.getItem(CHAT_KEY) !== 'off'
+    const saved = window.localStorage.getItem(CHAT_KEY)
+    // A phone starts on the picture alone, and the tab brings the sidebar out.
+    return saved ? saved !== 'off' : window.innerWidth >= 640
   } catch {
     return true
   }
@@ -571,6 +593,8 @@ export default function TV() {
   const [index, setIndex] = useState(initialIndex)
   const [sourceLabel, setSourceLabel] = useState<string>()
   const [staticOn, setStaticOn] = useState(false)
+  // The picture only comes up once the tube has warmed, sound included.
+  const [warming, setWarming] = useState(!reducedMotion)
   const [osd, setOsd] = useState(true)
   const [chatOn, setChatOn] = useState(initialChat)
   const [guideOpen, setGuideOpen] = useState(false)
@@ -869,25 +893,28 @@ export default function TV() {
             <Stage>
               <Trim>
                 <Glass>
-                  <Screen
-                    channel={channel}
-                    source={source}
-                    volume={tvVolume}
-                    muted={tvMuted}
-                    checkingLive={liveQuery.isPending}
-                    onAutoMuted={() => {
-                      autoMuted.current = true
-                      setTvMuted(true)
-                    }}
-                    tapeId={tapeId}
-                    tapePaused={tapePaused}
-                    onTape={pickTape}
-                    onBreak={setTapeBreak}
-                    reducedMotion={reducedMotion}
-                  />
+                  {!warming && (
+                    <Screen
+                      channel={channel}
+                      source={source}
+                      volume={tvVolume}
+                      muted={tvMuted}
+                      checkingLive={liveQuery.isPending}
+                      onAutoMuted={() => {
+                        autoMuted.current = true
+                        setTvMuted(true)
+                      }}
+                      tapeId={tapeId}
+                      tapePaused={tapePaused}
+                      onTape={pickTape}
+                      onBreak={setTapeBreak}
+                      reducedMotion={reducedMotion}
+                    />
+                  )}
                   <Static playing={staticOn} reducedMotion={reducedMotion} />
+                  {warming && <PowerOn onDone={() => setWarming(false)} />}
                   {osdNote && <Osd role="status">{osdNote}</Osd>}
-                  {!osdNote && (osd || staticOn) && (
+                  {!osdNote && (osd || staticOn || warming) && (
                     <Osd aria-hidden>
                       CH {pad(channel.number)}
                       {layout !== 'narrow' && <div style={{ fontSize: 13 }}>{channel.name}</div>}

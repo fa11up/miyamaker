@@ -124,7 +124,6 @@ export default function Playlist({
   onAskedAdd,
   onLoad,
   onTuneIn,
-  onUpload,
   onTestTone,
   onInfo,
 }: {
@@ -145,7 +144,6 @@ export default function Playlist({
   onLoad: (id: string) => void
   /** Load the community station and start it. */
   onTuneIn: () => void
-  onUpload: () => void
   onTestTone?: () => void
   onInfo: () => void
 }) {
@@ -233,10 +231,7 @@ export default function Playlist({
               <>
                 <p>No tracks yet</p>
                 <span>
-                  Nothing on the station yet.{' '}
-                  <button type="button" onClick={onUpload}>
-                    Add your own track
-                  </button>
+                  Nothing on the station yet.
                 </span>
               </>
             ) : (
@@ -327,15 +322,6 @@ export default function Playlist({
                 {src.label}
               </button>
             ))}
-            <button
-              type="button"
-              onClick={() => {
-                onUpload()
-                setMenu(undefined)
-              }}
-            >
-              Add your own track
-            </button>
             {onTestTone && (
               <button
                 type="button"
