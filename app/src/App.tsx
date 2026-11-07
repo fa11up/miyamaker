@@ -8,6 +8,7 @@ import merge from 'lodash.merge'
 import { Provider } from 'react-redux'
 import { WagmiProvider } from 'wagmi'
 
+import PrivyMount from '@/wallet/PrivyMount'
 import { wagmiConfig } from './config/wagmi'
 import { GRAPHQL_URL } from './constants/indexer'
 import AccountProvider from './context/AccountProvider'
@@ -72,6 +73,7 @@ export default function App() {
                     <RadioProvider>
                       <Router />
                     </RadioProvider>
+                    <PrivyMount />
                   </ThemeProvider>
                 </RainbowKitProvider>
               </ClustersProvider>

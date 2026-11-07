@@ -11,6 +11,8 @@ import type { Chain } from 'viem'
 import { mainnet, robinhood, sepolia } from 'viem/chains'
 import { createConfig, fallback, http } from 'wagmi'
 
+import { passkeyWallet, socialWallet } from '@/wallet/newcomerWallets'
+
 export { mainnet, robinhood, sepolia }
 
 /** Chains miyaOS supports. The first entry is the default. */
@@ -52,12 +54,19 @@ export const walletConnectProjectId: string = import.meta.env.VITE_WC_PROJECT_ID
 
 const appName = 'miyamaker'
 
+/** Privy app id, for logging in with Google, X or email. It's public by design. Without one that option is hidden. */
+export const privyAppId: string = import.meta.env.VITE_PRIVY_APP_ID || ''
+
 /** Offered only when a wallet is there to answer: otherwise it waits on an extension that doesn't exist. */
 const browserWallets =
   typeof window !== 'undefined' && (window as { ethereum?: unknown }).ethereum ? [injectedWallet] : []
 
 const connectors = connectorsForWallets(
   [
+    {
+      groupName: 'New here?',
+      wallets: [passkeyWallet({ appName }), ...(privyAppId ? [socialWallet] : [])],
+    },
     {
       groupName: 'Recommended',
       wallets: walletConnectProjectId
