@@ -10,7 +10,6 @@ import { MOBILE_BREAKPOINT, space, text } from '@/theme/tokens'
 
 import { findCollection } from '../collections'
 import { shortAddress } from '../mints/dedupe'
-import { useOpenApp } from '../useOpenApp'
 import type { Size } from './fitArtwork'
 import { fitArtwork, isPixelArt } from './fitArtwork'
 import type { Selection } from './MyFiles'
@@ -269,7 +268,6 @@ export default function Properties({
   cascade: number
   hidden: boolean
 }) {
-  const openApp = useOpenApp()
   const okRef = useRef<HTMLButtonElement>(null)
   const boxRef = useRef<HTMLDivElement>(null)
   const host = useMemo(() => document.querySelector('.bwindow') ?? document.body, [])
@@ -327,7 +325,6 @@ export default function Properties({
   let preview: React.ReactNode
   let rows: [string, React.ReactNode][]
   let links: { label: string; href: string }[] = []
-  let app: 'mint' | 'auction' | undefined
   let description = ''
 
   if (selection.kind === 'nft') {
@@ -372,7 +369,6 @@ export default function Properties({
       { label: 'Etherscan', href: `${explorer}/nft/${n.contract}/${n.tokenId}` },
       ...(n.externalUrl ? [{ label: 'Website', href: n.externalUrl }] : []),
     ]
-    app = quarantined ? undefined : findCollection(n.chainId, n.contract)?.app
   } else {
     const d = selection.doc
     const explorer = explorerUrl(1)
@@ -420,22 +416,6 @@ export default function Properties({
               {l.label} ↗
             </a>
           ))}
-        {app && (
-          <button
-            type="button"
-            onClick={() => {
-              openApp(app!)
-              onClose()
-            }}
-          >
-            Open in {app === 'mint' ? 'Mint' : 'Auction'}
-          </button>
-        )}
-        {selection.kind === 'token' && (
-          <button type="button" onClick={() => openApp('swap')}>
-            Open in Trade
-          </button>
-        )}
         {isArt && (
           <button type="button" onClick={onView}>
             View

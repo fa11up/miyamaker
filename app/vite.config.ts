@@ -13,6 +13,7 @@ import svgr from 'vite-plugin-svgr'
 import { handleMarketRequest, MARKET_PREFIX, memoryCache, openSeaReader } from './api/_lib/market'
 import { handleOpenSeaRequest, OPENSEA_PROXY_PATH, quoteBigInts } from './api/_lib/opensea'
 import { handlePublicAccessRequest, memoryTapeStore, PUBLIC_ACCESS_PATH, youtubeLookup } from './api/_lib/publicaccess'
+import { kickOnAir, kickReader } from './api/_lib/tvkick'
 import { handleTvLiveRequest, TV_LIVE_PATH } from './api/_lib/tvlive'
 import { gatewayContentType, handleStationRequest, memoryStore, STATION_PATH } from './api/_lib/station'
 import { clientKey, createRateLimiter, handleZeroExRequest, PROXY_PREFIX, sameOrigin } from './api/_lib/zeroex'
@@ -151,7 +152,11 @@ function tvLiveDevProxy(env: Record<string, string>): Plugin {
       server.middlewares.use(TV_LIVE_PATH, async (req, res) => {
         const response = await handleTvLiveRequest(
           { method: req.method || 'GET' },
-          { key: process.env.YOUTUBE_API_KEY || env.YOUTUBE_API_KEY, cache }
+          {
+            key: process.env.YOUTUBE_API_KEY || env.YOUTUBE_API_KEY,
+            cache,
+            kick: () => kickOnAir({ read: kickReader, cache, now: Date.now() }),
+          }
         )
         res.statusCode = response.status
         response.headers.forEach((value, key) => res.setHeader(key, value))

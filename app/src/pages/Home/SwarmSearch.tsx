@@ -1,3 +1,4 @@
+import networkArt from 'assets/imd/network.webp'
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
@@ -8,7 +9,7 @@ import { LINKS } from '@/constants/miyanet'
 import { buildPath, STARTERS } from '@/pages/Build/starters'
 import { bevel, color, space, text } from '@/theme/tokens'
 
-import { PushButton } from './y2k'
+import { PushButton, y2k } from './y2k'
 
 /**
  * The way into the swarm from miyanet. Searching (or one of the three starters) opens the Build window on this site,
@@ -55,8 +56,9 @@ const SearchForm = styled.form`
   grid-template-columns: minmax(0, 1fr) auto;
   gap: ${space[2]};
   padding: ${space[2]};
-  background: ${color.face};
-  box-shadow: ${bevel.raised};
+  /* INFER's network, from its site. */
+  background: url(${networkArt}) center / 420px, ${y2k.nightMid};
+  box-shadow: inset 1px 1px #a98bf0, inset -1px -1px ${y2k.night}, 0 0 0 1px ${y2k.night};
   input {
     min-width: 0;
     height: 44px;

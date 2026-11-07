@@ -73,7 +73,7 @@ const Steps = styled.ol`
     height: 22px;
     font-family: ${font.ui};
     color: #fff;
-    background: ${color.shadow};
+    background: ${y2k.headTo};
   }
   li[aria-current='step'] {
     color: ${color.ink};

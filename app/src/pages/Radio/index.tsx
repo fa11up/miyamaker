@@ -14,7 +14,6 @@ import { LISTED_MUSIC_CHAINS } from '@/music/config'
 import { countNew, positionLabel } from '@/music/queue'
 import { musicDropsSource, stationSource } from '@/music/sources'
 import type { PlaylistSource, Track } from '@/music/types'
-import { useOpenApp } from '@/music/useOpenApp'
 import { useAppDispatch } from '@/store/hooks'
 import { closeWindow, minimizeWindow, setAlwaysOnTop } from '@/store/windows/actions'
 import type { PageKey } from '@/store/windows/reducer'
@@ -77,11 +76,12 @@ const Root = styled.div`
   && .console .lcd-glass {
     pointer-events: none;
   }
-  && .phone-strip,
-  && .phone-strip *,
-  && .phone-sheet,
-  && .phone-sheet * {
+  && .phone-radio,
+  && .phone-radio * {
     pointer-events: auto;
+  }
+  && .phone-radio .lcd-glass {
+    pointer-events: none;
   }
 
   /* Phones: the heart fills the width on its own backdrop, with the wing tips running off the edges. */
@@ -94,19 +94,95 @@ const Root = styled.div`
   }
 `
 
-/* Phones: the heart stays, and its controls come again under it at a size a thumb can press. */
-const PhoneStrip = styled.div`
+/* Phones get their own small set: a little heart with the three buttons that matter, then one tall glass. */
+const PhoneRadio = styled.div`
+  position: relative;
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+`
+
+const PhoneTop = styled.div`
+  position: absolute;
+  z-index: 2;
+  top: 10px;
+  left: 14px;
+  right: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--rk-frame-hi, #e4e8f4);
+  > div {
+    display: flex;
+    gap: 12px;
+  }
+`
+
+const PhoneHeart = styled.div`
+  flex: none;
+  position: relative;
+  align-self: center;
+  margin-top: 26px;
+`
+
+const PhoneGlass = styled.div`
+  flex: 1 1 200px;
+  min-height: 200px;
+  margin: 0 14px;
+  padding: 4px;
+  display: flex;
+  border-radius: 16px;
+  background: url(${chromeSkin}) 0 0 / 300px 300px;
+  box-shadow: 0 0 0 1px #10101d, 0 3px 8px rgba(2, 1, 10, 0.75);
+  > div {
+    position: relative;
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 10px 10px 8px;
+    overflow: hidden;
+    border-radius: 12px;
+    color: var(--rk-lcd-ink);
+    background: var(--rk-lcd);
+  }
+  .lcd-glass {
+    position: absolute;
+    inset: 0;
+    z-index: 3;
+    background: linear-gradient(160deg, rgba(255, 255, 255, 0.18) 0%, rgba(255, 255, 255, 0.03) 26%, transparent 42%),
+      repeating-linear-gradient(0deg, rgba(0, 0, 0, 0.035) 0 1px, transparent 1px 2px),
+      repeating-linear-gradient(90deg, rgba(0, 0, 0, 0.035) 0 1px, transparent 1px 2px);
+    box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.4);
+  }
+  .now {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    zoom: 2;
+  }
+  .list {
+    flex: 1 1 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    zoom: 1.5;
+  }
+`
+
+const PhoneButtons = styled.div`
+  flex: none;
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 6px;
-  padding: 16px 16px 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding: 12px 14px;
   button {
     all: unset;
     box-sizing: border-box;
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 6px;
     min-height: 44px;
     border-radius: 22px;
     font-size: 14px;
@@ -115,25 +191,25 @@ const PhoneStrip = styled.div`
     box-shadow: 0 0 0 1px #10101d, inset 0 1px 0 rgba(255, 255, 255, 0.7);
     cursor: pointer;
   }
-  button.play {
+  button[aria-pressed='true'] {
     color: #fff;
     background: radial-gradient(circle at 40% 25%, #ff9df0 0%, #c82bd0 45%, #57107f 100%);
   }
-  button:active:not(:disabled) {
+  button:active {
     filter: brightness(0.85);
   }
   button:focus-visible {
     outline: 2px dotted #fff;
     outline-offset: 2px;
   }
-  button:disabled {
-    cursor: default;
-    opacity: 0.45;
-  }
 `
 
 const PhoneSheet = styled.div`
-  padding: 0 16px 16px;
+  flex: none;
+  padding: 0 14px;
+  &:not(:empty) {
+    padding-bottom: 14px;
+  }
   .sheet-row {
     display: flex;
     flex-direction: column;
@@ -162,9 +238,6 @@ const PhoneSheet = styled.div`
 const Stage = styled.div`
   display: flex;
   justify-content: center;
-  .narrow & {
-    padding-top: 24px;
-  }
 `
 
 const Player = styled.div`
@@ -443,7 +516,6 @@ export default function RadioWindow() {
   const radio = useRadio()
   const clock = useRadioClock()
   const dispatch = useAppDispatch()
-  const openApp = useOpenApp()
   const { chainId } = useAccount()
 
   const [remaining, setRemaining] = useState(false)
@@ -604,11 +676,226 @@ export default function RadioWindow() {
   const cycleViz = () => setVizKind((k) => VIZ_KINDS[(VIZ_KINDS.indexOf(k) + 1) % VIZ_KINDS.length] as VizKind)
   const toggleMenu = (id: 'options' | 'info') => setMenu((m) => (m === id ? undefined : id))
 
-  const narrow = width > 0 && width <= 480
-  // Phones scale the heart itself to the width; the wings run off the sides.
-  const zoom = narrow ? Math.min(1, Math.floor((width / 360) * 100) / 100) : 1
+  // Before the first measure, go by the screen, so a phone never flashes the big player.
+  const narrow = (width || window.innerWidth) <= 480
+  // The phone's heart keeps to about half the screen's height, wings and all.
+  const zoom = Math.min(0.62, Math.floor(((width || window.innerWidth) / PLAYER.width) * 100) / 100)
   const menuSheet = narrow ? sheet : null
   const orbLabel = !queue.tracks.length ? 'Tune in to the community station' : radio.playing ? 'Pause' : 'Play'
+  const shellDefs = (
+    <defs>
+      <pattern id="radio-plate" patternUnits="userSpaceOnUse" width="256" height="256">
+        <image href={plateSkin} width="256" height="256" />
+      </pattern>
+      <radialGradient id="radio-plate-light" cx="0.42" cy="0.24" r="0.9">
+        <stop offset="0" stopColor="#c9a4ff" stopOpacity="0.3" />
+        <stop offset="0.45" stopColor="#23103e" stopOpacity="0.15" />
+        <stop offset="1" stopColor="#02010a" stopOpacity="0.8" />
+      </radialGradient>
+      <pattern id="radio-chrome" patternUnits="userSpaceOnUse" width="300" height="300">
+        <image href={chromeSkin} width="300" height="300" />
+      </pattern>
+      {/* Rounds whatever it's applied to into a lit, bulging solid. */}
+      <filter id="radio-solid" x="-15%" y="-15%" width="130%" height="130%" colorInterpolationFilters="sRGB">
+        <feGaussianBlur in="SourceAlpha" stdDeviation="2.2" result="height" />
+        <feSpecularLighting
+          in="height"
+          surfaceScale="5"
+          specularConstant="1.05"
+          specularExponent="22"
+          lightingColor="#ffffff"
+          result="shine"
+        >
+          <fePointLight x="150" y="-80" z="210" />
+        </feSpecularLighting>
+        <feComposite in="shine" in2="SourceAlpha" operator="in" result="lit" />
+        <feComposite in="SourceGraphic" in2="lit" operator="arithmetic" k1="0" k2="1" k3="0.9" k4="0" />
+      </filter>
+      <filter id="radio-drop" x="-15%" y="-15%" width="130%" height="130%">
+        <feDropShadow dx="0" dy="3" stdDeviation="3" floodColor="#02010a" floodOpacity="0.75" />
+      </filter>
+    </defs>
+
+  )
+  const wings = (
+    <Layer viewBox={`0 0 ${VIEW.width} ${VIEW.height}`} aria-hidden="true">
+      {TAIL.map((t) => (
+        <TailPlume key={t.angle} angle={t.angle} length={t.length} />
+      ))}
+      <Wing side="left" />
+      <Wing side="right" />
+    </Layer>
+  )
+  const playlist = (
+    <Playlist
+      radio={radio}
+      nowIndex={nowIndex}
+      nowDuration={duration}
+      sources={sources}
+      busy={busy}
+      checked={checked}
+      failed={failed}
+      sheet={menuSheet}
+      askAdd={askAdd}
+      onAskedAdd={clearAskAdd}
+      onLoad={loadSource}
+      onTuneIn={tuneIn}
+      onTestTone={import.meta.env.DEV ? loadTestTone : undefined}
+      onInfo={() => setMenu('info')}
+    />
+  )
+  const trackInfo = (
+    <>
+      {menu === 'info' && (
+        <Menu
+          label="Track info"
+          sheet={menuSheet}
+          style={{ left: 165, top: 84, width: 210 }}
+          onClose={() => setMenu(undefined)}
+        >
+          {current ? (
+            <dl>
+              {current.artwork && (
+                <>
+                  <dt>Cover</dt>
+                  <dd>
+                    <img src={resolveUri(current.artwork)} alt={`Cover of ${current.title}`} />
+                  </dd>
+                </>
+              )}
+              <dt>Title</dt>
+              <dd title={current.title}>{current.title}</dd>
+              <dt>Artist</dt>
+              <dd>{current.artist || 'Unknown'}</dd>
+              <dt>Length</dt>
+              <dd>{formatDuration(duration || undefined)}</dd>
+              <dt>Bitrate</dt>
+              <dd>{kbps ? `about ${kbps} kbps` : 'Unknown'}</dd>
+              <dt>Channels</dt>
+              <dd>{channels || 'Unknown'}</dd>
+              <dt>Source</dt>
+              <dd>{sourceWords(current)}</dd>
+            </dl>
+          ) : (
+            <dl>
+              <dt>Track</dt>
+              <dd>Nothing loaded</dd>
+            </dl>
+          )}
+        </Menu>
+      )}
+    </>
+  )
+  const phone = (
+    <PhoneRadio className="phone-radio">
+      <PhoneTop>
+        <PixelText text="MIYA RADIO" />
+        <div>
+          <Bead $size={28} aria-label="Minimize" onClick={() => dispatch(minimizeWindow({ value: pageId }))}>
+            <svg width="12" height="12" viewBox="0 0 7 7" fill="currentColor" shapeRendering="crispEdges" aria-hidden="true">
+              <path d="M1 5h5v1H1z" />
+            </svg>
+          </Bead>
+          <Bead $size={28} aria-label="Close" onClick={() => dispatch(closeWindow({ value: pageId }))}>
+            <svg width="12" height="12" viewBox="0 0 7 7" fill="currentColor" shapeRendering="crispEdges" aria-hidden="true">
+              <path d="M1 1h1v1H1zM5 1h1v1H5zM2 2h1v1H2zM4 2h1v1H4zM3 3h1v1H3zM2 4h1v1H2zM4 4h1v1H4zM1 5h1v1H1zM5 5h1v1H5z" />
+            </svg>
+          </Bead>
+        </div>
+      </PhoneTop>
+
+      <PhoneHeart style={{ width: PLAYER.width * zoom, height: 318 * zoom }}>
+        <Player style={{ zoom }}>
+          {wings}
+          <Layer viewBox={`0 0 ${PLAYER.width} ${PLAYER.height}`} aria-hidden="true">
+            {shellDefs}
+            <path className="heart-body" transform={`scale(${SCALE})`} d={HEART_PATH} />
+            <path className="heart-light" transform={`scale(${SCALE})`} d={HEART_PATH} />
+            <g filter="url(#radio-solid)">
+              <path className="heart-rim" transform={`scale(${SCALE})`} d={HEART_PATH} />
+            </g>
+          </Layer>
+          <Bead $size={70} style={at(150, 118)} aria-label="Previous" onClick={radio.prev} disabled={!current}>
+            <Glyph kind="prev" size={28} />
+          </Bead>
+          <Bead
+            $orb
+            $size={104}
+            $lit={radio.playing}
+            style={at(218, 101)}
+            aria-label={orbLabel}
+            onClick={orb}
+            disabled={busy && !queue.tracks.length}
+          >
+            <Glyph kind={radio.playing ? 'pause' : 'play'} size={40} />
+          </Bead>
+          <Bead $size={70} style={at(320, 118)} aria-label="Next" onClick={radio.next} disabled={!current}>
+            <Glyph kind="next" size={28} />
+          </Bead>
+        </Player>
+      </PhoneHeart>
+
+      <PhoneGlass>
+        <div>
+          <div className="now">
+            <Marquee value={message || title} width={Math.max(60, Math.floor((width - 56) / 2))} />
+          </div>
+          <div className="now">
+            <TimeButton
+              type="button"
+              onClick={() => setRemaining((r) => !r)}
+              aria-label={`Time ${timeText}${remaining ? ' remaining' : ''}. Press to switch elapsed and remaining.`}
+            >
+              <Clock seconds={clockSeconds} negative={countdown} blank={!current} paused={paused} />
+            </TimeButton>
+          </div>
+          <Slider
+            $thumb={26}
+            $thumbH={14}
+            aria-label="Seek"
+            aria-valuetext={`${formatDuration(seekValue)} of ${formatDuration(duration || undefined)}`}
+            min={0}
+            max={seekMax}
+            step={0.1}
+            value={seekValue}
+            style={{ width: '100%', height: 14, flex: 'none' }}
+            disabled={!current || !duration}
+            onChange={(e) => setScrub(Number(e.target.value))}
+            onPointerUp={commitSeek}
+            onKeyUp={commitSeek}
+          />
+          <Panel className="list">
+            {view === 'pl' ? (
+              playlist
+            ) : (
+              <Visualizer
+                kind={vizKind}
+                onCycle={cycleViz}
+                mode={radio.visualizer}
+                playing={radio.playing}
+                getAnalyser={radio.getAnalyser}
+                skin={skin.id}
+                levelTarget={rootRef}
+              />
+            )}
+          </Panel>
+          <div className="lcd-glass" />
+        </div>
+      </PhoneGlass>
+
+      <PhoneButtons>
+        <button type="button" aria-pressed={view === 'pl'} onClick={() => show(view === 'pl' ? 'viz' : 'pl')}>
+          Playlist
+        </button>
+        <button type="button" onClick={openAdd}>
+          Add music
+        </button>
+      </PhoneButtons>
+      <PhoneSheet ref={setSheet} />
+      {trackInfo}
+      <ScreenReaderOnly role={radio.error ? 'alert' : 'status'}>{message}</ScreenReaderOnly>
+    </PhoneRadio>
+  )
   const setRoot = (el: HTMLDivElement | null) => {
     ;(rootRef as { current: HTMLDivElement | null }).current = el
     sizeRef(el)
@@ -623,50 +910,13 @@ export default function RadioWindow() {
       onKeyDown={onKeyDown}
       data-skin={skin.id}
     >
+      {narrow ? phone : (
       <Stage>
-        <Player style={{ zoom }}>
-          <Layer viewBox={`0 0 ${VIEW.width} ${VIEW.height}`} aria-hidden="true">
-            {TAIL.map((t) => (
-              <TailPlume key={t.angle} angle={t.angle} length={t.length} />
-            ))}
-            <Wing side="left" />
-            <Wing side="right" />
-          </Layer>
+        <Player>
+          {wings}
 
           <Layer viewBox={`0 0 ${PLAYER.width} ${PLAYER.height}`} aria-hidden="true">
-            <defs>
-              <pattern id="radio-plate" patternUnits="userSpaceOnUse" width="256" height="256">
-                <image href={plateSkin} width="256" height="256" />
-              </pattern>
-              <radialGradient id="radio-plate-light" cx="0.42" cy="0.24" r="0.9">
-                <stop offset="0" stopColor="#c9a4ff" stopOpacity="0.3" />
-                <stop offset="0.45" stopColor="#23103e" stopOpacity="0.15" />
-                <stop offset="1" stopColor="#02010a" stopOpacity="0.8" />
-              </radialGradient>
-              <pattern id="radio-chrome" patternUnits="userSpaceOnUse" width="300" height="300">
-                <image href={chromeSkin} width="300" height="300" />
-              </pattern>
-              {/* Rounds whatever it's applied to into a lit, bulging solid. */}
-              <filter id="radio-solid" x="-15%" y="-15%" width="130%" height="130%" colorInterpolationFilters="sRGB">
-                <feGaussianBlur in="SourceAlpha" stdDeviation="2.2" result="height" />
-                <feSpecularLighting
-                  in="height"
-                  surfaceScale="5"
-                  specularConstant="1.05"
-                  specularExponent="22"
-                  lightingColor="#ffffff"
-                  result="shine"
-                >
-                  <fePointLight x="150" y="-80" z="210" />
-                </feSpecularLighting>
-                <feComposite in="shine" in2="SourceAlpha" operator="in" result="lit" />
-                <feComposite in="SourceGraphic" in2="lit" operator="arithmetic" k1="0" k2="1" k3="0.9" k4="0" />
-              </filter>
-              <filter id="radio-drop" x="-15%" y="-15%" width="130%" height="130%">
-                <feDropShadow dx="0" dy="3" stdDeviation="3" floodColor="#02010a" floodOpacity="0.75" />
-              </filter>
-            </defs>
-
+            {shellDefs}
             {/* The plate stays dark; only the rim around it catches the light. */}
             <path className="heart-body title-bar" transform={`scale(${SCALE})`} d={HEART_PATH} />
             <path className="heart-light" transform={`scale(${SCALE})`} d={HEART_PATH} />
@@ -964,25 +1214,7 @@ export default function RadioWindow() {
                   />
                 )}
                 {view === 'eq' && <Equalizer radio={radio} />}
-                {view === 'pl' && (
-                  <Playlist
-                    radio={radio}
-                    nowIndex={nowIndex}
-                    nowDuration={duration}
-                    sources={sources}
-                    busy={busy}
-                    checked={checked}
-                    failed={failed}
-                    sheet={menuSheet}
-                    askAdd={askAdd}
-                    onAskedAdd={clearAskAdd}
-                    onLoad={loadSource}
-                    onTuneIn={tuneIn}
-                    onUpload={() => openApp('dropmusic')}
-                    onTestTone={import.meta.env.DEV ? loadTestTone : undefined}
-                    onInfo={() => setMenu('info')}
-                  />
-                )}
+                {view === 'pl' && playlist}
               </Panel>
 
               <Slider
@@ -1039,79 +1271,12 @@ export default function RadioWindow() {
                 </button>
               </Menu>
             )}
-            {menu === 'info' && (
-              <Menu
-                label="Track info"
-                sheet={menuSheet}
-                style={{ left: 165, top: 84, width: 210 }}
-                onClose={() => setMenu(undefined)}
-              >
-                {current ? (
-                  <dl>
-                    {current.artwork && (
-                      <>
-                        <dt>Cover</dt>
-                        <dd>
-                          <img src={resolveUri(current.artwork)} alt={`Cover of ${current.title}`} />
-                        </dd>
-                      </>
-                    )}
-                    <dt>Title</dt>
-                    <dd title={current.title}>{current.title}</dd>
-                    <dt>Artist</dt>
-                    <dd>{current.artist || 'Unknown'}</dd>
-                    <dt>Length</dt>
-                    <dd>{formatDuration(duration || undefined)}</dd>
-                    <dt>Bitrate</dt>
-                    <dd>{kbps ? `about ${kbps} kbps` : 'Unknown'}</dd>
-                    <dt>Channels</dt>
-                    <dd>{channels || 'Unknown'}</dd>
-                    <dt>Source</dt>
-                    <dd>{sourceWords(current)}</dd>
-                  </dl>
-                ) : (
-                  <dl>
-                    <dt>Track</dt>
-                    <dd>Nothing loaded</dd>
-                  </dl>
-                )}
-              </Menu>
-            )}
+            {trackInfo}
 
             <ScreenReaderOnly role={radio.error ? 'alert' : 'status'}>{message}</ScreenReaderOnly>
           </Controls>
         </Player>
       </Stage>
-      {narrow && (
-        <>
-          <PhoneStrip className="phone-strip" role="group" aria-label="Radio controls">
-            <button type="button" aria-label="Previous" onClick={radio.prev} disabled={!current}>
-              <Glyph kind="prev" size={14} />
-            </button>
-            <button
-              type="button"
-              className="play"
-              aria-label={orbLabel}
-              onClick={orb}
-              disabled={busy && !queue.tracks.length}
-            >
-              <Glyph kind={radio.playing ? 'pause' : 'play'} size={16} />
-            </button>
-            <button type="button" aria-label="Next" onClick={radio.next} disabled={!current}>
-              <Glyph kind="next" size={14} />
-            </button>
-            <button type="button" onClick={openAdd}>
-              Add music
-            </button>
-            <button type="button" aria-pressed={view === 'pl'} onClick={() => show('pl')}>
-              Playlist
-            </button>
-            <button type="button" onClick={() => dispatch(closeWindow({ value: pageId }))}>
-              Close
-            </button>
-          </PhoneStrip>
-          <PhoneSheet className="phone-sheet" ref={setSheet} />
-        </>
       )}
     </Root>
   )

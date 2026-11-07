@@ -48,13 +48,19 @@ const TaskButton = styled(HighlightButton)`
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-`
-
-const MobileButton = styled(HighlightButton)`
-  height: 100%;
-  min-width: 44px;
-  padding: 0 12px;
-  font-size: ${text.sm};
+  /* A phone's few inches: a thumb's width each, and only the icon once names won't fit. */
+  &&.phone {
+    flex-basis: 120px;
+    min-width: 44px;
+    padding: 0 8px;
+    justify-content: center;
+  }
+  &&.phone.crowded {
+    flex: 0 0 44px;
+    span {
+      display: none;
+    }
+  }
 `
 
 const Row = styled.div`
@@ -85,13 +91,12 @@ const TaskRow = styled(Row)`
   > ${ButtonContainer} {
     flex: 1 1 0;
     min-width: 0;
+    overflow-x: auto;
+    scrollbar-width: none;
   }
-`
-
-const MobileButtons = styled(ButtonContainer)`
-  display: grid;
-  grid-auto-flow: column;
-  grid-auto-columns: 1fr;
+  > ${ButtonContainer}::-webkit-scrollbar {
+    display: none;
+  }
 `
 
 const InsetContainer = styled.div`
@@ -124,67 +129,52 @@ export default function TaskBar({
   focus,
   onClick,
   mobile,
-  onOpenSwitcher,
-  onHome,
 }: {
   active: string[]
   focus: string | undefined
   onClick: (id: string) => void
   mobile?: boolean
-  onOpenSwitcher?: () => void
-  onHome?: () => void
 }) {
   const [waves, toggleWaves] = useWaves()
   const { block } = useAccount()
   const [, , , minimized] = useWindows()
-  const Left = mobile ? Row : TaskRow
+  const shown = active.filter((id) => !(id === 'radio' && minimized.includes(id)))
 
   return (
     <NoScroll>
       <TaskBarStyled>
-        <Left>
+        <TaskRow>
           <StartButton />
           <VerticalSeparator />
-          {mobile ? (
-            <MobileButtons>
-              <MobileButton className="free-height" onClick={onHome}>
-                Desktop
-              </MobileButton>
-              <MobileButton className="free-height" onClick={onOpenSwitcher} title="Switch programs">
-                Programs{active.length ? ` (${active.length})` : ''}
-              </MobileButton>
-            </MobileButtons>
-          ) : (
-            <ButtonContainer>
-              {/* The minimized radio lives in its dock by the wave button instead. */}
-              {active
-                .filter((id) => !(id === 'radio' && minimized.includes(id)))
-                .map((id) => {
-                  const page = Pages[id]!
-                  return (
-                    <TaskButton
-                      key={`${id}-taskbar`}
-                      className={`free-height free-width ${focus === id ? 'focus-taskbar' : ''}`}
-                      onClick={() => onClick(id)}
-                      title={page.label}
-                      aria-pressed={focus === id && !minimized.includes(id)}
-                    >
-                      <img
-                        src={page.icon?.src}
-                        srcSet={page.icon?.srcset}
-                        sizes="(min-width: 1px) 16px, 60px"
-                        width={16}
-                        height={16}
-                        style={{ minWidth: 16, width: 16, border: 'none', margin: 0 }}
-                        alt=""
-                      />
-                      <span>{page.label}</span>
-                    </TaskButton>
-                  )
-                })}
-            </ButtonContainer>
-          )}
-        </Left>
+          <ButtonContainer>
+            {/* The minimized radio lives in its dock by the wave button instead. */}
+            {shown.map((id) => {
+              const page = Pages[id]!
+              const phone = mobile ? `phone ${shown.length > 2 ? 'crowded' : ''}` : ''
+              return (
+                <TaskButton
+                  key={`${id}-taskbar`}
+                  className={`free-height free-width ${phone} ${focus === id ? 'focus-taskbar' : ''}`}
+                  onClick={() => onClick(id)}
+                  title={page.label}
+                  aria-label={page.label}
+                  aria-pressed={focus === id && !minimized.includes(id)}
+                >
+                  <img
+                    src={page.icon?.src}
+                    srcSet={page.icon?.srcset}
+                    sizes="(min-width: 1px) 16px, 60px"
+                    width={16}
+                    height={16}
+                    style={{ minWidth: 16, width: 16, border: 'none', margin: 0 }}
+                    alt=""
+                  />
+                  <span>{page.label}</span>
+                </TaskButton>
+              )
+            })}
+          </ButtonContainer>
+        </TaskRow>
         <Row>
           <VerticalSeparator />
           <InsetContainer>

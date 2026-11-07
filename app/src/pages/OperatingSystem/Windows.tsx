@@ -2,6 +2,9 @@ import type { ReactNode, RefObject } from 'react'
 import { useEffect, useRef, useState } from 'react'
 import type { DraggableData } from 'react-draggable'
 import Draggable from 'react-draggable'
+
+import Pages from '@/constants/pages'
+import AppBoot from '@/components/AppBoot'
 import { useWindowSize } from 'usehooks-ts'
 
 import { useWindowDimensions, useWindowPosition } from '@/store/windows/hooks'
@@ -135,6 +138,7 @@ export default function Windows({
   label,
   baseDepth = 2000,
   shaped = false,
+  noTrail = false,
   fixedSize = false,
   corner,
 }: {
@@ -148,6 +152,7 @@ export default function Windows({
   label?: string
   baseDepth?: number
   shaped?: boolean
+  noTrail?: boolean
   fixedSize?: boolean
   corner?: number
 }) {
@@ -274,6 +279,7 @@ export default function Windows({
 
   const moveIt = (x: number, y: number) => {
     setDragPosition({ x, y })
+    if (noTrail) return
     const lastWindow = dummyWindowsArray[dummyWindowsArray.length - 1]
     if (dummyWindowsArray.length < 100)
       setdummyWindowsArray((prev) => [...prev, { x: x + 5, y: y + 5, i: lastWindow ? lastWindow.i + 1 : 1 }])
@@ -301,7 +307,12 @@ export default function Windows({
   return position && dragPosition ? (
     <>
       <DraggableWrapper
-        className={[mobile ? 'fullscreen' : '', minimized ? 'minimized' : '', focused ? 'is-focused' : '']
+        className={[
+          mobile ? 'fullscreen' : '',
+          mobile && Pages[identifier]?.phoneCard ? 'phone-card' : '',
+          minimized ? 'minimized' : '',
+          focused ? 'is-focused' : '',
+        ]
           .filter(Boolean)
           .join(' ')}
         disabled={mobile}
@@ -328,7 +339,7 @@ export default function Windows({
             borderRadius: mobile ? undefined : corner,
           }}
         >
-          {children}
+          <AppBoot identifier={identifier}>{children}</AppBoot>
           {resizable &&
             EDGES.map((edge) => (
               <div

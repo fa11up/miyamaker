@@ -15,7 +15,7 @@ export const y2k = {
   headFrom: '#24135f',
   headTo: '#5b37b8',
   paper: color.well,
-  paperAlt: '#ebe7ff',
+  paperAlt: '#f4e2ff',
   phosphor: '#9dffb0',
   lcd: '#ff4f8b',
   tape: '#ffd400',
@@ -131,6 +131,7 @@ export function PortalBox({
   children,
   className,
   style,
+  art,
 }: {
   id?: string
   title: ReactNode
@@ -140,10 +141,18 @@ export function PortalBox({
   children: ReactNode
   className?: string
   style?: CSSProperties
+  /** A site's generative art, in white on nothing, worked into the title strip. */
+  art?: string
 }) {
   return (
     <BoxShell id={id} aria-label={label} className={className} style={style}>
-      <BoxHead>
+      <BoxHead
+        style={
+          art
+            ? { background: `url(${art}) right center / 320px, linear-gradient(90deg, ${y2k.headFrom}, ${y2k.headTo})` }
+            : undefined
+        }
+      >
         {icon}
         <h2>{title}</h2>
         {aside && <div className="aside">{aside}</div>}
@@ -190,7 +199,7 @@ export const DataTable = styled.table`
   th,
   td {
     padding: 5px ${space[2]};
-    border-bottom: 1px dotted ${color.light};
+    border-bottom: 1px dotted #cdb8f5;
     vertical-align: baseline;
   }
   tr:last-child th,
@@ -246,20 +255,21 @@ export const PushButton = styled.button`
   border-radius: 0;
   min-height: 32px;
   padding: ${space[1]} ${space[3]};
-  background: ${color.face};
-  color: ${color.ink};
+  background: linear-gradient(180deg, #ffd6f7 0%, ${color.accent} 100%);
+  color: ${y2k.night};
   font-family: ${font.ui};
   font-size: ${text.sm};
-  box-shadow: ${bevel.raised};
+  box-shadow: inset 1px 1px #fff, inset -1px -1px ${color.accentDark}, 0 0 0 1px ${y2k.night};
   cursor: pointer;
   &:hover:not(:disabled) {
-    background: ${color.faceLight};
+    background: linear-gradient(180deg, #fff0fb 0%, #eaa0ea 100%);
   }
   &:active:not(:disabled) {
-    box-shadow: ${bevel.pressed};
+    box-shadow: inset 1px 1px ${color.accentDark}, inset -1px -1px #fff, 0 0 0 1px ${y2k.night};
   }
   &:disabled {
-    color: ${color.shadow};
+    background: linear-gradient(180deg, ${y2k.headTo} 0%, ${y2k.headFrom} 100%);
+    color: #d6c8ff;
     cursor: not-allowed;
   }
 `

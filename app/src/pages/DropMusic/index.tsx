@@ -31,7 +31,6 @@ import { useRadio } from '@/context/RadioProvider'
 import { burst } from '@/desktop/mints/confetti'
 import { useReducedMotion } from '@/desktop/prefs'
 import { pctLabel } from '@/miyamints/split'
-import { useOpenManage } from '@/miyamints/useOpenManage'
 import type { FileCheck } from '@/music/audio'
 import {
   AUDIO_ACCEPT,
@@ -47,7 +46,6 @@ import {
 import { refusedWords, storageWords, storedBytes } from '@/music/creatorWords'
 import { parseAlignmentPct, parsePriceEth, parseSupply } from '@/music/drop'
 import { readAudioDuration } from '@/music/readDuration'
-import { useOpenApp } from '@/music/useOpenApp'
 import { useAppDispatch } from '@/store/hooks'
 import { closeWindow, minimizeWindow } from '@/store/windows/actions'
 import { useFullscreen } from '@/store/windows/hooks'
@@ -58,6 +56,7 @@ import { FREE_BYTES } from '@/utils/fundAndUpload'
 import { resolveUri } from '@/utils/resolveUri'
 import { useStorageQuote } from '@/utils/useStorageQuote'
 
+import StudioBoot from './Boot'
 import ReleasePreview from './ReleasePreview'
 import waterSkin from './skin/water.webp'
 import type { StageStatus } from './Stage'
@@ -445,8 +444,6 @@ export default function DropMusicWindow() {
   const dispatch = useAppDispatch()
   const [fullscreen, toggleFullscreen] = useFullscreen(pageId)
   const radio = useRadio()
-  const openApp = useOpenApp()
-  const openManage = useOpenManage()
   const { isConnected, chain } = useAccount()
   const { openConnectModal } = useConnectModal()
   const music = useMusicChain()
@@ -468,6 +465,9 @@ export default function DropMusicWindow() {
   const coverInput = useRef<HTMLInputElement>(null)
   const tabRefs = useRef<(HTMLButtonElement | null)[]>([])
   const stageRef = useRef<HTMLDivElement>(null)
+  const [boot, setBoot] = useState<'playing' | 'reveal' | 'done'>(() =>
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'done' : 'playing'
+  )
   const sessionRef = useRef<HTMLElement>(null)
 
   const set = (k: keyof Form) => (e: { target: { value: string } }) => setForm((f) => ({ ...f, [k]: e.target.value }))
@@ -915,9 +915,15 @@ export default function DropMusicWindow() {
       >
         {Pages.dropmusic?.label}
       </TitleBar>
-      <Layout ref={layoutRef} data-scroll className={narrow ? 'narrow' : wide ? 'wide' : undefined}>
+      <Layout
+        ref={layoutRef}
+        data-scroll
+        className={narrow ? 'narrow' : wide ? 'wide' : undefined}
+        style={boot === 'done' ? undefined : { position: 'relative', overflow: 'hidden' }}
+      >
         {guard.dialog}
-        <Wrap>
+        {boot !== 'done' && <StudioBoot onReveal={() => setBoot('reveal')} onDone={() => setBoot('done')} />}
+        <Wrap style={boot === 'done' ? undefined : { opacity: boot === 'reveal' ? 1 : 0, transition: 'opacity 0.3s linear' }}>
           <Head>
             <div>
               <ChromeTitle>Drop Music</ChromeTitle>
@@ -1394,19 +1400,6 @@ export default function DropMusicWindow() {
                         .{' '}
                         <SmallButton type="button" onClick={playReleased}>
                           Play in radio
-                        </SmallButton>{' '}
-                        <SmallButton type="button" onClick={() => openApp('mint')}>
-                          Open Mint
-                        </SmallButton>{' '}
-                        <SmallButton
-                          type="button"
-                          onClick={() =>
-                            chain &&
-                            drop.launched.instance &&
-                            openManage({ chainId: chain.id, address: drop.launched.instance, kind: 'editions' })
-                          }
-                        >
-                          Open in Manager
                         </SmallButton>{' '}
                         <SmallButton
                           type="button"

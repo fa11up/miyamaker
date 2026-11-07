@@ -21,7 +21,6 @@ import { keyOf, KIND_LABEL, kindFromFactory } from '@/miyamints/collections'
 import { rememberLaunch } from '@/miyamints/local'
 import { useMyLaunches } from '@/miyamints/useMyLaunches'
 import { setManageTarget, useManageTarget, useOpenManage } from '@/miyamints/useOpenManage'
-import { useOpenApp } from '@/music/useOpenApp'
 import { updateManagedCollection } from '@/store/experience/actions'
 import { useAppDispatch, useAppSelector } from '@/store/hooks'
 import { closeWindow, minimizeWindow } from '@/store/windows/actions'
@@ -84,7 +83,6 @@ export default function ManagePage() {
   const { address: wallet, isConnected, chainId: walletChainId } = useAccount()
   const { openConnectModal } = useConnectModal()
   const { switchChain } = useSwitchChain()
-  const openApp = useOpenApp()
   const openManage = useOpenManage()
   const target = useManageTarget()
   const stored = useAppSelector((state) => state.experience.managedCollection)
@@ -197,7 +195,6 @@ export default function ManagePage() {
                       error={mine.error}
                       onRetry={() => mine.refetch()}
                       onPick={(l) => openManage({ chainId: l.chainId, address: l.address, kind: l.kind })}
-                      onLaunch={() => openApp('launch')}
                     />
                   </div>
                 ) : (

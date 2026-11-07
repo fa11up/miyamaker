@@ -2,30 +2,18 @@ import { useConnectModal } from '@rainbow-me/rainbowkit'
 import PlaceholderImage from 'assets/explorer/sample/collections.jpeg'
 import { useEffect, useMemo, useState } from 'react'
 import styled from 'styled-components/macro'
-import { useElementSize } from 'usehooks-ts'
 import { formatEther } from 'viem'
 
-import LoadingHourglass from '@/assets/loading_hourglass.gif'
-import {
-  BigButton,
-  Chip,
-  DisplayTitle,
-  Eyebrow,
-  Panel,
-  ProgressMeter,
-  Skeleton,
-  StatRow,
-  StatusBox,
-  Stepper,
-  Well,
-} from '@/components/Retro'
+import { Skeleton } from '@/components/Retro'
 import { explorerUrl } from '@/config/wagmi'
 import { MIYAMINI_CHAIN_ID, MIYAMINI_CONTRACT } from '@/constants/contracts'
 import ArtistTag from '@/pages/Mint/ArtistTag'
-import BackToMints from '@/pages/Mint/BackToMints'
 import { LIVE_MINTS } from '@/pages/Mint/liveMints'
-import { bevel, color, space, text } from '@/theme/tokens'
+import { color, space, text } from '@/theme/tokens'
 
+import type { MachineStatus } from '../handheld/MintCart'
+import MintCart from '../handheld/MintCart'
+import type { LampTone } from '../handheld/status'
 import MintNeeds from '../MintNeeds'
 import { describeError, useMiyaminiMint, useMiyaminiState, useTokenMeta } from './useMiyamini'
 
@@ -33,105 +21,24 @@ import { describeError, useMiyaminiMint, useMiyaminiState, useTokenMeta } from '
 const MAX_PER_TX = 10
 const RECENT_COUNT = 8
 
-const Layout = styled.div`
-  height: 100%;
-  overflow-y: auto;
-  overflow-x: hidden;
-`
-
-const Grid = styled.div`
-  display: grid;
-  grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
-  grid-template-areas:
-    'head head'
-    'preview mint'
-    'recent recent';
-  gap: ${space[4]};
-  padding: ${space[4]};
-  max-width: 980px;
-  margin: 0 auto;
-
-  .narrow & {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-areas: 'head' 'preview' 'mint' 'recent';
-    gap: ${space[3]};
-    padding: ${space[3]};
-  }
-`
-
-const Head = styled.header`
-  grid-area: head;
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: ${space[2]} ${space[4]};
-`
-
-const PreviewPanel = styled(Panel)`
-  grid-area: preview;
-`
-
-const MintPanel = styled(Panel)`
-  grid-area: mint;
-  justify-content: flex-start;
-`
-
-const RecentPanel = styled(Panel)`
-  grid-area: recent;
-`
-
-const Frame = styled(Well)`
-  position: relative;
-  aspect-ratio: 1 / 1;
-  overflow: hidden;
-  padding: 3px;
-  img {
-    width: 100%;
-    height: 100%;
-    max-width: none;
-    object-fit: cover;
-    border: none;
-    margin: 0;
-    display: block;
-    image-rendering: auto;
-  }
-  img:hover {
-    border: none;
-  }
-`
-
-const Caption = styled.div`
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: ${space[2]};
-  font-size: ${text.sm};
-  a {
-    color: ${color.link};
-  }
-`
-
 const Thumbs = styled.div`
   display: grid;
-  grid-template-columns: repeat(${RECENT_COUNT}, minmax(0, 1fr));
-  gap: ${space[2]};
-  .narrow & {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-  }
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: ${space[1]};
 `
 
 const Thumb = styled.button<{ selected?: boolean }>`
-  padding: 3px;
-  border: none;
-  background: ${color.well};
-  box-shadow: ${({ selected }) => (selected ? `${bevel.sunken}, 0 0 0 2px ${color.accent}` : bevel.raised)};
-  cursor: pointer;
   display: flex;
   flex-direction: column;
   gap: 2px;
+  padding: 3px;
+  border: none;
+  border-radius: 2px;
+  cursor: pointer;
   font-size: ${text.xs};
-  color: ${color.inkMuted};
+  color: ${color.ink};
+  background: #e8e4f5;
+  box-shadow: ${({ selected }) => (selected ? '0 0 0 3px #ff2eaa' : '0 2px 3px rgba(0, 0, 0, 0.6)')};
   img {
     width: 100%;
     aspect-ratio: 1 / 1;
@@ -143,41 +50,10 @@ const Thumb = styled.button<{ selected?: boolean }>`
   img:hover {
     border: none;
   }
-  &:hover {
-    background: ${color.faceLight};
+  &:focus-visible {
+    outline: 2px dashed #fff35c;
+    outline-offset: 2px;
   }
-`
-
-const Muted = styled.p`
-  margin: 0;
-  font-size: ${text.sm};
-  color: ${color.inkMuted};
-  line-height: 1.5;
-`
-
-const Details = styled(Well)`
-  margin-top: auto;
-  padding: ${space[2]} ${space[3]};
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  font-size: ${text.xs};
-  > div {
-    display: flex;
-    justify-content: space-between;
-    gap: ${space[2]};
-  }
-  > div > span:first-child {
-    color: ${color.inkMuted};
-  }
-  a {
-    color: ${color.link};
-  }
-`
-
-const SmallLink = styled.a`
-  font-size: ${text.xs};
-  color: ${color.link};
 `
 
 function TokenImage({ id, alt }: { id: number | undefined; alt: string }) {
@@ -185,7 +61,7 @@ function TokenImage({ id, alt }: { id: number | undefined; alt: string }) {
   const [failed, setFailed] = useState(false)
   useEffect(() => setFailed(false), [id])
 
-  if (!id) return <img src={PlaceholderImage} alt="miyamaker mini preview" />
+  if (!id) return <img src={CREDIT?.image || PlaceholderImage} alt="miyamaker mini cover" />
   if (isLoading || !data) return <Skeleton h="100%" />
   if (failed) return <img src={PlaceholderImage} alt={alt} style={{ opacity: 0.5 }} />
   return <img src={data.image} alt={data.name || alt} loading="lazy" onError={() => setFailed(true)} />
@@ -201,12 +77,7 @@ const formatEth = (wei: bigint | undefined) => {
 
 const CREDIT = LIVE_MINTS.find((e) => e.slug === 'miyamini')
 
-export default function MiyaminiMint({
-  onBack,
-}: {
-  /** Back to the Mint home (all live mints). */
-  onBack?: () => void
-}) {
+export default function MiyaminiMint() {
   const state = useMiyaminiState()
   const tx = useMiyaminiMint()
   const { openConnectModal } = useConnectModal()
@@ -239,7 +110,8 @@ export default function MiyaminiMint({
     return ids
   }, [state.totalSupply])
 
-  const previewId = selected ?? recentIds[0]
+  // The collection's fixed cover, until someone picks a recent mint to look at.
+  const previewId = selected
   const busy = tx.isAwaitingWallet || tx.isConfirming
   const err = describeError(tx.error)
   const txUrl = tx.hash ? `${explorerUrl(MIYAMINI_CHAIN_ID)}/tx/${tx.hash}` : undefined
@@ -261,247 +133,146 @@ export default function MiyaminiMint({
     if (tx.isConfirming) return { label: 'Minting…', disabled: true, onClick: () => {} }
     if (insufficient) return { label: 'Not enough ETH', disabled: true, onClick: () => {} }
     return {
-      label: `Mint ${quantity}`,
+      label: `Mint ${quantity} for ${formatEth(total)} ETH`,
       disabled: state.price === undefined,
       onClick: () => state.price !== undefined && tx.mint(quantity, state.price),
     }
   })()
 
-  const [layoutRef, { width: layoutWidth }] = useElementSize()
-  const narrow = layoutWidth > 0 && layoutWidth <= 620
+  const status: MachineStatus | undefined = tx.isAwaitingWallet
+    ? { tone: 'info', body: 'Confirm the transaction in your wallet.' }
+    : tx.isConfirming
+    ? {
+        tone: 'info',
+        body: (
+          <>
+            Transaction sent, waiting for confirmation.{' '}
+            <a href={txUrl} target="_blank" rel="noreferrer">
+              View on Etherscan
+            </a>
+          </>
+        ),
+      }
+    : tx.reverted || (tx.error && !busy)
+    ? {
+        tone: err.cancelled ? 'info' : 'error',
+        alert: true,
+        body: (
+          <>
+            {tx.reverted ? 'The transaction reverted.' : err.message}{' '}
+            {txUrl && (
+              <a href={txUrl} target="_blank" rel="noreferrer">
+                View on Etherscan
+              </a>
+            )}
+          </>
+        ),
+      }
+    : undefined
+
+  const lamp: { tone: LampTone; label: string } = state.isError
+    ? { tone: 'warn', label: 'Can’t reach chain' }
+    : soldOut
+    ? { tone: 'off', label: 'Sold out' }
+    : state.mintOpen
+    ? { tone: 'ok', label: 'Mint open' }
+    : state.mintOpen === false
+    ? { tone: 'warn', label: 'Mint closed' }
+    : { tone: 'off', label: 'Checking…' }
 
   return (
-    <Layout ref={layoutRef} className={narrow ? 'narrow' : undefined}>
-      <Grid>
-        <Head>
-          <div>
-            <Eyebrow style={{ color: color.highlight, textShadow: `1px 1px 0 ${color.dark}` }}>
-              MIYAMINI · Ethereum
-            </Eyebrow>
-            <DisplayTitle>{state.name || 'miyamaker mini'}</DisplayTitle>
-            <ArtistTag
-              artist={CREDIT?.artist}
-              logo={CREDIT?.artistLogo}
-              url={CREDIT?.artistUrl}
-              style={{ color: color.highlight, textShadow: `1px 1px 0 ${color.dark}` }}
-            />
-          </div>
-          <div style={{ display: 'flex', gap: space[2], alignItems: 'center', flexWrap: 'wrap' }}>
-            {state.isLoading ? (
-              <Chip tone="off">Reading chain</Chip>
-            ) : state.isError ? (
-              <Chip tone="warn">RPC unavailable</Chip>
-            ) : soldOut ? (
-              <Chip tone="off">Sold out</Chip>
-            ) : state.mintOpen ? (
-              <Chip tone="ok">Mint open</Chip>
-            ) : state.mintOpen === false ? (
-              <Chip tone="warn">Mint closed</Chip>
-            ) : (
-              <Chip tone="off">Reading chain</Chip>
-            )}
-            {onBack && <BackToMints onBack={onBack} />}
-          </div>
-        </Head>
-
-        <PreviewPanel aria-label="Preview">
-          <Frame>
-            <TokenImage id={previewId} alt="miyamaker mini" />
-          </Frame>
-          <Caption>
+    <MintCart
+      name={state.name || 'miyamaker mini'}
+      artist={
+        <ArtistTag artist={CREDIT?.artist} logo={CREDIT?.artistLogo} url={CREDIT?.artistUrl} style={{ color: 'inherit' }} />
+      }
+      lamps={[lamp, { tone: 'off', label: 'Ethereum' }]}
+      art={<TokenImage id={previewId} alt="miyamaker mini" />}
+      onArtStep={
+        recentIds.length > 1
+          ? (step) => {
+              const at = recentIds.indexOf(previewId as number)
+              setSelected(recentIds[(at + step + recentIds.length) % recentIds.length])
+            }
+          : undefined
+      }
+      caption={previewId ? `#${previewId}` : undefined}
+      blurb={CREDIT?.blurb}
+      price={`${formatEth(state.price)} ETH`}
+      loading={state.isLoading}
+      minted={state.totalSupply}
+      supply={state.maxSupply}
+      left={remaining}
+      quantity={quantity}
+      maxQty={maxQty}
+      busy={busy}
+      onQuantity={setQuantity}
+      total={`${formatEth(total)} ETH`}
+      balance={tx.isConnected && tx.balance !== undefined ? `${formatEth(tx.balance)} ETH` : undefined}
+      action={action}
+      status={status}
+      needs={!tx.isConnected ? <MintNeeds /> : undefined}
+      dropped={
+        tx.isConfirmed ? (
+          <>
+            <strong>Minted!</strong>
             <span>
-              {previewId ? (
-                <>
-                  <strong>#{previewId}</strong>
-                  {previewId === recentIds[0] && !selected ? ' · latest mint' : ''}
-                </>
-              ) : (
-                'Preview'
-              )}
-            </span>
-            {previewId && (
-              <SmallLink
-                href={`${explorerUrl(MIYAMINI_CHAIN_ID)}/nft/${MIYAMINI_CONTRACT}/${previewId}`}
-                target="_blank"
-                rel="noreferrer"
-              >
-                View on Etherscan
-              </SmallLink>
-            )}
-          </Caption>
-        </PreviewPanel>
-
-        <MintPanel aria-label="Mint">
-          <StatRow>
-            <span>Price</span>
-            {state.isLoading ? <Skeleton w="96px" h="18px" /> : <strong>{formatEth(state.price)} ETH</strong>}
-          </StatRow>
-
-          <div style={{ display: 'flex', flexDirection: 'column', gap: space[2] }}>
-            <StatRow>
-              <span>Minted</span>
-              {state.isLoading ? (
-                <Skeleton w="96px" h="18px" />
-              ) : (
-                <strong>
-                  {state.totalSupply ?? '–'} / {state.maxSupply ?? '–'}
-                </strong>
-              )}
-            </StatRow>
-            <ProgressMeter value={state.totalSupply || 0} max={state.maxSupply || 1} label="Minted supply" />
-            <Muted>{remaining !== undefined ? `${remaining} left` : ' '}</Muted>
-          </div>
-
-          <div style={{ display: 'flex', flexDirection: 'column', gap: space[2] }}>
-            <Eyebrow as="label" htmlFor="mint-qty">
-              Quantity
-            </Eyebrow>
-            <Stepper>
-              <button
-                type="button"
-                aria-label="Decrease quantity"
-                disabled={quantity <= 1 || busy}
-                onClick={() => setQuantity((q) => Math.max(1, q - 1))}
-              >
-                −
-              </button>
-              <input
-                id="mint-qty"
-                type="number"
-                inputMode="numeric"
-                min={1}
-                max={maxQty}
-                value={quantity}
-                disabled={busy}
-                onChange={(e) => {
-                  const n = Math.floor(Number(e.target.value))
-                  if (Number.isFinite(n)) setQuantity(Math.min(maxQty, Math.max(1, n)))
-                }}
-              />
-              <button
-                type="button"
-                aria-label="Increase quantity"
-                disabled={quantity >= maxQty || busy}
-                onClick={() => setQuantity((q) => Math.min(maxQty, q + 1))}
-              >
-                +
-              </button>
-            </Stepper>
-          </div>
-
-          <StatRow>
-            <span>Total</span>
-            <strong>{formatEth(total)} ETH</strong>
-          </StatRow>
-
-          <BigButton type="button" disabled={action.disabled} onClick={action.onClick}>
-            {action.label}
-          </BigButton>
-
-          {tx.isAwaitingWallet && (
-            <StatusBox tone="info" role="status">
-              <img src={LoadingHourglass} alt="" />
-              <span>Confirm the transaction in your wallet.</span>
-            </StatusBox>
-          )}
-          {tx.isConfirming && (
-            <StatusBox tone="info" role="status">
-              <img src={LoadingHourglass} alt="" />
-              <span>
-                Transaction sent, waiting for confirmation.{' '}
-                <a href={txUrl} target="_blank" rel="noreferrer">
-                  View on Etherscan
-                </a>
-              </span>
-            </StatusBox>
-          )}
-          {tx.isConfirmed && (
-            <StatusBox tone="ok" role="status">
-              <span>
-                Minted! Welcome to the miyamaker minis.{' '}
-                <a href={txUrl} target="_blank" rel="noreferrer">
-                  View transaction
-                </a>
-              </span>
-            </StatusBox>
-          )}
-          {(tx.reverted || (tx.error && !busy)) && (
-            <StatusBox tone={err.cancelled ? 'info' : 'error'} role="alert">
-              <span>
-                {tx.reverted ? 'The transaction reverted.' : err.message}{' '}
-                {txUrl && (
-                  <a href={txUrl} target="_blank" rel="noreferrer">
-                    View on Etherscan
-                  </a>
-                )}
-              </span>
-            </StatusBox>
-          )}
-
-          {tx.isConnected && tx.balance !== undefined ? (
-            <Muted>Wallet balance: {formatEth(tx.balance)} ETH on Ethereum</Muted>
-          ) : (
-            !tx.isConnected && <MintNeeds />
-          )}
-          <Details>
-            <div>
-              <span>Contract</span>
-              <a
-                href={`${explorerUrl(MIYAMINI_CHAIN_ID)}/address/${MIYAMINI_CONTRACT}`}
-                target="_blank"
-                rel="noreferrer"
-              >
-                {MIYAMINI_CONTRACT.slice(0, 6)}…{MIYAMINI_CONTRACT.slice(-4)}
+              Welcome to the miyamaker minis.{' '}
+              <a href={txUrl} target="_blank" rel="noreferrer">
+                View transaction
               </a>
-            </div>
-            <div>
-              <span>Standard</span>
-              <span>ERC-721</span>
-            </div>
-            <div>
-              <span>Chain</span>
-              <span>Ethereum</span>
-            </div>
-          </Details>
-        </MintPanel>
-
-        <RecentPanel aria-label="Recent mints">
-          <StatRow>
-            <Eyebrow>Recent mints</Eyebrow>
-            <SmallLink
-              href={`${explorerUrl(MIYAMINI_CHAIN_ID)}/token/${MIYAMINI_CONTRACT}`}
+            </span>
+          </>
+        ) : undefined
+      }
+      stamp={
+        <>
+          <span>
+            Contract{' '}
+            <a href={`${explorerUrl(MIYAMINI_CHAIN_ID)}/address/${MIYAMINI_CONTRACT}`} target="_blank" rel="noreferrer">
+              {MIYAMINI_CONTRACT.slice(0, 6)}…{MIYAMINI_CONTRACT.slice(-4)}
+            </a>
+          </span>
+          {previewId && (
+            <a
+              href={`${explorerUrl(MIYAMINI_CHAIN_ID)}/nft/${MIYAMINI_CONTRACT}/${previewId}`}
               target="_blank"
               rel="noreferrer"
             >
-              Contract
-            </SmallLink>
-          </StatRow>
-          {state.isLoading ? (
-            <Thumbs>
-              {Array.from({ length: RECENT_COUNT }, (_, i) => (
-                <Skeleton key={i} style={{ aspectRatio: '1 / 1' }} h="auto" />
-              ))}
-            </Thumbs>
-          ) : recentIds.length === 0 ? (
-            <Muted>{state.isError ? 'Could not reach Ethereum to load mints.' : 'No mints yet. Be the first.'}</Muted>
-          ) : (
-            <Thumbs>
-              {recentIds.map((id) => (
-                <Thumb
-                  key={id}
-                  type="button"
-                  selected={id === previewId}
-                  onClick={() => setSelected(id)}
-                  aria-label={`Preview #${id}`}
-                >
-                  <TokenImage id={id} alt={`#${id}`} />
-                  <span>#{id}</span>
-                </Thumb>
-              ))}
-            </Thumbs>
+              #{previewId} on Etherscan
+            </a>
           )}
-        </RecentPanel>
-      </Grid>
-    </Layout>
+          <span>ERC-721 on Ethereum</span>
+        </>
+      }
+    >
+      <section aria-label="Recent mints">
+        <strong>Recent mints</strong>
+        {state.isLoading ? (
+          <Thumbs>
+            {Array.from({ length: RECENT_COUNT }, (_, i) => (
+              <Skeleton key={i} style={{ aspectRatio: '1 / 1' }} h="auto" />
+            ))}
+          </Thumbs>
+        ) : recentIds.length === 0 ? (
+          <p>{state.isError ? 'Could not reach Ethereum to load mints.' : 'No mints yet. Be the first.'}</p>
+        ) : (
+          <Thumbs>
+            {recentIds.map((id) => (
+              <Thumb
+                key={id}
+                type="button"
+                selected={id === previewId}
+                onClick={() => setSelected((now) => (now === id ? undefined : id))}
+                aria-label={`Preview #${id}`}
+              >
+                <TokenImage id={id} alt={`#${id}`} />
+                <span>#{id}</span>
+              </Thumb>
+            ))}
+          </Thumbs>
+        )}
+      </section>
+    </MintCart>
   )
 }

@@ -731,11 +731,11 @@ export default function Stage(p: StageProps) {
         ))}
         <Floor $run={!p.reduced && (player.playing || p.busy)} aria-hidden />
         <StageViz mood={mood} getAnalyser={player.getAnalyser} levelTarget={root} />
-        <Speaker $side="left" aria-hidden>
+        <Speaker $side="left" aria-hidden data-speaker>
           <i />
           <i />
         </Speaker>
-        <Speaker $side="right" aria-hidden>
+        <Speaker $side="right" aria-hidden data-speaker>
           <i />
           <i />
         </Speaker>

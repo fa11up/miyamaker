@@ -10,7 +10,6 @@ import { closeWindow } from '@/store/windows/actions'
 
 const Launch = lazy(() => import('@/pages/Launch'))
 const Home = lazy(() => import('@/pages/Home'))
-const Components = lazy(() => import('@/pages/Components'))
 const Uploader = lazy(() => import('@/pages/Uploader'))
 const Manager = lazy(() => import('@/pages/Manage'))
 const Auction = lazy(() => import('@/pages/Auction'))
@@ -64,8 +63,6 @@ export default function DynamicWrapper({ identifier }: { identifier: string }) {
         return <Launch />
       case 'home':
         return <Home />
-      case 'components':
-        return <Components />
       case 'uploader':
         return <Uploader />
       case 'manager':
