@@ -6,6 +6,15 @@ export function sliceCount(value) {
   return n
 }
 
+/** Boundaries from 0 to 1, one more point than there are slices. */
+export function evenPoints(count) {
+  const n = sliceCount(count)
+  if (!n) return []
+  const points = []
+  for (let i = 0; i <= n; i++) points.push(i / n)
+  return points
+}
+
 /** Equal lengths. A remainder shorter than one slice is left off the end. */
 export function evenSlices(pcm, count) {
   const n = sliceCount(count)

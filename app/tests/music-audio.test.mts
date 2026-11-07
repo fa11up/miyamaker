@@ -92,6 +92,14 @@ test('buildMusicMetadata produces image + animation_url + properties {artist, du
   ])
   assert.equal(m.description, 'late\nnight')
   assert.equal('external_url' in m, false)
+  const withSong = buildMusicMetadata({ ...form, song: 'ar://songfile', kit: 'ipfs://kitfile' })
+  assert.equal(withSong.ok, true)
+  const packed = (withSong as Extract<typeof withSong, { ok: true }>).metadata
+  assert.equal(packed.properties.song, 'ar://songfile')
+  assert.equal(packed.properties.kit, 'ipfs://kitfile')
+  const parsed = parseMusicMetadata(packed)
+  assert.equal(parsed?.song, 'ar://songfile')
+  assert.equal(parsed?.kit, 'ipfs://kitfile')
 })
 
 test('bpm and genre are optional; bad input is reported per field', () => {

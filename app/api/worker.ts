@@ -6,6 +6,7 @@ import { edgeCache, handleMarketRequest, MARKET_PREFIX, openSeaReader } from './
 import { handleOpenSeaRequest, OPENSEA_PROXY_PATH, quoteBigInts } from './_lib/opensea'
 import { d1TapeStore, handlePublicAccessRequest, PUBLIC_ACCESS_PATH, youtubeLookup } from './_lib/publicaccess'
 import { handleSampleMediaRequest, SAMPLE_MEDIA_PATH } from './_lib/samplemedia'
+import { handleVideoAudioRequest, VIDEO_AUDIO_PATH } from '../src/pages/MusicMaker/media/videoaudio.js'
 import { serveRange } from './_lib/ranges'
 import type { D1Like } from './_lib/station'
 import { d1Store, gatewayContentType, handleStationRequest, STATION_PATH } from './_lib/station'
@@ -122,6 +123,13 @@ export default {
 
     if (url.pathname === SAMPLE_MEDIA_PATH) {
       return handleSampleMediaRequest(
+        { method: request.method, url: request.url, headers: request.headers },
+        { sameOrigin, clientKey, limiter: sampleMediaLimiter }
+      )
+    }
+
+    if (url.pathname === VIDEO_AUDIO_PATH) {
+      return handleVideoAudioRequest(
         { method: request.method, url: request.url, headers: request.headers },
         { sameOrigin, clientKey, limiter: sampleMediaLimiter }
       )

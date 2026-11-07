@@ -1,53 +1,80 @@
-import { Fragment, useEffect, useRef, useState } from 'react'
-import { LANES, currentPattern, formatNudge, hexByte, model, stepCount, touch, writeLane } from '../model.js'
+import { Fragment, useEffect } from 'react'
+import { noteName } from '../keys.js'
+import {
+  LANES,
+  TRACK_FIELDS,
+  TRACK_VEL,
+  clearTrackerLane,
+  commitTrackerNote,
+  currentPattern,
+  formatNudge,
+  hexByte,
+  model,
+  patchTrackerEvent,
+  stepCount,
+  touch,
+} from '../model.js'
 import { useModel } from '../useModel.js'
 import { PatternBar } from './PatternBar.jsx'
-
-const FIELDS = 3
-const COMPACT_ROW = 18
 
 export function Tracker() {
   useModel()
   const seq = currentPattern()
   const rows = stepCount(seq)
   const t = model.tracker
-  const gridRef = useRef(null)
-  const [rowPx, setRowPx] = useState(COMPACT_ROW)
   useEffect(() => {
-    const el = gridRef.current
-    if (!el) return
-    const fit = () => {
-      const head = el.querySelector('thead')?.offsetHeight || 36
-      const room = el.clientHeight - head
-      const next = Math.max(COMPACT_ROW, Math.min(42, Math.floor(room / Math.max(1, rows))))
-      setRowPx((prev) => (prev === next ? prev : next))
-    }
-    fit()
-    const watch = new ResizeObserver(fit)
-    watch.observe(el)
-    return () => watch.disconnect()
-  }, [rows])
+    if (!model.playing || !t.follow) return
+    if (t.row === model.playhead) return
+    t.row = model.playhead
+    t.hex = ''
+    touch(false)
+  }, [model.playing, model.playhead, t.follow, t.row])
   useEffect(() => {
     if (!t.focus) return
     document.querySelector('.tracker td.cursor')?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
   }, [t.focus, t.row, t.col, model.pattern])
-  const focusLane = Math.floor((t.col || 0) / FIELDS)
+  const focusLane = Math.floor((t.col || 0) / TRACK_FIELDS)
   const focusEv = seq.steps[t.row]?.[focusLane]
   return (
     <div className="screen tracker-screen">
       <div className="tracker-bar">
         <PatternBar />
+        <div className="tracker-tools">
+          <label className="slider">
+            <span>Step</span>
+            <input
+              className="field num"
+              aria-label="Edit step"
+              type="number"
+              min={0}
+              max={16}
+              value={t.step ?? 1}
+              onChange={(e) => {
+                t.step = Math.max(0, Math.min(16, Number(e.target.value) || 0))
+                touch(true)
+              }}
+            />
+          </label>
+          <button
+            type="button"
+            className={`btn free-width ${t.follow ? 'on' : ''}`}
+            onClick={() => {
+              t.follow = !t.follow
+              touch(false)
+            }}
+          >
+            Follow
+          </button>
+        </div>
         <p className="track-status">
-          Track {trackNo(focusLane)} · {laneInstrument(seq, focusLane)} · step {hexByte(t.row)}
+          {t.edit ? 'REC' : 'PLAY'} · Track {trackNo(focusLane)} · {laneInstrument(seq, focusLane)} · step {hexByte(t.row)}
           {focusEv
-            ? ` · ${model.pads[focusEv.pad]?.name || 'Empty'} · vel ${hexByte(Math.round((focusEv.vel ?? 0) * 255))} · move ${formatNudge(focusEv.nudge)}`
+            ? ` · ${focusEv.off ? 'OFF' : noteName(focusEv.pitch)} · ${model.pads[focusEv.pad]?.name || 'Empty'} · vel ${hexByte(Math.round((focusEv.vel ?? 0) * 255))} · move ${formatNudge(focusEv.nudge)}`
             : ' · empty'}
         </p>
       </div>
       <div
-        ref={gridRef}
         className="tracker"
-        style={{ '--row-h': `${rowPx}px` }}
         onMouseDown={() => {
           t.focus = true
           touch(false)
@@ -58,7 +85,7 @@ export function Tracker() {
             <tr>
               <th className="st" rowSpan={2}>STEP</th>
               {Array.from({ length: LANES }, (_, lane) => (
-                <th key={lane} colSpan={FIELDS} className="track">
+                <th key={lane} colSpan={TRACK_FIELDS} className="track">
                   <span className="track-title">
                     <b>{trackNo(lane)}</b>
                     <span>{laneInstrument(seq, lane)}</span>
@@ -70,6 +97,7 @@ export function Tracker() {
               {Array.from({ length: LANES }, (_, lane) => (
                 <Fragment key={lane}>
                   <th className="sub edge">NOTE</th>
+                  <th className="sub">INST</th>
                   <th className="sub">VEL</th>
                   <th className="sub">MOVE</th>
                 </Fragment>
@@ -83,14 +111,16 @@ export function Tracker() {
               return (
                 <tr key={row} className={rowClass(row, play)}>
                   <td className="st">{hexByte(row)}</td>
-                  {Array.from({ length: LANES * FIELDS }, (_, col) => {
-                    const lane = Math.floor(col / FIELDS)
-                    const field = col % FIELDS
+                  {Array.from({ length: LANES * TRACK_FIELDS }, (_, col) => {
+                    const lane = Math.floor(col / TRACK_FIELDS)
+                    const field = col % TRACK_FIELDS
                     const ev = events[lane]
                     const active = t.focus && t.row === row && t.col === col
-                    const cls = [field === 0 ? 'note edge' : field === 1 ? 'vel' : 'move', active ? 'cursor' : '']
-                      .filter(Boolean)
-                      .join(' ')
+                    const cls = [
+                      field === 0 ? 'note edge' : field === 1 ? 'inst' : field === 2 ? 'vel' : 'move',
+                      active ? 'cursor' : '',
+                      active && t.edit ? 'armed' : '',
+                    ].filter(Boolean).join(' ')
                     return (
                       <td
                         key={col}
@@ -104,14 +134,7 @@ export function Tracker() {
                           touch(false)
                         }}
                       >
-                        {field === 0 && ev && !(active && t.hex) ? (
-                          <>
-                            <span className="id">{hexByte(ev.pad)}</span>
-                            <span className="nm">{model.pads[ev.pad]?.name || 'Empty'}</span>
-                          </>
-                        ) : (
-                          cellText(ev, field, active, t)
-                        )}
+                        {cellText(ev, field, active, t)}
                       </td>
                     )
                   })}
@@ -137,22 +160,23 @@ function rowClass(row, play) {
 function laneInstrument(seq, lane) {
   const row = model.tracker.focus ? model.tracker.row : model.playhead
   const at = seq.steps[row]?.[lane]
-  if (at) return model.pads[at.pad]?.name || 'Empty'
+  if (at && !at.off) return model.pads[at.pad]?.name || 'Empty'
   for (let i = 0; i < seq.steps.length; i++) {
     const ev = seq.steps[i]?.[lane]
-    if (ev) return model.pads[ev.pad]?.name || 'Empty'
+    if (ev && !ev.off) return model.pads[ev.pad]?.name || 'Empty'
   }
   return '—'
 }
 
 function cellText(ev, field, active, t) {
-  if (active && t.hex) {
-    if (field === 2) return `${(t.sign || 1) < 0 ? '-' : '+'}${t.hex}`
+  if (active && t.hex && field !== 0) {
+    if (field === 3) return `${(t.sign || 1) < 0 ? '-' : '+'}${t.hex}`
     return t.hex.toUpperCase()
   }
-  if (!ev) return '--'
-  if (field === 0) return hexByte(ev.pad)
-  if (field === 1) return hexByte(Math.round((ev.vel ?? 0) * 255))
+  if (!ev) return field === 0 ? '---' : '--'
+  if (field === 0) return ev.off ? 'OFF' : noteName(ev.pitch)
+  if (field === 1) return hexByte(ev.pad)
+  if (field === 2) return hexByte(Math.round((ev.vel ?? 0) * 255))
   return formatNudge(ev.nudge)
 }
 
@@ -161,10 +185,19 @@ export function handleTrackerKey(e) {
   if (t.col == null) t.col = 0
   const seq = currentPattern()
   const rows = stepCount(seq)
-  const cols = LANES * FIELDS
+  const cols = LANES * TRACK_FIELDS
   const key = e.key
   if (key === 'Escape') {
-    t.focus = false
+    t.edit = !t.edit
+    t.focus = true
+    t.hex = ''
+    touch(false)
+    return true
+  }
+  if (key === 'Tab') {
+    const lane = Math.floor(t.col / TRACK_FIELDS)
+    const next = (lane + (e.shiftKey ? -1 : 1) + LANES) % LANES
+    t.col = next * TRACK_FIELDS
     t.hex = ''
     touch(false)
     return true
@@ -193,17 +226,20 @@ export function handleTrackerKey(e) {
     touch(false)
     return true
   }
-  const lane = Math.floor(t.col / FIELDS)
-  const field = t.col % FIELDS
+  const lane = Math.floor(t.col / TRACK_FIELDS)
+  const field = t.col % TRACK_FIELDS
   const cell = seq.steps[t.row]
   if (!cell) return false
   if (key === 'Delete' || key === 'Backspace') {
-    cell[lane] = null
-    t.hex = ''
-    touch(true)
+    clearTrackerLane(t.row, lane)
     return true
   }
-  if (field === 2) {
+  if (field === 0) {
+    if (key === ' ') return false
+    if (key.length === 1) return true
+    return false
+  }
+  if (field === 3) {
     if (key === '-' || key === '+') {
       t.sign = key === '-' ? -1 : 1
       t.hex = ''
@@ -214,9 +250,7 @@ export function handleTrackerKey(e) {
       t.hex = (t.hex + key).slice(-2)
       if (t.hex.length >= 2 && cell[lane]) {
         const mag = Math.min(50, parseInt(t.hex, 10))
-        cell[lane].nudge = (t.sign || 1) < 0 ? -mag : mag
-        t.hex = ''
-        touch(true)
+        patchTrackerEvent(t.row, lane, { nudge: (t.sign || 1) < 0 ? -mag : mag })
       } else {
         touch(false)
       }
@@ -228,15 +262,22 @@ export function handleTrackerKey(e) {
     t.hex = (t.hex + key).slice(-2)
     if (t.hex.length >= 2) {
       const value = parseInt(t.hex, 16)
-      if (field === 0 && value < 64) {
-        const ev = cell[lane] || { pad: value, vel: 0.9, pitch: 0, nudge: 0 }
-        ev.pad = value
-        writeLane(t.row, lane, ev)
-      } else if (field === 1 && cell[lane]) {
-        cell[lane].vel = value / 255
-        touch(true)
+      if (field === 1 && value < 64) {
+        const prev = cell[lane]
+        commitTrackerNote({
+          typed: true,
+          pad: value,
+          vel: prev?.vel ?? TRACK_VEL,
+          pitch: prev?.pitch || 0,
+          nudge: prev?.nudge || 0,
+          row: t.row,
+        })
+      } else if (field === 2 && cell[lane]) {
+        patchTrackerEvent(t.row, lane, { vel: value / 255 })
+      } else {
+        t.hex = ''
+        touch(false)
       }
-      t.hex = ''
     } else {
       touch(false)
     }

@@ -183,6 +183,10 @@ export type MusicForm = {
   /** Optional; whole number 20–400. Empty string means unset. */
   bpm?: string | number
   externalUrl?: string
+  /** Editable .m1ya, ipfs:// or ar:// or https://. */
+  song?: string
+  /** Editable .k1t. */
+  kit?: string
 }
 
 export type MusicMetadata = {
@@ -192,7 +196,15 @@ export type MusicMetadata = {
   animation_url: string
   external_url?: string
   content: { mime: string; uri: string }
-  properties: { artist: string; duration: number; genre?: string; bpm?: number; mime_type: string }
+  properties: {
+    artist: string
+    duration: number
+    genre?: string
+    bpm?: number
+    mime_type: string
+    song?: string
+    kit?: string
+  }
   attributes: { trait_type: string; value: string | number; display_type?: string }[]
 }
 
@@ -215,6 +227,10 @@ export function buildMusicMetadata(form: MusicForm): BuildResult {
   const audio = safeUri(form.audio)
   const externalRaw = (form.externalUrl ?? '').trim()
   const external = externalRaw ? safeUri(externalRaw) : undefined
+  const songRaw = (form.song ?? '').trim()
+  const song = songRaw ? safeUri(songRaw) : undefined
+  const kitRaw = (form.kit ?? '').trim()
+  const kit = kitRaw ? safeUri(kitRaw) : undefined
   const mime = (form.mime || '').toLowerCase()
 
   if (!title) errors.title = 'Title is required.'
@@ -227,6 +243,8 @@ export function buildMusicMetadata(form: MusicForm): BuildResult {
   }
 
   if (externalRaw && !external) errors.externalUrl = 'Website must be an https:// link.'
+  if (songRaw && !song) errors.song = 'Song file must be an ipfs://, ar:// or https:// link.'
+  if (kitRaw && !kit) errors.kit = 'Kit file must be an ipfs://, ar:// or https:// link.'
 
   let bpm: number | undefined
   const bpmRaw = typeof form.bpm === 'number' ? String(form.bpm) : (form.bpm ?? '').trim()
@@ -259,6 +277,8 @@ export function buildMusicMetadata(form: MusicForm): BuildResult {
       ...(genre ? { genre } : {}),
       ...(bpm !== undefined ? { bpm } : {}),
       mime_type: mime,
+      ...(song ? { song } : {}),
+      ...(kit ? { kit } : {}),
     },
     attributes,
   }
@@ -286,6 +306,8 @@ export type ParsedMusic = {
   duration?: number
   genre?: string
   bpm?: number
+  song?: string
+  kit?: string
 }
 
 /**
@@ -314,6 +336,8 @@ export function parseMusicMetadata(json: unknown): ParsedMusic | null {
     duration: Number.isFinite(durationRaw) && durationRaw > 0 ? durationRaw : undefined,
     genre: plainText(props.genre ?? attr(json, 'genre'), 40) || undefined,
     bpm: Number.isFinite(bpmRaw) && bpmRaw > 0 ? Math.round(bpmRaw) : undefined,
+    song: safeUri(props.song),
+    kit: safeUri(props.kit),
   }
 }
 

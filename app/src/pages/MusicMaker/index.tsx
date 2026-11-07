@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 
 import TitleBar from '@/components/TitleBar'
@@ -9,7 +9,11 @@ import { closeWindow, minimizeWindow } from '@/store/windows/actions'
 import { useFullscreen } from '@/store/windows/hooks'
 
 import { MiyaMusicMaker } from './MiyaMusicMaker.jsx'
-import { boot, restoreSamples, touch } from './model.js'
+import { armHistory, withoutHistory } from './history.js'
+import { ensureBlankSong, openPackedUrl } from './audio/song.js'
+import { boot, model, restoreSamples, touch } from './model.js'
+import PublishDialog, { type PublishJob } from './PublishDialog'
+import { subscribeRemoteOpen, takeRemoteOpen } from './remoteOpen.js'
 import css from './styles/miyamaker.css?inline'
 
 const page = Pages.music
@@ -21,10 +25,22 @@ const page = Pages.music
  */
 export default function MusicMakerPage() {
   const host = useRef<HTMLDivElement>(null)
+  const [publish, setPublish] = useState<PublishJob | null>(null)
   const [fullscreen, toggleFullscreen] = useFullscreen('music')
   const dispatch = useAppDispatch()
   const close = () => dispatch(closeWindow({ value: 'music' }))
   const minimize = () => dispatch(minimizeWindow({ value: 'music' }))
+
+  useEffect(() => {
+    const onPublish = (event: Event) => {
+      const custom = event as CustomEvent<PublishJob>
+      if (!custom.detail?.intent) return
+      custom.preventDefault()
+      setPublish(custom.detail)
+    }
+    window.addEventListener('miya-music-publish', onPublish)
+    return () => window.removeEventListener('miya-music-publish', onPublish)
+  }, [])
 
   useEffect(() => {
     const el = host.current
@@ -44,18 +60,40 @@ export default function MusicMakerPage() {
     const root = createRoot(mount)
     root.render(<MiyaMusicMaker />)
     let cancel = false
-    restoreSamples().then(() => {
+    let ready = false
+    const consume = async (job: { href?: string; kind?: string; name?: string } | null) => {
+      if (!job?.href || cancel) return
+      try {
+        await withoutHistory(() => openPackedUrl(job))
+      } catch (error) {
+        model.browserNote = (error as Error).message || 'Could not open that file'
+        touch(false)
+      }
+    }
+    const unsub = subscribeRemoteOpen((next: { href?: string; kind?: string; name?: string }) => {
+      if (!ready || cancel) return
+      void consume(takeRemoteOpen() || next)
+    })
+    restoreSamples().then(async () => {
+      if (cancel) return
+      armHistory()
+      await withoutHistory(() => ensureBlankSong())
+      if (cancel) return
+      ready = true
+      await consume(takeRemoteOpen())
       if (!cancel) touch(false)
     })
     return () => {
       cancel = true
+      unsub()
       root.unmount()
     }
   }, [])
 
   return (
-    <WindowWrapper>
+    <WindowWrapper skin="mint">
       <TitleBar
+        skin="mint"
         closeBtn
         onClose={(e) => {
           if (e.cancelable) e.stopPropagation()
@@ -72,7 +110,10 @@ export default function MusicMakerPage() {
       >
         {page?.label}
       </TitleBar>
-      <div ref={host} data-miya-music="" style={{ height: '100%', minHeight: 0 }} />
+      <div style={{ position: 'relative', height: '100%', minHeight: 0 }}>
+        <div ref={host} data-miya-music="" style={{ height: '100%', minHeight: 0 }} />
+        {publish && <PublishDialog job={publish} onClose={() => setPublish(null)} />}
+      </div>
     </WindowWrapper>
   )
 }

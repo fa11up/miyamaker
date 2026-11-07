@@ -130,7 +130,6 @@ export function waveColumns(pcm, width, from = 0, to = 1) {
 }
 
 export function paintWave(ctx, width, height, pcm, sr, view) {
-  ctx.clearRect(0, 0, width, height)
   if (!pcm || pcm.length < 2 || width < 4 || height < 4) return
   const rate = sr > 1000 ? sr : 44100
   if (view === 2) {
@@ -158,7 +157,7 @@ export function paintWave(ctx, width, height, pcm, sr, view) {
     }
     return
   }
-  ctx.fillStyle = '#1b1530'
+  ctx.fillStyle = '#ffffff'
   for (let x = 0; x < width; x++) {
     const yHi = mid - cols[x].hi * half
     const yLo = mid - cols[x].lo * half

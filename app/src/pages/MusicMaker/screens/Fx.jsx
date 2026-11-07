@@ -22,7 +22,7 @@ export function Fx() {
     <div className="screen fx-screen">
       <p className="hint">
         Hold Shift and a numpad digit. That slot retriggers the master output, then runs its filter or effect until the key comes up.
-        Numpad / and * still move the Renoise octave.
+        Numpad / and * still move the Keys octave.
       </p>
       <div className="numpad" role="listbox" aria-label="Numpad FX">
         {ORDER.map((digit) => {

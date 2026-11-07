@@ -1,4 +1,4 @@
-import { BANKS, currentPattern, hexByte, model, padKeyLabel, selectPad, touch } from '../model.js'
+import { BANKS, busLabel, currentPattern, hexByte, model, padKeyLabel, selectPad, touch, TRACK_VEL } from '../model.js'
 import { SEQ_KEYS } from '../keys.js'
 import { noteOff, noteOn } from '../audio/engine.js'
 import { useModel } from '../useModel.js'
@@ -15,10 +15,8 @@ export function Pads() {
       <p className="hint">
         {BANKS[model.bank]} pads on 1 2 3 4 / Q W E R / A S D F / Z X C V. Pattern {hexByte(model.pattern)} {pat.name || 'untitled'} · slot {slot + 1} ({SEQ_KEYS[slot].toUpperCase()}) · sequence bank {bank + 1}.
         {model.keyboard && model.keyMap === 'renoise'
-          ? ` Renoise notation on the selected pad: Z is C, Q and comma are the C above, I is the next C. A or Caps Lock stops the note. Octave ${model.renoiseOct}.`
-          : model.keyboard
-            ? ` Koala notation on the selected pad: A is C. Z and X change octave ${model.octave}.`
-            : ''}
+          ? ` Keys on the selected pad: Z is C, Q and comma are the C above, I is the next C. A or Caps Lock stops the note. Octave ${model.renoiseOct}.`
+          : ''}
       </p>
       <div className="pad-layout">
         <div className="pad-grid">
@@ -48,7 +46,7 @@ export function Pads() {
                 <span className="name">{pad.name}</span>
                 <span className="meta">
                   {BANKS[model.bank]}
-                  {local + 1} · {pad.choke ? `choke ${pad.choke}` : 'choke off'} · {BANKS[pad.bus]}
+                  {local + 1} · {pad.choke ? `choke ${pad.choke}` : 'choke off'} · {model.buses[pad.bus]?.name || busLabel(pad.bus)}
                 </span>
               </button>
             )
@@ -67,7 +65,7 @@ function hit(index, e) {
   else if (model.hold === 'mute') selectPad(index, 'mute')
   else {
     selectPad(index)
-    noteOn(index, 0.92, `ptr:${index}`)
+    noteOn(index, TRACK_VEL, `ptr:${index}`)
   }
 }
 
@@ -92,9 +90,9 @@ function PadQuick() {
       <label className="slider">
         <span>Bus</span>
         <select className="row-select" value={pad.bus} onChange={(e) => set('bus', Number(e.target.value))}>
-          {BANKS.map((name, i) => (
-            <option key={name} value={i}>
-              BUS {name}
+          {model.buses.map((bus, i) => (
+            <option key={i} value={i}>
+              {bus.name}
             </option>
           ))}
         </select>

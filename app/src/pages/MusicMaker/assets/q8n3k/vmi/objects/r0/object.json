@@ -1,0 +1,25 @@
+{
+  "name": "r0",
+  "type": "static",
+  "zIndex": 0,
+  "parent": "",
+  "view": "",
+  "animation": false,
+  "warpLayer": "",
+  "sound": "",
+  "labels": {
+    "000": "rest"
+  },
+  "slots": [
+    {
+      "file": "000000.PNG",
+      "state": "000",
+      "frame": "000",
+      "label": "rest",
+      "layers": [
+        "r0"
+      ],
+      "png": true
+    }
+  ]
+}

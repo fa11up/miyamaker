@@ -1,3 +1,4 @@
+import { stashUndo } from '../history.js'
 import { idbDelete, idbGet, idbKeys, idbSet, model, touch } from '../model.js'
 
 export const MEDIA_RE = /\.(wav|mp3|m4a|aac|ogg|flac|aiff|aif|mp4|webm|mov|m4v)$/i
@@ -7,6 +8,9 @@ export function defaultLibrary() {
     folders: [
       { id: 'imports', parent: '', name: 'Imports' },
       { id: 'slices', parent: '', name: 'Slices' },
+      { id: 'songs', parent: '', name: 'Songs' },
+      { id: 'templates', parent: '', name: 'Templates' },
+      { id: 'kits', parent: '', name: 'Kits' },
     ],
     files: [],
   }
@@ -18,8 +22,11 @@ export function ensureLibrary() {
     model.library = defaultLibrary()
   }
   for (const folder of defaultLibrary().folders) {
-    if (!model.library.folders.some((item) => item.id === folder.id)) model.library.folders.unshift(folder)
+    if (model.library.folders.some((item) => item.id === folder.id)) continue
+    if (folder.id === 'songs' || folder.id === 'kits' || folder.id === 'templates') model.library.folders.push(folder)
+    else model.library.folders.unshift(folder)
   }
+  if (!Array.isArray(model.library.sliceSets)) model.library.sliceSets = []
   return model.library
 }
 
@@ -36,20 +43,57 @@ export function newFolder(name, parent = '') {
 export async function cachePcm(folder, name, pcm, sr, ext = 'wav') {
   const library = ensureLibrary()
   const id = `s${Date.now().toString(36)}${Math.floor(Math.random() * 1000)}`
+  stashUndo(`lib:${id}`, null)
   library.files.push({ id, folder, name: name || 'sample', ext })
   await idbSet(`lib:${id}`, { pcm, sr, name: name || 'sample' })
   touch(true)
   return id
 }
 
+/** Slice chops of one source stay unnamed by extension. Other files show theirs. */
+export function fileLabel(file) {
+  const library = ensureLibrary()
+  const chopped = (library.sliceSets || []).some((set) => set.folder === file.folder && (set.cuts || []).some((cut) => cut.fileId === file.id))
+  if (chopped || !file.ext) return file.name
+  return `${file.name}.${String(file.ext).replace(/^\./, '')}`
+}
+
 export function loadCached(id) {
   return idbGet(`lib:${id}`)
 }
 
+function pruneSliceFile(id) {
+  const library = ensureLibrary()
+  for (const set of library.sliceSets || []) {
+    set.cuts = (set.cuts || []).filter((cut) => cut.fileId !== id)
+  }
+  library.sliceSets = (library.sliceSets || []).filter((set) => set.cuts && set.cuts.length)
+  const alive = new Set(library.sliceSets.map((set) => set.folder))
+  library.folders = library.folders.filter((folder) => {
+    if (folder.parent !== 'slices') return true
+    if (alive.has(folder.id)) return true
+    return library.files.some((file) => file.folder === folder.id)
+  })
+}
+
 export async function removeCached(id) {
   const library = ensureLibrary()
-  library.files = library.files.filter((file) => file.id !== id)
-  await idbDelete(`lib:${id}`)
+  const file = library.files.find((item) => item.id === id)
+  if (file?.ext === 'm1ya') {
+    const doc = await idbGet(`song:${id}`)
+    stashUndo(`song:${id}`, doc || null)
+    await idbDelete(`song:${id}`)
+  } else if (file?.ext === 'k1t') {
+    const doc = await idbGet(`kit:${id}`)
+    stashUndo(`kit:${id}`, doc || null)
+    await idbDelete(`kit:${id}`)
+  } else {
+    const rec = await idbGet(`lib:${id}`)
+    stashUndo(`lib:${id}`, rec || null)
+    await idbDelete(`lib:${id}`)
+  }
+  library.files = library.files.filter((item) => item.id !== id)
+  pruneSliceFile(id)
   touch(true)
 }
 

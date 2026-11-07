@@ -1,0 +1,655 @@
+{
+  "name": "d0",
+  "type": "sequence",
+  "zIndex": 2,
+  "parent": "",
+  "view": "",
+  "animation": true,
+  "warpLayer": "",
+  "sound": "",
+  "labels": {
+    "000": "rest"
+  },
+  "slots": [
+    {
+      "file": "000000.PNG",
+      "state": "000",
+      "frame": "000",
+      "label": "f00",
+      "layers": [
+        "d0"
+      ],
+      "png": true
+    },
+    {
+      "file": "000001.PNG",
+      "state": "000",
+      "frame": "001",
+      "label": "f01",
+      "layers": [
+        "d0"
+      ],
+      "png": true
+    },
+    {
+      "file": "000002.PNG",
+      "state": "000",
+      "frame": "002",
+      "label": "f02",
+      "layers": [
+        "d0"
+      ],
+      "png": true
+    },
+    {
+      "file": "000003.PNG",
+      "state": "000",
+      "frame": "003",
+      "label": "f03",
+      "layers": [
+        "d0"
+      ],
+      "png": true
+    },
+    {
+      "file": "000004.PNG",
+      "state": "000",
+      "frame": "004",
+      "label": "f04",
+      "layers": [
+        "d0"
+      ],
+      "png": true
+    },
+    {
+      "file": "000005.PNG",
+      "state": "000",
+      "frame": "005",
+      "label": "f05",
+      "layers": [
+        "d0"
+      ],
+      "png": true
+    },
+    {
+      "file": "000006.PNG",
+      "state": "000",
+      "frame": "006",
+      "label": "f06",
+      "layers": [
+        "d0"
+      ],
+      "png": true
+    },
+    {
+      "file": "000007.PNG",
+      "state": "000",
+      "frame": "007",
+      "label": "f07",
+      "layers": [
+        "d0"
+      ],
+      "png": true
+    },
+    {
+      "file": "000008.PNG",
+      "state": "000",
+      "frame": "008",
+      "label": "f08",
+      "layers": [
+        "d0"
+      ],
+      "png": true
+    },
+    {
+      "file": "000009.PNG",
+      "state": "000",
+      "frame": "009",
+      "label": "f09",
+      "layers": [
+        "d0"
+      ],
+      "png": true
+    },
+    {
+      "file": "00000A.PNG",
+      "state": "000",
+      "frame": "00A",
+      "label": "f10",
+      "layers": [
+        "d0"
+      ],
+      "png": true
+    },
+    {
+      "file": "00000B.PNG",
+      "state": "000",
+      "frame": "00B",
+      "label": "f11",
+      "layers": [
+        "d0"
+      ],
+      "png": true
+    },
+    {
+      "file": "00000C.PNG",
+      "state": "000",
+      "frame": "00C",
+      "label": "f12",
+      "layers": [
+        "d0"
+      ],
+      "png": true
+    },
+    {
+      "file": "00000D.PNG",
+      "state": "000",
+      "frame": "00D",
+      "label": "f13",
+      "layers": [
+        "d0"
+      ],
+      "png": true
+    },
+    {
+      "file": "00000E.PNG",
+      "state": "000",
+      "frame": "00E",
+      "label": "f14",
+      "layers": [
+        "d0"
+      ],
+      "png": true
+    },
+    {
+      "file": "00000F.PNG",
+      "state": "000",
+      "frame": "00F",
+      "label": "f15",
+      "layers": [
+        "d0"
+      ],
+      "png": true
+    },
+    {
+      "file": "000010.PNG",
+      "state": "000",
+      "frame": "010",
+      "label": "f16",
+      "layers": [
+        "d0"
+      ],
+      "png": true
+    },
+    {
+      "file": "000011.PNG",
+      "state": "000",
+      "frame": "011",
+      "label": "f17",
+      "layers": [
+        "d0"
+      ],
+      "png": true
+    },
+    {
+      "file": "000012.PNG",
+      "state": "000",
+      "frame": "012",
+      "label": "f18",
+      "layers": [
+        "d0"
+      ],
+      "png": true
+    },
+    {
+      "file": "000013.PNG",
+      "state": "000",
+      "frame": "013",
+      "label": "f19",
+      "layers": [
+        "d0"
+      ],
+      "png": true
+    },
+    {
+      "file": "000014.PNG",
+      "state": "000",
+      "frame": "014",
+      "label": "f20",
+      "layers": [
+        "d0"
+      ],
+      "png": true
+    },
+    {
+      "file": "000015.PNG",
+      "state": "000",
+      "frame": "015",
+      "label": "f21",
+      "layers": [
+        "d0"
+      ],
+      "png": true
+    },
+    {
+      "file": "000016.PNG",
+      "state": "000",
+      "frame": "016",
+      "label": "f22",
+      "layers": [
+        "d0"
+      ],
+      "png": true
+    },
+    {
+      "file": "000017.PNG",
+      "state": "000",
+      "frame": "017",
+      "label": "f23",
+      "layers": [
+        "d0"
+      ],
+      "png": true
+    },
+    {
+      "file": "000018.PNG",
+      "state": "000",
+      "frame": "018",
+      "label": "f24",
+      "layers": [
+        "d0"
+      ],
+      "png": true
+    },
+    {
+      "file": "000019.PNG",
+      "state": "000",
+      "frame": "019",
+      "label": "f25",
+      "layers": [
+        "d0"
+      ],
+      "png": true
+    },
+    {
+      "file": "00001A.PNG",
+      "state": "000",
+      "frame": "01A",
+      "label": "f26",
+      "layers": [
+        "d0"
+      ],
+      "png": true
+    },
+    {
+      "file": "00001B.PNG",
+      "state": "000",
+      "frame": "01B",
+      "label": "f27",
+      "layers": [
+        "d0"
+      ],
+      "png": true
+    },
+    {
+      "file": "00001C.PNG",
+      "state": "000",
+      "frame": "01C",
+      "label": "f28",
+      "layers": [
+        "d0"
+      ],
+      "png": true
+    },
+    {
+      "file": "00001D.PNG",
+      "state": "000",
+      "frame": "01D",
+      "label": "f29",
+      "layers": [
+        "d0"
+      ],
+      "png": true
+    },
+    {
+      "file": "00001E.PNG",
+      "state": "000",
+      "frame": "01E",
+      "label": "f30",
+      "layers": [
+        "d0"
+      ],
+      "png": true
+    },
+    {
+      "file": "00001F.PNG",
+      "state": "000",
+      "frame": "01F",
+      "label": "f31",
+      "layers": [
+        "d0"
+      ],
+      "png": true
+    },
+    {
+      "file": "000020.PNG",
+      "state": "000",
+      "frame": "020",
+      "label": "f32",
+      "layers": [
+        "d0"
+      ],
+      "png": true
+    },
+    {
+      "file": "000021.PNG",
+      "state": "000",
+      "frame": "021",
+      "label": "f33",
+      "layers": [
+        "d0"
+      ],
+      "png": true
+    },
+    {
+      "file": "000022.PNG",
+      "state": "000",
+      "frame": "022",
+      "label": "f34",
+      "layers": [
+        "d0"
+      ],
+      "png": true
+    },
+    {
+      "file": "000023.PNG",
+      "state": "000",
+      "frame": "023",
+      "label": "f35",
+      "layers": [
+        "d0"
+      ],
+      "png": true
+    },
+    {
+      "file": "000024.PNG",
+      "state": "000",
+      "frame": "024",
+      "label": "f36",
+      "layers": [
+        "d0"
+      ],
+      "png": true
+    },
+    {
+      "file": "000025.PNG",
+      "state": "000",
+      "frame": "025",
+      "label": "f37",
+      "layers": [
+        "d0"
+      ],
+      "png": true
+    },
+    {
+      "file": "000026.PNG",
+      "state": "000",
+      "frame": "026",
+      "label": "f38",
+      "layers": [
+        "d0"
+      ],
+      "png": true
+    },
+    {
+      "file": "000027.PNG",
+      "state": "000",
+      "frame": "027",
+      "label": "f39",
+      "layers": [
+        "d0"
+      ],
+      "png": true
+    },
+    {
+      "file": "000028.PNG",
+      "state": "000",
+      "frame": "028",
+      "label": "f40",
+      "layers": [
+        "d0"
+      ],
+      "png": true
+    },
+    {
+      "file": "000029.PNG",
+      "state": "000",
+      "frame": "029",
+      "label": "f41",
+      "layers": [
+        "d0"
+      ],
+      "png": true
+    },
+    {
+      "file": "00002A.PNG",
+      "state": "000",
+      "frame": "02A",
+      "label": "f42",
+      "layers": [
+        "d0"
+      ],
+      "png": true
+    },
+    {
+      "file": "00002B.PNG",
+      "state": "000",
+      "frame": "02B",
+      "label": "f43",
+      "layers": [
+        "d0"
+      ],
+      "png": true
+    },
+    {
+      "file": "00002C.PNG",
+      "state": "000",
+      "frame": "02C",
+      "label": "f44",
+      "layers": [
+        "d0"
+      ],
+      "png": true
+    },
+    {
+      "file": "00002D.PNG",
+      "state": "000",
+      "frame": "02D",
+      "label": "f45",
+      "layers": [
+        "d0"
+      ],
+      "png": true
+    },
+    {
+      "file": "00002E.PNG",
+      "state": "000",
+      "frame": "02E",
+      "label": "f46",
+      "layers": [
+        "d0"
+      ],
+      "png": true
+    },
+    {
+      "file": "00002F.PNG",
+      "state": "000",
+      "frame": "02F",
+      "label": "f47",
+      "layers": [
+        "d0"
+      ],
+      "png": true
+    },
+    {
+      "file": "000030.PNG",
+      "state": "000",
+      "frame": "030",
+      "label": "f48",
+      "layers": [
+        "d0"
+      ],
+      "png": true
+    },
+    {
+      "file": "000031.PNG",
+      "state": "000",
+      "frame": "031",
+      "label": "f49",
+      "layers": [
+        "d0"
+      ],
+      "png": true
+    },
+    {
+      "file": "000032.PNG",
+      "state": "000",
+      "frame": "032",
+      "label": "f50",
+      "layers": [
+        "d0"
+      ],
+      "png": true
+    },
+    {
+      "file": "000033.PNG",
+      "state": "000",
+      "frame": "033",
+      "label": "f51",
+      "layers": [
+        "d0"
+      ],
+      "png": true
+    },
+    {
+      "file": "000034.PNG",
+      "state": "000",
+      "frame": "034",
+      "label": "f52",
+      "layers": [
+        "d0"
+      ],
+      "png": true
+    },
+    {
+      "file": "000035.PNG",
+      "state": "000",
+      "frame": "035",
+      "label": "f53",
+      "layers": [
+        "d0"
+      ],
+      "png": true
+    },
+    {
+      "file": "000036.PNG",
+      "state": "000",
+      "frame": "036",
+      "label": "f54",
+      "layers": [
+        "d0"
+      ],
+      "png": true
+    },
+    {
+      "file": "000037.PNG",
+      "state": "000",
+      "frame": "037",
+      "label": "f55",
+      "layers": [
+        "d0"
+      ],
+      "png": true
+    },
+    {
+      "file": "000038.PNG",
+      "state": "000",
+      "frame": "038",
+      "label": "f56",
+      "layers": [
+        "d0"
+      ],
+      "png": true
+    },
+    {
+      "file": "000039.PNG",
+      "state": "000",
+      "frame": "039",
+      "label": "f57",
+      "layers": [
+        "d0"
+      ],
+      "png": true
+    },
+    {
+      "file": "00003A.PNG",
+      "state": "000",
+      "frame": "03A",
+      "label": "f58",
+      "layers": [
+        "d0"
+      ],
+      "png": true
+    },
+    {
+      "file": "00003B.PNG",
+      "state": "000",
+      "frame": "03B",
+      "label": "f59",
+      "layers": [
+        "d0"
+      ],
+      "png": true
+    },
+    {
+      "file": "00003C.PNG",
+      "state": "000",
+      "frame": "03C",
+      "label": "f60",
+      "layers": [
+        "d0"
+      ],
+      "png": true
+    },
+    {
+      "file": "00003D.PNG",
+      "state": "000",
+      "frame": "03D",
+      "label": "f61",
+      "layers": [
+        "d0"
+      ],
+      "png": true
+    },
+    {
+      "file": "00003E.PNG",
+      "state": "000",
+      "frame": "03E",
+      "label": "f62",
+      "layers": [
+        "d0"
+      ],
+      "png": true
+    },
+    {
+      "file": "00003F.PNG",
+      "state": "000",
+      "frame": "03F",
+      "label": "f63",
+      "layers": [
+        "d0"
+      ],
+      "png": true
+    }
+  ]
+}

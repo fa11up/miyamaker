@@ -1,14 +1,31 @@
-import { useRef } from 'react'
-import { BANKS, audioBank, model, touch } from '../model.js'
+import { useEffect, useRef, useState } from 'react'
+import { BANKS, applyTrim, audioBank, defaultEnvelopes, model, touch } from '../model.js'
 import { importFile, audioRecordLabel, recordMic, resample, sliceOnto } from '../audio/engine.js'
+import { loadSliceSource, moveSliceMarker, sliceMarkers } from '../audio/song.js'
 import { useModel } from '../useModel.js'
-import { Slider } from '../widgets.jsx'
+import { Knob } from '../widgets.jsx'
 import { Waveform } from './Waveform.jsx'
 
 export function Editor() {
   useModel()
   const pad = model.pads[model.selected]
   const file = useRef(null)
+  const [resampleBus, setResampleBus] = useState(0)
+  const slice = (model.library?.sliceSets || []).find((set) => set.id === model.sliceView) || null
+  const [origin, setOrigin] = useState(null)
+  useEffect(() => {
+    let live = true
+    if (!slice) {
+      setOrigin(null)
+      return undefined
+    }
+    loadSliceSource(slice.id).then((rec) => {
+      if (live) setOrigin(rec || null)
+    })
+    return () => {
+      live = false
+    }
+  }, [slice?.id])
   const set = (patch) => {
     Object.assign(pad, patch)
     touch(true)
@@ -25,9 +42,26 @@ export function Editor() {
     pad.fx = { ...pad.fx, [key]: value }
     touch(true)
   }
+  const envelopes = pad.envelopes?.length === 3 ? pad.envelopes : defaultEnvelopes(pad.filter)
+  const setEnv = (index, key, value) => {
+    const list = envelopes.map((env) => ({ ...env }))
+    const env = list[index]
+    env[key] = value
+    if (key === 'target') {
+      env.depth = value === 'filter'
+        ? Math.max(-36, Math.min(60, env.depth))
+        : Math.max(0, Math.min(1, env.depth))
+    }
+    pad.envelopes = list
+    const filterEnv = list.find((item) => item.target === 'filter')
+    if (filterEnv) {
+      pad.filter = { ...pad.filter, a: filterEnv.a, d: filterEnv.d, s: filterEnv.s, r: filterEnv.r, env: filterEnv.depth }
+    }
+    touch(true)
+  }
   const label = audioRecordLabel()
   return (
-    <div className="screen">
+    <div className="screen edit-screen">
       <div className="slot-grid" role="listbox" aria-label="Sample slots">
         {model.pads.map((slot, i) => (
           <button
@@ -37,15 +71,17 @@ export function Editor() {
             data-pad={i}
             aria-selected={model.selected === i}
             className={`slot ${model.selected === i ? 'on' : ''} ${slot.source === 'empty' ? 'empty' : ''}`}
+            title={slot.name}
             onClick={() => {
               model.selected = i
               model.bank = Math.floor(i / 16)
               model.selection = []
+              model.sliceView = null
               touch(false)
             }}
           >
             <em>{BANKS[Math.floor(i / 16)]}{(i % 16) + 1}</em>
-            <span>{slot.name}</span>
+            <span style={slotText(slot.name)}>{slot.name}</span>
           </button>
         ))}
       </div>
@@ -70,16 +106,25 @@ export function Editor() {
         <button type="button" className={`btn ${label === 'resample' ? 'rec on' : ''}`} onClick={() => resample('main')}>
           {label === 'resample' ? 'Stop resample' : 'Resample main'}
         </button>
-        {['A', 'B', 'C', 'D'].map((name) => (
-          <button
-            key={name}
-            type="button"
-            className={`btn free-width ${label === `bus ${name}` ? 'rec on' : ''}`}
-            onClick={() => resample(name)}
-          >
-            {label === `bus ${name}` ? `Stop ${name}` : `Bus ${name}`}
-          </button>
-        ))}
+        <select
+          className="bus-pick"
+          aria-label="Resample bus"
+          value={resampleBus}
+          onChange={(e) => setResampleBus(Number(e.target.value))}
+        >
+          {model.buses.map((bus, i) => (
+            <option key={i} value={i}>
+              {bus.name}
+            </option>
+          ))}
+        </select>
+        <button
+          type="button"
+          className={`btn free-width ${label === `bus ${resampleBus}` ? 'rec on' : ''}`}
+          onClick={() => resample(resampleBus)}
+        >
+          {label === `bus ${resampleBus}` ? 'Stop bus' : 'Resample bus'}
+        </button>
         <button
           type="button"
           className={`btn ${pad.reverse ? 'on' : ''}`}
@@ -97,56 +142,119 @@ export function Editor() {
         >
           Slice 16
         </button>
+        {slice && (
+          <button
+            type="button"
+            className="btn"
+            onClick={() => {
+              model.sliceView = null
+              touch(false)
+            }}
+          >
+            Trim
+          </button>
+        )}
       </div>
-      <Waveform
-        tall
-        pcm={audioBank.get(model.selected)?.pcm}
-        sr={audioBank.get(model.selected)?.sr}
-        marks={{ start: pad.trimStart, end: pad.trimEnd }}
-      />
+      {slice ? (
+        <Waveform
+          pcm={origin?.pcm}
+          sr={origin?.sr || slice.sr}
+          marks={sliceMarkers(slice)}
+          onMark={(index, value, done) => {
+            moveSliceMarker(slice.id, index, value, done).catch((error) => {
+              model.browserNote = error.message
+              touch(false)
+            })
+          }}
+        />
+      ) : (
+        <Waveform
+          pcm={audioBank.get(model.selected)?.pcm}
+          sr={audioBank.get(model.selected)?.sr}
+          trim={{ start: pad.trimStart, end: pad.trimEnd, loop: pad.loopPoint ?? 0.5 }}
+          onTrim={(which, value, done) => {
+            applyTrim(pad, which, value)
+            touch(!!done)
+          }}
+        />
+      )}
+      <p className="hint">
+        {slice
+          ? `Drag a slice line on ${slice.name}. Release writes that chop back into the folder.`
+          : 'Drag S, E, and LP on the sample. Holding a note loops from LP to the end.'}
+      </p>
       <div className="synth-grid">
+        <div className="edit-col">
+          <fieldset className="group">
+            <legend>Amp</legend>
+            <div className="knob-row">
+              <Knob label="Attack" min={0.001} max={1} value={pad.amp.a} text={ms(pad.amp.a)} onChange={(v) => setAmp('a', v)} />
+              <Knob label="Decay" min={0.001} max={2} value={pad.amp.d} text={ms(pad.amp.d)} onChange={(v) => setAmp('d', v)} />
+              <Knob label="Sustain" min={0} max={1} value={pad.amp.s} onChange={(v) => setAmp('s', v)} />
+              <Knob label="Release" min={0.005} max={2} value={pad.amp.r} text={ms(pad.amp.r)} onChange={(v) => setAmp('r', v)} />
+            </div>
+          </fieldset>
+          <fieldset className="group">
+            <legend>Pitch</legend>
+            <div className="knob-row">
+              <Knob label="Semi" min={-24} max={24} value={pad.pitch} text={`${pad.pitch > 0 ? '+' : ''}${Math.round(pad.pitch)} st`} onChange={(v) => set({ pitch: Math.round(v) })} />
+              <Knob label="Fine" min={-100} max={100} value={pad.fine} text={`${Math.round(pad.fine)} ct`} onChange={(v) => set({ fine: Math.round(v) })} />
+            </div>
+          </fieldset>
+        </div>
         <fieldset className="group">
-          <legend>Trim</legend>
-          <Slider label="Start" min={0} max={0.95} step={0.001} value={pad.trimStart} onChange={(v) => set({ trimStart: Math.min(v, pad.trimEnd - 0.01) })} />
-          <Slider label="End" min={0.05} max={1} step={0.001} value={pad.trimEnd} onChange={(v) => set({ trimEnd: Math.max(v, pad.trimStart + 0.01) })} />
-          <p className="hint">Recordings auto-trim silence and normalize. Drop a file on the window to import it.</p>
-        </fieldset>
-        <fieldset className="group">
-          <legend>Amp</legend>
-          <Slider label="Attack" min={0.001} max={1} step={0.001} value={pad.amp.a} text={ms(pad.amp.a)} onChange={(v) => setAmp('a', v)} />
-          <Slider label="Decay" min={0.001} max={2} step={0.001} value={pad.amp.d} text={ms(pad.amp.d)} onChange={(v) => setAmp('d', v)} />
-          <Slider label="Sustain" min={0} max={1} step={0.01} value={pad.amp.s} onChange={(v) => setAmp('s', v)} />
-          <Slider label="Release" min={0.005} max={2} step={0.001} value={pad.amp.r} text={ms(pad.amp.r)} onChange={(v) => setAmp('r', v)} />
-        </fieldset>
-        <fieldset className="group">
-          <legend>Filter envelope</legend>
-          <label className="slider">
+          <legend>Filter</legend>
+          <label className="edit-filter-type">
             <span>Type</span>
             <select className="row-select" value={pad.filter.type} onChange={(e) => setFilter('type', e.target.value)}>
               <option value="lowpass">Low pass</option>
               <option value="highpass">High pass</option>
               <option value="bandpass">Band pass</option>
             </select>
-            <em />
           </label>
-          <Slider label="Cutoff" min={60} max={18000} step={1} value={pad.filter.cutoff} text={`${Math.round(pad.filter.cutoff)} Hz`} onChange={(v) => setFilter('cutoff', v)} />
-          <Slider label="Reso" min={0.2} max={16} step={0.1} value={pad.filter.q} onChange={(v) => setFilter('q', v)} />
-          <Slider label="Env" min={-36} max={60} step={1} value={pad.filter.env} text={`${pad.filter.env} st`} onChange={(v) => setFilter('env', v)} />
-          <Slider label="Attack" min={0.001} max={1} step={0.001} value={pad.filter.a} text={ms(pad.filter.a)} onChange={(v) => setFilter('a', v)} />
-          <Slider label="Decay" min={0.001} max={2} step={0.001} value={pad.filter.d} text={ms(pad.filter.d)} onChange={(v) => setFilter('d', v)} />
-          <Slider label="Sustain" min={0} max={1} step={0.01} value={pad.filter.s} onChange={(v) => setFilter('s', v)} />
-          <Slider label="Release" min={0.005} max={2} step={0.001} value={pad.filter.r} text={ms(pad.filter.r)} onChange={(v) => setFilter('r', v)} />
-        </fieldset>
-        <fieldset className="group">
-          <legend>Pitch</legend>
-          <Slider label="Semi" min={-24} max={24} step={1} value={pad.pitch} text={`${pad.pitch > 0 ? '+' : ''}${pad.pitch} st`} onChange={(v) => set({ pitch: v })} />
-          <Slider label="Fine" min={-100} max={100} step={1} value={pad.fine} text={`${pad.fine} ct`} onChange={(v) => set({ fine: v })} />
-          <p className="hint">Half steps run from −24 to +24. Fine is cents on top of that.</p>
+          <div className="knob-row">
+            <Knob label="Cutoff" bits={12} min={60} max={18000} value={pad.filter.cutoff} text={`${Math.round(pad.filter.cutoff)} Hz`} onChange={(v) => setFilter('cutoff', Math.round(v))} />
+            <Knob label="Reso" min={0.2} max={16} value={pad.filter.q} onChange={(v) => setFilter('q', v)} />
+          </div>
+          {envelopes.map((env, index) => (
+            <div className="env-line" key={index}>
+              <label className="env-target">
+                <span>Env {index + 1}</span>
+                <select aria-label={`Envelope ${index + 1} target`} value={env.target} onChange={(e) => setEnv(index, 'target', e.target.value)}>
+                  <option value="off">Off</option>
+                  <option value="filter">Filter</option>
+                  <option value="reverb">Reverb</option>
+                  <option value="width">Width</option>
+                  <option value="chorus">Chorus</option>
+                  <option value="amp">Amp</option>
+                </select>
+              </label>
+              <Knob label="Attack" min={0.001} max={1} value={env.a} text={ms(env.a)} onChange={(v) => setEnv(index, 'a', v)} />
+              <Knob label="Decay" min={0.001} max={2} value={env.d} text={ms(env.d)} onChange={(v) => setEnv(index, 'd', v)} />
+              <Knob label="Sustain" min={0} max={1} value={env.s} onChange={(v) => setEnv(index, 's', v)} />
+              <Knob label="Release" min={0.005} max={2} value={env.r} text={ms(env.r)} onChange={(v) => setEnv(index, 'r', v)} />
+              <Knob
+                label="Depth"
+                min={env.target === 'filter' ? -36 : 0}
+                max={env.target === 'filter' ? 60 : 1}
+                value={env.depth}
+                text={env.target === 'filter' ? `${Math.round(env.depth)} st` : undefined}
+                onChange={(v) => setEnv(index, 'depth', env.target === 'filter' ? Math.round(v) : v)}
+              />
+            </div>
+          ))}
         </fieldset>
         <fieldset className="group">
           <legend>Pad FX</legend>
-          <Slider label="Drive" min={0} max={1} step={0.01} value={pad.fx.drive} onChange={(v) => setFx('drive', v)} />
-          <Slider label="Crush" min={0} max={1} step={0.01} value={pad.fx.crush} onChange={(v) => setFx('crush', v)} />
+          <div className="knob-row">
+            <Knob label="Drive" min={0} max={1} value={pad.fx.drive} onChange={(v) => setFx('drive', v)} />
+            <Knob label="Crush" min={0} max={1} value={pad.fx.crush} onChange={(v) => setFx('crush', v)} />
+            <Knob label="Amp" min={0} max={1} value={pad.fx.amp || 0} onChange={(v) => setFx('amp', v)} />
+            <Knob label="Tone" min={0} max={1} value={pad.fx.tone ?? 0.65} text={`${Math.round(500 + (pad.fx.tone ?? 0.65) * 11000)} Hz`} onChange={(v) => setFx('tone', v)} />
+            <Knob label="Reverb" min={0} max={1} value={pad.fx.reverb || 0} onChange={(v) => setFx('reverb', v)} />
+            <Knob label="Width" min={0} max={1} value={pad.fx.width || 0} onChange={(v) => setFx('width', v)} />
+            <Knob label="Chorus" min={0} max={1} value={pad.fx.chorus || 0} onChange={(v) => setFx('chorus', v)} />
+          </div>
         </fieldset>
       </div>
     </div>
@@ -155,4 +263,12 @@ export function Editor() {
 
 function ms(seconds) {
   return `${Math.round(seconds * 1000)} ms`
+}
+
+function slotText(name) {
+  const n = Array.from(name || '').length
+  if (n > 18) return { fontSize: '8px', WebkitLineClamp: 3 }
+  if (n > 11) return { fontSize: '9px', WebkitLineClamp: 3 }
+  if (n > 7) return { fontSize: '10px', WebkitLineClamp: 2 }
+  return { fontSize: '11px', WebkitLineClamp: 1 }
 }

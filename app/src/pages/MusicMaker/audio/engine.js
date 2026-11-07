@@ -1,10 +1,16 @@
 import { limitStereo } from './limiter.js'
 import { encodeWav, trimSilence } from './wav.js'
-import { evenSlices } from './slice.js'
+import { evenPoints, evenSlices } from './slice.js'
 import { workletSource } from './numpadFx.js'
-import { cachePcm, ensureLibrary } from '../media/library.js'
+import { kneeWorkletSource } from './knee.js'
+import { cachePcm, ensureLibrary, newFolder } from '../media/library.js'
 import { allowedMediaUrl } from '../media/allow.js'
-import { audioBank, model, currentSequence, stepCount, writeEvent, touch, rememberSample } from '../model.js'
+import { VIDEO_AUDIO_PATH, videoPage } from '../media/videoaudio.js'
+import { beginUndo, endUndo, stashUndo } from '../history.js'
+import { importKitFile, importSongFile } from './song.js'
+import { BUS_COUNT, TRACK_VEL, audioBank, model, currentSequence, stepCount, writeEvent, commitTrackerNote, setUndoBatch, touch, rememberSample, fitLoop, idbSet } from '../model.js'
+
+setUndoBatch({ begin: beginUndo, end: endUndo })
 
 const busNodes = []
 let ctx = null
@@ -12,9 +18,13 @@ let master = null
 let limiter = null
 let limiterReady = false
 let numpadFx = null
+let stockComp = null
+let makeup = null
+let kneeNode = null
+let routed = null
 let analyser = null
 let meterAnalysers = []
-let reverbBuffer = null
+const reverbBuffers = new Map()
 let voices = []
 let patternVoices = []
 let held = new Map()
@@ -23,7 +33,7 @@ let nextTime = 0
 let nextStep = 0
 let origin = 0
 let started = false
-const meters = { bus: [0, 0, 0, 0], master: 0, gr: 0 }
+const meters = { bus: Array(BUS_COUNT).fill(0), master: 0, gr: 0, compGr: 0 }
 let meterTimer = 0
 let recording = null
 
@@ -75,15 +85,30 @@ async function ensure() {
     numpadFx = null
   }
   if (numpadFx) {
-    master.connect(numpadFx)
     numpadFx.connect(limiter)
     pushNumpadFx()
-  } else {
-    master.connect(limiter)
   }
+  stockComp = ctx.createDynamicsCompressor()
+  makeup = ctx.createGain()
+  makeup.gain.value = model.comp?.makeup ?? 1
+  try {
+    const kneeUrl = URL.createObjectURL(new Blob([kneeWorkletSource()], { type: 'text/javascript' }))
+    await ctx.audioWorklet.addModule(kneeUrl)
+    URL.revokeObjectURL(kneeUrl)
+    kneeNode = new AudioWorkletNode(ctx, 'miya-knee', { outputChannelCount: [2], numberOfInputs: 1, numberOfOutputs: 1 })
+    kneeNode.channelCount = 2
+    kneeNode.channelCountMode = 'explicit'
+    kneeNode.port.onmessage = (e) => {
+      if (e.data && typeof e.data.gr === 'number') meters.compGr = e.data.gr
+    }
+  } catch (err) {
+    console.warn('knee compressor worklet failed', err)
+    kneeNode = null
+  }
+  syncMasterComp()
   limiter.connect(analyser)
   analyser.connect(ctx.destination)
-  for (let i = 0; i < 4; i++) busNodes.push(makeBus(ctx, master))
+  ensureBuses()
   syncMixer(true)
   window.clearInterval(meterTimer)
   meterTimer = window.setInterval(readMeters, 80)
@@ -102,10 +127,12 @@ function hardClip(context) {
   return shaper
 }
 
-function impulse(context) {
-  if (reverbBuffer && reverbBuffer.sampleRate === context.sampleRate) return reverbBuffer
-  const seconds = 1.6
-  const len = Math.floor(context.sampleRate * seconds)
+function impulse(context, seconds = 1.6) {
+  const length = seconds > 1 ? 1.6 : seconds > 0.6 ? 0.9 : 0.4
+  const key = `${context.sampleRate}:${length}`
+  const cached = reverbBuffers.get(key)
+  if (cached) return cached
+  const len = Math.floor(context.sampleRate * length)
   const buf = context.createBuffer(2, len, context.sampleRate)
   for (let c = 0; c < 2; c++) {
     const d = buf.getChannelData(c)
@@ -114,7 +141,7 @@ function impulse(context) {
       d[i] = (Math.random() * 2 - 1) * Math.pow(1 - t, 2.4) * (c === 0 ? 1 : 0.85)
     }
   }
-  reverbBuffer = buf
+  reverbBuffers.set(key, buf)
   return buf
 }
 
@@ -124,6 +151,18 @@ function curveDrive(amount) {
   for (let i = 0; i < curve.length; i++) {
     const x = (i / (curve.length - 1)) * 2 - 1
     curve[i] = Math.tanh(x * k)
+  }
+  return curve
+}
+
+function curveAmp(amount) {
+  const curve = new Float32Array(2048)
+  const k = 1 + amount * 30
+  const bias = amount * 0.4
+  const norm = Math.tanh(k)
+  for (let i = 0; i < curve.length; i++) {
+    const x = (i / (curve.length - 1)) * 2 - 1
+    curve[i] = (Math.tanh((x + bias) * k) - Math.tanh(bias * k)) / norm
   }
   return curve
 }
@@ -327,8 +366,65 @@ function connectChain(bus, context) {
   bus.sig = spec
 }
 
+function ensureBuses() {
+  const n = Math.max(BUS_COUNT, model.buses.length || 0)
+  while (busNodes.length < n) busNodes.push(makeBus(ctx, master))
+  while (meters.bus.length < n) meters.bus.push(0)
+}
+
+function routeMaster() {
+  const next = numpadFx || limiter
+  const useKnee = !!(model.comp && model.comp.justice && kneeNode)
+  const mode = useKnee ? 'knee' : 'stock'
+  if (routed === mode) return
+  try { master.disconnect() } catch { /* not yet connected */ }
+  try { stockComp.disconnect() } catch { /* not yet connected */ }
+  try { makeup.disconnect() } catch { /* not yet connected */ }
+  try { kneeNode?.disconnect() } catch { /* not yet connected */ }
+  if (useKnee) {
+    master.connect(kneeNode)
+    kneeNode.connect(next)
+  } else {
+    master.connect(stockComp)
+    stockComp.connect(makeup)
+    makeup.connect(next)
+  }
+  routed = mode
+}
+
+export function syncMasterComp() {
+  if (!ctx || !stockComp) return
+  routeMaster()
+  const c = model.comp
+  if (!c) return
+  const t = ctx.currentTime
+  stockComp.threshold.setTargetAtTime(c.threshold, t, 0.02)
+  stockComp.knee.setTargetAtTime(c.knee, t, 0.02)
+  stockComp.ratio.setTargetAtTime(c.ratio, t, 0.02)
+  stockComp.attack.setTargetAtTime(c.attack, t, 0.02)
+  stockComp.release.setTargetAtTime(c.release, t, 0.02)
+  makeup.gain.setTargetAtTime(c.makeup, t, 0.02)
+  if (kneeNode) {
+    kneeNode.port.postMessage({
+      knee: c.kKnee,
+      police: c.kPolice,
+      fold: c.kFold,
+      pitch: c.kPitch,
+      policeLfo: c.lfo?.kPolice,
+      foldLfo: c.lfo?.kFold,
+    })
+  }
+}
+
+export function getCompReduction() {
+  if (model.comp?.justice) return meters.compGr || 0
+  if (stockComp && typeof stockComp.reduction === 'number') return stockComp.reduction
+  return 0
+}
+
 export function syncMixer(force = false) {
   if (!ctx) return
+  ensureBuses()
   master.gain.value = model.master
   const sig = model.buses.map((b) => b.fx.map((s) => s.type).join('.')).join('|')
   const anySolo = model.buses.some((b) => b.solo)
@@ -384,25 +480,233 @@ function shaper(context, kind, amount) {
   return s
 }
 
+function groupId(value) {
+  const n = value | 0
+  return n > 0 ? n : 0
+}
+
 function choke(group, when) {
-  if (!group) return
+  const id = groupId(group)
+  if (!id || !ctx) return
+  const t = Math.max(when || 0, ctx.currentTime)
   voices.forEach((v) => {
-    if (v.choke === group && !v.dead) silence(v, when, 0.012)
+    if (groupId(v.choke) !== id) return
+    if (v.startAt > t + 0.0005) return
+    silence(v, t, 0.012)
   })
 }
 
-function silence(v, when, seconds) {
-  if (v.dead) return
-  v.dead = true
-  const t = Math.max(when, ctx.currentTime)
-  try {
-    v.amp.gain.cancelScheduledValues(t)
-    v.amp.gain.setValueAtTime(Math.max(0.0001, v.amp.gain.value), t)
-    v.amp.gain.exponentialRampToValueAtTime(0.0001, t + seconds)
-    v.src.stop(t + seconds + 0.02)
-  } catch {
-    /* node already ended */
+function fxEnv(pad, target) {
+  const list = pad?.envelopes
+  if (!Array.isArray(list)) return null
+  for (let i = 0; i < list.length; i++) {
+    if (list[i]?.target === target) return list[i]
   }
+  return null
+}
+
+function scheduleFilter(filter, pad, t) {
+  const env = fxEnv(pad, 'filter')
+  const base = clamp(pad.filter.cutoff, 40, 18000)
+  const depth = env ? Number(env.depth) || 0 : 0
+  const attack = Math.max(0.001, env ? env.a : 0.004)
+  const decay = Math.max(0.001, env ? env.d : 0.12)
+  const sustain = env ? env.s : 0
+  const peak = clamp(base * Math.pow(2, depth / 12), 40, 18000)
+  const susHz = clamp(base + (peak - base) * (sustain ?? 0), 40, 18000)
+  filter.frequency.cancelScheduledValues(t)
+  filter.frequency.setValueAtTime(base, t)
+  filter.frequency.exponentialRampToValueAtTime(Math.max(40, peak), t + attack)
+  filter.frequency.exponentialRampToValueAtTime(Math.max(40, susHz), t + attack + decay)
+}
+
+function scheduleMix(dry, wet, env, amount, t, total) {
+  const wetG = wet.gain
+  const dryG = dry.gain
+  wetG.cancelScheduledValues(t)
+  dryG.cancelScheduledValues(t)
+  const level = clamp(amount, 0, 1)
+  if (!env) {
+    wetG.setValueAtTime(level, t)
+    dryG.setValueAtTime(1 - level, t)
+    return
+  }
+  const depth = clamp(env.depth ?? 1, 0, 1)
+  const peak = clamp(level * depth, 0, 1)
+  const a = Math.max(0.001, env.a || 0.001)
+  const d = Math.max(0.001, env.d || 0.001)
+  const s = clamp(env.s ?? 0, 0, 1)
+  const r = Math.max(0.005, env.r || 0.02)
+  const sus = peak * s
+  const relAt = Math.max(t + a + d, t + Math.max(0, total) - r)
+  wetG.setValueAtTime(0, t)
+  wetG.linearRampToValueAtTime(peak, t + a)
+  wetG.linearRampToValueAtTime(sus, t + a + d)
+  wetG.setValueAtTime(sus, relAt)
+  wetG.linearRampToValueAtTime(0, relAt + r)
+  dryG.setValueAtTime(1, t)
+  dryG.linearRampToValueAtTime(1 - peak, t + a)
+  dryG.linearRampToValueAtTime(1 - sus, t + a + d)
+  dryG.setValueAtTime(1 - sus, relAt)
+  dryG.linearRampToValueAtTime(1, relAt + r)
+}
+
+function wantsMix(amount, env) {
+  return (amount || 0) > 0.01 || !!env
+}
+
+function mixAround(input, amount, env, t, total, connectWet) {
+  if (!wantsMix(amount, env)) return input
+  const dry = ctx.createGain()
+  const wet = ctx.createGain()
+  const mix = ctx.createGain()
+  input.connect(dry)
+  dry.connect(mix)
+  connectWet(wet)
+  wet.connect(mix)
+  scheduleMix(dry, wet, env, clamp(amount || 0, 0, 1), t, total)
+  return mix
+}
+
+function ampModel(input, pad, env, t, total) {
+  const amount = pad.fx?.amp || 0
+  if (!wantsMix(amount, env)) return input
+  const pre = ctx.createGain()
+  pre.gain.value = 1 + clamp(amount, 0, 1) * 6
+  const sh = ctx.createWaveShaper()
+  sh.curve = curveAmp(Math.max(0.02, amount))
+  sh.oversample = '2x'
+  const tone = ctx.createBiquadFilter()
+  tone.type = 'lowpass'
+  tone.Q.value = 0.6
+  tone.frequency.value = 500 + clamp(pad.fx?.tone ?? 0.65, 0, 1) * 11000
+  return mixAround(input, amount, env, t, total, (wet) => {
+    input.connect(pre)
+    pre.connect(sh)
+    sh.connect(tone)
+    tone.connect(wet)
+  })
+}
+
+function chorus(input, amount, env, t, total, stops) {
+  if (!wantsMix(amount, env)) return input
+  const split = ctx.createChannelSplitter(2)
+  const merge = ctx.createChannelMerger(2)
+  const left = ctx.createDelay(0.05)
+  const right = ctx.createDelay(0.05)
+  left.delayTime.value = 0.016
+  right.delayTime.value = 0.021
+  const lfoL = ctx.createOscillator()
+  const lfoR = ctx.createOscillator()
+  const depthL = ctx.createGain()
+  const depthR = ctx.createGain()
+  const rate = 0.35 + clamp(amount, 0, 1) * 2.4
+  const depth = 0.003 + clamp(amount, 0, 1) * 0.006
+  lfoL.frequency.value = rate
+  lfoR.frequency.value = rate * 1.07
+  depthL.gain.value = depth
+  depthR.gain.value = depth
+  lfoL.connect(depthL)
+  lfoR.connect(depthR)
+  depthL.connect(left.delayTime)
+  depthR.connect(right.delayTime)
+  const node = mixAround(input, amount, env, t, total, (wet) => {
+    input.connect(split)
+    split.connect(left, 0)
+    split.connect(right, 1)
+    left.connect(merge, 0, 0)
+    right.connect(merge, 0, 1)
+    merge.connect(wet)
+  })
+  const startAt = Math.max(t, ctx.currentTime)
+  lfoL.start(startAt)
+  lfoR.start(startAt)
+  stops.push(() => {
+    try { lfoL.stop() } catch { /* ended */ }
+    try { lfoR.stop() } catch { /* ended */ }
+  })
+  return node
+}
+
+function widen(input, amount, env, t, total) {
+  if (!wantsMix(amount, env)) return input
+  const split = ctx.createChannelSplitter(2)
+  const merge = ctx.createChannelMerger(2)
+  const ll = ctx.createGain()
+  const lr = ctx.createGain()
+  const rl = ctx.createGain()
+  const rr = ctx.createGain()
+  ll.gain.value = 1.45
+  lr.gain.value = -0.45
+  rl.gain.value = -0.45
+  rr.gain.value = 1.45
+  return mixAround(input, amount, env, t, total, (wet) => {
+    input.connect(split)
+    split.connect(ll, 0)
+    split.connect(rl, 0)
+    split.connect(lr, 1)
+    split.connect(rr, 1)
+    ll.connect(merge, 0, 0)
+    lr.connect(merge, 0, 0)
+    rl.connect(merge, 0, 1)
+    rr.connect(merge, 0, 1)
+    merge.connect(wet)
+  })
+}
+
+function padReverb(input, amount, env, t, total) {
+  if (!wantsMix(amount, env)) return input
+  const conv = ctx.createConvolver()
+  const seconds = amount > 0.66 ? 1.7 : amount > 0.33 ? 0.75 : 0.3
+  conv.buffer = impulse(ctx, seconds)
+  return mixAround(input, amount, env, t, total, (wet) => {
+    input.connect(conv)
+    conv.connect(wet)
+  })
+}
+
+function stopExtras(v, when) {
+  if (!v?.stops?.length || v.extrasStopped) return
+  const run = () => {
+    if (v.extrasStopped) return
+    v.extrasStopped = true
+    for (const fn of v.stops) {
+      try { fn() } catch { /* ended */ }
+    }
+  }
+  const now = ctx ? ctx.currentTime : 0
+  if (when == null || when <= now + 0.01) run()
+  else window.setTimeout(run, Math.max(0, (when - now) * 1000))
+}
+
+/** Pull a voice silent at `when`. A released one-shot is still audible until its tail, so this must run even after `dead` is set. */
+function silence(v, when, seconds = 0.012) {
+  if (!ctx || !v?.gate) return
+  const now = ctx.currentTime
+  const requested = Math.max(when || 0, now)
+  const end = requested + Math.max(0.004, seconds)
+  if (v.quietAt != null && v.quietAt <= end + 0.0005) return
+  v.dead = true
+  v.quietAt = end
+  const g = v.gate.gain
+  // The envelope gain is already mid-ramp. A cut booked on that same param at
+  // the current sample never replaces it. `gate` stays at 1 until this call.
+  try {
+    if (requested <= now + 0.008) {
+      g.cancelScheduledValues(0)
+      g.value = 0
+    } else {
+      g.setValueAtTime(1, requested)
+      g.linearRampToValueAtTime(0, end)
+    }
+  } catch {
+    try {
+      g.cancelScheduledValues(0)
+      g.value = 0
+    } catch { /* ended */ }
+  }
+  try { v.src.stop(end + 0.02) } catch { /* one-shots already scheduled their stop; the gate is what goes quiet */ }
+  stopExtras(v, end)
 }
 
 export function releaseHeld(id) {
@@ -411,8 +715,31 @@ export function releaseHeld(id) {
   held.delete(id)
   if (!ctx || v.dead) return
   const pad = model.pads[v.pad]
-  if (!pad || pad.mode === 'oneshot') return
+  if (!pad) return
   const t = ctx.currentTime
+  if (pad.mode === 'oneshot' && v.heldLoop && t < v.introUntil - 0.008) {
+    const stopAt = v.introUntil
+    const peak = Math.max(0.0001, v.peak || v.amp.gain.value)
+    const span = Math.max(0.012, stopAt - t)
+    const mid = t + Math.min(0.008, span * 0.2)
+    const rel = Math.min(Math.max(0.008, pad.amp.r || 0.015), span * 0.45)
+    const fadeAt = Math.max(mid + 0.001, stopAt - rel)
+    try {
+      v.amp.gain.cancelScheduledValues(t)
+      v.amp.gain.setValueAtTime(Math.max(0.0001, v.amp.gain.value), t)
+      v.amp.gain.exponentialRampToValueAtTime(peak, mid)
+      v.amp.gain.setValueAtTime(peak, fadeAt)
+      v.amp.gain.exponentialRampToValueAtTime(0.0001, Math.max(fadeAt + 0.004, stopAt))
+      v.src.stop(stopAt + 0.015)
+    } catch {
+      /* ended */
+    }
+    v.dead = true
+    v.quietAt = stopAt
+    stopExtras(v, stopAt)
+    return
+  }
+  if (pad.mode === 'oneshot' && !v.heldLoop) return
   const rel = Math.max(0.02, pad.amp.r || 0.08)
   try {
     v.amp.gain.cancelScheduledValues(t)
@@ -425,9 +752,11 @@ export function releaseHeld(id) {
     /* ended */
   }
   v.dead = true
+  v.quietAt = t + rel
+  stopExtras(v, t + rel)
 }
 
-export function playPad(index, velocity = 0.9, when = 0, opts = {}) {
+export function playPad(index, velocity = TRACK_VEL, when = 0, opts = {}) {
   const pad = model.pads[index]
   if (!pad || pad.source === 'empty') return
   if (!padAudible(pad) && !opts.ignoreMute) return
@@ -438,7 +767,7 @@ export function playPad(index, velocity = 0.9, when = 0, opts = {}) {
   const entry = getEntry(index)
   if (!entry || !entry.pcm) return
   const t = when || ctx.currentTime
-  if (pad.choke) choke(pad.choke, t)
+  if (groupId(pad.choke)) choke(pad.choke, t)
   const src = ctx.createBufferSource()
   src.buffer = makeBuffer(ctx, entry, pad.reverse)
   const semi = (pad.pitch || 0) + (opts.pitch || 0) + (pad.fine || 0) / 100
@@ -448,46 +777,56 @@ export function playPad(index, velocity = 0.9, when = 0, opts = {}) {
   filter.type = pad.filter.type || 'lowpass'
   filter.Q.value = clamp(pad.filter.q || 0.7, 0.1, 18)
   const amp = ctx.createGain()
+  const gate = ctx.createGain()
+  gate.gain.value = 1
   const pan = ctx.createStereoPanner()
   pan.pan.value = clamp(pad.pan || 0, -1, 1)
 
-  let node = src
-  if (pad.fx.drive > 0.01) {
-    const d = shaper(ctx, 'drive', pad.fx.drive)
+  const startF = clamp(pad.trimStart, 0, 0.98)
+  const endF = clamp(pad.trimEnd, startF + 0.01, 1)
+  let loopF = typeof pad.loopPoint === 'number' ? pad.loopPoint : (startF + endF) / 2
+  loopF = clamp(loopF, startF, endF - 0.004)
+  const offset = startF * src.buffer.duration
+  const end = endF * src.buffer.duration
+  let loopAt = loopF * src.buffer.duration
+  if (end - loopAt < 0.004) loopAt = Math.max(offset, end - 0.004)
+  const region = Math.max(0.01, end - offset)
+  const regionDur = region / src.playbackRate.value
+  const vel = clamp(velocity, 0, 1) * pad.volume
+  const heldLive = !!opts.holdId && !opts.pattern
+  const envTotal = heldLive || pad.mode !== 'oneshot' ? Math.max(regionDur, 32) : regionDur
+  const stops = []
+  const fx = pad.fx || {}
+
+  let node = ampModel(src, pad, fxEnv(pad, 'amp'), t, envTotal)
+  if (fx.drive > 0.01) {
+    const d = shaper(ctx, 'drive', fx.drive)
     node.connect(d)
     node = d
   }
-  if (pad.fx.crush > 0.01) {
-    const c = shaper(ctx, 'crush', pad.fx.crush)
+  if (fx.crush > 0.01) {
+    const c = shaper(ctx, 'crush', fx.crush)
     node.connect(c)
     node = c
   }
   node.connect(filter)
   filter.connect(amp)
-  amp.connect(pan)
-  pan.connect(busNodes[pad.bus]?.input || master)
+  amp.connect(gate)
+  gate.connect(pan)
+  let out = chorus(pan, fx.chorus || 0, fxEnv(pad, 'chorus'), t, envTotal, stops)
+  out = widen(out, fx.width || 0, fxEnv(pad, 'width'), t, envTotal)
+  out = padReverb(out, fx.reverb || 0, fxEnv(pad, 'reverb'), t, envTotal)
+  out.connect(busNodes[pad.bus]?.input || master)
 
-  const dur = src.buffer.duration / src.playbackRate.value
-  const offset = clamp(pad.trimStart, 0, 0.99) * src.buffer.duration
-  const end = clamp(pad.trimEnd, pad.trimStart + 0.01, 1) * src.buffer.duration
-  const region = Math.max(0.01, end - offset)
-  const regionDur = region / src.playbackRate.value
-  const vel = clamp(velocity, 0, 1) * pad.volume
-
-  const base = clamp(pad.filter.cutoff, 40, 18000)
-  const peak = clamp(base * Math.pow(2, (pad.filter.env || 0) / 12), 40, 18000)
-  const susHz = clamp(base + (peak - base) * pad.filter.s, 40, 18000)
-  filter.frequency.setValueAtTime(base, t)
-  filter.frequency.exponentialRampToValueAtTime(Math.max(40, peak), t + Math.max(0.001, pad.filter.a))
-  filter.frequency.exponentialRampToValueAtTime(
-    Math.max(40, susHz),
-    t + Math.max(0.002, pad.filter.a + pad.filter.d),
-  )
-
-  const envTotal = pad.mode === 'oneshot' ? regionDur : Math.max(regionDur, 8)
+  scheduleFilter(filter, pad, t)
   scheduleAmp(amp, pad.amp, vel, t, envTotal)
 
-  if (pad.mode === 'loop') {
+  if (heldLive) {
+    src.loop = true
+    src.loopStart = loopAt
+    src.loopEnd = end
+    src.start(t, offset)
+  } else if (pad.mode === 'loop') {
     src.loop = true
     src.loopStart = offset
     src.loopEnd = end
@@ -499,17 +838,63 @@ export function playPad(index, velocity = 0.9, when = 0, opts = {}) {
     src.stop(t + regionDur + 0.02)
   }
 
-  const voice = { src, amp, filter, choke: pad.choke, pad: index, dead: false, pattern: !!opts.pattern }
+  const voice = {
+    src,
+    amp,
+    gate,
+    filter,
+    choke: groupId(pad.choke),
+    pad: index,
+    dead: false,
+    quietAt: heldLive || pad.mode !== 'oneshot' ? null : t + regionDur + 0.03,
+    startAt: t,
+    pattern: !!opts.pattern,
+    lane: opts.pattern ? (opts.lane ?? null) : null,
+    heldLoop: heldLive,
+    introUntil: t + regionDur,
+    peak: Math.max(0.0001, vel * clamp(pad.amp.s ?? 1, 0, 1)),
+    stops,
+  }
   voices.push(voice)
-  if (voices.length > 48) voices = voices.filter((v) => !v.dead)
+  if (voices.length > 64) {
+    const now = ctx.currentTime
+    voices = voices.filter((v) => v.quietAt == null || v.quietAt > now - 0.03)
+  }
   if (opts.pattern) patternVoices.push(voice)
   if (opts.holdId) held.set(opts.holdId, voice)
   src.onended = () => {
     voice.dead = true
+    if (voice.quietAt == null) voice.quietAt = ctx.currentTime
+    stopExtras(voice, ctx.currentTime)
   }
   flash(index)
-  if (model.recording && model.playing && !opts.fromSeq && opts.pitch == null) {
-    const hit = locateHit(t)
+  if (!opts.fromSeq && !opts.pattern) captureHit(index, velocity, opts.pitch, t)
+}
+
+function captureHit(index, velocity, pitch, when) {
+  if (model.screen === 'track') {
+    if (!model.tracker.edit) return
+    const live = !!(model.playing && model.tracker.follow && started)
+    let row = model.tracker.row | 0
+    let nudge = 0
+    if (live) {
+      const hit = locateHit(when)
+      if (!hit) return
+      row = hit.step
+      nudge = hit.nudge
+    }
+    commitTrackerNote({
+      pad: index,
+      vel: velocity,
+      pitch: typeof pitch === 'number' ? pitch : 0,
+      row,
+      nudge,
+      live,
+    })
+    return
+  }
+  if (model.recording && model.playing && typeof pitch !== 'number') {
+    const hit = locateHit(when)
     if (hit) writeEvent(index, hit.step, velocity, 0, hit.nudge)
   }
 }
@@ -564,30 +949,51 @@ function click(time, accent) {
   o.stop(time + 0.04)
 }
 
+function silenceLane(lane, when) {
+  patternVoices.forEach((v) => {
+    if (v.lane === lane) silence(v, when, 0.012)
+  })
+}
+
 function fireStep(step, time) {
   const seq = currentSequence()
   const events = seq.steps[step] || []
   const base = 60 / model.bpm / 4
-  events.forEach((ev) => {
+  events.forEach((ev, lane) => {
     if (!ev) return
     const nudge = (clamp(ev.nudge || 0, -50, 50) / 100) * base
-    playPad(ev.pad, ev.vel ?? 0.9, time + nudge, { pitch: ev.pitch || 0, fromSeq: true, pattern: true })
+    const when = time + nudge
+    silenceLane(lane, when)
+    if (ev.off) return
+    playPad(ev.pad, ev.vel ?? 0.9, when, { pitch: ev.pitch || 0, fromSeq: true, pattern: true, lane })
   })
   if (model.metro && step % 4 === 0) click(time, step % 16 === 0)
   model.playhead = step
   if (step % 2 === 0) touch(false)
 }
 
+function advanceSong() {
+  const order = model.songOrder
+  if (!model.songPlay || !Array.isArray(order) || order.length < 2) return
+  model.songCursor = ((model.songCursor || 0) + 1) % order.length
+  model.pattern = order[model.songCursor] | 0
+}
+
 function scheduler() {
   if (!ctx || !model.playing) return
   const horizon = ctx.currentTime + 0.12
   const base = 60 / model.bpm / 4
-  const seq = currentSequence()
-  const n = stepCount(seq)
   while (nextTime < horizon) {
+    const seq = currentSequence()
+    const n = Math.max(1, stepCount(seq))
+    if (nextStep >= n) nextStep = 0
     const swung = nextTime + (nextStep % 2 === 1 ? base * model.swing : 0)
     fireStep(nextStep, swung)
-    nextStep = (nextStep + 1) % n
+    nextStep += 1
+    if (nextStep >= n) {
+      nextStep = 0
+      advanceSong()
+    }
     nextTime += base
   }
 }
@@ -608,6 +1014,10 @@ export function startTransport() {
   origin = ctx.currentTime + 0.05
   nextTime = origin
   nextStep = 0
+  if (model.songPlay && Array.isArray(model.songOrder) && model.songOrder.length) {
+    model.songCursor = 0
+    model.pattern = model.songOrder[0] | 0
+  }
   window.clearInterval(timer)
   timer = window.setInterval(scheduler, 25)
   scheduler()
@@ -647,11 +1057,28 @@ export async function previewPcm(pcm, sr = 44100) {
   src.start()
 }
 
-export function noteOn(index, velocity, holdId, pitch = 0) {
+export function noteOn(index, velocity, holdId, pitch) {
   const pad = model.pads[index]
   if (!pad) return
   if (pad.mode !== 'oneshot' && holdId && held.has(holdId)) return
-  playPad(index, velocity, 0, { holdId, pitch })
+  const opts = { holdId }
+  if (typeof pitch === 'number') opts.pitch = pitch
+  playPad(index, velocity, 0, opts)
+}
+
+export function recordTrackerOff() {
+  if (model.screen !== 'track' || !model.tracker.edit) return
+  const live = !!(model.playing && model.tracker.follow && started && ctx)
+  let row = model.tracker.row | 0
+  let nudge = 0
+  if (live) {
+    const hit = locateHit(ctx.currentTime)
+    if (hit) {
+      row = hit.step
+      nudge = hit.nudge
+    }
+  }
+  commitTrackerNote({ pad: model.selected, vel: 0, pitch: 0, off: true, row, nudge, live })
 }
 
 export function noteOff(holdId) {
@@ -664,11 +1091,10 @@ export function releaseKeyboardNotes() {
   }
 }
 
-export async function bounceWav() {
+export async function renderBounce() {
   await resume()
   const seq = currentSequence()
-  const bars = seq.bars
-  const seconds = bars * 4 * (60 / model.bpm) + 0.6
+  const seconds = stepCount(seq) * (60 / model.bpm / 4) + 0.6
   const sr = 44100
   const off = new OfflineAudioContext(2, Math.ceil(seconds * sr), sr)
   const dest = off.createGain()
@@ -715,7 +1141,11 @@ export async function bounceWav() {
   const left = rendered.getChannelData(0).slice()
   const right = rendered.getChannelData(1).slice()
   const limited = limitStereo(left, right, rendered.sampleRate)
-  const blob = encodeWav([limited.left, limited.right], rendered.sampleRate)
+  return encodeWav([limited.left, limited.right], rendered.sampleRate)
+}
+
+export async function bounceWav() {
+  const blob = await renderBounce()
   const a = document.createElement('a')
   a.href = URL.createObjectURL(blob)
   a.download = 'miya-music-maker.wav'
@@ -750,7 +1180,7 @@ export async function enableMidi() {
   touch(false)
 }
 
-function onMidi(event) {
+export function onMidi(event) {
   const [status, data1, data2] = event.data
   const cmd = status & 0xf0
   if (cmd === 0x90 && data2 > 0) {
@@ -780,23 +1210,17 @@ export async function recordMic() {
 
 export async function resample(which = 'main') {
   await resume()
-  const label = which === 'main' ? 'resample' : `bus ${which}`
+  const busIndex = which === 'main' ? -1 : Number(which)
+  const label = which === 'main' ? 'resample' : `bus ${busIndex}`
   if (recording?.label === label) return stopRecorder()
   if (recording) await stopRecorder()
   const tap = ctx.createMediaStreamDestination()
   if (which === 'main') limiter.connect(tap)
-  else {
-    const index = 'ABCD'.indexOf(which)
-    const node = busNodes[index]
-    if (node) node.panner.connect(tap)
-  }
-  return startRecorder(tap.stream, which === 'main' ? 'resample' : `bus ${which}`, () => {
+  else if (busNodes[busIndex]) busNodes[busIndex].panner.connect(tap)
+  return startRecorder(tap.stream, label, () => {
     try {
       if (which === 'main') limiter.disconnect(tap)
-      else {
-        const index = 'ABCD'.indexOf(which)
-        busNodes[index]?.panner.disconnect(tap)
-      }
+      else busNodes[busIndex]?.panner.disconnect(tap)
     } catch {
       /* already disconnected */
     }
@@ -829,6 +1253,7 @@ function startRecorder(stream, label, cleanup) {
     const pad = model.pads[model.selected]
     pad.trimStart = trim.start
     pad.trimEnd = trim.end
+    fitLoop(pad)
     if (model.settings.autoNorm) {
       let peak = 0
       const a = Math.floor(trim.start * pcm.length)
@@ -1006,23 +1431,38 @@ async function fetchMediaBytes(url) {
 }
 
 export async function placePcm(index, pcm, sr, name, { folder = 'imports', forceName = false, ext = 'wav' } = {}) {
-  model.selected = index
-  const pad = model.pads[index]
-  pad.trimStart = 0
-  pad.trimEnd = 1
-  await rememberSample(index, { pcm, sr, name, forceName })
-  ensureLibrary()
-  await cachePcm(folder, name, pcm, sr, ext)
-  model.browserNote = `${name} on pad ${index + 1}`
-  touch(true)
+  beginUndo()
+  try {
+    model.selected = index
+    const pad = model.pads[index]
+    pad.trimStart = 0
+    pad.trimEnd = 1
+    fitLoop(pad)
+    await rememberSample(index, { pcm, sr, name, forceName })
+    ensureLibrary()
+    await cachePcm(folder, name, pcm, sr, ext)
+    model.browserNote = `${name} on pad ${index + 1}`
+    touch(true)
+  } finally {
+    endUndo()
+  }
 }
 
 export async function importFile(file, index = model.selected) {
+  const ext = (file.name.split('.').pop() || '').toLowerCase()
+  if (ext === 'k1t') {
+    await importKitFile(file)
+    return
+  }
+  if (ext === 'm1ya' || ext === 'mod' || ext === 'xm') {
+    await importSongFile(file)
+    return
+  }
   await resume()
   const arr = await file.arrayBuffer()
   const decoded = await decodeAny(arr, file.name)
   const name = file.name.replace(/\.[^.]+$/, '')
-  await placePcm(index, decoded.pcm, decoded.sr, name, { forceName: true, ext: (file.name.split('.').pop() || 'wav').toLowerCase() })
+  await placePcm(index, decoded.pcm, decoded.sr, name, { forceName: true, ext })
 }
 
 export async function importRemote(url, index = model.selected, name = 'nft') {
@@ -1034,22 +1474,122 @@ export async function importRemote(url, index = model.selected, name = 'nft') {
   await placePcm(index, decoded.pcm, decoded.sr, name, { forceName: true, ext: 'wav' })
 }
 
+const SAMPLE_SECONDS = 16
+
+function fitSample(pcm, sr) {
+  const rate = sr || 44100
+  let start = 0
+  let end = pcm.length
+  if (model.settings.autoTrim) {
+    const trim = trimSilence(pcm, rate)
+    start = Math.floor(trim.start * pcm.length)
+    end = Math.ceil(trim.end * pcm.length)
+  }
+  const cap = Math.floor(rate * SAMPLE_SECONDS)
+  if (end - start > cap) end = start + cap
+  if (end <= start) {
+    start = 0
+    end = Math.min(pcm.length, cap)
+  }
+  const out = new Float32Array(Math.max(0, end - start))
+  if (out.length) out.set(pcm.subarray(start, end))
+  if (model.settings.autoNorm && out.length) {
+    let peak = 0
+    for (let i = 0; i < out.length; i++) peak = Math.max(peak, Math.abs(out[i]))
+    if (peak > 0.001) {
+      const gain = 0.98 / peak
+      for (let i = 0; i < out.length; i++) out[i] *= gain
+    }
+  }
+  return { pcm: out, sr: rate }
+}
+
+function sampleTitle(name) {
+  const clean = String(name || 'video').replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80)
+  return clean || 'video'
+}
+
+async function storeInCache(pcm, sr, name) {
+  const fitted = fitSample(pcm, sr)
+  const title = sampleTitle(name)
+  ensureLibrary()
+  await cachePcm('imports', title, fitted.pcm, fitted.sr, 'wav')
+  model.browserNote = `${title} is in Cache. Load it onto a pad to keep it in a song.`
+  touch(true)
+}
+
+export async function cacheRemote(url, name = 'media') {
+  await resume()
+  model.browserNote = `Reading ${name}`
+  touch(false)
+  const bytes = await fetchMediaBytes(url)
+  const decoded = await decodeAny(bytes, url)
+  await storeInCache(decoded.pcm, decoded.sr, name)
+}
+
+export async function importVideoLink(raw) {
+  const page = videoPage(String(raw || '').trim())
+  if (!page) throw new Error('Use a YouTube, Odysee, LBRY, or X link.')
+  await resume()
+  model.browserNote = 'Reading that video'
+  touch(false)
+  const res = await fetch(`${VIDEO_AUDIO_PATH}?url=${encodeURIComponent(page.href)}`)
+  if (!res.ok) {
+    let message = 'Could not read that video'
+    try {
+      const body = await res.json()
+      if (body?.message) message = body.message
+    } catch {
+      /* the server answered with a page, not a reason */
+    }
+    throw new Error(message)
+  }
+  const header = res.headers.get('x-sample-name')
+  let name = 'video'
+  try {
+    name = decodeURIComponent(header || '') || name
+  } catch {
+    name = header || name
+  }
+  const bytes = await res.arrayBuffer()
+  const decoded = await decodeAny(bytes, `${name}.webm`)
+  await storeInCache(decoded.pcm, decoded.sr, name)
+}
+
 export async function sliceOnto(index, count, baseName) {
   await resume()
   const entry = audioBank.get(index)
   if (!entry?.pcm) throw new Error('That pad has no sample to slice')
   const pieces = evenSlices(entry.pcm, count)
-  const base = baseName || model.pads[index].name || 'slice'
-  for (let i = 0; i < pieces.length; i++) {
-    const at = (index + i) % 64
-    model.pads[at].trimStart = 0
-    model.pads[at].trimEnd = 1
-    model.pads[at].mode = 'oneshot'
-    await rememberSample(at, { pcm: pieces[i], sr: entry.sr, name: `${base} ${i + 1}`, forceName: true })
-    await cachePcm('slices', `${base} ${i + 1}`, pieces[i], entry.sr, 'wav')
+  const points = evenPoints(count)
+  const base = String(baseName || model.pads[index].name || 'slice').slice(0, 40)
+  beginUndo()
+  try {
+    const folderId = newFolder(base, 'slices')
+    if (!folderId) throw new Error('Could not make a slice folder')
+    const cuts = []
+    for (let i = 0; i < pieces.length; i++) {
+      const at = (index + i) % 64
+      model.pads[at].trimStart = 0
+      model.pads[at].trimEnd = 1
+      model.pads[at].mode = 'oneshot'
+      fitLoop(model.pads[at])
+      await rememberSample(at, { pcm: pieces[i], sr: entry.sr, name: `${base} ${i + 1}`, forceName: true })
+      const fileId = await cachePcm(folderId, `${base} ${i + 1}`, pieces[i], entry.sr, 'wav')
+      cuts.push({ fileId, pad: at, a: points[i], b: points[i + 1] })
+    }
+    const setId = `c${Date.now().toString(36)}${Math.floor(Math.random() * 1000)}`
+    const library = ensureLibrary()
+    library.sliceSets.push({ id: setId, folder: folderId, name: base, sr: entry.sr, cuts })
+    stashUndo(`src:${setId}`, null)
+    await idbSet(`src:${setId}`, { pcm: entry.pcm, sr: entry.sr, name: base })
+    model.sliceView = setId
+    model.screen = 'edit'
+    model.browserNote = `${pieces.length} even slices in ${base}`
+    touch(true)
+  } finally {
+    endUndo()
   }
-  model.browserNote = `${pieces.length} even slices from pad ${index + 1}`
-  touch(true)
 }
 
 export async function decodePreview(arrayBuffer, name) {

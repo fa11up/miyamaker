@@ -38,6 +38,16 @@ const RENOISE_UPPER = {
 }
 const RENOISE_TOP = { i: 0, 9: 1, o: 2, 0: 3, p: 4 }
 
+const NOTE_NAMES = ['C-', 'C#', 'D-', 'D#', 'E-', 'F-', 'F#', 'G-', 'G#', 'A-', 'A#', 'B-']
+
+/** Pattern note for a pitch offset from C-4, the tracker's root. */
+export function noteName(pitch = 0) {
+  const midi = 60 + (pitch | 0)
+  const name = NOTE_NAMES[((midi % 12) + 12) % 12]
+  const oct = Math.floor(midi / 12) - 1
+  return `${name}${oct}`
+}
+
 /** MIDI note for the Renoise layout, or null when the key is not a note. */
 export function renoiseNote(key, octave = 3) {
   const k = key.length === 1 ? key.toLowerCase() : key
@@ -55,7 +65,7 @@ export const SHORTCUTS = [
   ['Space', 'Play / stop'],
   ['0', 'Record on / off'],
   ['M', 'Metronome on / off'],
-  ['/', 'Keyboard mode on / off. Koala and Renoise choose the note layout.'],
+  ['/', 'Toggle Pad and Keys.'],
   ['Shift (hold)', 'Edit. Multi-select pads'],
   ['N (hold)', 'Solo the next pad'],
   ['B (hold)', 'Mute the next pad'],
@@ -67,7 +77,10 @@ export const SHORTCUTS = [
   ['Left / Right', 'Previous / next pad page'],
   ['Down', 'Sample browser'],
   ['Delete / Backspace', 'Delete the selection'],
-  ['Keyboard mode, Koala', 'A S D F G H J K L ; \' white keys from C. W E T Y U O P black keys. Z / X shift octave.'],
-  ['Keyboard mode, Renoise', 'Selected pad, in notation. Z is C of the octave (default 3). Q and comma are the next C. I is the C above that. A and Caps Lock are note off. Numpad / and *, or Ctrl+[ and Ctrl+], shift the octave. In this map M, N, and 0 are notes.'],
+  ['Pad', '1 2 3 4 / Q W E R / A S D F / Z X C V play the current bank. Y U I O / H J K L are sequence slots on the Pads page.'],
+  ['Keys', 'Selected pad, in notation. Z is C of the octave (default 3). Q and comma are the next C. I is the C above that. A and Caps Lock are note off. Numpad / and *, or Ctrl+[ and Ctrl+], shift the octave. In this map M, N, and 0 are notes.'],
+  ['Tracker', 'Esc or Rec arms edit. On NOTE, Z is C and Q is the next C. A is note off. INST is the pad in hex. Ctrl and 1–0 sets the step. Tab moves a track. MIDI pads write the armed track.'],
+  ['FILE', 'Open and save. Wallet reads tokens for media. A video link from YouTube, Odysee, LBRY, or X becomes a Cache sample until it is loaded onto a pad and the song is saved. Image… turns a picture into a Cache sample.'],
+  ['NEW / SAVE', 'New song, folder, kit, or slice. Save writes the current song. Save as stores a new .m1ya. Save as template keeps a starting point. On miyamaker.com, Save song or kit to Arweave, upload a bounce, or mint either as an edition.'],
   ['Shift+numpad 0–9', 'Hold a master FX slot. It retriggers the output, then runs that slot’s filter, chorus, flanger, or repeat. Edit the ten slots on the FX page.'],
 ]

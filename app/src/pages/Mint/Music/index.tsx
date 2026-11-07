@@ -19,6 +19,7 @@ import { discoverMusic } from '@/music/discovery'
 import { addKnownCollection, onKnownCollectionsChange } from '@/music/known'
 import { useAddToRadio } from '@/music/useAddToRadio'
 import { useOpenApp } from '@/music/useOpenApp'
+import { queueRemoteOpen } from '@/pages/MusicMaker/remoteOpen.js'
 import { describeError } from '@/pages/Mint/Miyamini/useMiyamini'
 import { bevel, color, space, text } from '@/theme/tokens'
 import { resolveUri } from '@/utils/resolveUri'
@@ -268,6 +269,13 @@ export default function MusicDrops({ onBack }: { onBack: () => void }) {
   })
   const items = query.data || []
 
+  const openMaker = (uri: string | undefined, kind: 'song' | 'kit', name: string) => {
+    const href = uri ? resolveUri(uri) : ''
+    if (!href) return
+    queueRemoteOpen({ href, kind, name })
+    openApp('music')
+  }
+
   const add = () => {
     const a = address.trim()
     if (!isAddress(a)) {
@@ -390,6 +398,23 @@ export default function MusicDrops({ onBack }: { onBack: () => void }) {
                   <Small type="button" onClick={() => addToRadio(item.track)}>
                     Add to radio
                   </Small>
+                  {item.music.song && (
+                    <Small
+                      type="button"
+                      onClick={() => openMaker(item.music.song, 'song', item.music.title)}
+                    >
+                      Open song
+                    </Small>
+                  )}
+                  {item.music.kit && (
+                    <Small
+                      type="button"
+                      title="Replaces the current kit"
+                      onClick={() => openMaker(item.music.kit, 'kit', item.music.title)}
+                    >
+                      Load kit
+                    </Small>
+                  )}
                 </Actions>
                 <MintEdition item={item} />
                 <Sub>

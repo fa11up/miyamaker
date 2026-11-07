@@ -1,5 +1,5 @@
 import { useRef } from 'react'
-import { model, currentPattern, setHit, clearHit, addBar, removeBar, doubleUp, touch } from '../model.js'
+import { model, currentPattern, setHit, clearHit, addBar, removeBar, doubleUp, stepCount, touch } from '../model.js'
 import { useModel } from '../useModel.js'
 import { Slider } from '../widgets.jsx'
 import { PatternBar } from './PatternBar.jsx'
@@ -8,7 +8,7 @@ export function Sequencer() {
   useModel()
   const seq = currentPattern()
   const start = model.bank * 16
-  const steps = seq.bars * 16
+  const steps = stepCount(seq)
   const hit = model.seqHit
   const selected = hit ? (seq.steps[hit.step] || []).find((e) => e && e.pad === hit.pad) : null
   return (
@@ -24,7 +24,7 @@ export function Sequencer() {
         <button type="button" className="btn free-width" onClick={doubleUp}>
           Double
         </button>
-        <span className="hint">{seq.bars} bar{seq.bars === 1 ? '' : 's'}</span>
+        <span className="hint">{steps === 1 ? '1 step' : `${steps} steps`}</span>
         <Slider
           label="Swing"
           min={0}
