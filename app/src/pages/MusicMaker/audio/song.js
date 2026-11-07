@@ -1,7 +1,8 @@
 import { parseMod, parseXm } from './module.js'
 import { defaultNumpadFx, normalizeNumpadFx } from './numpadFx.js'
 import { FACTORY, KIT_LAYOUT } from './presets.js'
-import { beginUndo, endUndo, stashUndo } from '../history.js'
+import { beginUndo, endUndo, songSwitch, stashUndo } from '../history.js'
+import { bumpSong, exclusive, loadCurrent, loadTicket } from '../jobs.js'
 import { ensureLibrary } from '../media/library.js'
 import { allowedMediaUrl } from '../media/allow.js'
 import {
@@ -211,7 +212,11 @@ export async function moveSliceMarker(setId, cutIndex, fraction, done) {
   if (done) await rewriteSlice(set)
 }
 
-async function rewriteSlice(set) {
+function rewriteSlice(set) {
+  return exclusive(() => rewriteSliceNow(set))
+}
+
+async function rewriteSliceNow(set) {
   beginUndo()
   try {
     const src = await idbGet(`src:${set.id}`)
@@ -249,14 +254,15 @@ export async function storeSongFile(name, doc, { quiet = false, folder = 'songs'
   const packed = packSong({ ...doc, name: name || doc.name })
   const id = `g${Date.now().toString(36)}${Math.floor(Math.random() * 1000)}`
   const where = folder === 'templates' ? 'templates' : 'songs'
+  // Storage first: a failed write must not leave a library entry that points at nothing.
+  await idbSet(`song:${id}`, packed)
   stashUndo(`song:${id}`, null)
   library.files.push({ id, folder: where, name: packed.name, ext: 'm1ya' })
-  await idbSet(`song:${id}`, packed)
   const who = (model.wallet || '').trim().toLowerCase()
   if (/^0x[a-f0-9]{40}$/.test(who)) {
     const key = `profile:${who}:${id}`
-    stashUndo(key, null)
     await idbSet(key, packed)
+    stashUndo(key, null)
   }
   if (!quiet) touch(true)
   return { id, doc: packed }
@@ -268,9 +274,9 @@ export async function replaceSongFile(id, name, doc) {
   if (!file) return storeSongFile(name, doc)
   const packed = packSong({ ...doc, name: name || file.name })
   const prev = await idbGet(`song:${id}`)
+  await idbSet(`song:${id}`, packed)
   stashUndo(`song:${id}`, prev || null)
   file.name = packed.name
-  await idbSet(`song:${id}`, packed)
   const who = (model.wallet || '').trim().toLowerCase()
   if (/^0x[a-f0-9]{40}$/.test(who)) await idbSet(`profile:${who}:${id}`, packed)
   touch(true)
@@ -281,9 +287,9 @@ export async function storeKitFile(name, doc, { quiet = false } = {}) {
   const library = ensureLibrary()
   const packed = packKit({ ...doc, name: name || doc.name })
   const id = `k${Date.now().toString(36)}${Math.floor(Math.random() * 1000)}`
+  await idbSet(`kit:${id}`, packed)
   stashUndo(`kit:${id}`, null)
   library.files.push({ id, folder: 'kits', name: packed.name, ext: 'k1t' })
-  await idbSet(`kit:${id}`, packed)
   if (!quiet) touch(true)
   return { id, doc: packed }
 }
@@ -419,13 +425,19 @@ export function decodeKitSamples(samples) {
   return out
 }
 
-async function applyKit(doc) {
+/**
+ * Replace all 64 pads. Only call from inside an exclusive job. `stillWanted` is checked after the slow
+ * reads and before anything is replaced: a superseded load returns false and changes nothing.
+ */
+async function applyKit(doc, stillWanted = () => true) {
   const decoded = decodeKitSamples(doc.samples)
   const pads = Array.from({ length: 64 }, (_, i) => clonePad(i, Array.isArray(doc.pads) ? doc.pads[i] : null))
+  const prevs = []
   for (let i = 0; i < 64; i++) {
-    const prev = await idbGet(`pad:${i}`)
-    stashUndo(`pad:${i}`, prev || null)
+    prevs.push(await idbGet(`pad:${i}`))
+    if (!stillWanted()) return false
   }
+  prevs.forEach((prev, i) => stashUndo(`pad:${i}`, prev || null))
   for (let i = 0; i < 64; i++) {
     model.pads[i] = pads[i]
     audioBank.delete(i)
@@ -452,6 +464,7 @@ async function applyKit(doc) {
       pad.patch = null
     }
   })
+  return true
 }
 
 async function pushMix() {
@@ -482,7 +495,11 @@ function applySongMix(doc) {
   return changed
 }
 
-export async function clearKit() {
+export function clearKit() {
+  return exclusive(clearKitNow)
+}
+
+async function clearKitNow() {
   beginUndo()
   try {
     for (let i = 0; i < 64; i++) {
@@ -499,7 +516,12 @@ export async function clearKit() {
   }
 }
 
-export async function loadKit(doc) {
+/** Kit loads run one at a time with song loads and undo, so two never mix their pads. */
+export function loadKit(doc) {
+  return exclusive(() => loadKitNow(doc))
+}
+
+async function loadKitNow(doc) {
   if (!doc || doc.type !== 'k1t') throw new Error('That file is not a .k1t kit')
   beginUndo()
   try {
@@ -511,11 +533,24 @@ export async function loadKit(doc) {
   }
 }
 
-export async function loadSong(doc, fileId = '') {
+/**
+ * Open a song. Loads run one at a time (with kit loads and undo). The ticket is taken when the user asks,
+ * so pass the one taken before any slow read of the file: a newer load supersedes this one, and a
+ * superseded load resolves false without touching the session or storage.
+ */
+export function loadSong(doc, fileId = '', ticket = loadTicket()) {
+  return exclusive(() => loadSongNow(doc, fileId, ticket))
+}
+
+async function loadSongNow(doc, fileId, ticket) {
   if (!doc || doc.type !== 'm1ya') throw new Error('That file is not an .m1ya song')
+  const wanted = () => loadCurrent(ticket)
+  if (!wanted()) return false
   beginUndo()
   try {
-    if (songHasKit(doc)) await applyKit(doc)
+    if (songHasKit(doc) && !(await applyKit(doc, wanted))) return false
+    bumpSong()
+    songSwitch()
     const mix = applySongMix(doc)
     model.patterns = Array.from({ length: 256 }, () => null)
     for (const pattern of Array.isArray(doc.patterns) ? doc.patterns : []) {
@@ -544,9 +579,11 @@ export async function loadSong(doc, fileId = '') {
   } finally {
     endUndo()
   }
+  return true
 }
 
-export async function importSongBytes(buffer, name = 'Song') {
+/** Store a song file in Songs and open it. Take `ticket` before reading the bytes. */
+export async function importSongBytes(buffer, name = 'Song', ticket = loadTicket()) {
   const bytes = new Uint8Array(buffer)
   const head = String.fromCharCode(...bytes.subarray(0, 17))
   let doc
@@ -566,7 +603,8 @@ export async function importSongBytes(buffer, name = 'Song') {
   beginUndo()
   try {
     const stored = await storeSongFile(doc.name, doc)
-    await loadSong(stored.doc, stored.id)
+    // A newer load won: the file stays in Songs, the session stays on the newer song.
+    if (!(await loadSong(stored.doc, stored.id, ticket))) model.browserNote = `${stored.doc.name}.m1ya saved in Songs`
     return stored.doc
   } finally {
     endUndo()
@@ -580,6 +618,7 @@ function magicMod(bytes) {
 
 export async function openPackedUrl(job) {
   if (!job?.href) return
+  const ticket = job.kind === 'kit' ? 0 : loadTicket()
   const res = await fetch(job.href)
   if (!res.ok) throw new Error('Could not download that file')
   const buffer = await res.arrayBuffer()
@@ -601,12 +640,12 @@ export async function openPackedUrl(job) {
     }
     return
   }
-  await importSongBytes(buffer, job.name || 'Song')
+  await importSongBytes(buffer, job.name || 'Song', ticket)
 }
 
-export async function importSongFile(file) {
+export async function importSongFile(file, ticket = loadTicket()) {
   const buffer = await file.arrayBuffer()
-  await importSongBytes(buffer, file.name.replace(/\.(m1ya|mod|xm)$/i, ''))
+  await importSongBytes(buffer, file.name.replace(/\.(m1ya|mod|xm)$/i, ''), ticket)
 }
 
 export async function importKitFile(file) {
@@ -640,11 +679,13 @@ export function gatewayUrl(raw) {
 export async function importSongUrl(raw) {
   const url = gatewayUrl(raw)
   if (!allowedMediaUrl(url)) throw new Error('Use an ipfs:// URI or an allowed IPFS gateway link')
+  const ticket = loadTicket()
   const res = await fetch(url)
   if (!res.ok) throw new Error('The gateway did not return that song')
   const buffer = await res.arrayBuffer()
   const leaf = decodeURIComponent(url.split('/').pop() || 'Song')
-  await importSongBytes(buffer, leaf)
+  await importSongBytes(buffer, leaf, ticket)
+  if (!loadCurrent(ticket)) return
   model.browserNote = `${model.songName} loaded from the gateway`
   touch(false)
 }

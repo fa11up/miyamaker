@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { BANKS, applyTrim, audioBank, defaultEnvelopes, model, touch } from '../model.js'
-import { importFile, audioRecordLabel, recordMic, resample, sliceOnto } from '../audio/engine.js'
+import { importFile, audioRecordLabel, audioStartingLabel, recordMic, resample, sliceOnto } from '../audio/engine.js'
 import { loadSliceSource, moveSliceMarker, sliceMarkers } from '../audio/song.js'
 import { useModel } from '../useModel.js'
 import { Knob } from '../widgets.jsx'
@@ -59,7 +59,7 @@ export function Editor() {
     }
     touch(true)
   }
-  const label = audioRecordLabel()
+  const label = audioRecordLabel() || audioStartingLabel()
   return (
     <div className="screen edit-screen">
       <div className="slot-grid" role="listbox" aria-label="Sample slots">
@@ -96,7 +96,12 @@ export function Editor() {
           accept="audio/*"
           onChange={(e) => {
             const f = e.target.files?.[0]
-            if (f) importFile(f)
+            if (f) {
+              importFile(f).catch((error) => {
+                model.browserNote = error?.message || 'Could not open that file'
+                touch(false)
+              })
+            }
             e.target.value = ''
           }}
         />

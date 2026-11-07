@@ -4,6 +4,7 @@ import { FACTORY, KIT_LAYOUT } from './audio/presets.js'
 import { defaultNumpadFx, normalizeNumpadFx } from './audio/numpadFx.js'
 import { snapOctave } from './audio/knee.js'
 import { defaultPatch, renderSynth, SYNTH_SR } from './audio/synth.js'
+import { SongChanged, bumpSong, exclusive, sameSong, songId } from './jobs.js'
 
 export const BANKS = ['A', 'B', 'C', 'D']
 export const BUS_COUNT = 16
@@ -21,6 +22,8 @@ export { formatLp, formatSl }
 
 const SAVE_KEY = 'miya-music-maker-v1'
 export const BACKUP_KEY = 'miya-music-maker-v1-backup'
+/** Later unreadable saves go to `${BACKUP_KEY}-<time>`, newest few only. The first backup is never replaced. */
+export const BACKUP_EXTRA = 3
 
 export const audioBank = new Map()
 
@@ -837,7 +840,8 @@ export function selectPad(index, mode) {
 
 export function deleteSelection() {
   const ids = selectionIds()
-  Promise.all(ids.map(async (id) => {
+  // Pads and their stored samples change together, so this waits its turn with loads and undo.
+  exclusive(() => Promise.all(ids.map(async (id) => {
     const prev = await idbGet(`pad:${id}`)
     const { stashUndo } = await import('./history.js')
     stashUndo(`pad:${id}`, prev || null)
@@ -846,7 +850,7 @@ export function deleteSelection() {
     model.pads[id].bus = bus
     audioBank.delete(id)
     await idbDelete(`pad:${id}`)
-  })).catch((err) => {
+  }))).catch((err) => {
     console.warn('delete did not reach storage', err)
   }).finally(() => touch(true))
 }
@@ -941,11 +945,40 @@ export function save() {
   }
 }
 
-/** Keep a save this version cannot read, so the next edit does not overwrite it. */
+function backupKeys() {
+  const keys = []
+  try {
+    const n = Number(localStorage.length) || 0
+    for (let i = 0; i < n; i++) {
+      const key = localStorage.key(i)
+      if (typeof key === 'string' && key.startsWith(`${BACKUP_KEY}-`)) keys.push(key)
+    }
+  } catch { /* a store without key(): only the first backup is kept */ }
+  return keys.sort()
+}
+
+/**
+ * Keep a save this version cannot read, so the next edit does not overwrite it.
+ * A second unreadable save never replaces the first backup: it gets a timestamped key, and only the
+ * newest BACKUP_EXTRA of those are kept.
+ */
 function backupRaw(raw) {
   if (!raw) return
   try {
-    localStorage.setItem(BACKUP_KEY, raw)
+    const first = localStorage.getItem(BACKUP_KEY)
+    if (first == null || first === raw) {
+      if (first == null) localStorage.setItem(BACKUP_KEY, raw)
+      keepBackup = false
+      return
+    }
+    const extra = backupKeys()
+    if (extra.some((key) => localStorage.getItem(key) === raw)) {
+      keepBackup = false
+      return
+    }
+    localStorage.setItem(`${BACKUP_KEY}-${String(Date.now()).padStart(15, '0')}`, raw)
+    const kept = backupKeys()
+    while (kept.length > BACKUP_EXTRA) localStorage.removeItem(kept.shift())
     keepBackup = false
   } catch {
     keepBackup = true
@@ -1039,17 +1072,35 @@ export function idbKeys() {
   return withStore('readonly', (store) => store.getAllKeys()).then((keys) => keys || [])
 }
 
-export async function rememberSample(index, record) {
-  const prev = await idbGet(`pad:${index}`)
+/**
+ * Put a sample on a pad. Storage is written first: when that write fails, the pad, its audio and the
+ * undo stack keep the old sample and saveError says why. Runs as an exclusive job, so a song load or an
+ * undo cannot interleave with it.
+ * `record.song` (a songId() taken when the take or import started) makes it throw SongChanged instead
+ * of writing into a song that was opened since. `record.padPatch` (trim, mode) is applied once it lands.
+ */
+export function rememberSample(index, record) {
+  return exclusive(() => rememberSampleNow(index, record))
+}
+
+async function rememberSampleNow(index, record) {
+  if (record.song != null && !sameSong(record.song)) throw new SongChanged()
+  if (!model.pads[index]) throw new Error('That pad does not exist')
   const { stashUndo } = await import('./history.js')
+  const prev = await idbGet(`pad:${index}`)
+  const sampleName = record.name || 'sample'
+  await idbSet(`pad:${index}`, { pcm: record.pcm, sr: record.sr, name: sampleName })
   stashUndo(`pad:${index}`, prev || null)
   audioBank.set(index, { pcm: record.pcm, sr: record.sr, rev: Date.now() })
   const pad = model.pads[index]
   pad.source = 'sample'
   pad.patch = null
-  pad.sampleName = record.name || 'sample'
-  if (record.forceName || !pad.name || pad.name === 'Empty') pad.name = record.name || 'sample'
-  await idbSet(`pad:${index}`, { pcm: record.pcm, sr: record.sr, name: pad.sampleName })
+  pad.sampleName = sampleName
+  if (record.forceName || !pad.name || pad.name === 'Empty') pad.name = sampleName
+  if (record.padPatch) {
+    Object.assign(pad, record.padPatch)
+    fitLoop(pad)
+  }
   touch(true)
 }
 
@@ -1095,6 +1146,8 @@ function migrateSequences(sequences, seqBank, seqSlot) {
 const SCREEN_IDS = ['pads', 'edit', 'seq', 'mix', 'track', 'synth', 'fx']
 
 export function boot() {
+  // A new session: anything still in flight from the last one must not land in this one.
+  bumpSong()
   loadFactoryKit()
   keepBackup = false
   model.saveError = ''
@@ -1171,17 +1224,31 @@ export function boot() {
   }
 }
 
+/**
+ * Read each sample pad's audio back from IndexedDB. One unreadable pad does not stop the rest.
+ * Rejects after the others are in, with a message for the user, when any could not be read.
+ */
 export async function restoreSamples() {
+  const session = songId()
+  let failed = 0
   await Promise.all(
     model.pads.map(async (pad, i) => {
       if (pad.source !== 'sample') return
-      const rec = await idbGet(`pad:${i}`)
-      if (rec && rec.pcm) {
-        audioBank.set(i, { pcm: rec.pcm, sr: rec.sr || 44100, rev: 1 })
+      try {
+        const rec = await idbGet(`pad:${i}`)
+        if (rec && rec.pcm && sameSong(session)) {
+          audioBank.set(i, { pcm: rec.pcm, sr: rec.sr || 44100, rev: 1 })
+        }
+      } catch (err) {
+        failed += 1
+        console.warn(`pad ${i + 1} sample could not be read`, err)
       }
     }),
   )
   touch(false)
+  if (failed) {
+    throw new Error(`${failed} sample${failed > 1 ? 's' : ''} could not be read from browser storage. Those pads are silent until reloaded.`)
+  }
 }
 
 export function padKeyLabel(localIndex) {

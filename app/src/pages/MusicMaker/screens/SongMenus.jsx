@@ -10,6 +10,7 @@ import {
   storeSongFile,
 } from '../audio/song.js'
 import { beginUndo, endUndo } from '../history.js'
+import { loadTicket, sameSong, songId } from '../jobs.js'
 import { ensureLibrary, newFolder } from '../media/library.js'
 import { idbGet, model, touch } from '../model.js'
 import { askPublish } from '../publish.js'
@@ -75,9 +76,10 @@ export function NewMenu() {
   async function makeBlank() {
     setBusy(true)
     try {
-      await loadSong(blankSong(), '')
-      note('Blank song at 184 bpm')
-      closeWindow()
+      if (await loadSong(blankSong(), '')) {
+        note('Blank song at 184 bpm')
+        closeWindow()
+      }
     } catch (error) {
       note(error.message || 'Could not start a blank song')
     } finally {
@@ -87,10 +89,11 @@ export function NewMenu() {
 
   async function makeFromTemplate(file) {
     setBusy(true)
+    const ticket = loadTicket()
     try {
       const doc = await idbGet(`song:${file.id}`)
       if (!doc) throw new Error('That template is missing')
-      await loadSong(doc, '')
+      if (!(await loadSong(doc, '', ticket))) return
       note(`${doc.name || file.name} started. Save as keeps the template.`)
       closeWindow()
     } catch (error) {
@@ -105,9 +108,15 @@ export function NewMenu() {
     if (!name) return
     setBusy(true)
     beginUndo()
+    const song = songId()
     try {
       const doc = await captureSong(name)
       const stored = await storeSongFile(doc.name, doc)
+      if (!sameSong(song)) {
+        // Another song was opened while this one was written. The copy is in Songs; the session stays put.
+        note(`${stored.doc.name}.m1ya saved in Songs`)
+        return
+      }
       model.songName = stored.doc.name
       model.songFile = stored.id
       model.songPlay = true
@@ -304,13 +313,17 @@ export function SaveMenu() {
     }
     setBusy(true)
     beginUndo()
+    const song = songId()
+    const file = model.songFile
     try {
       const doc = await captureSong(model.songName || 'Song')
-      const stored = await replaceSongFile(model.songFile, doc.name, doc)
+      const stored = await replaceSongFile(file, doc.name, doc)
+      note(`${stored.doc.name}.m1ya saved`)
+      // Only repoint the session if it still holds the song that was saved, in the same file.
+      if (!sameSong(song) || model.songFile !== file) return
       model.songName = stored.doc.name
       model.songFile = stored.id
       model.songPlay = true
-      note(`${stored.doc.name}.m1ya saved`)
       touch(true)
     } catch (error) {
       note(error.message || 'Could not save that song')
@@ -325,10 +338,16 @@ export function SaveMenu() {
     if (!next) return
     setBusy(true)
     beginUndo()
+    const song = songId()
     try {
       const doc = await captureSong(next)
       const stored = await storeSongFile(doc.name, doc)
       downloadSong(stored.doc)
+      if (!sameSong(song)) {
+        note(`${stored.doc.name}.m1ya saved in Songs and downloaded`)
+        closeWindow()
+        return
+      }
       model.songName = stored.doc.name
       model.songFile = stored.id
       model.songOrder = stored.doc.order

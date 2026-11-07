@@ -76,15 +76,31 @@ export default function MusicMakerPage() {
       if (!ready || cancel) return
       void consume(takeRemoteOpen() || next)
     })
-    restoreSamples().then(async () => {
+    const start = async () => {
+      // A pad whose sample could not be read stays silent, but the app must still become ready.
+      let restoreError = ''
+      try {
+        await restoreSamples()
+      } catch (error) {
+        restoreError = (error as Error)?.message || 'Some samples could not be read from browser storage'
+      }
       if (cancel) return
       armHistory()
-      await withoutHistory(() => ensureBlankSong())
+      try {
+        await withoutHistory(() => ensureBlankSong())
+      } catch (error) {
+        console.warn('the Blank song could not be stored', error)
+      }
       if (cancel) return
       ready = true
+      if (restoreError) {
+        model.browserNote = restoreError
+        touch(false)
+      }
       await consume(takeRemoteOpen())
       if (!cancel) touch(false)
-    })
+    }
+    void start()
     return () => {
       cancel = true
       unsub()

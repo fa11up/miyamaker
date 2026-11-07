@@ -11,7 +11,8 @@ import { VIDEO_AUDIO_PATH, videoPage } from '../media/videoaudio.js'
 import { beginUndo, endUndo, stashUndo } from '../history.js'
 import { createBufferCache, finiteOr, heldForPort, liveVoices, locateStep, scrubPcm, stepSeconds, stepsBehind } from './voices.js'
 import { importKitFile, importSongFile } from './song.js'
-import { BUS_COUNT, TRACK_VEL, audioBank, model, currentSequence, ensurePattern, stepCount, writeEvent, commitTrackerNote, setUndoBatch, touch, rememberSample, fitLoop, idbSet, selectPad, flushSave } from '../model.js'
+import { SongChanged, loadTicket, songId } from '../jobs.js'
+import { BUS_COUNT, TRACK_VEL, audioBank, model, currentSequence, ensurePattern, stepCount, writeEvent, commitTrackerNote, setUndoBatch, touch, rememberSample, idbSet, selectPad, flushSave } from '../model.js'
 
 setUndoBatch({ begin: beginUndo, end: endUndo })
 
@@ -38,8 +39,18 @@ let started = false
 const meters = { bus: Array(BUS_COUNT).fill(0), master: 0, gr: 0, compGr: 0 }
 let meterTimer = 0
 let recording = null
+/** A Mic or Resample press waiting on resume() or the permission prompt. */
+let starting = null
 let ensuring = null
 let active = true
+/** Bumped by shutdown(). An await that started before it must not wake the engine again. */
+let life = 0
+/**
+ * Held notes whose start waits on resume(), by holdId. A release before the start does not drop the hit: a one-shot
+ * still plays once, as a tap, just not held (a held one-shot loops). A gate or loop pad released that early is skipped.
+ */
+const deferred = new Map()
+let deferSeq = 0
 let anchor = null
 const buffers = createBufferCache()
 
@@ -51,11 +62,28 @@ export function getMeters() {
   return meters
 }
 
+/**
+ * Build or wake the context. Resolves false when the window was closed (shutdown) while it waited:
+ * callers must then not play, start the clock, or record.
+ */
 export async function resume() {
+  const gen = life
   await ensure()
+  if (gen !== life) return false
   active = true
   if (!meterTimer) meterTimer = window.setInterval(readMeters, 80)
   if (ctx.state !== 'running') await ctx.resume()
+  if (gen !== life) {
+    // shutdown() ran while the context was waking. Park it again.
+    if (ctx.state !== 'closed') ctx.suspend().catch(() => {})
+    return false
+  }
+  return true
+}
+
+/** True while the window that started this work is still the open one. */
+function alive(gen) {
+  return gen === life && active
 }
 
 /** One build at a time. `ctx` is only set once the whole graph is wired, so no caller sees half of it. */
@@ -754,6 +782,9 @@ function silence(v, when, seconds = 0.012) {
 }
 
 export function releaseHeld(id) {
+  // The press is still waiting on resume(): it must not start later as a held, looping note.
+  const waiting = deferred.get(id)
+  if (waiting) waiting.released = true
   const v = held.get(id)
   if (!v) return
   held.delete(id)
@@ -805,7 +836,19 @@ export function playPad(index, velocity = TRACK_VEL, when = 0, opts = {}) {
   if (!pad || pad.source === 'empty') return
   if (!padAudible(pad) && !opts.ignoreMute) return
   if (!ctx || (ctx.state === 'suspended' && !opts.resumed && !opts.pattern)) {
-    resume().then(() => playPad(index, velocity, 0, { ...opts, resumed: true })).catch(() => {})
+    const wait = { token: ++deferSeq, released: false }
+    if (opts.holdId) deferred.set(opts.holdId, wait)
+    resume().then((ok) => {
+      if (opts.holdId) {
+        if (deferred.get(opts.holdId) !== wait) return
+        deferred.delete(opts.holdId)
+      }
+      if (!ok) return
+      if (!wait.released) return playPad(index, velocity, 0, { ...opts, resumed: true })
+      if (model.pads[index]?.mode === 'oneshot') playPad(index, velocity, 0, { ...opts, holdId: undefined, resumed: true })
+    }).catch(() => {
+      if (opts.holdId && deferred.get(opts.holdId) === wait) deferred.delete(opts.holdId)
+    })
     return
   }
   const entry = getEntry(index)
@@ -1134,7 +1177,7 @@ function scheduler() {
 }
 
 export async function togglePlay() {
-  await resume()
+  if (!(await resume())) return
   if (model.playing) stopTransport()
   else startTransport()
 }
@@ -1168,7 +1211,7 @@ export function stopTransport() {
 }
 
 export async function toggleRecord() {
-  await resume()
+  if (!(await resume())) return
   model.recording = !model.recording
   if (model.recording && !model.playing) startTransport()
   touch(false)
@@ -1180,7 +1223,7 @@ export function toggleMetro() {
 }
 
 export async function previewPcm(pcm, sr = 44100) {
-  await resume()
+  if (!(await resume())) return
   const buffer = ctx.createBuffer(1, pcm.length, sr)
   buffer.getChannelData(0).set(pcm)
   const src = ctx.createBufferSource()
@@ -1218,6 +1261,11 @@ export function recordTrackerOff() {
 
 export function noteOff(holdId) {
   releaseHeld(holdId)
+}
+
+/** Hold ids with a sounding voice or a start still waiting on resume(). */
+export function heldNotes() {
+  return [...held.keys(), ...deferred.keys()]
 }
 
 export function releaseKeyboardNotes() {
@@ -1478,33 +1526,77 @@ export function onMidi(event) {
   midiState.last = `${port?.name || 'MIDI'} note ${note}`
 }
 
+/**
+ * A take is aimed at the pad selected when Rec was pressed, in the song open then. While one is starting
+ * (resume or the permission prompt), another press is refused, so no recorder or stream is orphaned.
+ */
+function beginStart(label) {
+  if (starting) return null
+  starting = { label, cancelled: false, gen: life, target: { pad: model.selected, song: songId() } }
+  touch(false)
+  return starting
+}
+
+function endStart(pending) {
+  if (starting === pending) starting = null
+  touch(false)
+}
+
+function startFailed(err, label) {
+  console.warn(`${label} did not start`, err)
+  model.browserNote = err?.name === 'NotAllowedError' ? 'Microphone permission was blocked' : `${label === 'mic' ? 'Mic' : 'Resample'} did not start${err?.message ? `: ${err.message}` : ''}`
+}
+
 export async function recordMic() {
-  await resume()
+  if (starting) return
   if (recording?.label === 'mic') return stopRecorder()
-  if (recording) await stopRecorder()
-  const stream = await navigator.mediaDevices.getUserMedia({
-    audio: { echoCancellation: false, noiseSuppression: false },
-  })
-  return startRecorder(stream, 'mic')
+  const pending = beginStart('mic')
+  try {
+    if (!(await resume()) || pending.cancelled) return
+    if (recording) await stopRecorder()
+    if (pending.cancelled || !alive(pending.gen)) return
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: false, noiseSuppression: false },
+    })
+    if (pending.cancelled || !alive(pending.gen)) {
+      // The window closed during the prompt: this stream must not keep the mic open.
+      stopTracks(stream)
+      return
+    }
+    startRecorder(stream, 'mic', null, pending.target)
+  } catch (err) {
+    startFailed(err, 'mic')
+  } finally {
+    endStart(pending)
+  }
 }
 
 export async function resample(which = 'main') {
-  await resume()
+  if (starting) return
   const busIndex = which === 'main' ? -1 : Number(which)
   const label = which === 'main' ? 'resample' : `bus ${busIndex}`
   if (recording?.label === label) return stopRecorder()
-  if (recording) await stopRecorder()
-  const tap = ctx.createMediaStreamDestination()
-  if (which === 'main') limiter.connect(tap)
-  else if (busNodes[busIndex]) busNodes[busIndex].panner.connect(tap)
-  return startRecorder(tap.stream, label, () => {
-    try {
-      if (which === 'main') limiter.disconnect(tap)
-      else busNodes[busIndex]?.panner.disconnect(tap)
-    } catch {
-      /* already disconnected */
-    }
-  })
+  const pending = beginStart(label)
+  try {
+    if (!(await resume()) || pending.cancelled) return
+    if (recording) await stopRecorder()
+    if (pending.cancelled || !alive(pending.gen)) return
+    const tap = ctx.createMediaStreamDestination()
+    if (which === 'main') limiter.connect(tap)
+    else if (busNodes[busIndex]) busNodes[busIndex].panner.connect(tap)
+    startRecorder(tap.stream, label, () => {
+      try {
+        if (which === 'main') limiter.disconnect(tap)
+        else busNodes[busIndex]?.panner.disconnect(tap)
+      } catch {
+        /* already disconnected */
+      }
+    }, pending.target)
+  } catch (err) {
+    startFailed(err, label)
+  } finally {
+    endStart(pending)
+  }
 }
 
 function stopTracks(stream) {
@@ -1513,7 +1605,7 @@ function stopTracks(stream) {
   })
 }
 
-function startRecorder(stream, label, cleanup) {
+function startRecorder(stream, label, cleanup, target = { pad: model.selected, song: songId() }) {
   const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : ''
   let rec
   try {
@@ -1553,10 +1645,6 @@ function startRecorder(stream, label, cleanup) {
       if (!pcm.length) throw new Error('That recording was empty')
       let trim = { start: 0, end: 1 }
       if (model.settings.autoTrim) trim = trimSilence(pcm, audio.sampleRate)
-      const pad = model.pads[model.selected]
-      pad.trimStart = trim.start
-      pad.trimEnd = trim.end
-      fitLoop(pad)
       if (model.settings.autoNorm) {
         let peak = 0
         const a = Math.floor(trim.start * pcm.length)
@@ -1567,7 +1655,22 @@ function startRecorder(stream, label, cleanup) {
           for (let i = 0; i < pcm.length; i++) pcm[i] *= g
         }
       }
-      await rememberSample(model.selected, { pcm, sr: audio.sampleRate, name: label })
+      try {
+        await rememberSample(target.pad, {
+          pcm,
+          sr: audio.sampleRate,
+          name: label,
+          song: target.song,
+          padPatch: { trimStart: trim.start, trimEnd: trim.end },
+        })
+        model.browserNote = `${label} take on pad ${target.pad + 1}`
+      } catch (err) {
+        if (!(err instanceof SongChanged)) throw err
+        // Another song was opened during the take. It is kept in Imports, not written into that song.
+        ensureLibrary()
+        await cachePcm('imports', `${label} take`, pcm, audio.sampleRate, 'wav')
+        model.browserNote = `The song changed during the take. ${label} take is in Imports.`
+      }
     } catch (err) {
       console.warn('recording failed', err)
       model.browserNote = err?.message ? `Recording not kept: ${err.message}` : 'Recording not kept'
@@ -1594,6 +1697,11 @@ export function isRecordingAudio() {
 
 export function audioRecordLabel() {
   return recording ? recording.label : ''
+}
+
+/** The label of a Mic or Resample press still waiting to start, or ''. */
+export function audioStartingLabel() {
+  return starting ? starting.label : ''
 }
 
 function stopRecorder() {
@@ -1637,6 +1745,14 @@ export function wakeEngine() {
  */
 export function shutdown() {
   active = false
+  life += 1
+  model.hold = null
+  deferred.clear()
+  if (starting) {
+    // Its stream may still arrive from the permission prompt. recordMic stops it when it does.
+    starting.cancelled = true
+    starting = null
+  }
   try {
     stopTransport()
   } catch { /* nothing was playing */ }
@@ -1827,32 +1943,39 @@ async function fetchMediaBytes(url) {
   return proxied.arrayBuffer()
 }
 
-export async function placePcm(index, pcm, sr, name, { folder = 'imports', forceName = false, ext = 'wav' } = {}) {
+/**
+ * Put decoded audio on a pad and in the library. `song` is the songId() from when the import started:
+ * if another song was opened since, the sound only goes to the library.
+ */
+export async function placePcm(index, pcm, sr, name, { folder = 'imports', forceName = false, ext = 'wav', song = null } = {}) {
   beginUndo()
   try {
-    model.selected = index
-    const pad = model.pads[index]
-    pad.trimStart = 0
-    pad.trimEnd = 1
-    fitLoop(pad)
-    await rememberSample(index, { pcm, sr, name, forceName })
+    let onPad = true
+    try {
+      await rememberSample(index, { pcm, sr, name, forceName, song, padPatch: { trimStart: 0, trimEnd: 1 } })
+      model.selected = index
+    } catch (err) {
+      if (!(err instanceof SongChanged)) throw err
+      onPad = false
+    }
     ensureLibrary()
     await cachePcm(folder, name, pcm, sr, ext)
-    model.browserNote = `${name} on pad ${index + 1}`
+    model.browserNote = onPad ? `${name} on pad ${index + 1}` : `The song changed during the import. ${name} is in the library, not on a pad.`
     touch(true)
   } finally {
     endUndo()
   }
 }
 
-export async function importFile(file, index = model.selected) {
+/** `song` defaults to the song open now. A batch passes the one from when it started. */
+export async function importFile(file, index = model.selected, song = songId()) {
   const ext = (file.name.split('.').pop() || '').toLowerCase()
   if (ext === 'k1t') {
     await importKitFile(file)
     return
   }
   if (ext === 'm1ya' || ext === 'mod' || ext === 'xm') {
-    await importSongFile(file)
+    await importSongFile(file, loadTicket())
     return
   }
   await resume()
@@ -1862,10 +1985,11 @@ export async function importFile(file, index = model.selected) {
   // Same trim and length cap as the cache, so a long file still fits in a saved song.
   const fitted = fitSample(decoded.pcm, decoded.sr)
   if (!fitted.pcm.length) throw new Error('That file has no audio')
-  await placePcm(index, fitted.pcm, fitted.sr, name, { forceName: true, ext })
+  await placePcm(index, fitted.pcm, fitted.sr, name, { forceName: true, ext, song })
 }
 
 export async function importRemote(url, index = model.selected, name = 'nft') {
+  const song = songId()
   await resume()
   model.browserNote = `Reading ${name}`
   touch(false)
@@ -1873,7 +1997,7 @@ export async function importRemote(url, index = model.selected, name = 'nft') {
   const decoded = await decodeAny(bytes, url)
   const fitted = fitSample(decoded.pcm, decoded.sr)
   if (!fitted.pcm.length) throw new Error('That file has no audio')
-  await placePcm(index, fitted.pcm, fitted.sr, name, { forceName: true, ext: 'wav' })
+  await placePcm(index, fitted.pcm, fitted.sr, name, { forceName: true, ext: 'wav', song })
 }
 
 const SAMPLE_SECONDS = 16
@@ -1960,6 +2084,7 @@ export async function importVideoLink(raw) {
 }
 
 export async function sliceOnto(index, count, baseName) {
+  const song = songId()
   await resume()
   const entry = audioBank.get(index)
   if (!entry?.pcm) throw new Error('That pad has no sample to slice')
@@ -1973,11 +2098,7 @@ export async function sliceOnto(index, count, baseName) {
     const cuts = []
     for (let i = 0; i < pieces.length; i++) {
       const at = (index + i) % 64
-      model.pads[at].trimStart = 0
-      model.pads[at].trimEnd = 1
-      model.pads[at].mode = 'oneshot'
-      fitLoop(model.pads[at])
-      await rememberSample(at, { pcm: pieces[i], sr: entry.sr, name: `${base} ${i + 1}`, forceName: true })
+      await rememberSample(at, { pcm: pieces[i], sr: entry.sr, name: `${base} ${i + 1}`, forceName: true, song, padPatch: { trimStart: 0, trimEnd: 1, mode: 'oneshot' } })
       const fileId = await cachePcm(folderId, `${base} ${i + 1}`, pieces[i], entry.sr, 'wav')
       cuts.push({ fileId, pad: at, a: points[i], b: points[i + 1] })
     }

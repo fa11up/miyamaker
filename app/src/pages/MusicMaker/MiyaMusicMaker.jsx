@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { PAD_KEYS, SCREENS, SEQ_KEYS, SHORTCUTS, pianoNote, renoiseNote } from './keys.js'
+import { PAD_KEYS, SCREENS, SEQ_KEYS, SHORTCUTS, pianoNote, renoiseNote, typing } from './keys.js'
 import {
   addBar,
   clearHit,
@@ -21,6 +21,7 @@ import {
 import { enableMidi, getMidiState, holdNumpadFx, importFile, noteOff, noteOn, pushNumpadFx, recordTrackerOff, releaseKeyboardNotes, releaseNumpadFx, syncMasterComp, syncMixer, toggleMetro, togglePlay, toggleRecord } from './audio/engine.js'
 import { midiSummary } from './audio/midi.js'
 import { undo } from './history.js'
+import { songId } from './jobs.js'
 import { useModel } from './useModel.js'
 import { Dialog } from './widgets.jsx'
 import { Pads } from './screens/Pads.jsx'
@@ -93,7 +94,7 @@ export function MiyaMusicMaker() {
       onDrop={(e) => {
         e.preventDefault()
         const files = [...e.dataTransfer.files].filter((f) => f.type.startsWith('audio') || f.type.startsWith('video') || /\.(wav|mp3|ogg|flac|aiff|aif|m4a|mp4|webm|mov|m1ya|mod|xm|k1t)$/i.test(f.name))
-        files.forEach((file, i) => importFile(file, Math.min(63, model.selected + i)))
+        dropFiles(files)
       }}
     >
       <div className="mmm-bar">
@@ -254,10 +255,23 @@ function Transport() {
   )
 }
 
-function typing(e) {
-  const tag = e.target?.tagName
-  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || e.target?.isContentEditable
+/**
+ * One at a time, aimed at the pads and the song from when they were dropped. A failure says why and the
+ * rest still import. A song in the drop opens, and the sounds after it go to the library, not its pads.
+ */
+async function dropFiles(files) {
+  const song = songId()
+  const first = model.selected
+  for (let i = 0; i < files.length; i++) {
+    try {
+      await importFile(files[i], Math.min(63, first + i), song)
+    } catch (error) {
+      model.browserNote = `${files[i].name}: ${error?.message || 'could not open that file'}`
+      touch(false)
+    }
+  }
 }
+
 
 function numpadDigit(e) {
   const code = e.code || ''

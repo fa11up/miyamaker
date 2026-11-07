@@ -22,6 +22,7 @@ import {
   sliceSetForFolder,
 } from '../audio/song.js'
 import { audioBank, idbGet, model, rememberSample, touch } from '../model.js'
+import { loadTicket, songId } from '../jobs.js'
 import { useModel } from '../useModel.js'
 import { Dialog } from '../widgets.jsx'
 import { Waveform } from './Waveform.jsx'
@@ -106,14 +107,17 @@ export function SampleBrowser() {
     try {
       if (!pick) return
       if (pick.kind === 'cache') {
+        const song = songId()
+        const at = model.selected
         const rec = await loadCached(pick.id)
         if (!rec?.pcm) return
-        await rememberSample(model.selected, { pcm: rec.pcm, sr: rec.sr || 44100, name: pick.name, forceName: true })
-        model.browserNote = `${pick.name} on pad ${model.selected + 1}`
+        await rememberSample(at, { pcm: rec.pcm, sr: rec.sr || 44100, name: pick.name, forceName: true, song })
+        model.browserNote = `${pick.name} on pad ${at + 1}`
         touch(false)
       } else if (pick.kind === 'song') {
+        const ticket = loadTicket()
         const doc = await idbGet(`song:${pick.id}`)
-        if (doc) await loadSong(doc, pick.folder === 'templates' ? '' : pick.id)
+        if (doc) await loadSong(doc, pick.folder === 'templates' ? '' : pick.id, ticket)
       } else if (pick.kind === 'kit') {
         model.browserNote = 'Right-click the kit and choose Load'
         touch(false)
@@ -506,13 +510,17 @@ async function openLibraryFile(file) {
   try {
     if (file.ext === 'k1t') return
     if (file.ext === 'm1ya' || SONG_RE.test(file.name)) {
+      // The ticket is taken on the click, so of two quick clicks the second song is the one that opens.
+      const ticket = loadTicket()
       const doc = await idbGet(`song:${file.id}`)
-      if (doc) await loadSong(doc, file.folder === 'templates' ? '' : file.id)
+      if (doc) await loadSong(doc, file.folder === 'templates' ? '' : file.id, ticket)
       return
     }
+    const song = songId()
+    const at = model.selected
     const rec = await loadCached(file.id)
     if (!rec?.pcm) return
-    await rememberSample(model.selected, { pcm: rec.pcm, sr: rec.sr || 44100, name: file.name, forceName: true })
+    await rememberSample(at, { pcm: rec.pcm, sr: rec.sr || 44100, name: file.name, forceName: true, song })
   } catch (error) {
     model.browserNote = error.message || 'Could not open that file'
     touch(false)

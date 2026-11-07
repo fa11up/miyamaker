@@ -10,13 +10,17 @@ import {
   idbDelete,
   idbSet,
 } from './model.js'
+import { bumpSong, exclusive } from './jobs.js'
 
 const stack = []
 const CAP = 30
 let baseline = null
 let pendingBlobs = []
 let armed = false
-let restoring = false
+/** Undos in flight. A counter, so an earlier one's finally cannot clear it while a later one runs. */
+let restoring = 0
+/** The next commit starts a new song's history: older entries hold another song's samples. */
+let switchPending = false
 let depth = 0
 let dirty = false
 let lastCommitAt = 0
@@ -76,6 +80,16 @@ function applySnapshot(data) {
 function commit() {
   if (!armed || restoring || !baseline) return
   const now = typeof performance !== 'undefined' ? performance.now() : Date.now()
+  if (switchPending) {
+    // Keep only the step that undoes the switch itself. It holds every pad the switch replaced.
+    switchPending = false
+    stack.length = 0
+    stack.push({ json: baseline, blobs: pendingBlobs })
+    pendingBlobs = []
+    baseline = takeSnapshot()
+    lastCommitAt = now
+    return
+  }
   const glide = !pendingBlobs.length && stack.length && now - lastCommitAt < 450
   if (glide) {
     baseline = takeSnapshot()
@@ -146,8 +160,24 @@ export function historyDepth() {
   return depth
 }
 
+/**
+ * A song load replaced the session. Undo may step back across the load once, to the song as it was,
+ * but not further into that other song's history.
+ */
+export function songSwitch() {
+  if (!armed || restoring) {
+    stack.length = 0
+    switchPending = false
+    return
+  }
+  switchPending = true
+}
+
+/** A new session (the window opened). Nothing from an earlier session can be undone into this one. */
 export function armHistory() {
   cancelSettle()
+  stack.length = 0
+  switchPending = false
   pendingBlobs = []
   depth = 0
   dirty = false
@@ -176,12 +206,18 @@ function synthSig(pad) {
   return pad?.source === 'synth' && pad.patch ? JSON.stringify(pad.patch) : ''
 }
 
-export async function undo() {
+/** Runs as an exclusive job: a second Undo waits for the first, and neither interleaves with a load. */
+export function undo() {
+  return exclusive(undoNow)
+}
+
+async function undoNow() {
   flushHistory()
   const entry = stack.pop()
   if (!entry) return false
-  restoring = true
+  restoring += 1
   const before = model.pads.map(synthSig)
+  const fromSong = `${model.songFile}\n${model.songName}`
   try {
     applySnapshot(entry.json)
     for (const blob of entry.blobs) {
@@ -206,9 +242,11 @@ export async function undo() {
       if (!sets.some((set) => set.id === model.sliceView)) model.sliceView = null
     }
     baseline = takeSnapshot()
+    // Stepping back across a song load is a song change for anything still in flight.
+    if (`${model.songFile}\n${model.songName}` !== fromSong) bumpSong()
     touch(true)
   } finally {
-    restoring = false
+    restoring = Math.max(0, restoring - 1)
   }
   return true
 }

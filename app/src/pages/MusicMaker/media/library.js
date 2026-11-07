@@ -43,9 +43,10 @@ export function newFolder(name, parent = '') {
 export async function cachePcm(folder, name, pcm, sr, ext = 'wav') {
   const library = ensureLibrary()
   const id = `s${Date.now().toString(36)}${Math.floor(Math.random() * 1000)}`
+  // Storage first: a failed write must not leave a library row with no audio behind it.
+  await idbSet(`lib:${id}`, { pcm, sr, name: name || 'sample' })
   stashUndo(`lib:${id}`, null)
   library.files.push({ id, folder, name: name || 'sample', ext })
-  await idbSet(`lib:${id}`, { pcm, sr, name: name || 'sample' })
   touch(true)
   return id
 }

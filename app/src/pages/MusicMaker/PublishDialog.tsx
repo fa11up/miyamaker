@@ -1,7 +1,7 @@
 import { getAccount } from '@wagmi/core'
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import styled from 'styled-components/macro'
-import type { Address, Chain } from 'viem'
+import { type Address, type Chain, formatEther } from 'viem'
 import { useAccount, useEnsName } from 'wagmi'
 
 import { wagmiConfig } from '@/config/wagmi'
@@ -18,16 +18,30 @@ import { checkLaunch, type EditionLaunch, launchEdition } from './launchEdition'
 import {
   contentKey,
   defaultArtist,
+  describeLaunch,
   firstCopyLabel,
   launchCommitted,
-  type LaunchProgress,
+  launchUnsettled,
   PLACEHOLDER_URIS,
   publishBpm,
   releaseBlocker,
 } from './mintPlan'
 import { requestFiles } from './publish.js'
+import {
+  browserStore,
+  clearRelease,
+  findReleases,
+  loadRelease,
+  releaseKey,
+  type SavedRelease,
+  saveRelease,
+  watchProgress,
+} from './releaseStore'
 
 export type PublishJob = { intent: string; name: string; bpm: number }
+
+const UNCONFIRMED =
+  'The network has not confirmed this yet. It may still go through, so check your wallet or wait a minute. Try again waits on the same one and sends nothing new.'
 
 const Back = styled.div`
   position: absolute;
@@ -141,6 +155,50 @@ async function upload(file: File, kind: string, chain: Chain | undefined) {
   return `ar://${tx}`
 }
 
+type Prepared =
+  | { kind: 'fresh'; content: string; sealed: { launch: Omit<EditionLaunch, 'mintFirst'>; links: string[] } }
+  | { kind: 'resume'; found: SavedRelease }
+
+// Releases started in this tab, kept past the dialog closing: a wallet prompt still open goes on answering into
+// them, and reopening the dialog joins the same one instead of starting another.
+const live = new Map<string, SavedRelease>()
+const running = new Map<string, Promise<unknown>>()
+
+/** How long the dialog stays locked on one wallet answer before it can be closed anyway. */
+const STUCK_MS = 45_000
+
+const keyOf = (r: Pick<SavedRelease, 'account' | 'chainId' | 'content'>) => releaseKey(r.account, r.chainId, r.content)
+
+/** The record under way, saved again every time its progress changes. */
+function track(record: SavedRelease): SavedRelease {
+  const key = keyOf(record)
+  const known = live.get(key)
+  if (known) return known
+  const save = () => {
+    record.savedAt = Date.now()
+    saveRelease(browserStore(), record)
+  }
+
+  record.progress = watchProgress(record.progress, save)
+  live.set(key, record)
+  save()
+  return record
+}
+
+function forget(record: SavedRelease) {
+  live.delete(keyOf(record))
+  clearRelease(browserStore(), record.account, record.chainId, record.content)
+}
+
+/** A release left under way for this wallet and chain: one still running in this tab first, then the saved ones. */
+function pendingRelease(account: string, chainId: number): SavedRelease | undefined {
+  const at = releaseKey(account, chainId, '')
+  const here = Array.from(live).find(([key]) => key.startsWith(at))?.[1]
+  if (here) return here
+  const [saved] = findReleases(browserStore(), account, chainId)
+  return saved && track(saved)
+}
+
 export default function PublishDialog({ job, onClose }: { job: PublishJob; onClose: () => void }) {
   const mint = job.intent.startsWith('mint-')
   const { address, chain } = useAccount()
@@ -157,18 +215,93 @@ export default function PublishDialog({ job, onClose }: { job: PublishJob; onClo
   const [error, setError] = useState('')
   const [links, setLinks] = useState<string[]>([])
   const [busy, setBusy] = useState(false)
+  const [stuck, setStuck] = useState(false)
   const [instance, setInstance] = useState<Address>()
-  // Kept for as long as the dialog is open, so a failed attempt is retried without paying for anything twice:
-  // uploads by their exact bytes, and what has gone to the chain with the release it was built for.
+  // Uploads by their exact bytes, so a failed attempt is retried without paying for anything twice.
   const uploads = useRef(new Map<string, string>())
-  const progress = useRef<LaunchProgress>({})
-  const sealed = useRef<{ launch: Omit<EditionLaunch, 'mintFirst'>; links: string[] }>()
+  // The release under way: what has gone to the chain with exactly what it was built from. It is saved in the
+  // browser on every change, so closing the dialog or the window keeps it, and reopening carries on from it.
+  const record = useRef<SavedRelease>()
+  // A release picked up from before is fixed as it was saved, until it is finished or dropped.
+  const resumed = useRef(false)
   // The bounce and the file, made once: a retry hands the same bytes to the upload cache.
   const bounced = useRef<Promise<Awaited<ReturnType<typeof requestFiles>>>>()
   const [committed, setCommitted] = useState(false)
   const [released, setReleased] = useState(false)
+  const [, redraw] = useState(0)
   const artistName = artist.trim() || defaultArtist(ens.data, address)
   const pricedNow = parsePriceEth(price)
+  const { current } = record
+  const sealed = committed ? current?.launch : undefined
+  const unsettled = !!current && launchUnsettled(current.progress)
+
+  const adopt = (found: SavedRelease) => {
+    record.current = found
+    Object.entries(found.uploads || {}).forEach(([key, uri]) => uploads.current.set(key, uri))
+    resumed.current = true
+    setCommitted(true)
+    setTitle(found.launch.title)
+    setPrice(formatEther(found.launch.priceWei))
+    setMintFirst(found.launch.mintFirst)
+    setLinks(found.links)
+    setInstance(found.progress.instance)
+  }
+
+  /** Waits on a run of this release that is still going from an earlier opening of the dialog. */
+  const join = async (found: SavedRelease) => {
+    const run = running.get(keyOf(found))
+    if (!run) return
+    setBusy(true)
+    setStatus('Still waiting on the wallet from before. Nothing new is sent.')
+    try {
+      await run
+      setStatus('')
+    } catch (e) {
+      setError(isUnconfirmed(e) ? UNCONFIRMED : describeTxError(e) || (e as Error).message)
+      setStatus('')
+    } finally {
+      setBusy(false)
+      setInstance(found.progress.instance)
+      if (!live.has(keyOf(found))) {
+        setReleased(true)
+        setStatus('Edition is live.')
+      }
+    }
+  }
+
+  // Opening, or switching wallets: pick up a release this wallet left under way on this chain.
+  useEffect(() => {
+    if (!mint || !address || busy) return
+    if (record.current?.account.toLowerCase() === address.toLowerCase()) return
+    if (record.current) {
+      // Another wallet's release: it stays saved for that wallet. This one starts from its own.
+      record.current = undefined
+      resumed.current = false
+      setCommitted(false)
+      setInstance(undefined)
+      setLinks([])
+    }
+
+    const found = pendingRelease(address, music.cfg.chainId)
+    if (!found) return
+    adopt(found)
+    join(found)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mint, address, music.cfg.chainId])
+
+  // A wallet that never answers must not hold the dialog open: after a while it can be closed, and the release waits.
+  useEffect(() => {
+    setStuck(false)
+    if (!busy) return undefined
+    const timer = setTimeout(() => setStuck(true), STUCK_MS)
+    return () => clearTimeout(timer)
+  }, [busy])
+
+  const closable = !busy || stuck
+  const sent = current?.progress
+  const waiting = !!sent && !!(sent.batchId || sent.deployHash || sent.editionHash || sent.mintHash)
+  let mintLabel = committed || error ? 'Try again' : 'Mint'
+  if (resumed.current) mintLabel = waiting ? 'Check status' : 'Continue'
 
   const store = async (file: File, kind: string) => {
     const key = await contentKey(kind, file)
@@ -200,8 +333,11 @@ export default function PublishDialog({ job, onClose }: { job: PublishJob; onClo
     }
   }
 
-  /** Checks everything that can be checked, bounces, and stores the files. Nothing is paid for until the checks pass. */
-  const prepare = async (account: Address): Promise<{ launch: Omit<EditionLaunch, 'mintFirst'>; links: string[] }> => {
+  /**
+   * Checks everything that can be checked, bounces, and stores the files. Nothing is paid for until the checks pass.
+   * If this exact song or kit already has a release under way, that one is handed back to carry on instead.
+   */
+  const prepare = async (account: Address): Promise<Prepared> => {
     const openChain = MUSIC_CHAINS.find((c) => c.factory && c.vault)?.name
     const blocked = releaseBlocker({
       connected: true,
@@ -236,6 +372,14 @@ export default function PublishDialog({ job, onClose }: { job: PublishJob; onClo
 
     const files = await bounced.current
     if (!files.audio || !files.pack) throw new Error('Could not prepare the bounce and the file')
+    // The same song or kit must not go out twice while one release of it is still under way.
+    const content = await contentKey(files.packKind, files.pack)
+    const key = releaseKey(account, music.cfg.chainId, content)
+    const earlier = live.get(key) ?? loadRelease(browserStore(), account, music.cfg.chainId, content)
+    if (earlier && earlier !== record.current && launchCommitted(earlier.progress)) {
+      return { kind: 'resume', found: track(earlier) }
+    }
+
     const audioCheck = validateAudioFile(files.audio)
     if (!audioCheck.ok) throw new Error(audioCheck.error)
     const picture = cover || (await plainCover(title))
@@ -281,22 +425,64 @@ export default function PublishDialog({ job, onClose }: { job: PublishJob; onClo
     }
 
     return {
-      links: [audioUri, packUri, metadataUri],
-      launch: {
-        account,
-        chainId: music.cfg.chainId,
-        factory,
-        vault,
-        name: title,
-        title,
-        metadataURI: metadataUri,
-        priceWei: priced.wei,
-        supply: edition.supply,
-        model: edition.model,
-        rate: edition.rate,
-        alignmentBps: alignment.bps,
+      kind: 'fresh',
+      content,
+      sealed: {
+        links: [audioUri, packUri, metadataUri],
+        launch: {
+          account,
+          chainId: music.cfg.chainId,
+          factory,
+          vault,
+          name: title,
+          title,
+          metadataURI: metadataUri,
+          priceWei: priced.wei,
+          supply: edition.supply,
+          model: edition.model,
+          rate: edition.rate,
+          alignmentBps: alignment.bps,
+        },
       },
     }
+  }
+
+  /** The release to send: the one under way, or a new one sealed from the fields as they are now. */
+  const releaseFor = async (account: Address): Promise<SavedRelease> => {
+    const now = record.current
+    // Once something is on the chain the release is fixed: carry on with exactly what was sent.
+    if (now && (resumed.current || launchCommitted(now.progress))) return now
+    setLinks([])
+    const made = await prepare(account)
+    if (made.kind === 'resume') {
+      adopt(made.found)
+      setStatus('This one is already being released. Carrying on with that release instead of starting another.')
+      return made.found
+    }
+
+    const launch = { ...made.sealed.launch, mintFirst }
+    if (now && keyOf(now) === releaseKey(account, launch.chainId, made.content)) {
+      // The same content with nothing still out: what the fields say now replaces what it was sealed with. The
+      // progress (and its salt) is kept, so a later send still makes only the one collection.
+      Object.assign(now, { launch, links: made.sealed.links, uploads: Object.fromEntries(uploads.current) })
+      saveRelease(browserStore(), now)
+      return now
+    }
+
+    if (now) forget(now)
+    const next = track({
+      account,
+      chainId: launch.chainId,
+      content: made.content,
+      intent: job.intent,
+      launch,
+      links: made.sealed.links,
+      uploads: Object.fromEntries(uploads.current),
+      progress: {},
+      savedAt: Date.now(),
+    })
+    record.current = next
+    return next
   }
 
   const runMint = async () => {
@@ -304,26 +490,32 @@ export default function PublishDialog({ job, onClose }: { job: PublishJob; onClo
     setError('')
     try {
       if (!address) throw new Error('Connect a wallet first.')
-      // Once something is on the chain the release is fixed: carry on with exactly what was sent.
-      let release = sealed.current
-      if (!release || !launchCommitted(progress.current)) {
-        setLinks([])
-        release = await prepare(address)
-        sealed.current = release
-      } else setLinks(release.links)
-      if (release.launch.account.toLowerCase() !== address.toLowerCase()) {
+      const release = await releaseFor(address)
+      setLinks(release.links)
+      const { launch, progress } = release
+      if (launch.account.toLowerCase() !== address.toLowerCase()) {
         throw new Error('This release was started from another wallet. Switch back to it to finish.')
       }
 
-      if (chain?.id !== release.launch.chainId) throw new Error(`Switch to ${music.cfg.name} to finish the release.`)
+      if (chain?.id !== launch.chainId) throw new Error(`Switch to ${music.cfg.name} to finish the release.`)
 
-      setStatus(
-        progress.current.instance ? 'Confirm the next step in your wallet.' : 'Confirm the edition in your wallet.'
-      )
-      const launched = await launchEdition({ ...release.launch, mintFirst }, progress.current, (deployedAt) => {
+      setStatus(progress.instance ? 'Confirm the next step in your wallet.' : 'Confirm the edition in your wallet.')
+      const key = keyOf(release)
+      const run = launchEdition(launch, progress, (deployedAt) => {
         setInstance(deployedAt)
         setStatus(`Collection is live at ${deployedAt}. Confirm the next step in your wallet.`)
-      }).finally(() => setCommitted(launchCommitted(progress.current)))
+      })
+      running.set(key, run)
+      const launched = await run
+        .then((done) => {
+          // Finished: nothing is left to resume.
+          forget(release)
+          return done
+        })
+        .finally(() => {
+          if (running.get(key) === run) running.delete(key)
+          setCommitted(resumed.current || launchCommitted(progress))
+        })
       setInstance(launched.instance)
       setReleased(true)
       setStatus(
@@ -332,22 +524,33 @@ export default function PublishDialog({ job, onClose }: { job: PublishJob; onClo
           : 'Edition is live. Mint a copy from Music drops to see it in My Files.'
       )
     } catch (e) {
-      setError(
-        isUnconfirmed(e)
-          ? 'The network has not confirmed this yet. It may still go through, so check your wallet or wait a minute. Try again waits on the same one and sends nothing new.'
-          : describeTxError(e) || (e as Error).message
-      )
+      setError(isUnconfirmed(e) ? UNCONFIRMED : describeTxError(e) || (e as Error).message)
       setStatus('')
     } finally {
       setBusy(false)
     }
   }
 
+  /** Drops a release after a clear failure. Only offered once nothing sent is still waiting to be heard from. */
+  const discard = () => {
+    const now = record.current
+    if (!now || launchUnsettled(now.progress)) return
+    forget(now)
+    record.current = undefined
+    resumed.current = false
+    setCommitted(false)
+    setInstance(undefined)
+    setLinks([])
+    setError('')
+    setStatus('Dropped. The next release starts fresh.')
+    redraw((n) => n + 1)
+  }
+
   return (
     <Back
       role="presentation"
       onMouseDown={() => {
-        if (!busy) onClose()
+        if (closable) onClose()
       }}
     >
       <Card
@@ -409,10 +612,13 @@ export default function PublishDialog({ job, onClose }: { job: PublishJob; onClo
               />
             </Row>
             <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: text.xs }}>
-              <input type="checkbox" checked={mintFirst} onChange={(e) => setMintFirst(e.target.checked)} />
-              {firstCopyLabel(
-                sealed.current && committed ? sealed.current.launch.priceWei : pricedNow.ok ? pricedNow.wei : undefined
-              )}
+              <input
+                type="checkbox"
+                checked={sealed ? sealed.mintFirst : mintFirst}
+                disabled={committed}
+                onChange={(e) => setMintFirst(e.target.checked)}
+              />
+              {firstCopyLabel(sealed ? sealed.priceWei : pricedNow.ok ? pricedNow.wei : undefined)}
             </label>
             <Note>
               The bounce plays in miya radio. The {job.intent === 'mint-kit' ? 'kit' : 'song'} file is stored beside it
@@ -423,7 +629,21 @@ export default function PublishDialog({ job, onClose }: { job: PublishJob; onClo
         ) : (
           <Note>Uploading through Irys. Files under about 90 KB are free. Larger ones pay ETH on Ethereum.</Note>
         )}
+        {mint && current && committed && !released && (
+          <Note>
+            A release of “{current.launch.title}” is in progress:{' '}
+            {describeLaunch(current.progress, current.launch.mintFirst)}.{' '}
+            {unsettled
+              ? 'Check status waits on what was sent and sends nothing new.'
+              : 'Continue carries on from there.'}
+          </Note>
+        )}
         {status && <Note>{status}</Note>}
+        {busy && stuck && (
+          <Note>
+            This is taking a while. You can close this window: the release stays saved and resumes when you reopen.
+          </Note>
+        )}
         {error && (
           <Note role="alert" style={{ color: '#8a1030' }}>
             {error}
@@ -434,11 +654,16 @@ export default function PublishDialog({ job, onClose }: { job: PublishJob; onClo
         ))}
         {instance && <Note>Collection: {instance}</Note>}
         <Actions>
-          <Btn type="button" onClick={onClose} disabled={busy}>
+          {mint && current && committed && !released && !busy && !unsettled && (
+            <Btn type="button" onClick={discard}>
+              Discard this release
+            </Btn>
+          )}
+          <Btn type="button" onClick={onClose} disabled={!closable}>
             Close
           </Btn>
           <Btn type="submit" disabled={busy || (mint && (!title.trim() || released))}>
-            {busy ? 'Working…' : mint ? (released ? 'Released' : committed || error ? 'Try again' : 'Mint') : 'Upload'}
+            {busy ? 'Working…' : mint ? (released ? 'Released' : mintLabel) : 'Upload'}
           </Btn>
         </Actions>
       </Card>

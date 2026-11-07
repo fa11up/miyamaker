@@ -12,6 +12,7 @@ import {
   syncProfileSongs,
 } from '../audio/song.js'
 import { beginUndo, endUndo } from '../history.js'
+import { sameSong, songId } from '../jobs.js'
 import { MEDIA_RE, rememberDirectory } from '../media/library.js'
 import { isAddress, loadWalletPacks, requestAccount } from '../media/nft.js'
 import { model, touch } from '../model.js'
@@ -21,6 +22,16 @@ import { Dialog } from '../widgets.jsx'
 const ACCEPT = 'audio/*,video/*,.wav,.mp3,.m4a,.ogg,.flac,.aiff,.mp4,.webm,.mov,.m1ya,.mod,.xm,.k1t'
 const SONG_RE = /\.(m1ya|mod|xm)$/i
 const KIT_RE = /\.k1t$/i
+
+/** The newest wallet read. An older one that answers late is dropped. */
+let walletRequest = 0
+/** The address being read, or whose packs are shown. */
+let walletFor = ''
+
+function clearPacks() {
+  model.nftPacks = []
+  model.nftLocked = []
+}
 
 export function FileMenu() {
   useModel()
@@ -87,8 +98,10 @@ export function FileMenu() {
     event.target.value = ''
     if (!files.length) return
     setBusy(true)
+    const song = songId()
+    const first = model.selected
     try {
-      for (let i = 0; i < files.length; i++) await importFile(files[i], Math.min(63, model.selected + i))
+      for (let i = 0; i < files.length; i++) await importFile(files[i], Math.min(63, first + i), song)
       closeWindow()
     } catch (error) {
       note(error.message || 'Could not open that file')
@@ -127,10 +140,17 @@ export function FileMenu() {
   async function saveSong() {
     setBusy(true)
     beginUndo()
+    const song = songId()
     try {
       const doc = await captureSong(songName)
       const stored = await storeSongFile(doc.name, doc)
       downloadSong(doc)
+      if (!sameSong(song)) {
+        // Another song was opened meanwhile: the file is saved, the session stays on the newer song.
+        note(`${doc.name}.m1ya saved in Songs and downloaded`)
+        closeWindow()
+        return
+      }
       model.songOrder = doc.order
       model.songName = doc.name
       model.songFile = stored.id
@@ -183,20 +203,25 @@ export function FileMenu() {
       return
     }
     model.wallet = who
+    const request = ++walletRequest
+    if (walletFor !== who.toLowerCase()) clearPacks()
+    walletFor = who.toLowerCase()
     note('Reading the wallet')
     setBusy(true)
     try {
       const result = await loadWalletPacks(who)
+      if (request !== walletRequest) return
       model.nftPacks = result.packs
       model.nftLocked = result.locked
       const songs = await syncProfileSongs(who)
+      if (request !== walletRequest) return
       const count = result.packs.reduce((sum, pack) => sum + pack.tokens.length, 0)
       const songNote = songs ? `, ${songs} songs` : ''
       note(count ? `${count} tokens with media${songNote}` : songs ? `${songs} songs from this wallet` : 'No audio or video in this wallet yet')
     } catch (error) {
-      note(error.message || 'Could not read that wallet')
+      if (request === walletRequest) note(error.message || 'Could not read that wallet')
     } finally {
-      setBusy(false)
+      if (request === walletRequest) setBusy(false)
     }
   }
 
@@ -325,6 +350,13 @@ export function FileMenu() {
               value={model.wallet}
               onChange={(e) => {
                 model.wallet = e.target.value
+                // A different account: its packs are not the ones on screen, and a read in flight is stale.
+                if (walletFor && e.target.value.trim().toLowerCase() !== walletFor) {
+                  walletRequest += 1
+                  walletFor = ''
+                  clearPacks()
+                  setBusy(false)
+                }
                 touch(false)
               }}
             />

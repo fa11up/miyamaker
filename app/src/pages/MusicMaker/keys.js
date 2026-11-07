@@ -85,3 +85,22 @@ export const SHORTCUTS = [
   ['NEW / SAVE', 'New song, folder, kit, or slice. Save writes the current song. Save as stores a new .m1ya. Save as template keeps a starting point. On miyamaker.com, Save song or kit to Arweave, upload a bounce, or mint either as an edition.'],
   ['Shift+numpad 0–9', 'Hold a master FX slot. It retriggers the output, then runs that slot’s filter, chorus, flanger, or repeat. Edit the ten slots on the FX page.'],
 ]
+
+/**
+ * The maker lives in an open shadow root, so a window listener sees the host as e.target.
+ * The first node of the composed path is the element that really has the key.
+ */
+export function eventSource(e) {
+  return (typeof e?.composedPath === 'function' && e.composedPath()[0]) || e?.target
+}
+
+/** Inputs that take typed text. A focused slider, checkbox or file button still lets the pads play. */
+const NOT_TEXT = new Set(['range', 'checkbox', 'radio', 'button', 'submit', 'reset', 'file', 'color', 'image'])
+
+/** The key went to a text field, a select, or editable text: shortcuts (Tab too) leave it alone. */
+export function typing(e) {
+  const el = eventSource(e)
+  const tag = el?.tagName
+  if (tag === 'INPUT') return !NOT_TEXT.has(String(el.type || 'text').toLowerCase())
+  return tag === 'TEXTAREA' || tag === 'SELECT' || !!el?.isContentEditable
+}
