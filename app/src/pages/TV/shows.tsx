@@ -300,7 +300,7 @@ export function RadioShow({ reducedMotion }: { reducedMotion: boolean }) {
       ) : (
         <Centre>
           <h2>miya radio</h2>
-          <p>The community station.</p>
+          <p>The people's station.</p>
           <button type="button" onClick={tuneIn}>
             Tune in
           </button>

@@ -130,7 +130,7 @@ const STATES = {
     { name: 'public', ...tv('public-access'), wait: 8000 },
     { name: 'guide', ...tv('lofi'), wait: 3000, act: async (p) => { await press(p, 'Guide'); await p.waitForTimeout(2500) } },
     { name: 'guide-end', ...tv('lofi'), wait: 3000, act: async (p) => { await press(p, 'Guide'); await p.waitForTimeout(1500); await p.getByTestId('guide').getByText('Public Access').first().scrollIntoViewIfNeeded(); await p.waitForTimeout(1000) } },
-    { name: 'no-chat', ...tv('lofi'), wait: 5000, act: async (p) => { await p.getByRole('button', { name: 'Hide the sidebar' }).click({ timeout: 10000 }); await p.waitForTimeout(1000) } },
+    { name: 'no-chat', ...tv('lofi'), wait: 5000, act: async (p) => { await p.getByRole('button', { name: /^(Hide the sidebar|Chat)$/ }).click({ timeout: 10000 }); await p.waitForTimeout(1000) } },
     { name: 'wallet', wallet: true, ...tv('miya-radio'), wait: 5000 },
   ],
   radio: [
@@ -169,7 +169,7 @@ const inspect = (phone) => {
     const s = getComputedStyle(e)
     return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none'
   }
-  const say = (e) => (e.getAttribute('aria-label') || e.innerText || e.getAttribute('title') || e.tagName).trim().replace(/\s+/g, ' ').slice(0, 50)
+  const say = (e) => (e.getAttribute('aria-label') || e.labels?.[0]?.innerText || e.innerText || e.getAttribute('title') || e.tagName).trim().replace(/\s+/g, ' ').slice(0, 50)
   const all = [...document.querySelectorAll('body *')].filter(shown)
   const sideways = all
     .filter((e) => { const s = getComputedStyle(e); return e.scrollWidth > e.clientWidth + 2 && (s.overflowX === 'auto' || s.overflowX === 'scroll') })

@@ -33,7 +33,7 @@ export default class ErrorBoundary extends Component<
 const reloadPage = () => window.location.reload()
 
 /** Last-resort fallback for the whole app. Uses inline styles only: the theme provider may be what crashed. */
-export function RootErrorFallback({ error }: FallbackProps) {
+export function RootErrorFallback({ error, reset }: FallbackProps) {
   return (
     <div
       role="alert"
@@ -42,19 +42,44 @@ export function RootErrorFallback({ error }: FallbackProps) {
         inset: 0,
         display: 'grid',
         placeItems: 'center',
-        background: '#6f6894',
-        fontFamily: 'monospace',
+        background: 'linear-gradient(180deg, #6a78d8 0%, #8a6fb8 100%)',
+        fontFamily: "'W95FA', monospace",
         padding: '16px',
       }}
     >
-      <div style={{ background: '#c0c0c0', border: '2px outset #fff', maxWidth: '420px', width: '100%' }}>
-        <div style={{ background: '#000080', color: '#fff', padding: '4px 8px', fontWeight: 700 }}>miyaOS</div>
-        <div style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px', color: '#000' }}>
-          <b>miyaOS crashed.</b>
-          <code style={{ wordBreak: 'break-word', fontSize: '12px' }}>{error.message}</code>
-          <button type="button" onClick={reloadPage} style={{ alignSelf: 'flex-end', padding: '4px 16px' }}>
-            Reload
-          </button>
+      <div
+        style={{
+          background: '#a9a3c9',
+          color: '#1b1530',
+          boxShadow:
+            'inset -1px -1px #14101f, inset 1px 1px #ffffff, inset -2px -2px #6f6894, inset 2px 2px #dcd8f0',
+          padding: '3px',
+          maxWidth: '420px',
+          width: '100%',
+        }}
+      >
+        <div
+          style={{
+            background: 'linear-gradient(90deg, #d97ada, #8f5fd0)',
+            color: '#fff',
+            padding: '4px 8px',
+            fontWeight: 700,
+          }}
+        >
+          miyaOS
+        </div>
+        <div style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          <b>Something went wrong.</b>
+          <span>Your windows are safe. Try again to go back to them.</span>
+          <code style={{ wordBreak: 'break-word', fontSize: '12px', opacity: 0.75 }}>{error.message}</code>
+          <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+            <button type="button" onClick={reloadPage} style={{ minHeight: '36px', padding: '0 16px' }}>
+              Reload
+            </button>
+            <button type="button" autoFocus onClick={reset} style={{ minHeight: '36px', padding: '0 16px' }}>
+              Try again
+            </button>
+          </div>
         </div>
       </div>
     </div>

@@ -27,6 +27,16 @@ const Items = styled.div`
     background-color: rgba(122, 22, 32, 0.07);
   }
 
+  &.solo {
+    flex: 1 1 auto;
+    height: auto;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    max-width: 560px;
+    margin: 0 auto;
+  }
+
   /* Rows stack on phones and the list scrolls, so each row takes the height its content needs. */
   @media only screen and (max-width: 640px) {
     flex-direction: column;
@@ -53,6 +63,13 @@ const DescriptionItem = styled(Item)`
   display: block;
   line-height: 1.25;
 
+  .solo & {
+    width: 100%;
+    flex: none;
+    max-height: 9rem;
+    text-align: center;
+  }
+
   @media only screen and (max-width: 640px) {
     flex: none;
   }
@@ -68,6 +85,11 @@ const LinkItem = styled.div`
   padding: 0.5rem;
   overflow-wrap: anywhere;
   min-width: 0;
+
+  .solo & {
+    width: 100%;
+    align-items: center;
+  }
 
   /* Pads the link to the phone's smallest tap target. */
   @media only screen and (max-width: 640px) {
@@ -91,6 +113,20 @@ const ImageItem = styled.div`
 
   > * + * {
     margin-left: 1rem;
+  }
+
+  .solo & {
+    width: 100%;
+    flex: none;
+    flex-direction: column;
+    justify-content: center;
+    height: 19rem;
+    text-align: center;
+
+    > * + * {
+      margin-top: 0.5rem;
+      margin-left: 0;
+    }
   }
 
   @media only screen and (max-width: 640px) {
@@ -144,10 +180,13 @@ export default function ItemsList({
   nft,
   setPageSection,
   auctionContract,
+  solo,
 }: {
   nft: string
   setPageSection: (section: string) => void
   auctionContract: Address
+  /** The only sale there is: laid out as a catalogue cover, not one row of an empty table. */
+  solo?: boolean
 }) {
   const dispatch = useAppDispatch()
 
@@ -174,7 +213,7 @@ export default function ItemsList({
   }
 
   return (
-    <Items onClick={handleClick}>
+    <Items onClick={handleClick} className={solo ? 'solo' : undefined}>
       <ImageItem>
         <ImageWrapper>
           <NftImage

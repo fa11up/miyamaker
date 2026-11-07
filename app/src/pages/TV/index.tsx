@@ -385,8 +385,6 @@ const Grille = styled.div`
 const EAR_TOP = 18
 const EAR_DEPTH = 9
 const EAR_LONG = 46
-const EAR_PHONE = 9
-const EAR_PHONE_LEFT = 18
 const SIDE_GOLD_X = -120
 
 /**
@@ -455,55 +453,9 @@ const SideTab = styled.button`
     left: -2px;
     background-position: 2px -${EAR_TOP}px;
   }
-  /* Phones: chat is below the picture, so the ear sits on the top edge. */
+  /* Phones have a Chat button on the plate instead: an ear this thin is too small to press. */
   .narrow & {
-    top: -${EAR_PHONE}px;
-    left: ${EAR_PHONE_LEFT}px;
-    width: ${EAR_LONG}px;
-    height: ${EAR_PHONE}px;
-    border-radius: 7px 7px 0 0;
-    background-position: ${SIDE_GOLD_X - EAR_PHONE_LEFT}px ${EAR_PHONE}px;
-    line-height: ${EAR_PHONE}px;
-    font-size: 10px;
-    box-shadow:
-      0 -1px 0 #2a1a04,
-      -1px 0 0 #2a1a04,
-      1px 0 0 #2a1a04,
-      inset 0 1px 0 rgba(255, 250, 220, 0.6);
-  }
-  .narrow &::before {
-    top: auto;
-    bottom: -2px;
-    left: 0;
-    right: 0;
-    width: auto;
-    height: 3px;
-    background-position: ${SIDE_GOLD_X - EAR_PHONE_LEFT}px 1px;
-  }
-  .narrow &.closed {
-    top: auto;
-    bottom: -${EAR_PHONE}px;
-    right: auto;
-    width: ${EAR_LONG}px;
-    border-radius: 0 0 7px 7px;
-    background-position: -${EAR_PHONE_LEFT}px 0;
-    box-shadow:
-      0 1px 0 #2a1a04,
-      -1px 0 0 #2a1a04,
-      1px 0 0 #2a1a04;
-  }
-  .narrow &.closed::before {
-    top: -2px;
-    bottom: auto;
-    left: 0;
-    background-position: -${EAR_PHONE_LEFT}px 2px;
-  }
-  /* Enough to press with a thumb, 32px tall, and only just touching the plate above it or the chat below. */
-  .narrow &::after {
-    inset: -12px -8px -11px;
-  }
-  .narrow &.closed::after {
-    inset: -18px -8px -5px;
+    display: none;
   }
 `
 
@@ -930,7 +882,7 @@ export default function TV() {
                     title="Show the sidebar (C)"
                     onClick={toggleChat}
                   >
-                    {layout === 'narrow' ? '▾' : '‹'}
+                    ‹
                   </SideTab>
                 )}
               </Trim>
@@ -954,6 +906,11 @@ export default function TV() {
               <button type="button" className="toggle guide" title="The guide (G)" onClick={() => setGuideOpen(true)}>
                 Guide
               </button>
+              {layout === 'narrow' && (
+                <button type="button" className="toggle" aria-pressed={chatOn} onClick={toggleChat}>
+                  Chat
+                </button>
+              )}
               {sources.length > 1 && (
                 <SkinMenu
                   label="Creator"
@@ -1030,7 +987,7 @@ export default function TV() {
                 title="Hide the sidebar (C)"
                 onClick={toggleChat}
               >
-                {layout === 'narrow' ? '▴' : '›'}
+                ›
               </SideTab>
               <ChatPanel room={CHAT_ROOM} roomLabel={CHAT_ROOM} channelId={channel.id} native={native} panel={panel} />
             </Side>

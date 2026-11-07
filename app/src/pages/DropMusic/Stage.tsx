@@ -166,9 +166,9 @@ const Sign = styled.div<{ $status: StageStatus }>`
   border: 2px solid currentColor;
   border-radius: 6px;
   color: ${({ $status }) => ($status === 'rec' ? '#ff5d73' : $status === 'onair' ? '#ffe27a' : '#f5c6f6')};
-  text-shadow: 0 0 6px currentColor, 0 0 14px currentColor;
-  box-shadow: 0 0 10px currentColor, inset 0 0 10px currentColor;
-  background: rgba(20, 16, 31, 0.6);
+  text-shadow: 0 0 4px currentColor;
+  box-shadow: 0 0 10px currentColor, inset 0 0 6px currentColor;
+  background: rgba(10, 8, 30, 0.88);
   animation: ${({ $status }) => ($status === 'rec' ? blink : flicker)} ${({ $status }) => ($status === 'rec' ? 1 : 4)}s
     steps(1) infinite;
   .still & {

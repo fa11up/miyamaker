@@ -933,7 +933,9 @@ export default function DropMusicWindow() {
             {music.ready ? (
               <Chip tone="ok">Live on {music.cfg.name}</Chip>
             ) : (
-              <Chip tone="warn">{music.wrongChain ? 'Unsupported network' : 'Opens soon'}</Chip>
+              (music.wrongChain || music.deployed) && (
+                <Chip tone="warn">{music.wrongChain ? 'Unsupported network' : 'Opens soon'}</Chip>
+              )
             )}
             {!music.deployed && !music.wrongChain && (
               <StatusBox tone="info" role="status" style={{ flexBasis: '100%' }}>

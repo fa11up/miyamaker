@@ -605,11 +605,8 @@ export default function LaunchPage() {
       }), recommended`
     : 'Default vault, recommended'
 
-  const statusChip = net.deployed ? (
-    <Chip tone="ok">Live on {net.chain.name}</Chip>
-  ) : (
-    <Chip tone="warn">Opens soon</Chip>
-  )
+  // Before launch the note under the header says so.
+  const statusChip = net.deployed && <Chip tone="ok">Live on {net.chain.name}</Chip>
 
   const success = launch.result
   const royalty = parseRoyaltyPct(form.royaltyPct)
@@ -931,7 +928,14 @@ export default function LaunchPage() {
                     Back
                   </BigButton>
                 )}
-                <BigButton type="button" className="primary" disabled={!!primary.disabled} onClick={primary.onClick}>
+                <BigButton
+                  type="button"
+                  className="primary"
+                  disabled={!!primary.disabled}
+                  // Looks not ready until the step is filled in, and a press says what's missing.
+                  style={step !== 'review' && !stepOk ? { opacity: 0.55 } : undefined}
+                  onClick={primary.onClick}
+                >
                   {primary.label}
                 </BigButton>
               </Foot>

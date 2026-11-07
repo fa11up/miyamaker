@@ -254,7 +254,7 @@ export const Key = styled.button`
 `
 
 /** Tap size by bead size. The window's cleft beads sit 24px apart, the arms 33px and the transport 37px. */
-const BEAD_TAP: Record<number, number> = { 13: 24, 20: 32, 24: 36 }
+const BEAD_TAP: Record<number, number> = { 13: 24, 20: 32, 24: 36, 28: 44 }
 
 /** A round chrome bead with a glyph on it. `$orb` is the big glass play button. */
 export const Bead = styled.button.attrs({ type: 'button' })<{ $size: number; $lit?: boolean; $orb?: boolean }>`
