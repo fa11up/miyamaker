@@ -23,6 +23,7 @@ import {
 } from '../audio/song.js'
 import { audioBank, budgetNote, idbGet, model, plainText, rememberSample, touch } from '../model.js'
 import { loadTicket, songId } from '../jobs.js'
+import { armSampleDrag } from '../padEdit.js'
 import { useModel } from '../useModel.js'
 import { Dialog } from '../widgets.jsx'
 import { Waveform } from './Waveform.jsx'
@@ -258,9 +259,10 @@ export function SampleBrowser() {
                       <button
                         key={link.url}
                         type="button"
-                        className={`browser-row ${pick?.url === link.url ? 'on' : ''}`}
+                        className={`browser-row can-drag ${pick?.url === link.url ? 'on' : ''}`}
                         style={{ paddingLeft: 40 }}
                         onClick={() => showNft(link, plainText(token.name))}
+                        onPointerDown={(event) => armSampleDrag(event, { kind: 'remote', url: link.url, name: plainText(token.name) || link.name })}
                         onDoubleClick={() => {
                           showNft(link, plainText(token.name))
                           importRemote(link.url, model.selected, plainText(token.name) || 'nft').catch((error) => {
@@ -294,9 +296,13 @@ export function SampleBrowser() {
                 <button
                   key={row.path}
                   type="button"
-                  className={`browser-row ${pick?.handle === row.handle ? 'on' : ''}`}
+                  className={`browser-row ${pick?.handle === row.handle ? 'on' : ''} ${songOrKit(row.name) ? '' : 'can-drag'}`}
                   style={{ paddingLeft: 16 + row.depth * 12 }}
                   onClick={() => showHandle(row)}
+                  onPointerDown={(event) => {
+                    if (songOrKit(row.name)) return
+                    armSampleDrag(event, { kind: 'handle', handle: row.handle, name: row.name.replace(/\.[^.]+$/, '') })
+                  }}
                   onDoubleClick={() => importFileFromHandle(row)}
                 >
                   {row.name}
@@ -312,10 +318,14 @@ export function SampleBrowser() {
               <button
                 key={file.webkitRelativePath || file.name}
                 type="button"
-                className="browser-row"
+                className={`browser-row ${songOrKit(file.name) ? '' : 'can-drag'}`}
                 style={{ paddingLeft: 28 }}
                 onClick={() => {
                   setPick({ kind: 'link', name: file.name, handle: { getFile: async () => file } })
+                }}
+                onPointerDown={(event) => {
+                  if (songOrKit(file.name)) return
+                  armSampleDrag(event, { kind: 'file', file, name: file.name.replace(/\.[^.]+$/, '') })
                 }}
                 onDoubleClick={() => importFile(file, model.selected)}
               >
@@ -517,10 +527,14 @@ function Folder({ folder, depth, open, toggle, needle, pick, picked, onPick, onM
         <button
           key={file.id}
           type="button"
-          className={`browser-row ${pick?.id === file.id || picked?.includes(file.id) ? 'on' : ''}`}
+          className={`browser-row ${pick?.id === file.id || picked?.includes(file.id) ? 'on' : ''} ${librarySample(file) ? 'can-drag' : ''}`}
           style={{ paddingLeft: (depth + 1) * 12 }}
           onClick={(event) => onPick(event, file, files)}
           onContextMenu={(event) => onMenu(event, file, files)}
+          onPointerDown={(event) => {
+            if (!librarySample(file)) return
+            armSampleDrag(event, { kind: 'cache', id: file.id, name: file.name })
+          }}
           onDoubleClick={() => {
             if (file.ext === 'm1ya' || file.ext === 'k1t' || SONG_RE.test(file.name)) return
             openLibraryFile(file)
@@ -535,6 +549,14 @@ function Folder({ folder, depth, open, toggle, needle, pick, picked, onPick, onM
 
 const SONG_RE = /\.(m1ya|mod|xm)$/i
 const KIT_RE = /\.k1t$/i
+
+function songOrKit(name) {
+  return SONG_RE.test(name) || KIT_RE.test(name)
+}
+
+function librarySample(file) {
+  return file.ext !== 'k1t' && file.ext !== 'm1ya' && !songOrKit(file.name)
+}
 
 async function openLibraryFile(file) {
   try {

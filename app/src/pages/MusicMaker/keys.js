@@ -79,7 +79,10 @@ export const SHORTCUTS = [
   ['Delete / Backspace', 'Delete the selection'],
   ['Pad', '1 2 3 4 / Q W E R / A S D F / Z X C V play the current bank. Y U I O / H J K L are sequence slots on the Pads page.'],
   ['Keys', 'Selected pad, in notation. Z is C of the octave (default 3). Q and comma are the next C. I is the C above that. A and Caps Lock are note off. Numpad / and *, or Ctrl+[ and Ctrl+], shift the octave. In this map M, N, and 0 are notes.'],
-  ['Tracker', 'Esc or Rec arms edit. On NOTE, Z is C and Q is the next C. A is note off. INST is the pad in hex. Ctrl and 1–0 sets the step. Tab moves a track. MIDI pads write the armed track. Right-click a column header and choose Show/hide SL/LP columns. SL is the play offset, four hex digits. LP is move then length, eight hex digits. Blank leaves the sample alone. Hiding the columns keeps the values.'],
+  ['Tracker', 'Esc or Rec arms edit. Arrows move. On SL or LP, Left and Right walk each hex pair before leaving the column. Shift+Left/Right on NOTE is one semitone. Shift+Up/Down on NOTE is one octave. On every other column, Shift+Up/Down edits the left digit and Shift+Left/Right edits the right digit. Both wrap. Step, or Ctrl and 1–0, is how many rows a finished note or value skips. 0 stays. Pad mode writes the pad you press as C-4 at velocity 80, from any column. Keys mode uses the Renoise map on NOTE. A is note off. Delete on MOVE sets +00 and leaves the note. Shift+numpad 0–9 still holds a master FX slot. Right-click a column header and choose Show/hide SL/LP columns. Blank grain cells leave the sample alone. Hiding the columns keeps the values.'],
+  ['Sample page', 'Drag the wave to set S and E. Drag inside a shorter span to slide it, and drag near an edge to resize it. The thin S, E, and LP handles do the same. Pinch, or ctrl-scroll, zooms in. The wheel pans once you are zoomed. Double-click, or Fit, shows the whole sample. A yellow line marks each voice playing that pad. Chop copies the span onto the next empty pad and leaves the original.'],
+  ['Copy a pad', 'Drag a row from the browser onto a pad. Right-click a pad, or hold it on a touch screen, then Copy pad. Paste on an empty pad. Paste & replace shows when that pad already has a sound.'],
+  ['Browser', 'The < button hides the sample browser. > opens it again.'],
   ['MIDI', 'Click MIDI once so the browser can see a controller. Pad mode: a Launchpad plays all 64 instruments, and MPC, MPD, and MPK pads play instruments from note 36. Keys mode plays the selected pad chromatically. Notes outside the pad map play the selected pad, so a keyboard can carry a melody. The computer keys work in every browser.'],
   ['FILE', 'Open and save. Wallet reads tokens for media. A video link from YouTube, Odysee, LBRY, or X becomes a Cache sample until it is loaded onto a pad and the song is saved. Image… turns a picture into a Cache sample.'],
   ['NEW / SAVE', 'New song, folder, kit, or slice. Save writes the current song. Save as stores a new .m1ya. Save as template keeps a starting point. On miyamaker.com, Publish song, kit, or bounce to Arweave (public and permanent, every sample included), or mint the song or kit as an edition.'],
@@ -100,6 +103,20 @@ const NOT_TEXT = new Set(['range', 'checkbox', 'radio', 'button', 'submit', 'res
 /** The key went to a text field, a select, or editable text: shortcuts (Tab too) leave it alone. */
 export function typing(e) {
   const el = eventSource(e)
+  if (el?.getAttribute?.('aria-label') === 'Edit step') {
+    const key = e.key
+    if (e.ctrlKey || e.metaKey || e.altKey || key === 'Escape' || (e.shiftKey && key?.startsWith('Arrow'))) {
+      el.blur()
+      return false
+    }
+    if (key === 'Enter') {
+      el.blur()
+      return true
+    }
+    if (/^[0-9]$/.test(key) || key === 'ArrowUp' || key === 'ArrowDown' || key === 'ArrowLeft' || key === 'ArrowRight' || key === 'Backspace' || key === 'Delete' || key === 'Tab' || key === 'Home' || key === 'End') return true
+    el.blur()
+    return false
+  }
   const tag = el?.tagName
   if (tag === 'INPUT') return !NOT_TEXT.has(String(el.type || 'text').toLowerCase())
   return tag === 'TEXTAREA' || tag === 'SELECT' || !!el?.isContentEditable

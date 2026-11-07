@@ -212,7 +212,7 @@ function Compressor() {
     window.addEventListener('pointerup', up)
   }
   return (
-    <section className={`comp-panel ${model.compFocus ? 'armed' : ''}`}>
+    <section className={`comp-panel ${model.compFocus ? 'armed' : ''} ${comp.justice ? 'has-plate' : ''}`}>
       <div className="comp-head-row">
         <button
           ref={headRef}
@@ -252,7 +252,9 @@ function Compressor() {
         <span className="hint">Limit {gr < -0.1 ? `${gr.toFixed(1)} dB` : '0.0 dB'}</span>
       </div>
       {comp.justice ? (
-        <Faceplate />
+        <div className="plate-slot">
+          <Faceplate />
+        </div>
       ) : (
         <div className="knob-row comp-knobs">
           <Knob label="Thresh" min={-60} max={0} value={comp.threshold} text={`${comp.threshold.toFixed(1)} dB`} onChange={(v) => set('threshold', v)} />

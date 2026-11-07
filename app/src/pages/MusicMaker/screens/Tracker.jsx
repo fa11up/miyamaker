@@ -1,5 +1,4 @@
-import { Fragment, useEffect, useState } from 'react'
-import { signed16 } from '../audio/grain.js'
+import { Fragment, useEffect, useRef, useState } from 'react'
 import { noteName } from '../keys.js'
 import {
   LANES,
@@ -27,6 +26,7 @@ const HEADS = ['NOTE', 'INST', 'VEL', 'MOVE', 'SL', 'LP']
 export function Tracker() {
   useModel()
   const [menu, setMenu] = useState(null)
+  const gridRef = useRef(null)
   const seq = currentPattern()
   const rows = stepCount(seq)
   const t = model.tracker
@@ -52,6 +52,10 @@ export function Tracker() {
     if (!t.focus) return
     document.querySelector('.tracker td.cursor')?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
   }, [t.focus, t.row, t.col, model.pattern])
+  useEffect(() => {
+    if (!t.focus || activeField()) return
+    gridRef.current?.focus({ preventScroll: true })
+  }, [t.focus, model.screen])
   const focusLane = Math.floor((t.col || 0) / fields)
   const focusEv = seq.steps[t.row]?.[focusLane]
   return (
@@ -60,10 +64,11 @@ export function Tracker() {
         <PatternBar />
         <div className="tracker-tools">
           <label className="slider">
-            <span>Step</span>
+            <span title="Rows to skip after a note or a finished value. 0 stays on the row. Ctrl and 1–0 set this from the grid.">Step</span>
             <input
               className="field num"
               aria-label="Edit step"
+              title="Rows to skip after a note or a finished value. 0 stays on the row."
               type="number"
               min={0}
               max={16}
@@ -94,8 +99,11 @@ export function Tracker() {
       </div>
       <div
         className="tracker"
-        onMouseDown={() => {
+        ref={gridRef}
+        tabIndex={0}
+        onMouseDown={(event) => {
           t.focus = true
+          event.currentTarget.focus({ preventScroll: true })
           touch(false)
         }}
       >
@@ -153,12 +161,13 @@ export function Tracker() {
                           t.focus = true
                           t.row = row
                           t.col = col
+                          t.pair = 0
                           t.hex = ''
                           t.sign = 1
                           touch(false)
                         }}
                       >
-                        {cellText(ev, field, active, t)}
+                        {renderCell(ev, field, active, t)}
                       </td>
                     )
                   })}
@@ -224,11 +233,21 @@ function blankCell(field) {
   return '--'
 }
 
+function wideText(ev, field) {
+  if (!ev || ev.off) return blankCell(field)
+  if (field === 4) return formatSl(ev.sl)
+  return formatLp(ev.move, ev.len)
+}
+
 function cellText(ev, field, active, t) {
-  const width = field === 4 ? 4 : field === 5 ? 8 : 2
   if (active && t.hex && field !== 0) {
     if (field === 3) return `${(t.sign || 1) < 0 ? '-' : '+'}${t.hex}`
-    if (field >= 4) return (t.hex.toUpperCase() + '-'.repeat(width)).slice(0, width)
+    if (field >= 4) {
+      const base = wideText(ev, field)
+      const at = Math.max(0, t.pair | 0) * 2
+      const typed = t.hex.toUpperCase()
+      return base.slice(0, at) + typed + base.slice(at + typed.length)
+    }
     return t.hex.toUpperCase()
   }
   if (!ev) return blankCell(field)
@@ -238,6 +257,21 @@ function cellText(ev, field, active, t) {
   if (field === 3) return formatNudge(ev.nudge)
   if (field === 4) return formatSl(ev.sl)
   return formatLp(ev.move, ev.len)
+}
+
+function renderCell(ev, field, active, t) {
+  const text = cellText(ev, field, active, t)
+  const pairs = pairCount(field)
+  if (!active || pairs < 2) return text
+  const pair = Math.max(0, Math.min(pairs - 1, t.pair | 0))
+  const at = pair * 2
+  return (
+    <>
+      {text.slice(0, at)}
+      <span className="pair">{text.slice(at, at + 2)}</span>
+      {text.slice(at + 2)}
+    </>
+  )
 }
 
 export function handleTrackerKey(e) {
@@ -259,8 +293,13 @@ export function handleTrackerKey(e) {
     const lane = Math.floor(t.col / fields)
     const next = (lane + (e.shiftKey ? -1 : 1) + LANES) % LANES
     t.col = next * fields
+    t.pair = 0
     t.hex = ''
     touch(false)
+    return true
+  }
+  if (e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey && key.startsWith('Arrow')) {
+    nudgeCell(t, seq, key)
     return true
   }
   if (key === 'ArrowUp') {
@@ -275,14 +314,22 @@ export function handleTrackerKey(e) {
     touch(false)
     return true
   }
-  if (key === 'ArrowLeft') {
-    t.col = (t.col + cols - 1) % cols
-    t.hex = ''
-    touch(false)
-    return true
-  }
-  if (key === 'ArrowRight') {
-    t.col = (t.col + 1) % cols
+  if (key === 'ArrowLeft' || key === 'ArrowRight') {
+    const dir = key === 'ArrowRight' ? 1 : -1
+    const here = t.col % fields
+    const pairs = pairCount(here)
+    if (pairs > 1) {
+      const next = (t.pair | 0) + dir
+      if (next >= 0 && next < pairs) {
+        t.pair = next
+        t.hex = ''
+        touch(false)
+        return true
+      }
+    }
+    t.col = (t.col + (dir > 0 ? 1 : cols - 1)) % cols
+    const landed = pairCount(t.col % fields)
+    t.pair = dir > 0 ? 0 : landed - 1
     t.hex = ''
     touch(false)
     return true
@@ -292,25 +339,37 @@ export function handleTrackerKey(e) {
   const cell = seq.steps[t.row]
   if (!cell) return false
   if (key === 'Delete' || key === 'Backspace') {
+    if (field === 3) {
+      if (cell[lane]) patchTrackerEvent(t.row, lane, { nudge: 0 }, { step: false })
+      return true
+    }
     if (field === 4 || field === 5) clearTrackerGrain(t.row, lane, field)
     else clearTrackerLane(t.row, lane)
     return true
   }
   if (field === 4 || field === 5) {
-    const width = field === 4 ? 4 : 8
+    const pairs = pairCount(field)
+    const pair = Math.max(0, Math.min(pairs - 1, t.pair | 0))
     if (/^[0-9a-fA-F]$/.test(key)) {
-      t.hex = (t.hex + key).slice(-width)
-      if (t.hex.length >= width && cell[lane] && !cell[lane].off) {
-        if (field === 4) patchTrackerEvent(t.row, lane, { sl: parseInt(t.hex, 16) })
-        else {
-          patchTrackerEvent(t.row, lane, {
-            move: signed16(parseInt(t.hex.slice(0, 4), 16)),
-            len: parseInt(t.hex.slice(4), 16),
-          })
+      t.hex = (t.hex + key).slice(-2)
+      const ev = cell[lane]
+      if (t.hex.length >= 2 && ev && !ev.off) {
+        const byte = parseInt(t.hex, 16) & 255
+        const last = pair >= pairs - 1
+        const willStep = last && (t.step | 0) !== 0
+        if (!last) t.pair = pair + 1
+        else if (willStep) t.pair = 0
+        if (field === 4) {
+          const base = ev.sl == null ? 0 : (ev.sl & 0xffff)
+          patchTrackerEvent(t.row, lane, { sl: writeByte(base, pair, byte, pairs) }, { step: willStep })
+        } else {
+          const packed = writeByte(packLp(ev.move || 0, ev.len || 0), pair, byte, pairs)
+          patchTrackerEvent(t.row, lane, unpackLp(packed), { step: willStep })
         }
       } else touch(false)
       return true
     }
+    if (key === ' ') return false
     if (key.length === 1) return true
     return false
   }
@@ -364,4 +423,134 @@ export function handleTrackerKey(e) {
     return true
   }
   return false
+}
+
+function nudgeCell(t, seq, key) {
+  const fields = trackerFields()
+  const lane = Math.floor(t.col / fields)
+  const field = t.col % fields
+  const ev = seq.steps[t.row]?.[lane]
+  t.hex = ''
+  const up = key === 'ArrowUp' || key === 'ArrowRight'
+  const vertical = key === 'ArrowUp' || key === 'ArrowDown'
+  const dir = up ? 1 : -1
+  if (field === 0) {
+    if (ev?.off) {
+      touch(false)
+      return
+    }
+    const jump = vertical ? 12 : 1
+    const base = ev ? (ev.pitch | 0) : 0
+    const pitch = Math.max(-60, Math.min(67, base + dir * jump))
+    if (!ev) {
+      commitTrackerNote({
+        typed: true,
+        stay: true,
+        pad: model.selected,
+        vel: TRACK_VEL,
+        pitch,
+        row: t.row,
+      })
+      return
+    }
+    if (pitch === (ev.pitch | 0)) {
+      touch(false)
+      return
+    }
+    patchTrackerEvent(t.row, lane, { pitch }, { step: false })
+    return
+  }
+  if (!ev || ev.off) {
+    touch(false)
+    return
+  }
+  if (field === 1) {
+    patchTrackerEvent(t.row, lane, { pad: bumpPair(ev.pad, 4, vertical, up) }, { step: false })
+    return
+  }
+  if (field === 2) {
+    const byte = Math.round((ev.vel ?? 0) * 255) & 255
+    patchTrackerEvent(t.row, lane, { vel: bumpPair(byte, 16, vertical, up) / 255 }, { step: false })
+    return
+  }
+  if (field === 3) {
+    const nudge = bumpMove(ev.nudge, vertical, up)
+    const held = Math.max(-50, Math.min(50, Math.round(ev.nudge || 0)))
+    if (nudge === held) {
+      touch(false)
+      return
+    }
+    patchTrackerEvent(t.row, lane, { nudge }, { step: false })
+    return
+  }
+  const pairs = pairCount(field)
+  const pair = Math.max(0, Math.min(pairs - 1, t.pair | 0))
+  if (field === 4) {
+    const base = ev.sl == null ? 0 : (ev.sl & 0xffff)
+    patchTrackerEvent(t.row, lane, { sl: bumpByte(base, pair, pairs, vertical, up) }, { step: false })
+    return
+  }
+  const packed = bumpByte(packLp(ev.move || 0, ev.len || 0), pair, pairs, vertical, up)
+  patchTrackerEvent(t.row, lane, unpackLp(packed), { step: false })
+}
+
+/** Left digit is Shift+Up/Down. Right digit is Shift+Left/Right. Both wrap. */
+function bumpPair(value, span, vertical, up) {
+  const mask = span * 16 - 1
+  let v = value & mask
+  const shift = vertical ? 4 : 0
+  const size = vertical ? span : 16
+  let digit = (v >> shift) & 0xf
+  digit = (digit + (up ? 1 : -1) + size) % size
+  const nibble = 0xf << shift
+  v = (v & ~nibble) | ((digit & 0xf) << shift)
+  return v & mask
+}
+
+function bumpMove(nudge, vertical, up) {
+  const sign = nudge < 0 ? -1 : 1
+  let mag = Math.abs(Math.round(nudge || 0))
+  let tens = Math.min(5, Math.floor(mag / 10))
+  let ones = mag % 10
+  if (vertical) tens = Math.max(0, Math.min(5, tens + (up ? 1 : -1)))
+  else ones = Math.max(0, Math.min(9, ones + (up ? 1 : -1)))
+  mag = Math.min(50, tens * 10 + ones)
+  return sign < 0 ? -mag : mag
+}
+
+function pairCount(field) {
+  if (field === 4) return 2
+  if (field === 5) return 4
+  return 1
+}
+
+function writeByte(value, pair, byte, pairs) {
+  const shift = (pairs - 1 - pair) * 8
+  const full = pairs >= 4 ? 0xffffffff : 0xffff
+  const cur = (value >>> 0) & full
+  const mask = (0xff << shift) >>> 0
+  return (cur & (~mask >>> 0) & full) | (((byte & 0xff) << shift) >>> 0)
+}
+
+function bumpByte(value, pair, pairs, vertical, up) {
+  const shift = (pairs - 1 - pair) * 8
+  const byte = (value >>> shift) & 0xff
+  return writeByte(value, pair, bumpPair(byte, 16, vertical, up), pairs)
+}
+
+function packLp(move, len) {
+  return ((((move | 0) & 0xffff) << 16) | ((len | 0) & 0xffff)) >>> 0
+}
+
+function unpackLp(bits) {
+  const moveBits = (bits >>> 16) & 0xffff
+  return { move: moveBits >= 0x8000 ? moveBits - 0x10000 : moveBits, len: bits & 0xffff }
+}
+
+function activeField() {
+  let node = document.activeElement
+  if (node?.shadowRoot?.activeElement) node = node.shadowRoot.activeElement
+  const tag = node?.tagName
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || node?.isContentEditable) return node
+  return null
 }

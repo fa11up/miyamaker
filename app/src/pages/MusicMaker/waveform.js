@@ -129,21 +129,27 @@ export function waveColumns(pcm, width, from = 0, to = 1) {
   return cols
 }
 
-export function paintWave(ctx, width, height, pcm, sr, view) {
+export function paintWave(ctx, width, height, pcm, sr, view, span) {
   if (!pcm || pcm.length < 2 || width < 4 || height < 4) return
   const rate = sr > 1000 ? sr : 44100
+  const from = clamp(span?.from ?? 0, 0, 1)
+  const to = clamp(span?.to ?? 1, from, 1)
   if (view === 2) {
-    paintSpectrum(ctx, width, height, pcm, rate)
+    paintSpectrum(ctx, width, height, pcm, rate, from, to)
     return
   }
-  const cols = waveColumns(pcm, width)
+  const cols = waveColumns(pcm, width, from, to)
   const mid = height / 2
   const half = Math.max(1, height / 2 - 1)
   if (view === 1) {
-    const bucket = Math.max(1, Math.floor(pcm.length / Math.min(width, 96)))
+    const count = pcm.length
+    const a = clamp(Math.floor(from * count), 0, count)
+    const b = clamp(Math.ceil(to * count), a + 1, count)
+    const spanN = b - a
+    const bucket = Math.max(1, Math.floor(spanN / Math.min(width, 96)))
     for (let x = 0; x < width; x++) {
-      const i0 = Math.floor((x * pcm.length) / width)
-      const i1 = Math.min(pcm.length, i0 + bucket)
+      const i0 = a + Math.floor((x * spanN) / width)
+      const i1 = Math.min(count, i0 + bucket)
       const band = analyse(pcm, i0, i1, rate)
       const peak = Math.max(band.low, band.mid, band.high, 1e-8)
       const amp = Math.max(Math.abs(cols[x].lo), Math.abs(cols[x].hi))
@@ -167,14 +173,18 @@ export function paintWave(ctx, width, height, pcm, sr, view) {
   }
 }
 
-function paintSpectrum(ctx, width, height, pcm, rate) {
+function paintSpectrum(ctx, width, height, pcm, rate, from = 0, to = 1) {
   const fMin = 40
   const fMax = Math.min(20000, rate * 0.5)
   const logSpan = Math.log(fMax / fMin)
   const columns = Math.min(width, 160)
+  const count = pcm.length
+  const a = clamp(Math.floor(Math.min(from, to) * count), 0, Math.max(0, count - 1))
+  const b = clamp(Math.ceil(Math.max(from, to) * count), a + 1, count)
+  const spanN = b - a
   for (let x = 0; x < width; x++) {
     const cx = Math.floor((x * columns) / width)
-    const centre = Math.floor(((cx + 0.5) * pcm.length) / columns)
+    const centre = a + Math.floor(((cx + 0.5) * spanN) / columns)
     let i0 = Math.max(0, centre - FFT / 2)
     let i1 = Math.min(pcm.length, i0 + FFT)
     if (i1 - i0 < 32) {

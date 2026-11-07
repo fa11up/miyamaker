@@ -57,9 +57,10 @@ export const model = {
   master: 0.9,
   settings: { autoTrim: true, autoNorm: true, midiOffset: 36, velocity: true },
   browser: false,
+  dockOpen: true,
   help: false,
   about: false,
-  tracker: { row: 0, col: 0, focus: false, hex: '', sign: 1, edit: false, step: 1, follow: true, grains: false },
+  tracker: { row: 0, col: 0, pair: 0, focus: false, hex: '', sign: 1, edit: false, step: 1, follow: true, grains: false },
   library: null,
   wallet: '',
   fileWindow: '',
@@ -130,12 +131,53 @@ function emptyFx() {
 
 const ENV_TARGETS = ['off', 'filter', 'reverb', 'width', 'chorus', 'amp']
 
+/** Type choices for an envelope, shown after its target. Off has none. */
+export const ENV_KINDS = {
+  filter: [
+    ['lowpass', 'Low pass'],
+    ['highpass', 'High pass'],
+    ['bandpass', 'Band pass'],
+    ['notch', 'Notch'],
+    ['lowshelf', 'Low shelf'],
+    ['highshelf', 'High shelf'],
+  ],
+  amp: [
+    ['tube', 'Tube'],
+    ['clean', 'Clean'],
+    ['tape', 'Tape'],
+    ['fold', 'Fold'],
+  ],
+  chorus: [
+    ['stereo', 'Stereo'],
+    ['mono', 'Mono'],
+  ],
+  reverb: [
+    ['room', 'Room'],
+    ['hall', 'Hall'],
+    ['plate', 'Plate'],
+    ['spring', 'Spring'],
+  ],
+  width: [
+    ['wide', 'Wide'],
+    ['mid', 'Mid'],
+    ['haas', 'Haas'],
+  ],
+}
+
+export function envKind(target, kind, filterType) {
+  const options = (ENV_KINDS[target] || []).map((pair) => pair[0])
+  if (options.includes(kind)) return kind
+  if (target === 'filter' && options.includes(filterType)) return filterType
+  if (target === 'filter') return 'lowpass'
+  return ''
+}
+
 export function defaultEnvelopes(filter) {
   const src = filter || {}
   return [
-    { target: 'filter', a: src.a ?? 0.004, d: src.d ?? 0.12, s: src.s ?? 0.35, r: src.r ?? 0.08, depth: src.env ?? 0 },
-    { target: 'off', a: 0.01, d: 0.18, s: 0.4, r: 0.2, depth: 1 },
-    { target: 'off', a: 0.02, d: 0.24, s: 0, r: 0.3, depth: 1 },
+    { target: 'filter', kind: envKind('filter', src.type), a: src.a ?? 0.004, d: src.d ?? 0.12, s: src.s ?? 0.35, r: src.r ?? 0.08, depth: src.env ?? 0 },
+    { target: 'off', kind: '', a: 0.01, d: 0.18, s: 0.4, r: 0.2, depth: 1 },
+    { target: 'off', kind: '', a: 0.02, d: 0.24, s: 0, r: 0.3, depth: 1 },
   ]
 }
 
@@ -147,8 +189,12 @@ export function normalizeEnvelopes(raw, filter) {
     const target = ENV_TARGETS.includes(src.target) ? src.target : fallback.target
     const depthMin = target === 'filter' ? -36 : 0
     const depthMax = target === 'filter' ? 60 : 1
+    const kind = target === 'off'
+      ? ''
+      : (target === 'filter' ? envKind('filter', src.kind || fallback.kind, filter?.type) : envKind(target, src.kind))
     return {
       target,
+      kind,
       a: num(src.a, num(fallback.a, 0.004, 0.001, 1), 0.001, 1),
       d: num(src.d, num(fallback.d, 0.12, 0.001, 2), 0.001, 2),
       s: num(src.s, num(fallback.s, 0, 0, 1), 0, 1),
@@ -330,6 +376,7 @@ export function normalizePad(raw, index = 0) {
     patch: normalizePatch(raw.patch),
   }
   if (pad.source === 'synth' && !pad.patch) pad.source = 'empty'
+  if (!ENV_KINDS.filter.some((pair) => pair[0] === pad.filter.type)) pad.filter.type = 'lowpass'
   return pad
 }
 
@@ -479,6 +526,13 @@ export function applyTrim(pad, which, value) {
   if (which === 'start') pad.trimStart = value
   else if (which === 'end') pad.trimEnd = value
   else pad.loopPoint = value
+  fitLoop(pad)
+}
+
+/** Move the whole trimmed span, then keep the loop point inside it. */
+export function applyTrimSpan(pad, start, end) {
+  pad.trimStart = start
+  pad.trimEnd = end
   fitLoop(pad)
 }
 
@@ -686,14 +740,14 @@ function stepCursor(fromRow) {
  * Live record (playing and Follow) uses the playhead row and spills for the rest of that step.
  * Typed instrument entry stays on the armed track and steps immediately.
  */
-export function commitTrackerNote({ pad = 0, vel = TRACK_VEL, pitch = 0, off = false, row = null, nudge = 0, live = false, typed = false }) {
+export function commitTrackerNote({ pad = 0, vel = TRACK_VEL, pitch = 0, off = false, row = null, nudge = 0, live = false, typed = false, stay = false }) {
   const rows = stepCount()
   if (!rows) return
   const now = typeof performance !== 'undefined' ? performance.now() : Date.now()
   let writeRow = row == null ? (model.tracker.row | 0) : row
   writeRow = ((writeRow % rows) + rows) % rows
   let lane = armedLane()
-  let advance = !live
+  let advance = !live && !stay
   if (!typed && live) {
     const stepMs = 60000 / Math.max(1, model.bpm || 96) / 4
     const sameVisit = !!(chord?.live && chord.row === writeRow && now - chord.at < stepMs)
@@ -734,11 +788,13 @@ export function commitTrackerNote({ pad = 0, vel = TRACK_VEL, pitch = 0, off = f
   })
 }
 
-export function patchTrackerEvent(row, lane, patch) {
+export function patchTrackerEvent(row, lane, patch, { step = true } = {}) {
   batch(() => {
     const cell = currentPattern().steps[row]
     const ev = cell?.[lane]
     if (!ev) return
+    if (patch.pitch != null && !ev.off) ev.pitch = Math.max(-60, Math.min(67, patch.pitch | 0))
+    if (patch.pad != null && !ev.off) ev.pad = Math.max(0, Math.min(63, patch.pad | 0))
     if (patch.vel != null) ev.vel = Math.max(0, Math.min(1, patch.vel))
     if (patch.nudge != null) ev.nudge = Math.max(-50, Math.min(50, Math.round(patch.nudge)))
     if (patch.sl != null) ev.sl = Math.max(0, Math.min(65535, patch.sl | 0))
@@ -747,7 +803,7 @@ export function patchTrackerEvent(row, lane, patch) {
       ev.move = Math.max(-32768, Math.min(32767, patch.move | 0))
     }
     model.tracker.hex = ''
-    stepCursor(row)
+    if (step) stepCursor(row)
     touch(true)
   })
 }
@@ -961,6 +1017,7 @@ export function save() {
     recNatural: !!model.recNatural,
     editStep: editStep(),
     grainCols: !!model.tracker.grains,
+    dockOpen: model.dockOpen !== false,
     settings: model.settings,
     octave: model.octave,
     keyMap: model.keyMap === 'renoise' ? 'renoise' : 'koala',
@@ -1262,6 +1319,7 @@ export function boot() {
     }
     if (Number.isFinite(data.editStep)) model.tracker.step = Math.max(0, Math.min(16, data.editStep | 0))
     model.tracker.grains = !!data.grainCols
+    model.dockOpen = data.dockOpen !== false
     if (model.screen === 'track') {
       model.tracker.focus = true
       model.tracker.edit = true

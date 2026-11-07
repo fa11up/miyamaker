@@ -1,6 +1,6 @@
-import { BANKS, busLabel, currentPattern, hexByte, model, padKeyLabel, selectPad, touch, TRACK_VEL } from '../model.js'
+import { BANKS, busLabel, currentPattern, hexByte, model, padKeyLabel, touch } from '../model.js'
 import { SEQ_KEYS } from '../keys.js'
-import { noteOff, noteOn } from '../audio/engine.js'
+import { padGesture } from '../padEdit.js'
 import { useModel } from '../useModel.js'
 import { Slider } from '../widgets.jsx'
 
@@ -17,6 +17,7 @@ export function Pads() {
         {model.keyboard && model.keyMap === 'renoise'
           ? ` Keys on the selected pad: Z is C, Q and comma are the C above, I is the next C. A or Caps Lock stops the note. Octave ${model.renoiseOct}.`
           : ''}
+        {' '}Drag a sample onto a pad. Right-click, or hold on a touch screen, then Copy pad and Paste. Paste &amp; replace shows when that pad already has a sound.
       </p>
       <div className="pad-layout">
         <div className="pad-grid">
@@ -38,10 +39,7 @@ export function Pads() {
                 type="button"
                 className={cls}
                 data-pad={index}
-                onPointerDown={(e) => hit(index, e)}
-                onPointerUp={() => noteOff(`ptr:${index}`)}
-                onPointerCancel={() => noteOff(`ptr:${index}`)}
-                onLostPointerCapture={() => noteOff(`ptr:${index}`)}
+                {...padGesture(index, { play: true })}
               >
                 <span className="key">{padKeyLabel(local)}</span>
                 <span className="name">{pad.name}</span>
@@ -57,23 +55,6 @@ export function Pads() {
       </div>
     </div>
   )
-}
-
-function hit(index, e) {
-  e.preventDefault()
-  // Keep the pointer on this pad, so the release lands here even if the finger slides off.
-  try {
-    e.currentTarget.setPointerCapture(e.pointerId)
-  } catch {
-    /* no capture for this pointer */
-  }
-  if (e.shiftKey || model.hold === 'edit') selectPad(index, 'edit')
-  else if (model.hold === 'solo') selectPad(index, 'solo')
-  else if (model.hold === 'mute') selectPad(index, 'mute')
-  else {
-    selectPad(index)
-    noteOn(index, TRACK_VEL, `ptr:${index}`)
-  }
 }
 
 function PadQuick() {

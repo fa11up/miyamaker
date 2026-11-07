@@ -24,6 +24,7 @@ export function Fx() {
         Hold Shift and a numpad digit. That slot retriggers the master output, then runs its filter or effect until the key comes up.
         Numpad / and * still move the Keys octave.
       </p>
+      <div className="fx-layout">
       <div className="numpad" role="listbox" aria-label="Numpad FX">
         {ORDER.map((digit) => {
           const item = model.numpadFx[digit]
@@ -47,9 +48,9 @@ export function Fx() {
           )
         })}
       </div>
-      <fieldset className="group">
+      <fieldset className="group fx-edit">
         <legend>Numpad {index}</legend>
-        <label className="slider">
+        <label className="fx-field">
           <span>Type</span>
           <select
             className="row-select"
@@ -61,9 +62,8 @@ export function Fx() {
             <option value="chorus">Chorus</option>
             <option value="flange">Flanger</option>
           </select>
-          <em />
         </label>
-        <label className="slider">
+        <label className="fx-field">
           <span>Retrig</span>
           <select
             className="row-select"
@@ -78,7 +78,6 @@ export function Fx() {
               <option key={name} value={i}>{name}</option>
             ))}
           </select>
-          <em />
         </label>
         <div className="knob-row">
           <Knob
@@ -107,6 +106,7 @@ export function Fx() {
             : 'Every one of these still retriggers, then the effect runs on that loop. Div is the retrigger length. Mix is how much of the loop you hear.'}
         </p>
       </fieldset>
+      </div>
     </div>
   )
 }

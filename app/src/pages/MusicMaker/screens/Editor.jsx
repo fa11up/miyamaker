@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
-import { BANKS, applyTrim, audioBank, defaultEnvelopes, model, touch } from '../model.js'
-import { importFile, audioRecordLabel, audioStartingLabel, recordMic, resample, sliceOnto } from '../audio/engine.js'
+import { BANKS, applyTrim, applyTrimSpan, audioBank, defaultEnvelopes, ENV_KINDS, envKind, model, touch } from '../model.js'
+import { chopSelection, importFile, audioRecordLabel, audioStartingLabel, recordMic, resample, sliceOnto, voicePositions } from '../audio/engine.js'
+import { padGesture } from '../padEdit.js'
 import { loadSliceSource, moveSliceMarker, sliceMarkers } from '../audio/song.js'
 import { useModel } from '../useModel.js'
 import { Knob } from '../widgets.jsx'
@@ -48,14 +49,32 @@ export function Editor() {
     const env = list[index]
     env[key] = value
     if (key === 'target') {
+      const other = list.find((item, i) => i !== index && item.target === value && item.kind)
+      if (value === 'off') env.kind = ''
+      else if (other) env.kind = other.kind
+      else if (value === 'filter') env.kind = envKind('filter', '', pad.filter.type)
+      else env.kind = (ENV_KINDS[value] || [])[0]?.[0] || ''
       env.depth = value === 'filter'
         ? Math.max(-36, Math.min(60, env.depth))
         : Math.max(0, Math.min(1, env.depth))
     }
+    if (key === 'kind' && env.target !== 'off') {
+      for (const item of list) {
+        if (item.target === env.target) item.kind = value
+      }
+    }
     pad.envelopes = list
     const filterEnv = list.find((item) => item.target === 'filter')
     if (filterEnv) {
-      pad.filter = { ...pad.filter, a: filterEnv.a, d: filterEnv.d, s: filterEnv.s, r: filterEnv.r, env: filterEnv.depth }
+      pad.filter = {
+        ...pad.filter,
+        a: filterEnv.a,
+        d: filterEnv.d,
+        s: filterEnv.s,
+        r: filterEnv.r,
+        env: filterEnv.depth,
+        ...(filterEnv.kind ? { type: filterEnv.kind } : {}),
+      }
     }
     touch(true)
   }
@@ -71,7 +90,8 @@ export function Editor() {
             data-pad={i}
             aria-selected={model.selected === i}
             className={`slot ${model.selected === i ? 'on' : ''} ${slot.source === 'empty' ? 'empty' : ''}`}
-            title={slot.name}
+            title={`${slot.name}. Drag a sample here. Right-click or hold to copy and paste.`}
+            {...padGesture(i, { play: false })}
             onClick={() => {
               model.selected = i
               model.bank = Math.floor(i / 16)
@@ -147,6 +167,18 @@ export function Editor() {
         >
           Slice 16
         </button>
+        {!slice && (
+          <button
+            type="button"
+            className="btn"
+            onClick={() => chopSelection(model.selected).catch((error) => {
+              model.browserNote = error.message
+              touch(false)
+            })}
+          >
+            Chop
+          </button>
+        )}
         {slice && (
           <button
             type="button"
@@ -162,9 +194,14 @@ export function Editor() {
       </div>
       {slice ? (
         <Waveform
+          tall
           pcm={origin?.pcm}
           sr={origin?.sr || slice.sr}
           marks={sliceMarkers(slice)}
+          playAt={() => slice.cuts.flatMap((cut) => {
+            const span = (cut.b ?? 1) - cut.a
+            return voicePositions(cut.pad).map((fraction) => cut.a + fraction * span)
+          })}
           onMark={(index, value, done) => {
             moveSliceMarker(slice.id, index, value, done).catch((error) => {
               model.browserNote = error.message
@@ -174,19 +211,22 @@ export function Editor() {
         />
       ) : (
         <Waveform
+          tall
           pcm={audioBank.get(model.selected)?.pcm}
           sr={audioBank.get(model.selected)?.sr}
+          playAt={() => voicePositions(model.selected)}
           trim={{ start: pad.trimStart, end: pad.trimEnd, loop: pad.loopPoint ?? 0.5 }}
           onTrim={(which, value, done) => {
-            applyTrim(pad, which, value)
+            if (which === 'span') applyTrimSpan(pad, value.start, value.end)
+            else applyTrim(pad, which, value)
             touch(!!done)
           }}
         />
       )}
       <p className="hint">
         {slice
-          ? `Drag a slice line on ${slice.name}. Release writes that chop back into the folder.`
-          : 'Drag S, E, and LP on the sample. Holding a note loops from LP to the end.'}
+          ? `Drag a slice line on ${slice.name}. Pinch or ctrl-scroll to zoom. Release writes that chop back into the folder.`
+          : 'Drag the wave to set S and E. Drag inside the span to slide it. Pinch or ctrl-scroll to zoom, double-click to fit. Chop copies the span to the next empty pad. Hold a note to loop from LP.'}
       </p>
       <div className="synth-grid">
         <div className="edit-col">
@@ -209,19 +249,16 @@ export function Editor() {
         </div>
         <fieldset className="group">
           <legend>Filter</legend>
-          <label className="edit-filter-type">
-            <span>Type</span>
-            <select className="row-select" value={pad.filter.type} onChange={(e) => setFilter('type', e.target.value)}>
-              <option value="lowpass">Low pass</option>
-              <option value="highpass">High pass</option>
-              <option value="bandpass">Band pass</option>
-            </select>
-          </label>
           <div className="knob-row">
             <Knob label="Cutoff" bits={12} min={60} max={18000} value={pad.filter.cutoff} text={`${Math.round(pad.filter.cutoff)} Hz`} onChange={(v) => setFilter('cutoff', Math.round(v))} />
             <Knob label="Reso" min={0.2} max={16} value={pad.filter.q} onChange={(v) => setFilter('q', v)} />
           </div>
-          {envelopes.map((env, index) => (
+          {envelopes.map((env, index) => {
+            const typeOptions = ENV_KINDS[env.target] || []
+            const typeValue = env.target === 'off'
+              ? ''
+              : (typeOptions.some(([id]) => id === env.kind) ? env.kind : (typeOptions[0]?.[0] || ''))
+            return (
             <div className="env-line" key={index}>
               <label className="env-target">
                 <span>Env {index + 1}</span>
@@ -232,6 +269,19 @@ export function Editor() {
                   <option value="width">Width</option>
                   <option value="chorus">Chorus</option>
                   <option value="amp">Amp</option>
+                </select>
+              </label>
+              <label className={`env-kind ${env.target === 'off' ? 'is-off' : ''}`}>
+                <span>Type</span>
+                <select
+                  aria-label={`Envelope ${index + 1} type`}
+                  value={typeValue}
+                  disabled={env.target === 'off'}
+                  onChange={(e) => setEnv(index, 'kind', e.target.value)}
+                >
+                  {env.target === 'off'
+                    ? <option value="">None</option>
+                    : typeOptions.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
                 </select>
               </label>
               <Knob label="Attack" min={0.001} max={1} value={env.a} text={ms(env.a)} onChange={(v) => setEnv(index, 'a', v)} />
@@ -247,7 +297,8 @@ export function Editor() {
                 onChange={(v) => setEnv(index, 'depth', env.target === 'filter' ? Math.round(v) : v)}
               />
             </div>
-          ))}
+            )
+          })}
         </fieldset>
         <fieldset className="group">
           <legend>Pad FX</legend>

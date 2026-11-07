@@ -15,7 +15,9 @@ You do not need to read music. You do not need a controller. The computer keyboa
 
 The pads on screen are the keys `1 2 3 4`, then `Q W E R`, then `A S D F`, then `Z X C V`. That is one bank of sixteen. Banks **A B C D** are the other instruments. `[` and `]` change bank.
 
-Drop a sound file onto the window and it lands on the selected pad. On the Sample page, **Rec mic** records the microphone. A video link or a picture can become a sample too, from the **FILE** menu. None of that is required. The starter kit is already something you can play.
+Drop a sound file onto the window and it lands on the selected pad. You can also drag a row out of the browser onto a pad. The **<** button beside the browser hides that panel so the pages have the width. It turns into **>**, which opens the browser again.
+
+On the Sample page, **Rec mic** records the microphone. A video link or a picture can become a sample too, from the **FILE** menu. None of that is required. The starter kit is already something you can play.
 
 ## Pad and Keys
 
@@ -37,6 +39,22 @@ The Synth page draws a sound and stores it on a pad. The Mixer page is four buse
 
 You can ignore every one of those pages until you want them.
 
+## Trim a sample
+
+Open the Sample page. The wave fills the space under the knobs. **S** and **E** are the start and the end of what plays. **LP** is where a held note starts looping. The handles stay thin.
+
+Drag across the wave to draw a new span. When the span is already shorter than the sample, drag inside it and the whole span slides. Drag near either edge and that edge moves. Arrow keys nudge the handle you last touched.
+
+Pinch the wave, or hold Ctrl and scroll, to zoom in. Once you are zoomed, the wheel pans along the sample. Double-click the wave, or press **Fit**, to see all of it again.
+
+A yellow line is a voice that is playing this pad right now. Two hits at once are two lines. They move while the sound plays.
+
+**Chop** copies the span between S and E onto the next empty pad. The pad you chopped stays as it was. The starter kit already uses pads 1 through 16, so the first chop lands on pad 17.
+
+## Copy a pad
+
+Right-click a pad and choose **Copy pad**. Right-click another pad and choose **Paste**. If that pad already has a sound, the menu says **Paste & replace**. On a phone or a tablet, hold the pad and the same menu opens above your finger. Copy takes the settings and the sample. Mute and solo on the pad you paste onto stay as they were.
+
 ## A pattern
 
 The Sequence page and the Tracker page are the same song, two ways of looking at it.
@@ -52,6 +70,12 @@ Record quantizes to the grid. There is a natural-feel option on the Sequence pag
 The Tracker is a spreadsheet of notes. Sixteen lanes run sideways. A cell is a note, an instrument, a velocity, and a tiny timing nudge.
 
 Press Esc or Rec to edit. On a note, `Z` is C and `Q` is the next C. `A` is note off. The instrument column is the pad number in hex.
+
+Shift and the arrows change the cell you are on, and the cursor stays there. On a note, Shift+Left and Shift+Right move one semitone. Shift+Up and Shift+Down move one octave. On the other columns, Shift+Up and Shift+Down change the left digit, and Shift+Left and Shift+Right change the right digit. The digits wrap. Left and Right on SL or LP walk each pair of digits before they leave the column.
+
+**Step**, next to the tracker, is how many rows the cursor moves after you finish a value. Ctrl and `1` through `0` set it. `0` writes the cell and stays on the row. In Pad mode the pad keys write that pad as C-4 with velocity 80, from any column, then step. In Keys mode the same map as the keyboard writes notes, and only in the note column.
+
+Delete or Backspace on MOVE sets the nudge to +00. The note stays. On SL or LP it clears only that column. On the note, the instrument, or the velocity, it clears the whole hit.
 
 Right-click a column header and choose **Show/hide SL/LP columns** if you want the grain columns. They start blank. SL is where in the sample a hit begins. LP is how the play head walks through it. Hiding the columns keeps the numbers. You can make whole songs and never open them.
 

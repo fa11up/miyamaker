@@ -3,6 +3,7 @@ import { PAD_KEYS, SCREENS, SEQ_KEYS, SHORTCUTS, pianoNote, renoiseNote, typing 
 import {
   addBar,
   clearHit,
+  commitTrackerNote,
   cycleScreen,
   deleteSelection,
   doubleUp,
@@ -36,6 +37,7 @@ import { FileMenu } from './screens/FileMenu.jsx'
 import { KeysMap } from './screens/KeysMap.jsx'
 import { buildPublish, listenForFiles } from './publish.js'
 import { NewMenu, SaveMenu } from './screens/SongMenus.jsx'
+import { PadMenu } from './screens/PadMenu.jsx'
 
 export function MiyaMusicMaker() {
   useModel()
@@ -101,36 +103,48 @@ export function MiyaMusicMaker() {
         <FileMenu />
         <NewMenu />
         <SaveMenu />
+        <Transport />
       </div>
-      <div className="mmm-body">
+      <div className={`mmm-body${model.dockOpen === false ? ' dock-shut' : ''}`}>
+        <button
+          type="button"
+          className="dock-toggle btn"
+          aria-label={model.dockOpen === false ? 'Show sample browser' : 'Hide sample browser'}
+          onClick={() => {
+            model.dockOpen = model.dockOpen === false
+            touch(true)
+          }}
+        >
+          {model.dockOpen === false ? '>' : '<'}
+        </button>
         <SampleBrowser />
         <div className="mmm-main">
-      <Transport />
-      {model.screen === 'pads' && <Pads />}
-      {model.screen === 'edit' && <Editor />}
-      {model.screen === 'seq' && <Sequencer />}
-      {model.screen === 'mix' && <Mixer />}
-      {model.screen === 'track' && <Tracker />}
-      {model.screen === 'synth' && <Synth />}
-      {model.screen === 'fx' && <Fx />}
-      {model.keysHelp && (
-        <KeysMap onClose={() => { model.keysHelp = false; touch(false) }} />
-      )}
-      {model.help && (
-        <Dialog title="QWERTY shortcuts" onClose={() => { model.help = false; touch(false) }}>
-          <table>
-            <tbody>
-              {SHORTCUTS.map(([key, action]) => (
-                <tr key={key}>
-                  <td>{key}</td>
-                  <td>{action}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          <p className="hint">Pad plays the bank, including the A B C D pages on [ ] and the arrow keys. Keys plays the selected pad. Click MIDI for a Launchpad, MPC, MPD, MPK, or any other controller. Shift and a numpad digit holds a master FX slot.</p>
-        </Dialog>
-      )}
+          {model.screen === 'pads' && <Pads />}
+          {model.screen === 'edit' && <Editor />}
+          {model.screen === 'seq' && <Sequencer />}
+          {model.screen === 'mix' && <Mixer />}
+          {model.screen === 'track' && <Tracker />}
+          {model.screen === 'synth' && <Synth />}
+          {model.screen === 'fx' && <Fx />}
+          <PadMenu />
+          {model.keysHelp && (
+            <KeysMap onClose={() => { model.keysHelp = false; touch(false) }} />
+          )}
+          {model.help && (
+            <Dialog title="QWERTY shortcuts" onClose={() => { model.help = false; touch(false) }}>
+              <table>
+                <tbody>
+                  {SHORTCUTS.map(([key, action]) => (
+                    <tr key={key}>
+                      <td>{key}</td>
+                      <td>{action}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <p className="hint">Pad plays the bank, including the A B C D pages on [ ] and the arrow keys. Keys plays the selected pad. Click MIDI for a Launchpad, MPC, MPD, MPK, or any other controller. Shift and a numpad digit holds a master FX slot.</p>
+            </Dialog>
+          )}
         </div>
       </div>
     </div>
@@ -141,8 +155,7 @@ function Transport() {
   const midi = midiSummary(getMidiState())
   const midiLive = getMidiState().inputs.length > 0
   return (
-    <div className="transport">
-      <div className="transport-row">
+    <>
         <div className="transport-group">
           <button type="button" className={`btn free-width ${model.playing ? 'on' : ''}`} onClick={() => togglePlay()}>
             {model.playing ? 'Stop' : 'Play'}
@@ -179,7 +192,7 @@ function Transport() {
           >
             Undo
           </button>
-          <label className="slider" style={{ width: 120 }}>
+          <label className="slider bpm">
             <span>BPM</span>
             <input
               className="field num"
@@ -236,8 +249,6 @@ function Transport() {
         >
           {midi.short}
         </button>
-      </div>
-      <div className="transport-row">
         <div className="screen-tabs">
           {SCREENS.map((screen) => (
             <button
@@ -250,8 +261,7 @@ function Transport() {
             </button>
           ))}
         </div>
-      </div>
-    </div>
+    </>
   )
 }
 
@@ -271,7 +281,6 @@ async function dropFiles(files) {
     }
   }
 }
-
 
 function numpadDigit(e) {
   const code = e.code || ''
@@ -301,6 +310,7 @@ function renoiseLive() {
 }
 
 function onTrackerNote(e) {
+  if (!keysMode()) return false
   if ((model.tracker.col | 0) % trackerFields() !== 0) return false
   const key = e.key
   const low = key.length === 1 ? key.toLowerCase() : key
@@ -314,7 +324,26 @@ function onTrackerNote(e) {
   e.preventDefault()
   // Auto-repeat would restart the held note and write it again on every repeat.
   if (e.repeat) return true
-  noteOn(model.selected, TRACK_VEL, `key:${e.code}`, note - 60)
+  if (model.tracker.edit) {
+    commitTrackerNote({ pad: model.selected, vel: TRACK_VEL, pitch: note - 60, typed: true })
+  }
+  noteOn(model.selected, TRACK_VEL, `key:${e.code}`, note - 60, { noCapture: true })
+  return true
+}
+
+function onTrackerPad(e) {
+  if (keysMode() || e.shiftKey || e.ctrlKey || e.altKey || e.metaKey) return false
+  const low = e.key.length === 1 ? e.key.toLowerCase() : e.key
+  const local = PAD_KEYS.indexOf(low)
+  if (local < 0) return false
+  e.preventDefault()
+  if (e.repeat) return true
+  const index = model.bank * 16 + local
+  if (model.tracker.edit) {
+    commitTrackerNote({ pad: index, vel: TRACK_VEL, pitch: 0, typed: true })
+  }
+  selectPad(index)
+  noteOn(index, TRACK_VEL, `key:${e.code}`, undefined, { noCapture: true })
   return true
 }
 
@@ -411,8 +440,17 @@ function onKey(e) {
   const musical = renoiseLive()
 
   if (trackerFocusNow) {
+    if (onTrackerPad(e)) return
     if (onTrackerNote(e)) return
     if (handleTrackerKey(e)) {
+      e.preventDefault()
+      return
+    }
+    if (keysMode() && (renoiseNote(key, model.renoiseOct) != null || low === 'a' || key === 'CapsLock')) {
+      e.preventDefault()
+      return
+    }
+    if (!keysMode() && PAD_KEYS.includes(low)) {
       e.preventDefault()
       return
     }

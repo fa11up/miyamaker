@@ -217,6 +217,67 @@ function curveAmp(amount) {
   return curve
 }
 
+function curveClean(amount) {
+  const curve = new Float32Array(2048)
+  const k = 1 + amount * 4
+  for (let i = 0; i < curve.length; i++) {
+    const x = (i / (curve.length - 1)) * 2 - 1
+    curve[i] = Math.tanh(x * k)
+  }
+  return curve
+}
+
+function curveTape(amount) {
+  const curve = new Float32Array(2048)
+  const k = 1 + amount * 8
+  for (let i = 0; i < curve.length; i++) {
+    const x = (i / (curve.length - 1)) * 2 - 1
+    const y = x / (1 + k * Math.abs(x))
+    curve[i] = y * (1 + amount * 0.35)
+  }
+  return curve
+}
+
+function curveFold(amount) {
+  const curve = new Float32Array(2048)
+  const turns = 1 + amount * 3
+  for (let i = 0; i < curve.length; i++) {
+    const x = (i / (curve.length - 1)) * 2 - 1
+    curve[i] = Math.sin(x * turns * Math.PI * 0.5)
+  }
+  return curve
+}
+
+function coloredImpulse(context, kind) {
+  const spec = {
+    room: [0.42, 3.2, false],
+    hall: [1.9, 1.45, false],
+    plate: [1.05, 4.8, false],
+    spring: [0.62, 1.1, true],
+  }[kind] || [0.42, 3.2, false]
+  const [seconds, damp, spring] = spec
+  const key = `${context.sampleRate}:kind:${kind}`
+  const cached = reverbBuffers.get(key)
+  if (cached) return cached
+  const len = Math.floor(context.sampleRate * seconds)
+  const buf = context.createBuffer(2, len, context.sampleRate)
+  for (let c = 0; c < 2; c++) {
+    const data = buf.getChannelData(c)
+    for (let i = 0; i < len; i++) {
+      const t = i / len
+      data[i] = (Math.random() * 2 - 1) * Math.pow(1 - t, damp) * (c === 0 ? 1 : 0.82)
+    }
+    if (spring) {
+      for (const tap of [0.017, 0.029, 0.043]) {
+        const at = Math.floor(tap * context.sampleRate)
+        if (at < len) data[at] += c === 0 ? 0.65 : -0.5
+      }
+    }
+  }
+  reverbBuffers.set(key, buf)
+  return buf
+}
+
 function curveCrush(amount) {
   const curve = new Float32Array(1024)
   const bits = Math.max(2, Math.round(12 - amount * 8))
@@ -641,10 +702,12 @@ function mixAround(input, amount, env, t, total, connectWet) {
 function ampModel(input, pad, env, t, total) {
   const amount = pad.fx?.amp || 0
   if (!wantsMix(amount, env)) return input
+  const kind = env?.kind || 'tube'
   const pre = ctx.createGain()
-  pre.gain.value = 1 + clamp(amount, 0, 1) * 6
+  pre.gain.value = 1 + clamp(amount, 0, 1) * (kind === 'clean' ? 2 : kind === 'fold' ? 3 : 6)
   const sh = ctx.createWaveShaper()
-  sh.curve = curveAmp(Math.max(0.02, amount))
+  const drive = Math.max(0.02, amount)
+  sh.curve = kind === 'clean' ? curveClean(drive) : kind === 'tape' ? curveTape(drive) : kind === 'fold' ? curveFold(drive) : curveAmp(drive)
   sh.oversample = '2x'
   const tone = ctx.createBiquadFilter()
   tone.type = 'lowpass'
@@ -660,6 +723,28 @@ function ampModel(input, pad, env, t, total) {
 
 function chorus(input, amount, env, t, total, stops) {
   if (!wantsMix(amount, env)) return input
+  const rate = 0.35 + clamp(amount, 0, 1) * 2.4
+  const depth = 0.003 + clamp(amount, 0, 1) * 0.006
+  const startAt = Math.max(t, ctx.currentTime)
+  if (env?.kind === 'mono') {
+    const delay = ctx.createDelay(0.05)
+    delay.delayTime.value = 0.018
+    const lfo = ctx.createOscillator()
+    const depthNode = ctx.createGain()
+    lfo.frequency.value = rate
+    depthNode.gain.value = depth
+    lfo.connect(depthNode)
+    depthNode.connect(delay.delayTime)
+    const node = mixAround(input, amount, env, t, total, (wet) => {
+      input.connect(delay)
+      delay.connect(wet)
+    })
+    lfo.start(startAt)
+    stops.push(() => {
+      try { lfo.stop() } catch { /* ended */ }
+    })
+    return node
+  }
   const split = ctx.createChannelSplitter(2)
   const merge = ctx.createChannelMerger(2)
   const left = ctx.createDelay(0.05)
@@ -670,8 +755,6 @@ function chorus(input, amount, env, t, total, stops) {
   const lfoR = ctx.createOscillator()
   const depthL = ctx.createGain()
   const depthR = ctx.createGain()
-  const rate = 0.35 + clamp(amount, 0, 1) * 2.4
-  const depth = 0.003 + clamp(amount, 0, 1) * 0.006
   lfoL.frequency.value = rate
   lfoR.frequency.value = rate * 1.07
   depthL.gain.value = depth
@@ -688,7 +771,6 @@ function chorus(input, amount, env, t, total, stops) {
     right.connect(merge, 0, 1)
     merge.connect(wet)
   })
-  const startAt = Math.max(t, ctx.currentTime)
   lfoL.start(startAt)
   lfoR.start(startAt)
   stops.push(() => {
@@ -700,16 +782,28 @@ function chorus(input, amount, env, t, total, stops) {
 
 function widen(input, amount, env, t, total) {
   if (!wantsMix(amount, env)) return input
+  if (env?.kind === 'haas') {
+    const merge = ctx.createChannelMerger(2)
+    const delay = ctx.createDelay(0.05)
+    delay.delayTime.value = 0.014
+    return mixAround(input, amount, env, t, total, (wet) => {
+      input.connect(merge, 0, 0)
+      input.connect(delay)
+      delay.connect(merge, 0, 1)
+      merge.connect(wet)
+    })
+  }
+  const spread = env?.kind === 'mid' ? 0.18 : 0.45
   const split = ctx.createChannelSplitter(2)
   const merge = ctx.createChannelMerger(2)
   const ll = ctx.createGain()
   const lr = ctx.createGain()
   const rl = ctx.createGain()
   const rr = ctx.createGain()
-  ll.gain.value = 1.45
-  lr.gain.value = -0.45
-  rl.gain.value = -0.45
-  rr.gain.value = 1.45
+  ll.gain.value = 1 + spread
+  lr.gain.value = -spread
+  rl.gain.value = -spread
+  rr.gain.value = 1 + spread
   return mixAround(input, amount, env, t, total, (wet) => {
     input.connect(split)
     split.connect(ll, 0)
@@ -727,8 +821,12 @@ function widen(input, amount, env, t, total) {
 function padReverb(input, amount, env, t, total) {
   if (!wantsMix(amount, env)) return input
   const conv = ctx.createConvolver()
-  const seconds = amount > 0.66 ? 1.7 : amount > 0.33 ? 0.75 : 0.3
-  conv.buffer = impulse(ctx, seconds)
+  if (env?.kind === 'room' || env?.kind === 'hall' || env?.kind === 'plate' || env?.kind === 'spring') {
+    conv.buffer = coloredImpulse(ctx, env.kind)
+  } else {
+    const seconds = amount > 0.66 ? 1.7 : amount > 0.33 ? 0.75 : 0.3
+    conv.buffer = impulse(ctx, seconds)
+  }
   return mixAround(input, amount, env, t, total, (wet) => {
     input.connect(conv)
     conv.connect(wet)
@@ -874,8 +972,10 @@ export function playPad(index, velocity = TRACK_VEL, when = 0, opts = {}) {
   }
 
   const filter = ctx.createBiquadFilter()
-  filter.type = pad.filter.type || 'lowpass'
+  const filterKind = fxEnv(pad, 'filter')?.kind || pad.filter.type || 'lowpass'
+  filter.type = ['lowpass', 'highpass', 'bandpass', 'notch', 'lowshelf', 'highshelf'].includes(filterKind) ? filterKind : 'lowpass'
   filter.Q.value = clamp(finiteOr(pad.filter.q, 0.7) || 0.7, 0.1, 18)
+  filter.gain.value = filter.type === 'lowshelf' || filter.type === 'highshelf' ? 9 : 0
   const amp = ctx.createGain()
   const gate = ctx.createGain()
   gate.gain.value = 1
@@ -971,6 +1071,14 @@ export function playPad(index, velocity = TRACK_VEL, when = 0, opts = {}) {
     sr,
     pos: spec ? spec.start : 0,
     nextAt: t,
+    play: {
+      dur: buffer.duration,
+      offset,
+      end,
+      loopAt,
+      mode: grainLoop ? 'grain' : heldLive ? 'held' : (pad.mode || 'oneshot'),
+      reverse: !!pad.reverse,
+    },
   }
   voices.push(voice)
   if (voices.length > 64) voices = liveVoices(voices, ctx.currentTime)
@@ -990,7 +1098,72 @@ export function playPad(index, velocity = TRACK_VEL, when = 0, opts = {}) {
   }
   if (grainLoop) pumpGrains()
   flash(index)
-  if (!opts.fromSeq && !opts.pattern) captureHit(index, velocity, opts.pitch, t)
+  if (!opts.noCapture && !opts.fromSeq && !opts.pattern) captureHit(index, velocity, opts.pitch, t)
+}
+
+/** Sample fractions (0–1 of the pad's original audio) for each living voice. */
+export function voicePositions(padIndex) {
+  if (!ctx) return []
+  const now = ctx.currentTime
+  const out = []
+  for (const v of voices) {
+    if (v.pad !== padIndex || !v.play) continue
+    if (now + 0.0005 < v.startAt) continue
+    if (v.quietAt != null && now >= v.quietAt - 0.0005) continue
+    out.push(v.play.mode === 'grain' ? grainFraction(v, now) : bufferFraction(v, now))
+  }
+  return out
+}
+
+function bufferFraction(v, now) {
+  const play = v.play
+  const dur = Math.max(0.0001, play.dur || 0.0001)
+  const rate = v.rate || 1
+  const elapsed = Math.max(0, (now - v.startAt) * rate)
+  let bufTime
+  if (play.mode === 'held') {
+    const first = Math.max(0.0001, play.end - play.offset)
+    if (elapsed <= first) bufTime = play.offset + elapsed
+    else {
+      const loopLen = Math.max(0.0001, play.end - play.loopAt)
+      bufTime = play.loopAt + ((elapsed - first) % loopLen)
+    }
+  } else if (play.mode === 'loop') {
+    const loopLen = Math.max(0.0001, play.end - play.offset)
+    bufTime = play.offset + (elapsed % loopLen)
+  } else if (play.mode === 'gate') {
+    bufTime = Math.min(dur, play.offset + elapsed)
+  } else {
+    bufTime = Math.min(play.end, play.offset + elapsed)
+  }
+  const buf = Math.max(0, Math.min(1, bufTime / dur))
+  return play.reverse ? 1 - buf : buf
+}
+
+function grainFraction(v, now) {
+  const n = v.pcm?.length || 0
+  if (!n) return 0
+  let live = null
+  const list = v.srcs || []
+  for (let i = 0; i < list.length; i++) {
+    const item = list[i]
+    if (now + 0.0001 >= item.at && now < item.until) live = item
+  }
+  if (!live) {
+    for (let i = list.length - 1; i >= 0; i--) {
+      if (list[i].at <= now) {
+        live = list[i]
+        break
+      }
+    }
+  }
+  let index = v.pos || 0
+  if (live && live.samples) {
+    const elapsed = Math.max(0, Math.min(live.samples, (now - live.at) * (v.rate || 1) * (v.sr || 44100)))
+    index = live.backward ? live.origin - elapsed : live.origin + elapsed
+  }
+  const buf = (((index % n) + n) % n) / n
+  return v.play.reverse ? 1 - buf : buf
 }
 
 function captureHit(index, velocity, pitch, when) {
@@ -1118,6 +1291,8 @@ function pumpGrains() {
     let guard = 0
     while (v.nextAt < horizon && guard < 8) {
       const minSamples = Math.max(v.spec.lenSamples, Math.round(0.03 * v.sr))
+      const origin = v.pos
+      const backward = !!v.spec.backward
       const chunk = stitchGrains(v.pcm, v.pos, v.spec.lenSamples, v.spec.moveSamples, v.spec.backward, minSamples, true)
       if (!chunk.pcm.length) break
       const audio = ctx.createBuffer(1, chunk.pcm.length, v.sr)
@@ -1132,7 +1307,7 @@ function pumpGrains() {
       v.nextAt = when + dur
       v.pos = chunk.pos
       v.src = node
-      v.srcs.push({ node, until: v.nextAt })
+      v.srcs.push({ node, until: v.nextAt, at: when, origin, samples: chunk.pcm.length, backward })
       guard += 1
     }
   }
@@ -1236,11 +1411,11 @@ export async function previewPcm(pcm, sr = 44100) {
   src.start()
 }
 
-export function noteOn(index, velocity, holdId, pitch) {
+export function noteOn(index, velocity, holdId, pitch, extra) {
   const pad = model.pads[index]
   if (!pad) return
   if (holdId && held.has(holdId)) releaseHeld(holdId)
-  const opts = { holdId }
+  const opts = { holdId, ...(extra || {}) }
   if (typeof pitch === 'number') opts.pitch = pitch
   playPad(index, velocity, 0, opts)
 }
@@ -1534,11 +1709,35 @@ export function onMidi(event) {
   })
   if (!action) return
   const vel = model.settings.velocity ? velocityByte / 127 : 1
+  if (model.screen === 'track' && model.tracker.edit) {
+    const live = !!(model.playing && model.tracker.follow && started && ctx)
+    let row = model.tracker.row | 0
+    let nudge = 0
+    let write = true
+    if (live) {
+      const hit = locateHit(ctx.currentTime)
+      if (!hit) write = false
+      else {
+        row = hit.step
+        nudge = hit.nudge
+      }
+    }
+    if (write) {
+      commitTrackerNote({
+        pad: 'pad' in action ? action.pad : model.selected,
+        vel,
+        pitch: 'pitch' in action ? action.pitch : 0,
+        row,
+        nudge,
+        live,
+      })
+    }
+  }
   if ('pad' in action) {
     if (model.selected !== action.pad || model.selection.length) selectPad(action.pad)
-    playPad(action.pad, vel, 0, { holdId })
+    playPad(action.pad, vel, 0, { holdId, noCapture: model.screen === 'track' })
   } else {
-    playPad(model.selected, vel, 0, { pitch: action.pitch, holdId })
+    playPad(model.selected, vel, 0, { pitch: action.pitch, holdId, noCapture: model.screen === 'track' })
   }
   midiState.last = `${port?.name || 'MIDI'} note ${note}`
 }
@@ -2130,6 +2329,32 @@ export async function importVideoLink(raw) {
   const bytes = await res.arrayBuffer()
   const decoded = await decodeAny(bytes, `${name}.webm`)
   await storeInCache(decoded.pcm, decoded.sr, name)
+}
+
+/** Copy the trimmed span onto the next empty pad. The original sample stays. */
+export async function chopSelection(index = model.selected) {
+  const song = songId()
+  if (!(await resume())) throw new Error('The instrument closed before the chop could copy')
+  const entry = audioBank.get(index)
+  if (!entry?.pcm) throw new Error('That pad has no sample to chop')
+  const pad = model.pads[index]
+  const n = entry.pcm.length
+  let a = Math.floor(clamp(pad.trimStart || 0, 0, 1) * n)
+  let b = Math.ceil(clamp(pad.trimEnd ?? 1, 0, 1) * n)
+  a = Math.max(0, Math.min(n - 1, a))
+  b = Math.max(a + 1, Math.min(n, b))
+  const piece = new Float32Array(entry.pcm.subarray(a, b))
+  let dest = -1
+  for (let i = 1; i <= 64; i++) {
+    const at = (index + i) % 64
+    if (model.pads[at]?.source === 'empty') {
+      dest = at
+      break
+    }
+  }
+  if (dest < 0) throw new Error('No empty pad for the chop')
+  const name = `${String(pad.name || 'sample').slice(0, 24)} cut`
+  await placePcm(dest, piece, entry.sr || 44100, name, { forceName: true, song })
 }
 
 export async function sliceOnto(index, count, baseName) {
