@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import {Test, console} from "forge-std/Test.sol";
+import {Test, Vm, console} from "forge-std/Test.sol";
 import {MiyaPool} from "../../../src/pools/MiyaPool.sol";
 import {MiyaPoolFactory} from "../../../src/pools/MiyaPoolFactory.sol";
 import {ERC721AuctionFactory} from "../../../src/factories/erc721/ERC721AuctionFactory.sol";
-import {ERC721AuctionInstance, NoPendingProtocolCut, SettlementGasTooLow, DepositRequired, URIRequired, BidBelowMinimum, BidTooLow, AuctionExpired, AuctionNotEnded, NoBids, HasBids, NotEscrowedWinner, RenounceDisabled} from "../../../src/factories/erc721/ERC721AuctionInstance.sol";
+import {ERC721AuctionInstance, NoPendingProtocolCut, SettlementGasTooLow, DepositRequired, URIRequired, BidBelowMinimum, BidTooLow, AuctionExpired, AuctionNotEnded, AuctionAlreadySettled, NoBids, HasBids, NoFeesToClaim, Unauthorized, NotEscrowedWinner, RenounceDisabled} from "../../../src/factories/erc721/ERC721AuctionInstance.sol";
 import {UniAlignmentVault} from "../../../src/vaults/uni/UniAlignmentVault.sol";
 import {MockEXECToken} from "../../mocks/MockEXECToken.sol";
 import {MockZRouter} from "../../mocks/MockZRouter.sol";
@@ -418,8 +418,171 @@ contract ERC721AuctionFactoryTest is Test {
         vm.warp(auction.endTime);
 
         vm.prank(bidder1);
-        vm.expectRevert();
+        vm.expectRevert(Unauthorized.selector);
         inst.reclaimUnsold(1);
+    }
+
+    function test_ReclaimUnsold_AnyoneAfterGrace_AdvancesLineAndPaysOnlyTreasury() public {
+        ERC721AuctionInstance inst = _createDefaultInstance();
+        vm.startPrank(artist);
+        inst.queuePiece{value: 0.1 ether}("ipfs://piece1");
+        inst.queuePiece{value: 0.2 ether}("ipfs://piece2");
+        vm.stopPrank();
+        uint40 endTime = inst.getAuction(1).endTime;
+
+        vm.warp(uint256(endTime) + inst.UNSOLD_CLOSE_GRACE() - 1);
+        vm.prank(bidder1);
+        vm.expectRevert(Unauthorized.selector);
+        inst.reclaimUnsold(1);
+
+        vm.warp(uint256(endTime) + inst.UNSOLD_CLOSE_GRACE());
+        uint256 treasuryBefore = treasury.balance;
+        uint256 callerBefore = bidder1.balance;
+        uint256 artistBefore = artist.balance;
+        vm.prank(bidder1);
+        inst.reclaimUnsold(1);
+
+        assertTrue(inst.getAuction(1).settled);
+        assertEq(treasury.balance - treasuryBefore, 0.1 ether);
+        assertEq(bidder1.balance, callerBefore);
+        assertEq(artist.balance, artistBefore);
+        // only the next piece's deposit is left, and that piece is now live
+        assertEq(address(inst).balance, 0.2 ether);
+        assertEq(inst.getActiveAuction(0), 2);
+
+        vm.prank(bidder1);
+        vm.expectRevert(AuctionAlreadySettled.selector);
+        inst.reclaimUnsold(1);
+    }
+
+    function test_ReclaimUnsold_GraceDoesNotOpenBidAuctionsOrLiveOnes() public {
+        ERC721AuctionInstance inst = _createDefaultInstance();
+        vm.prank(artist);
+        inst.queuePiece{value: 0.1 ether}("ipfs://piece1");
+
+        vm.prank(bidder1);
+        vm.expectRevert(AuctionNotEnded.selector);
+        inst.reclaimUnsold(1);
+
+        vm.deal(bidder2, 1 ether);
+        vm.prank(bidder2);
+        inst.createBid{value: 0.1 ether}(1, "");
+        vm.warp(uint256(inst.getAuction(1).endTime) + inst.UNSOLD_CLOSE_GRACE());
+        vm.prank(bidder1);
+        vm.expectRevert(HasBids.selector);
+        inst.reclaimUnsold(1);
+    }
+
+    function test_GetActiveAuction_EndedPieceIsNotActive() public {
+        ERC721AuctionInstance inst = _createDefaultInstance();
+        vm.prank(artist);
+        inst.queuePiece{value: 0.1 ether}("ipfs://piece1");
+        assertEq(inst.getActiveAuction(0), 1);
+
+        vm.warp(inst.getAuction(1).endTime);
+        assertEq(inst.getActiveAuction(0), 0);
+        // still findable, so it can be closed
+        assertEq(inst.lineQueues(0, inst.lineQueueHead(0)), 1);
+        assertEq(inst.getQueueLength(0), 1);
+    }
+
+    // ┌─────────────────────────┐
+    // │   Parked vault cuts     │
+    // └─────────────────────────┘
+
+    /// @dev Sells one piece for 0.005 ETH: a 19% cut of 0.00095 ETH, under the real vault's 0.001 minimum, so it parks.
+    function _instanceWithDustParked() internal returns (ERC721AuctionInstance inst) {
+        inst = _createDefaultInstance();
+        vm.prank(artist);
+        inst.queuePiece{value: 0.005 ether}("ipfs://piece1");
+        vm.deal(bidder1, 1 ether);
+        vm.prank(bidder1);
+        inst.createBid{value: 0.005 ether}(1, "");
+        vm.warp(inst.getAuction(1).endTime);
+        inst.settleAuction(1);
+        assertEq(inst.pendingVaultCut(), 0.00095 ether);
+        assertEq(address(inst).balance, 0.00095 ether);
+    }
+
+    function test_FlushVaultCut_DustCanBeToppedUpToReachTheVault() public {
+        ERC721AuctionInstance inst = _instanceWithDustParked();
+
+        vm.expectRevert(UniAlignmentVault.ContributionBelowMinimum.selector);
+        inst.flushPendingVaultCut();
+
+        // not enough: reverts, so the helper keeps its ETH and the cut stays parked
+        vm.deal(bidder2, 1 ether);
+        vm.prank(bidder2);
+        vm.expectRevert(UniAlignmentVault.ContributionBelowMinimum.selector);
+        inst.flushPendingVaultCut{value: 0.00004 ether}();
+        assertEq(bidder2.balance, 1 ether);
+        assertEq(inst.pendingVaultCut(), 0.00095 ether);
+
+        uint256 vaultBefore = address(vault).balance;
+        vm.prank(bidder2);
+        inst.flushPendingVaultCut{value: 0.00005 ether}();
+        assertEq(inst.pendingVaultCut(), 0);
+        assertEq(address(inst).balance, 0);
+        assertEq(address(vault).balance - vaultBefore, 0.001 ether);
+        // credited to the collection, not to whoever topped it up
+        assertEq(vault.benefactorTotalETH(address(inst)), 0.001 ether);
+        assertEq(vault.benefactorTotalETH(bidder2), 0);
+    }
+
+    function test_FlushVaultCut_ToppingUpNothingParkedReverts() public {
+        ERC721AuctionInstance inst = _createDefaultInstance();
+        vm.deal(bidder1, 1 ether);
+        vm.prank(bidder1);
+        vm.expectRevert(NoFeesToClaim.selector);
+        inst.flushPendingVaultCut{value: 0.01 ether}();
+    }
+
+    function test_FlushVaultCut_NextSaleCarriesDust() public {
+        ERC721AuctionInstance inst = _instanceWithDustParked();
+        vm.prank(artist);
+        inst.queuePiece{value: 0.005 ether}("ipfs://piece2");
+        vm.prank(bidder1);
+        inst.createBid{value: 0.005 ether}(2, "");
+        vm.warp(inst.getAuction(2).endTime);
+        inst.settleAuction(2);
+        assertEq(inst.pendingVaultCut(), 0);
+        assertEq(vault.benefactorTotalETH(address(inst)), 0.0019 ether);
+    }
+
+    function test_SettleAuction_ZeroAlignmentMakesNoVaultCall() public {
+        ERC721AuctionInstance inst = new ERC721AuctionInstance(
+            ERC721AuctionInstance.ConstructorParams({
+                vault: address(vault),
+                protocolTreasury: treasury,
+                protocolFeeBps: 100,
+                alignmentBps: 0,
+                owner: artist,
+                name: "No alignment",
+                symbol: "NA",
+                lines: 1,
+                baseDuration: BASE_DURATION,
+                timeBuffer: TIME_BUFFER,
+                bidIncrement: BID_INCREMENT,
+                factory: address(factory),
+                weth: address(0)
+            })
+        );
+        vm.deal(artist, 1 ether);
+        vm.prank(artist);
+        inst.queuePiece{value: 0.1 ether}("ipfs://piece1");
+        vm.deal(bidder1, 1 ether);
+        vm.prank(bidder1);
+        inst.createBid{value: 1 ether}(1, "");
+        vm.warp(inst.getAuction(1).endTime);
+
+        vm.recordLogs();
+        inst.settleAuction(1);
+        bytes32 failed = keccak256("VaultContributionFailed(address,uint256)");
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        for (uint256 i; i < logs.length; ++i) {
+            assertTrue(logs[i].topics[0] != failed, "no contribution was due");
+        }
+        assertEq(inst.pendingVaultCut(), 0);
     }
 
     // ┌─────────────────────────┐

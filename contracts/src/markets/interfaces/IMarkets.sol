@@ -51,6 +51,7 @@ interface IParimutuelMarket {
     function proposedOutcome() external view returns (uint8);
     function proposer() external view returns (address);
     function finalOutcome() external view returns (uint8);
+    function decidedOutcome() external view returns (uint8);
     function timedOut() external view returns (bool);
     function outcomeForAnswer(uint256 answer) external view returns (uint8);
     function stakeFor(

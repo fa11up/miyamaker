@@ -23,6 +23,10 @@ contract MarketFactory is ReentrancyGuard {
     uint256 public constant MAX_SLOT_BYTES = 256;
     /// @dev Longest a market may stay open.
     uint64 public constant MAX_OPEN_DURATION = 365 days;
+    /// @dev Longest a market may wait for its result after locking. Stakes can't move until it resolves or voids, and
+    ///      voiding needs `resolveAfter` + PROPOSE_GRACE, so without this a creator could freeze them indefinitely.
+    ///      A far-off event sets a later `lockAt`, not a longer gap. Worst case 365 + 30 + 7 days.
+    uint64 public constant MAX_RESOLVE_GAP = 30 days;
 
     struct CreateParams {
         uint256 templateId;
@@ -100,6 +104,7 @@ contract MarketFactory is ReentrancyGuard {
         if (!registry.isResolverAllowed(p.resolver)) revert ResolverNotAllowed();
         if (p.lockAt <= block.timestamp || p.lockAt > block.timestamp + MAX_OPEN_DURATION) revert InvalidTimes();
         if (p.resolveAfter < uint256(p.lockAt) + tpl.minLockGap) revert InvalidTimes();
+        if (p.resolveAfter > uint256(p.lockAt) + MAX_RESOLVE_GAP) revert InvalidTimes();
         if (tpl.answerMode != MarketTypes.AnswerMode.Threshold && p.threshold != 0) revert InvalidThreshold();
 
         (bytes memory question, bytes memory start) = buildPrefixes(p.templateId, p.slots);

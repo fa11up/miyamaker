@@ -167,6 +167,43 @@ contract DisputeCouncilTest is MarketsBase {
         disputes.escalate(address(m));
     }
 
+    // ── a decision for a side nobody counted on voids, and the bond still follows the decision ────────
+
+    function _marketWithStakesOnlyOnTwo(uint8 proposed) internal {
+        m = _winnerMarket();
+        _stake(m, bob, 2, 200e18);
+        vm.warp(m.terms().resolveAfter);
+        _propose(m, proposed, m.terms().lockAt);
+    }
+
+    function test_panelUpholdsEmptySide_voidsAndDisputerStillLosesBond() public {
+        _marketWithStakesOnlyOnTwo(1);
+        uint256 bond = _dispute();
+        _panel(1);
+        assertEq(uint8(m.state()), uint8(MarketTypes.State.Void));
+        assertEq(m.finalOutcome(), 0);
+        assertEq(m.decidedOutcome(), 1);
+        assertEq(_refund(m, bob), 200e18);
+
+        uint256 treasuryBefore = imd.balanceOf(treasury);
+        disputes.settleBond(address(m));
+        assertEq(imd.balanceOf(disputer), 0);
+        assertEq(imd.balanceOf(keeper), bond / 2);
+        assertEq(imd.balanceOf(treasury) - treasuryBefore, bond - bond / 2);
+    }
+
+    function test_councilOverturnsVoidProposalForEmptySide_disputerKeepsBond() public {
+        _marketWithStakesOnlyOnTwo(0);
+        uint256 bond = _dispute();
+        _panel(1);
+        _councilVote(m, 1, 3);
+        assertEq(uint8(m.state()), uint8(MarketTypes.State.Void));
+        assertEq(m.finalOutcome(), 0);
+        assertEq(m.decidedOutcome(), 1);
+        disputes.settleBond(address(m));
+        assertEq(imd.balanceOf(disputer), bond);
+    }
+
     // ── council ─────────────────────────────────────────────────────────────
 
     function test_council_voidRefundsEveryoneAndDisputer() public {

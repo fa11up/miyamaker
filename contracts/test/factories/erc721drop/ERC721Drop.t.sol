@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import { Test } from "forge-std/Test.sol";
+import { Test, Vm } from "forge-std/Test.sol";
 import { Currency } from "v4-core/types/Currency.sol";
 import { ERC721DropInstance } from "../../../src/factories/erc721drop/ERC721DropInstance.sol";
 import { ERC721DropFactory } from "../../../src/factories/erc721drop/ERC721DropFactory.sol";
@@ -152,6 +152,21 @@ contract ERC721DropTest is Test {
     function _noProof() internal pure returns (bytes32[] memory p) { }
 
     // ── factory ──────────────────────────────────────────────────────────────
+
+    function test_lifecycle_reportsTypeAndEntersMinting() public {
+        vm.recordLogs();
+        ERC721DropInstance d = _drop(10, 1000);
+        assertEq(d.instanceType(), keccak256("erc721"));
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bool seen;
+        for (uint256 i; i < logs.length; ++i) {
+            if (
+                logs[i].emitter == address(d) && logs[i].topics[0] == keccak256("StateChanged(bytes32)")
+                    && logs[i].topics[1] == keccak256("minting")
+            ) seen = true;
+        }
+        assertTrue(seen);
+    }
 
     function test_factory_snapshotsTerms() public {
         ERC721DropInstance d = _drop(100, 1500);

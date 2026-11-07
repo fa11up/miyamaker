@@ -249,7 +249,8 @@ contract ERC1155Instance is Ownable, ReentrancyGuard, IInstanceLifecycle {
 
     /// @notice Claim one free token of a specified edition at zero ETH cost.
     /// @param editionId  The edition to claim from. Must exist.
-    /// @param gatingData Passed to gatingModule.canMint if scope requires it.
+    /// @param gatingData abi.encode(bytes32 passwordHash), or empty for the open tier, used if scope requires it. As in
+    ///        mint(), the module gets the edition's openTime from here: a caller's value could skip a time lock.
     // slither-disable-next-line reentrancy-benign,reentrancy-no-eth,unused-return
     function claimFreeMint(uint256 editionId, bytes calldata gatingData) external nonReentrant {
         if (freeMintAllocation == 0) revert FreeMintDisabled();
@@ -266,7 +267,8 @@ contract ERC1155Instance is Ownable, ReentrancyGuard, IInstanceLifecycle {
         }
 
         if (address(gatingModule) != address(0) && gatingScope != GatingScope.PAID_ONLY) {
-            (bool allowed,) = gatingModule.canMint(msg.sender, 1, gatingData);
+            bytes32 passwordHash = gatingData.length == 0 ? bytes32(0) : abi.decode(gatingData, (bytes32));
+            (bool allowed,) = gatingModule.canMint(msg.sender, 1, abi.encode(passwordHash, edition.openTime));
             if (!allowed) revert GatingCheckFailed();
             gatingModule.onMint(msg.sender, 1);
         }
@@ -427,7 +429,7 @@ contract ERC1155Instance is Ownable, ReentrancyGuard, IInstanceLifecycle {
         }
 
         // Gating check — forwards edition's openTime as the time reference
-        if (address(gatingModule) != address(0)) {
+        if (address(gatingModule) != address(0) && gatingScope != GatingScope.FREE_MINT_ONLY) {
             bytes memory encoded = abi.encode(gatingData, edition.openTime);
             (bool allowed,) = gatingModule.canMint(msg.sender, amount, encoded);
             if (!allowed) revert GatingCheckFailed();

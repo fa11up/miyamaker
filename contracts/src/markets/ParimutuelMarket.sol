@@ -49,7 +49,11 @@ contract ParimutuelMarket is ReentrancyGuard, IParimutuelMarket {
 
     MarketTypes.State internal _state;
     uint8 public proposedOutcome;
+    /// @notice The winning outcome. Nonzero only when the market is Final; Void leaves it 0.
     uint8 public finalOutcome;
+    /// @notice What the last deciding step chose (0 = VOID), including a side nobody counted on, which voids the
+    ///         market. The dispute module settles bonds on this: a dispute is lost if the decision matched the proposal.
+    uint8 public decidedOutcome;
     /// @notice True when the market voided because nobody resolved it in time (no proposal, or no council).
     bool public timedOut;
     bool public swept;
@@ -420,7 +424,7 @@ contract ParimutuelMarket is ReentrancyGuard, IParimutuelMarket {
 
     function _settle(uint8 outcome) internal {
         resolvedAt = uint64(block.timestamp);
-        finalOutcome = outcome;
+        decidedOutcome = outcome;
         if (outcome == MarketTypes.VOID) return _void();
 
         uint64 c = cutoff;
@@ -446,6 +450,7 @@ contract ParimutuelMarket is ReentrancyGuard, IParimutuelMarket {
         countedPool = counted;
         winningPool = win;
         distributable = losing - rake;
+        finalOutcome = outcome;
         _state = MarketTypes.State.Final;
         emit Finalized(outcome, counted, win, rake);
 
@@ -465,7 +470,7 @@ contract ParimutuelMarket is ReentrancyGuard, IParimutuelMarket {
 
     function _void() internal {
         _state = MarketTypes.State.Void;
-        emit Voided(finalOutcome, timedOut);
+        emit Voided(decidedOutcome, timedOut);
     }
 
     function _release(uint256 amount) internal {

@@ -12,6 +12,7 @@ import { Currency } from "v4-core/types/Currency.sol";
 import { IAlignmentVault } from "../../interfaces/IAlignmentVault.sol";
 import { SmartTransferLib } from "../../libraries/SmartTransferLib.sol";
 import { RevenueSplitLib } from "../../shared/libraries/RevenueSplitLib.sol";
+import { IInstanceLifecycle, TYPE_ERC721, STATE_MINTING } from "../../interfaces/IInstanceLifecycle.sol";
 
 /**
  * @title ERC721DropInstance
@@ -24,7 +25,7 @@ import { RevenueSplitLib } from "../../shared/libraries/RevenueSplitLib.sol";
  *         the owner. If the vault rejects a contribution, its cut is parked in `pendingVaultCut` and can be
  *         retried with `flushPendingVaultCut()`; it is never redirected to the owner.
  */
-contract ERC721DropInstance is ERC721, ERC2981, Ownable, ReentrancyGuard {
+contract ERC721DropInstance is ERC721, ERC2981, Ownable, ReentrancyGuard, IInstanceLifecycle {
     using LibString for uint256;
 
     struct Phase {
@@ -131,6 +132,11 @@ contract ERC721DropInstance is ERC721, ERC2981, Ownable, ReentrancyGuard {
         contractURI = p.contractURI;
         if (p.royaltyReceiver != address(0)) _setDefaultRoyalty(p.royaltyReceiver, p.royaltyBps);
         _setPhases(p.phases);
+        emit StateChanged(STATE_MINTING);
+    }
+
+    function instanceType() external pure override returns (bytes32) {
+        return TYPE_ERC721;
     }
 
     // ┌─────────────────────────┐
