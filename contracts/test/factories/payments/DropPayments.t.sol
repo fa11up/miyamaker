@@ -121,6 +121,27 @@ contract DropPaymentsTest is PaymentTestBase {
         d.withdrawAll();
     }
 
+    function test_withdrawAll_skipsATokenThatCantPayOut() public {
+        ERC721DropInstance d = _drop(_list(ETH, address(usdc)), _prices(0.1 ether, 100e6));
+        _mint(d, alice, ETH, 1, 0.1 ether);
+        _mint(d, bob, address(usdc), 1, 100e6);
+        usdc.setBlocked(artist, true); // the owner can't receive USDC
+
+        uint256 ethBefore = artist.balance;
+        vm.expectEmit(true, false, false, false, address(d));
+        emit ERC721DropInstance.WithdrawSkipped(address(usdc));
+        vm.prank(artist);
+        d.withdrawAll();
+        assertEq(artist.balance - ethBefore, 0.1 ether - 0.001 ether - 0.015 ether, "ETH still paid");
+        assertEq(d.unsplitProceeds(address(usdc)), 100e6, "the skipped token is untouched");
+
+        usdc.setBlocked(artist, false);
+        uint256 usdcBefore = usdc.balanceOf(artist);
+        vm.prank(artist);
+        d.withdraw(address(usdc));
+        assertEq(usdc.balanceOf(artist) - usdcBefore, 100e6 - 1e6 - 15e6);
+    }
+
     function test_withdrawIsOwnerOnly_distributeIsOpen() public {
         ERC721DropInstance d = _drop(_list(address(usdc)), _prices(100e6));
         _mint(d, alice, address(usdc), 1, 100e6);
@@ -463,6 +484,24 @@ contract DropPaymentsTest is PaymentTestBase {
         vm.prank(artist);
         vm.expectRevert(PaymentLib.NoFeesToClaim.selector);
         d.claimVaultFees(ClaimMode.TOKENS, 0);
+    }
+
+    function test_claimVaultFees_forwardsTheVaultsOwnFeeTokens() public {
+        // Off mainnet the vault's fee tokens are other addresses: the collection reads them from the vault.
+        MockToken feeA = new MockToken("A", "A", 18);
+        MockToken feeB = new MockToken("B", "B", 18);
+        vault.setFeeTokens(address(feeA), address(feeB));
+        ERC721DropInstance d = _drop(_list(ETH), _prices(1));
+        feeA.mint(address(vault), 3e18);
+        feeB.mint(address(vault), 4e18);
+        vault.setFees(3e18, 4e18, 0);
+        vm.prank(artist);
+        (uint256 i, uint256 m,) = d.claimVaultFees(ClaimMode.TOKENS, 0);
+        assertEq(i, 3e18);
+        assertEq(m, 4e18);
+        assertEq(feeA.balanceOf(artist), 3e18);
+        assertEq(feeB.balanceOf(artist), 4e18);
+        assertEq(feeA.balanceOf(address(d)) + feeB.balanceOf(address(d)), 0, "nothing stranded");
     }
 
     function test_claimVaultFees_ethModePassesFloor() public {

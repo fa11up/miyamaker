@@ -100,7 +100,9 @@ these pools (v4 has no TWAP), so the keeper floors are the protection, as today.
   3. Swap the balanced part of the free IMD/INFER (beyond fees owed and beyond what is still pending) in the INFER/IMD
      pool (vault-side swap), floor from the keeper.
   4. Add INFER + IMD full range (spacing 60) to the vault's single INFER/IMD position. Leftover stays for next batch.
-  5. Issue shares: the batch's liquidity is split across its tokens by realized IMD value; each token's part goes to
+  5. Issue shares: the batch's shares (its own share of the added liquidity, at the share price before the add;
+     INFER/IMD left from earlier batches or sent in is added too but raises every holder's share) are split across its
+     tokens by realized IMD value; each token's part goes to
      that token's benefactors pro rata to their pending balance in it (each balance converts by amount / pending),
      from the fee indexes as they stand after step 1's fee collection (`PendingLedger`: O(1) per benefactor and token,
      collected lazily). A benefactor with several tokens pending, some converted, gets exactly the shares of what was

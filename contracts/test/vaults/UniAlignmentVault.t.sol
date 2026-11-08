@@ -674,8 +674,9 @@ contract UniAlignmentVaultTest is VaultTestBase {
         uint256 before = vault.benefactorShares(alice);
         _contribute(bob, imd, 1e22); // bob books in the new scale; alice's balance spans both
         uint256 shares = _convert();
-        assertApproxEqAbs(vault.benefactorShares(alice) - before, shares * 1e18 / (1e22 + 1e18), shares / 1e15);
-        assertApproxEqAbs(vault.benefactorShares(bob), shares * 1e22 / (1e22 + 1e18), shares / 1e15);
+        // 1e-14: shares are priced at totalShares / units, one more rounding than one share per unit.
+        assertApproxEqAbs(vault.benefactorShares(alice) - before, shares * 1e18 / (1e22 + 1e18), shares / 1e14);
+        assertApproxEqAbs(vault.benefactorShares(bob), shares * 1e22 / (1e22 + 1e18), shares / 1e14);
         assertEq(vault.pendingOf(alice, IMD_ADDR) + vault.pendingOf(bob, IMD_ADDR), 0);
         _assertSolvent(vault);
     }
@@ -754,6 +755,38 @@ contract UniAlignmentVaultTest is VaultTestBase {
         _contributeEth(alice, 1 ether);
         _contributeEth(bob, 3 ether);
         _convert();
+    }
+
+    function test_convert_strayInferImdLiftsHoldersNotTheNextBatch() public {
+        // Twin vaults, same history; one holds 100 IMD of strays (INFER + IMD sent in) when a tiny batch converts.
+        TestableUniAlignmentVault twin = _newVault();
+        _contributeEth(alice, 1 ether);
+        _contributeEth(bob, 3 ether);
+        _convert();
+        _giveEth(alice, 1 ether, twin);
+        _giveEth(bob, 3 ether, twin);
+        _convert(twin);
+
+        infer.mint(address(vault), 50e18);
+        imd.mint(address(vault), 50e18);
+        _contributeEth(dan, 0.01 ether);
+        _giveEth(dan, 0.01 ether, twin);
+        uint256 shares = _convert();
+        uint256 twinShares = _convert(twin);
+
+        // dan gets shares for his own value only; the strays raise every existing share instead.
+        assertApproxEqRel(shares, twinShares, 0.01e18, "the strays don't go to the batch");
+        assertLt(vault.totalShares(), vault.totalLPUnits(), "the strays raised every share");
+        assertGt(vault.totalLPUnits() - twin.totalLPUnits(), 0);
+        _assertSolvent(vault);
+    }
+
+    function test_convert_firstBatchTakesStraysToo() public {
+        infer.mint(address(vault), 5e18);
+        imd.mint(address(vault), 5e18);
+        _contributeEth(alice, 1 ether);
+        uint256 shares = _convert();
+        assertEq(shares, vault.totalLPUnits(), "nobody else to own them");
     }
 
     function test_fees_proRataWithProtocolCut() public {

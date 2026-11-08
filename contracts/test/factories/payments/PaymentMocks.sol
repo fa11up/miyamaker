@@ -10,6 +10,10 @@ import { ICreateX, CREATEX } from "../../../src/shared/CreateXConstants.sol";
 import { CREATEX_BYTECODE } from "createx-forge/script/CreateX.d.sol";
 
 /// @dev Plain ERC-20 with configurable decimals (USDC 6, cbBTC/WBTC 8, IMD/INFER/imdUSD 18).
+/// @dev INFER and IMD at their mainnet addresses (the vault's fee tokens on mainnet).
+address constant MOCK_INFER = 0x53d0eA0A685220718Dc6a0a6e4617194C6F37921;
+address constant MOCK_IMD = 0xD34a99Bc0f67aE1bbd63C660e6d0b0dd03E263B7;
+
 contract MockToken {
     string public name;
     string public symbol;
@@ -133,6 +137,9 @@ contract MockPaymentRegistry {
 ///      does), can refuse everything or anything under a per-token minimum, and pays configured INFER / IMD / ETH
 ///      on claimFees.
 contract MockVaultV2 {
+    /// @dev The fee tokens it pays (PaymentLib reads these, as from the real vault).
+    address public infer = MOCK_INFER;
+    address public imd = MOCK_IMD;
     bool public rejecting;
     mapping(address token => uint256) public minContribution;
     mapping(address token => uint256) public received;
@@ -144,6 +151,10 @@ contract MockVaultV2 {
     ClaimMode public lastMode;
     uint256 public lastMinEthOut;
     uint256 public claims;
+
+    function setFeeTokens(address i, address m) external {
+        (infer, imd) = (i, m);
+    }
 
     function setRejecting(bool r) external {
         rejecting = r;
@@ -196,8 +207,8 @@ contract MockVaultV2 {
         inferToPay = 0;
         imdToPay = 0;
         ethToPay = 0;
-        if (inferOut != 0) MockToken(PaymentLib.INFER).transfer(msg.sender, inferOut);
-        if (imdOut != 0) MockToken(PaymentLib.IMD).transfer(msg.sender, imdOut);
+        if (inferOut != 0) MockToken(infer).transfer(msg.sender, inferOut);
+        if (imdOut != 0) MockToken(imd).transfer(msg.sender, imdOut);
         if (ethOut != 0) {
             (bool ok,) = msg.sender.call{ value: ethOut }("");
             require(ok, "eth");
@@ -218,8 +229,8 @@ abstract contract PaymentTestBase is Test {
     BlocklistToken wbtc; // 8 decimals, blocklist
     MockToken cbbtc; // 8 decimals
     MockToken imdUsd; // 18 decimals
-    MockToken infer; // 18 decimals, at PaymentLib.INFER
-    MockToken imd; // 18 decimals, at PaymentLib.IMD
+    MockToken infer; // 18 decimals, at MOCK_INFER
+    MockToken imd; // 18 decimals, at MOCK_IMD
     FeeOnTransferToken feeToken; // allowlisted on purpose: the balance check must still refuse it
 
     address treasury = makeAddr("treasury");
@@ -238,10 +249,10 @@ abstract contract PaymentTestBase is Test {
         wbtc = new BlocklistToken("Wrapped BTC", "WBTC", 8);
         cbbtc = new MockToken("Coinbase BTC", "cbBTC", 8);
         imdUsd = new MockToken("imdUSD", "imdUSD", 18);
-        deployCodeTo("PaymentMocks.sol:MockToken", abi.encode("INFER", "INFER", uint8(18)), PaymentLib.INFER);
-        deployCodeTo("PaymentMocks.sol:MockToken", abi.encode("IMD", "IMD", uint8(18)), PaymentLib.IMD);
-        infer = MockToken(PaymentLib.INFER);
-        imd = MockToken(PaymentLib.IMD);
+        deployCodeTo("PaymentMocks.sol:MockToken", abi.encode("INFER", "INFER", uint8(18)), MOCK_INFER);
+        deployCodeTo("PaymentMocks.sol:MockToken", abi.encode("IMD", "IMD", uint8(18)), MOCK_IMD);
+        infer = MockToken(MOCK_INFER);
+        imd = MockToken(MOCK_IMD);
         feeToken = new FeeOnTransferToken();
 
         address[7] memory all =

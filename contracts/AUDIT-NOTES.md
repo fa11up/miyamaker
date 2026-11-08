@@ -263,7 +263,7 @@ deployed); the v1 notes above describe the hardening it keeps. New review surfac
 - **Fees**: INFER and IMD index per share (1% protocol cut each, `withdrawProtocolFees(token)`) and an ETH dust index
   (rejected rewards, refunds; no cut). `claimFees(mode, minEthOut)`: TOKENS pays INFER + IMD (+ ETH dust); ETH swaps
   INFER -> IMD in the pool and IMD -> ETH along the reverse of the ETH route, `minEthOut` must be non-zero and is the
-  claimant's only protection; REINVEST balances and adds the claim to the position (1 share per liquidity unit),
+  claimant's only protection; REINVEST balances and adds the claim to the position (shares at the current share price),
   `minEthOut` is then the minimum shares, and what the add can't use stays claimable. `claimFeesAsDelegate` takes
   TOKENS or ETH. Claims and reinvests are permissionless for one's own fees, so their swaps are sandwichable up to the
   claimant's floor; they cannot touch anyone else's balance.
@@ -324,6 +324,20 @@ docs/IMD-INFER-VAULT.md. Earlier sections describe the ETH-only collections; whe
   EIP-170. A collection now costs about 1.3M more gas to create.
 - Deploy: `script/config/1.json` holds `paymentTokens` and `routes`; the script sets both before the ownership handoff and
   `_check` confirms each allowed ERC-20 (other than IMD and INFER) and ETH has a route.
+
+## Audit-suite fixes (2026-11-08)
+
+- **Leftovers no longer go to the next batch.** INFER/IMD already free before a conversion (earlier leftovers, strays)
+  is still added to the position, but the batch is issued shares only for its own value, at the share price before the
+  add (`_batchShares`, `_sharesFor`). The rest raises every holder's share (shares <= liquidity units, as the invariant
+  already allowed). Reinvest also mints at the share price. A first batch (no shares yet) takes everything.
+- **Fee tokens from the vault.** Collections forward the vault's own `infer()` / `imd()` (read per claim), not mainnet
+  constants, so fees forward on any chain.
+- **`withdrawAll` skips a token that can't pay out** (and emits `WithdrawSkipped`) instead of reverting for all.
+- **Auctions get `sweepUntracked(token)`** for the auction currency, like the other collections.
+- **Dynamic pricing rounds up**, so a tiny base price can't mint below price.
+- Not fixed, by decision: an issuer blocklist (USDC) on the vault makes that token's splits revert (approve outside the
+  try).
 
 ## Known risks (accepted for testnet; re-assess before any mainnet use)
 

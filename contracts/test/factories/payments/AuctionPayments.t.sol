@@ -320,6 +320,22 @@ contract AuctionPaymentsTest is PaymentTestBase {
         assertEq(a.ownerOf(id), alice);
     }
 
+    function test_sweepUntracked_strayCurrencyIsSplitLikeASale() public {
+        ERC721AuctionInstance a = _auction(address(usdc), 1e6);
+        uint24 id = _queue(a, 10e6);
+        _bid(a, alice, id, 20e6);
+        uint256 owed = a.ownerBalance(address(usdc));
+        vm.prank(bob);
+        usdc.transfer(address(a), 100e6); // e.g. royalties paid to the auction house
+        a.sweepUntracked(address(usdc));
+        assertGt(a.ownerBalance(address(usdc)), owed, "artist share booked");
+        _assertSolvent(a);
+        vm.expectRevert(PaymentLib.NothingToWithdraw.selector);
+        a.sweepUntracked(address(usdc)); // escrow and bids are never counted
+        vm.expectRevert(abi.encodeWithSelector(PaymentLib.TokenNotAccepted.selector, address(wbtc)));
+        a.sweepUntracked(address(wbtc));
+    }
+
     function test_claimVaultFees() public {
         ERC721AuctionInstance a = _auction(address(usdc), 1e6);
         _fundVaultFees(1e18, 2e18, 0.1 ether);

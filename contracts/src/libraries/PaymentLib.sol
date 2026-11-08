@@ -7,6 +7,12 @@ import { SmartTransferLib } from "./SmartTransferLib.sol";
 import { RevenueSplitLib } from "../shared/libraries/RevenueSplitLib.sol";
 import { IAlignmentVault, ClaimMode } from "../interfaces/IAlignmentVault.sol";
 import { IMiyaRegistry } from "../registry/interfaces/IMiyaRegistry.sol";
+
+/// @dev The fee-token views of vault v2 (UniAlignmentVault.infer / imd).
+interface IVaultFeeTokens {
+    function infer() external view returns (address);
+    function imd() external view returns (address);
+}
 import { TokenPrice } from "../factories/interfaces/TokenPrice.sol";
 
 /// @title PaymentLib
@@ -26,9 +32,6 @@ library PaymentLib {
     /// @notice Most tokens a collection can accept at once (the spec's allowlist has 7).
     uint256 internal constant MAX_TOKENS = 8;
 
-    /// @notice The vault's fee tokens on mainnet (spec: "Tokens"). claimVaultFees forwards these and ETH.
-    address internal constant INFER = 0x53d0eA0A685220718Dc6a0a6e4617194C6F37921;
-    address internal constant IMD = 0xD34a99Bc0f67aE1bbd63C660e6d0b0dd03E263B7;
 
     struct Ledger {
         address[] accepted;
@@ -247,18 +250,22 @@ library PaymentLib {
         internal
         returns (uint256 inferOut, uint256 imdOut, uint256 ethOut)
     {
-        uint256 i0 = SafeTransferLib.balanceOf(INFER, address(this));
-        uint256 m0 = SafeTransferLib.balanceOf(IMD, address(this));
+        // The vault's own fee tokens (INFER and IMD on mainnet; other tokens elsewhere). A vault without these views
+        // pays ETH only.
+        address inferToken = _feeToken(vault, IVaultFeeTokens.infer.selector);
+        address imdToken = _feeToken(vault, IVaultFeeTokens.imd.selector);
+        uint256 i0 = SafeTransferLib.balanceOf(inferToken, address(this));
+        uint256 m0 = SafeTransferLib.balanceOf(imdToken, address(this));
         uint256 e0 = address(this).balance;
         IAlignmentVault(payable(vault)).claimFees(mode, minEthOut);
-        inferOut = SafeTransferLib.balanceOf(INFER, address(this)) - i0;
-        imdOut = SafeTransferLib.balanceOf(IMD, address(this)) - m0;
+        inferOut = SafeTransferLib.balanceOf(inferToken, address(this)) - i0;
+        imdOut = SafeTransferLib.balanceOf(imdToken, address(this)) - m0;
         ethOut = address(this).balance - e0;
         if (requirePaid && inferOut == 0 && imdOut == 0 && ethOut == 0 && mode != ClaimMode.REINVEST) {
             revert NoFeesToClaim();
         }
-        if (inferOut != 0) SafeTransferLib.safeTransfer(INFER, to, inferOut);
-        if (imdOut != 0) SafeTransferLib.safeTransfer(IMD, to, imdOut);
+        if (inferOut != 0) SafeTransferLib.safeTransfer(inferToken, to, inferOut);
+        if (imdOut != 0) SafeTransferLib.safeTransfer(imdToken, to, imdOut);
         if (ethOut != 0) SmartTransferLib.smartTransferETH(to, ethOut, weth);
         emit VaultFeesForwarded(to, mode, inferOut, imdOut, ethOut);
     }
@@ -288,6 +295,12 @@ library PaymentLib {
     // ┌─────────────────────────┐
     // │        Internals        │
     // └─────────────────────────┘
+
+    /// @dev The vault's fee token from `selector` (infer() / imd()), or address(0) if it has none.
+    function _feeToken(address vault, bytes4 selector) private view returns (address t) {
+        (bool ok, bytes memory ret) = vault.staticcall(abi.encodeWithSelector(selector));
+        if (ok && ret.length >= 32) t = abi.decode(ret, (address));
+    }
 
     function _tryTransfer(address token, address to, uint256 amount) private returns (bool) {
         if (token == ETH) return SafeTransferLib.trySafeTransferETH(to, amount, SafeTransferLib.GAS_STIPEND_NO_GRIEF);

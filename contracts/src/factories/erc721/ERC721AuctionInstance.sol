@@ -499,6 +499,16 @@ contract ERC721AuctionInstance is ERC721, Ownable, ReentrancyGuard, IInstanceLif
         PaymentLib.flushVault(_pay, address(vault), token, topUp);
     }
 
+    /// @notice Count `token` that reached this auction house outside a bid or deposit (royalties, transfers) as
+    ///         proceeds and split it like a sale. Only the auction currency; escrow and everything owed is excluded.
+    ///         Anyone can call this.
+    function sweepUntracked(address token) external nonReentrant {
+        if (!_pay.isKnown[token]) revert PaymentLib.TokenNotAccepted(token);
+        uint256 extra = PaymentLib.untracked(_pay, token);
+        if (extra == 0) revert PaymentLib.NothingToWithdraw();
+        PaymentLib.split(_pay, _terms(), token, extra);
+    }
+
     /// @notice ERC-20 auctions: pay the owner its balance (returned deposits and sale proceeds) of `token`.
     function withdraw(address token) external onlyOwner nonReentrant {
         if (PaymentLib.payOwner(_pay, token, owner(), weth) == 0) revert PaymentLib.NothingToWithdraw();

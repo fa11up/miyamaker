@@ -88,6 +88,8 @@ contract ERC721DropInstance is ERC721, ERC2981, Ownable, ReentrancyGuard, IInsta
 
     PaymentLib.Ledger internal _pay;
 
+    /// @notice withdrawAll skipped `token`: its split or payout reverted. Withdraw it on its own to see why.
+    event WithdrawSkipped(address indexed token);
     event PhasesSet(Phase[] phases);
     event PhasePricesSet(uint256 indexed phaseId, TokenPrice[] prices);
     event Minted(
@@ -301,10 +303,21 @@ contract ERC721DropInstance is ERC721, ERC2981, Ownable, ReentrancyGuard, IInsta
         address[] storage known = _pay.known;
         bool any;
         for (uint256 i; i < known.length; ++i) {
-            if (_distribute(known[i])) any = true;
-            if (PaymentLib.payOwner(_pay, known[i], owner(), weth) != 0) any = true;
+            // One token that can't split or pay out (a refusing vault, a blocklisted owner) is skipped, not fatal.
+            try this.withdrawAllStep(known[i]) returns (bool did) {
+                if (did) any = true;
+            } catch {
+                emit WithdrawSkipped(known[i]);
+            }
         }
         if (!any) revert NothingToWithdraw();
+    }
+
+    /// @notice withdrawAll's step for one token. Only this contract can call it (inside withdrawAll's guard).
+    function withdrawAllStep(address token) external returns (bool did) {
+        if (msg.sender != address(this)) revert Unauthorized();
+        did = _distribute(token);
+        if (PaymentLib.payOwner(_pay, token, owner(), weth) != 0) did = true;
     }
 
     function _distribute(address token) internal returns (bool) {

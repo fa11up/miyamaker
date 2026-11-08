@@ -341,6 +341,12 @@ contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignm
         // Yield earned so far belongs to current holders: book it before any share change.
         _collectFees();
 
+        // Before this batch: INFER/IMD already free (earlier leftovers, strays) and the units the position holds. The
+        // balancing below adds the leftovers too, but the batch gets shares only for its own value (_batchShares).
+        uint256[3] memory before;
+        (before[0], before[1]) = _freeAlignmentBalances();
+        before[2] = totalLPUnits;
+
         // Take the converted amounts out of pending first, so the balancing below sees only what is free.
         (uint256[] memory pendingBefore, uint256 reward) = _takePending(p);
         (uint256[] memory values, uint256 inferSlot) = _toImd(p, reward);
@@ -356,8 +362,9 @@ contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignm
         uint256 ethOwed = _feeOwed(I_ETH) + pendingByToken[ETH] + reward;
         if (address(this).balance > ethOwed) _distribute(I_ETH, address(this).balance - ethOwed);
 
-        _closeBatch(p, liquidity, values, pendingBefore);
-        sharesIssued = liquidity;
+        sharesIssued = _batchShares(liquidity, values, before, rateImd, rateInfer);
+        if (sharesIssued == 0) revert InsufficientLiquidity();
+        _closeBatch(p, sharesIssued, values, pendingBefore);
         emit BatchConverted(closedBatches, liquidity, inferAdded, imdAdded, reward);
         _payCallerReward(reward);
         _checkSolvent();
@@ -543,6 +550,30 @@ contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignm
 
     /// @dev Split the batch's liquidity across its tokens by realized IMD value; each token's pool pays its part to that
     ///      token's benefactors pro rata (PendingLedger.convert), from the fee indexes as they stand now.
+    /// @dev Shares for this batch: the part of `liquidity` its own value paid for (the rest came from leftovers and
+    ///      strays, and lifts every holder's share), priced at the share price before the add.
+    function _batchShares(
+        uint256 liquidity,
+        uint256[] memory values,
+        uint256[3] memory before,
+        uint256 rateImd,
+        uint256 rateInfer
+    ) private view returns (uint256) {
+        if (totalShares == 0) return liquidity; // nobody else to own the leftovers
+        uint256 own;
+        for (uint256 i; i < values.length; ++i) own += values[i];
+        uint256 left = before[1] + FixedPointMathLib.fullMulDiv(before[0], rateImd, rateInfer);
+        uint256 ownLiquidity = left == 0 ? liquidity : FixedPointMathLib.fullMulDiv(liquidity, own, own + left);
+        return _sharesFor(ownLiquidity, before[2]);
+    }
+
+    /// @dev Shares worth `liquidity` units at the current share price (totalShares / units before the add). The first
+    ///      holders get one share per unit.
+    function _sharesFor(uint256 liquidity, uint256 unitsBefore) private view returns (uint256) {
+        if (totalShares == 0 || unitsBefore == 0) return liquidity;
+        return FixedPointMathLib.fullMulDiv(liquidity, totalShares, unitsBefore); // round down
+    }
+
     function _closeBatch(ConvertParams calldata p, uint256 liquidity, uint256[] memory values, uint256[] memory pendingBefore)
         private
     {
@@ -782,8 +813,8 @@ contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignm
         }
     }
 
-    /// @dev Put the caller's INFER + IMD fees back into the position as new shares (1 share = 1 liquidity unit, the
-    ///      price every share was issued at). Balances the two first with a vault-side swap. What the add can't use, and
+    /// @dev Put the caller's INFER + IMD fees back into the position as new shares at the current share price
+    ///      (totalShares / totalLPUnits before the add). Balances the two first with a vault-side swap. What the add can't use, and
     ///      any ETH dust, stays claimable.
     function _reinvest(address b, uint256 minShares)
         internal
@@ -795,6 +826,7 @@ contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignm
         _unharvest(b, I_ETH, a[2], a[2]);
 
         (uint256 amtInfer, uint256 amtImd) = (a[0], a[1]);
+        uint256 unitsBefore = totalLPUnits;
         (uint160 sqrtP, uint128 poolL) = _poolState();
         if (sqrtP == 0) revert PoolNotInitialized();
         (bool inferToImd, uint256 s,) = _splitAmount(amtInfer, amtImd, sqrtP, poolL);
@@ -804,6 +836,8 @@ contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignm
             (amtInfer, amtImd) = inferToImd ? (amtInfer - s, amtImd + out) : (amtInfer + out, amtImd - s);
         }
         (uint256 l, uint256 usedInfer, uint256 usedImd) = _addLiquidity(amtInfer, amtImd);
+        if (l == 0) revert InsufficientLiquidity();
+        l = _sharesFor(l, unitsBefore); // shares, at the share price before the add
         if (l == 0) revert InsufficientLiquidity();
         if (l < minShares) revert InsufficientOutput();
         // The add booked the position's fees to current holders, b's existing shares included: settle before minting.

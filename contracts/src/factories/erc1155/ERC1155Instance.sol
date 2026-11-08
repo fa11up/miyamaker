@@ -140,6 +140,8 @@ contract ERC1155Instance is Ownable, ReentrancyGuard, IInstanceLifecycle {
     mapping(address token => uint256) public totalProceeds;
 
     // Events
+    /// @notice withdrawAll skipped `token`: its split or payout reverted. Withdraw it on its own to see why.
+    event WithdrawSkipped(address indexed token);
     event TransferSingle(
         address indexed operator,
         address indexed from,
@@ -519,10 +521,21 @@ contract ERC1155Instance is Ownable, ReentrancyGuard, IInstanceLifecycle {
         address[] storage known = _pay.known;
         bool any;
         for (uint256 i; i < known.length; ++i) {
-            if (_distribute(known[i])) any = true;
-            if (PaymentLib.payOwner(_pay, known[i], owner(), weth) != 0) any = true;
+            // One token that can't split or pay out (a refusing vault, a blocklisted owner) is skipped, not fatal.
+            try this.withdrawAllStep(known[i]) returns (bool did) {
+                if (did) any = true;
+            } catch {
+                emit WithdrawSkipped(known[i]);
+            }
         }
         if (!any) revert InsufficientBalance();
+    }
+
+    /// @notice withdrawAll's step for one token. Only this contract can call it (inside withdrawAll's guard).
+    function withdrawAllStep(address token) external returns (bool did) {
+        if (msg.sender != address(this)) revert Unauthorized();
+        did = _distribute(token);
+        if (PaymentLib.payOwner(_pay, token, owner(), weth) != 0) did = true;
     }
 
     function _distribute(address token) internal returns (bool) {
