@@ -1,124 +1,158 @@
-# Design: aligning to the INFER/IMD pool
+# Design: multi-token sales, aligned to the INFER/IMD pool
 
-Status: proposal for review (2026-11-08). Nothing here is built or deployed.
+Status: agreed decisions, ready to build (2026-11-08). Nothing here is built or deployed. Mainnet (chain 1) only.
 
-## Goal
+## Decisions
 
-Sales stay in ETH (buyers can pay in any token: the app swaps it to ETH first). The vault share of every sale ends up
-as permanent liquidity in the existing INFER/IMD pool, instead of a new INFER/ETH pool that would have to be seeded.
-Collection owners keep earning the pool's fees, and choose how to take them.
-
-## What stays the same
-
-- **Collections take ETH.** Drops, music editions and auctions keep their payment code (`msg.value`, refunds, bids,
-  deposits). Only how they claim vault fees changes (see Claims).
-- **The vault share per sale**: at least `minAlignmentBps` (10%), set by the artist at launch, up to 100%.
-- **Contributions, batches, shares**: `receiveContribution` credits the collection with ETH; ETH waits until a keeper
-  converts a batch; shares are issued per batch in proportion to ETH (the batch accounting in `_closeBatch` is kept).
-- **Liquidity is permanent.** No function removes it, as today.
-- **Protocol yield cut**: 1% of everything the position earns (`protocolYieldCutBps`), paid to the registry treasury.
-- **Keeper only** for conversions (`registry.conversionKeeper`), floors from a live quote, private mempool.
-
-## The pools (read from chain, 2026-11-08, block ~26,367,950)
-
-| Pool | Key | Id | Liquidity | Notes |
-|---|---|---|---|---|
-| IMD/ETH | native ETH (c0) / IMD `0xD34a…63B7` (c1), fee 10000 (1%), spacing 200, no hook | `0xb07d…bfb3` | 9.73e21 | Same fee and spacing as the vault's zRouter route today |
-| INFER/IMD | INFER `0x53d0…7921` (c0) / IMD (c1), fee 12500 (1.25%), spacing 60, hook `0x784F…6000` | `0x1f03…1e95` | 7.62e23 | Hook is the verified `PoolInitializationGuard`: only `beforeInitialize`; swaps, fees and liquidity are unaffected |
-
-IMD is the verified `BridgedFP` (18 decimals): no transfer override, no fee, no pause; the owner can only rename it.
-
-## Conversion (keeper, per batch)
-
-`convertAndAddLiquidity(minImdOut, minInferOut, deadline)`:
-
-1. Take the conversion reward from the batch ETH, as today (0.0012 ETH, capped at 1% of the batch).
-2. **ETH -> IMD** through the IMD/ETH pool with zRouter `swapV4` (hookless, fee 10000/200: zRouter can route it).
-   `minImdOut` from the keeper.
-3. **About half the IMD -> INFER** through the INFER/IMD pool. zRouter cannot route a hooked pool (`swapV4` takes no
-   hook address), so the vault swaps itself: `PoolManager.unlock` -> `swap` in `unlockCallback` (the vault already
-   unlocks for liquidity adds). `minInferOut` from the keeper. The split is the balanced-swap calculation used today
-   (`_balancedSwap`), applied to IMD against the INFER/IMD reserves, so the add leaves little unpaired.
-4. **Add INFER + IMD liquidity**, full range for spacing 60, to the vault's single position in the INFER/IMD pool.
-   Whatever is left unpaired stays in the vault and is folded into the next batch, as today.
-5. Close the batch: shares issued in proportion to the batch ETH, at the batch's accumulator values.
-
-Floors: neither pool has a manipulation-resistant reference the vault can read on chain (v4 has no built-in TWAP), so
-the keeper's quote-based floors on both hops are the protection, as documented today. The vault also refuses a hop whose
-execution price moves the pool more than `maxPriceDeviationBps` (500) from its price at the start of the call.
-
-## Fees the position earns
-
-The position earns INFER and IMD (not ETH). Accounting moves from one ETH accumulator to two token accumulators:
-`accInferPerShare`, `accImdPerShare`, with per-benefactor checkpoints, the same pattern as today's `accFeePerShare`.
-The protocol cut is booked per token and withdrawn per token (`withdrawProtocolFees(token)`). Any ETH dust (rejected
-rewards, stray transfers) keeps today's ETH accumulator, so nothing is lost.
-
-## Claims: three choices for each collection owner
-
-The collection's `claimVaultFees` gains a mode. Each claim settles the collection's share of both tokens first.
-
-1. **Take as tokens** (default): INFER and IMD are sent to the collection owner. No swap, no slippage, no keeper.
-2. **Take as ETH**: the vault swaps the collection's INFER -> IMD (INFER/IMD pool) and IMD -> ETH (IMD/ETH pool)
-   in the claim, with `minEthOut` from the owner's live quote (the app supplies it), and pays the owner ETH.
-3. **Reinvest**: the collection's INFER and IMD are added to the position, and the collection is issued shares for
-   them at the current share price. More future fees; nothing is paid out.
-
-`claimFeesAsDelegate` and `delegateBenefactor` keep working; the mode applies to the delegate's claim the same way.
-
-## Contract changes
-
-| Contract | Change |
+| | Decision |
 |---|---|
-| `UniAlignmentVault` | Two-hop conversion; non-ETH position (INFER/IMD, hooked pool key); vault-side swap in `unlockCallback`; two token fee accumulators; three claim modes; per-token protocol cut. A new version: clones from the old factory are unaffected (none are deployed). |
-| `UniAlignmentVaultFactory` | Takes the alignment pool key (both currencies, fee, spacing, hooks) and the ETH route pool, instead of one fee tier for both. |
-| `IAlignmentVault` | `claimFees(mode, minEthOut)` returning amounts per token; views for claimable INFER/IMD. |
-| `ERC721DropInstance`, `ERC721AuctionInstance`, `ERC1155Instance` | `claimVaultFees(mode, minEthOut)` forwarding tokens or ETH to `owner()`. |
-| `UniswapVaultPriceValidator` | Not used for the INFER/IMD conversion (no on-chain reference); kept for other vaults or removed. |
-| `DeployMiyamints.s.sol`, `config/1.json` | Pool keys for both pools; the INFER/ETH precondition goes; a depth check on INFER/IMD (`minPoolDepth`) instead of `minPoolEth`. |
+| Payment tokens | ETH, IMD, INFER, USDC, imdUSD, cbBTC, WBTC |
+| Prices | The artist sets a price per token they accept (no exchange rates in the contracts) |
+| Artist revenue | Collected exactly as paid, per token. No conversions |
+| Protocol fee | Taken in the token paid (1%), collected per token by the treasury |
+| Vault share | Taken in the token paid, sent to the vault as is; the vault turns everything into INFER/IMD liquidity |
+| Auctions | One currency per auction, chosen by the artist or curator; bids, refunds and the deposit in that currency |
+| Vault fee claims | Default: take as tokens (INFER + IMD). Also: take as ETH, or reinvest |
+| Chains | Mainnet only for now |
+| Keeper batch | Minimum 0.1 ETH of value, adjusted for gas cost |
 
-Robinhood (4663): there is no INFER or confirmed IMD there. Either keep today's ETH-paired vault for that chain with a
-real target, or don't deploy there yet. Decision needed.
+## Tokens (mainnet, read from chain 2026-11-08)
 
-## Keeper (new service, next to imd-keeper)
+| Token | Address | Decimals |
+|---|---|---|
+| ETH | native (`address(0)`) | 18 |
+| IMD | `0xD34a99Bc0f67aE1bbd63C660e6d0b0dd03E263B7` (BridgedFP: plain ERC-20, no fee, no pause) | 18 |
+| INFER | `0x53d0eA0A685220718Dc6a0a6e4617194C6F37921` | 18 |
+| USDC | `0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48` | 6 |
+| imdUSD | `0x61aAF8a992A3143e2B0C9cB0030b9fE702854a25` | 18 |
+| cbBTC | `0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf` | 8 |
+| WBTC | `0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599` | 8 |
 
-- Watches each vault's `totalPendingETH`; converts when a batch is worth the gas (configurable minimum).
-- Quotes both hops with the v4 Quoter (ETH -> IMD, then IMD -> INFER for the computed split), applies a slippage
-  margin, submits `convertAndAddLiquidity` through a private RPC (as imd-keeper does with `VAULT_RPC_URL`).
-- Same guard rails as imd-keeper: kill switch, gas ceiling, ETH floor, simulate first, daily spend ledger, and the
-  unknown-outcome handling (hash kept, nonce recorded, no blind resend).
-- Also runs `convertFeeTokens` only if the ETH claim mode needs batching (it doesn't in this design).
+The registry keeps the allowlist (`isPaymentToken(token)`), owner-managed. Collections refuse anything not on it.
+USDC and WBTC have admin blocklists: a blocklisted recipient makes a transfer revert. Payouts are pull-based (the
+artist withdraws), so a blocklist never blocks a sale or another person's refund.
 
-## App changes
+## The pools the vault uses (v4 liquidity read 2026-11-08)
 
-- **Pay with any token**: at mint and bid, an option to pay from another token; the app swaps it to ETH first (0x
-  route already in Trade), in one signature where the wallet can batch.
-- **Manage**: the three claim choices, claimable INFER and IMD, and the ETH quote for "Take as ETH".
-- **Copy**: where the vault share goes ("becomes permanent INFER/IMD liquidity"), that only the vault share does, and
-  that artists can raise it at launch.
+| Pool | Key | Liquidity |
+|---|---|---|
+| **INFER/IMD** (the alignment pool) | INFER (c0) / IMD (c1), fee 12500, spacing 60, hook `0x784F…6000` (`PoolInitializationGuard`: beforeInitialize only) | 7.62e23 |
+| IMD/ETH | ETH / IMD, fee 10000, spacing 200, no hook | 9.73e21 |
+| imdUSD/IMD | imdUSD / IMD, fee 3000, spacing 60, no hook | 2.73e21 |
+| ETH/USDC | fee 500, spacing 10, no hook | 1.54e17 |
+| ETH/WBTC | fee 500, spacing 10, no hook | 1.29e17 |
+| cbBTC | v4 ETH/cbBTC is thin (3000/60: 1.28e14); v3 cbBTC/WETH 0.3% `0x15aA…7C3b` is deeper (1.04e15) | |
+
+## Conversion routes (to IMD; INFER and IMD need none)
+
+| Paid in | Route | Swapped by |
+|---|---|---|
+| IMD | none | |
+| INFER | none: used as the INFER side directly | |
+| imdUSD | imdUSD/IMD (v4) | zRouter |
+| ETH | IMD/ETH (v4) | zRouter |
+| USDC | ETH/USDC (v4) -> IMD/ETH (v4) | zRouter |
+| WBTC | ETH/WBTC (v4) -> IMD/ETH (v4) | zRouter |
+| cbBTC | cbBTC/WETH (v3) -> unwrap -> IMD/ETH (v4) | zRouter (v3 and v4) |
+| IMD -> INFER (the split) | INFER/IMD (v4, hooked) | the vault itself, through `PoolManager.unlock` (zRouter cannot route a hooked pool) |
+
+Routes are an owner-set table per token (registry or vault owner, a Safe). The keeper picks the route the table allows
+and supplies `minOut` for every hop from a live quote, through a private mempool. No on-chain price reference exists for
+these pools (v4 has no TWAP), so the keeper floors are the protection, as today.
+
+## Sale flow (collections)
+
+- A collection has an `acceptedTokens` list and a price per token (`priceOf[token]`), set by the owner; each must be on
+  the registry allowlist. Phases (drops) and editions (1155) carry a price per token the same way.
+- `mint(qty, token, maxCost)`: ETH via `msg.value`; ERC-20 via `transferFrom` of exactly `price * qty` (fee-on-transfer
+  tokens are not on the allowlist; the contract still checks the balance delta and reverts if short).
+- The split happens per token, as today for ETH: protocol cut -> treasury balance for that token (pull); vault share ->
+  `vault.receiveContribution(token, amount, address(this))`; the rest -> the collection's balance for that token.
+- `withdraw(token)` pays the owner that token's balance. `withdrawAll()` loops the accepted tokens.
+- Music editions with a rising price (LIMITED_DYNAMIC): each token's price rises by the same rule.
+- Auctions: `currency` fixed at creation (artist or curator chooses). The deposit, every bid, outbid refunds, the
+  settle split and the unsold reclaim are all in that currency. ETH auctions keep today's behaviour exactly.
+- Refunds of outbid bidders: ETH keeps `forceSafeTransferETH`; ERC-20 refunds are pull-based (credited, claimed by
+  the bidder) so a blocklisted or reverting bidder can never stop a higher bid.
+
+## Vault
+
+### Contributions and batches
+
+- `receiveContribution(Currency currency, uint256 amount, address benefactor)`: accepts ETH or any allowlisted token;
+  books `pending[benefactor][token] += amount` and the vault's `pendingByToken[token]`.
+- `convertAndAddLiquidity(ConvertParams)` (keeper only) converts one batch:
+  1. Pay the keeper reward from pending ETH if any (today's rule: 0.0012 ETH, capped at 1% of the batch's ETH); if the
+     batch holds no ETH, the reward is 0.
+  2. Convert each pending token to IMD along its route, with the keeper's floors. Record each token's realized rate
+     (IMD out per unit in). INFER is valued at the realized IMD->INFER rate of step 3.
+  3. Swap the balanced part of the IMD to INFER in the INFER/IMD pool (vault-side swap), floor from the keeper.
+  4. Add INFER + IMD full range (spacing 60) to the vault's single INFER/IMD position. Leftover stays for next batch.
+  5. Issue shares: each benefactor's batch value in IMD = sum over tokens of `pending * realizedRate`; shares are issued
+     in proportion to that value, at the batch's accumulator values (today's `_closeBatch` pattern, in IMD units).
+- Shares are never redeemable for liquidity (permanent), only for fees, as today.
+
+### Fees and claims
+
+- The position earns INFER and IMD. Two accumulators (`accInferPerShare`, `accImdPerShare`) with per-benefactor
+  checkpoints; 1% of each goes to the protocol (`withdrawProtocolFees(token)`). ETH dust keeps an ETH accumulator.
+- `claimFees(ClaimMode mode, uint256 minEthOut)`, paid to the benefactor or its delegate:
+  - `TOKENS` (default): send INFER and IMD.
+  - `ETH`: swap the claim INFER -> IMD (vault-side) -> ETH (zRouter), check `minEthOut`, send ETH.
+  - `REINVEST`: add the claim's INFER + IMD to the position and issue shares at the current share price.
+- Collections: `claimVaultFees(mode, minEthOut)` (owner only) forwards whatever the vault pays to `owner()`.
+
+## Interfaces (fixed for the build)
+
+```solidity
+enum ClaimMode { TOKENS, ETH, REINVEST }
+
+// IAlignmentVault (v2)
+function receiveContribution(Currency currency, uint256 amount, address benefactor) external payable;
+function claimFees(ClaimMode mode, uint256 minEthOut) external returns (uint256 inferOut, uint256 imdOut, uint256 ethOut);
+function claimable(address benefactor) external view returns (uint256 infer, uint256 imd, uint256 eth);
+function pendingOf(address benefactor, address token) external view returns (uint256);
+
+// Registry
+function isPaymentToken(address token) external view returns (bool);
+function setPaymentToken(address token, bool allowed) external; // onlyOwner
+
+// Collections (drop, 1155, auction)
+function acceptedTokens() external view returns (address[] memory);
+function withdraw(address token) external;              // onlyOwner; address(0) = ETH
+function claimVaultFees(ClaimMode mode, uint256 minEthOut) external; // onlyOwner
+```
+
+## Keeper (new service next to imd-keeper)
+
+- Watches each vault's pending value per token; converts when the batch is worth at least 0.1 ETH and gas is under the
+  ceiling (both config), converting all tokens in one call.
+- Quotes every hop (v4 Quoter, v3 QuoterV2), applies a slippage margin per hop, simulates, then sends through a private
+  RPC. Same guard rails as imd-keeper: kill switch, gas ceiling, ETH floor, spend ledger, unknown-outcome handling.
+
+## App
+
+- **Mint and bid**: a token picker with the artist's accepted tokens and their prices; approve (or permit) for ERC-20s;
+  "Pay with another token" swaps into one of the accepted tokens first via 0x, when the buyer holds none of them.
+- **Launch**: accepted tokens and a price per token; for auctions, one currency.
+- **Manage**: balances per token with Withdraw; vault fees claimable in INFER and IMD with the three claim modes.
+- **Copy**: what the vault share becomes, per-token prices, that artists collect each token as paid.
 
 ## Test plan
 
-- Unit: conversion maths (balanced split for token/token), accumulators for two tokens, each claim mode, reinvest
-  share pricing, protocol cut per token, dust paths.
-- Invariants: the vault never owes more INFER, IMD or ETH than it holds; shares never decrease; fees per share never
-  decrease.
-- Fork tests against the real IMD/ETH and INFER/IMD pools: a batch converts and adds; floors refuse a bad quote; each
-  claim mode pays the right amounts; reinvest grows the position.
-- The audit suite on the result (`/audit-suite contracts`), then an independent review before mainnet.
+- Unit, per collection type and per token (ETH, 6-decimal, 8-decimal, 18-decimal): payment, split, withdraw, refunds,
+  dynamic price, phases; auctions in ETH and in an ERC-20, outbid refunds (push for ETH, pull for ERC-20), settle,
+  reclaim.
+- Vault: each route, realized-rate share issuance across mixed batches, two-token accumulators, the three claim modes,
+  reinvest share pricing, protocol cut per token, leftovers, dust.
+- Invariants: no balance owed beyond what is held, per token; shares and fees per share never decrease.
+- Fork tests against the real pools: every route, a mixed batch, each claim mode.
+- `/audit-suite contracts`, then an independent review before mainnet.
 
-## Risks and trade-offs
+## Risks
 
-- **IMD exposure**: the vault holds an IMD leg as well as INFER.
-- **Two hops cost more**: 1% (IMD/ETH) + 1.25% (INFER/IMD) on the swapped part of each batch.
-- **Pool depth**: conversions are limited by INFER/IMD and IMD/ETH depth; the keeper should size batches to keep
-  slippage small.
-- **"Take as ETH" claims** swap in the claim transaction on a public mempool; the floor protects the owner, and the app
-  can route the claim through a private RPC.
-
-## Open decisions
-
-1. Default claim mode: tokens (proposed), ETH, or reinvest.
-2. Robinhood: ETH-paired vault with which target, or no deployment yet.
-3. Pay-with-any-token in the first release, or after.
-4. Minimum batch size for the keeper (gas vs. how long ETH waits).
+- **Scope**: every collection's payment code changes; the ETH-only hardening has to be redone per token.
+- **Vault exposure** to IMD and INFER; two-hop conversions cost pool fees on the swapped part.
+- **Thin routes**: cbBTC and small pools; the keeper sizes batches and the route table can be changed by the owner.
+- **Token admin powers**: USDC/WBTC blocklists, cbBTC custody; handled by pull payouts, and the allowlist can drop a
+  token for new sales (existing balances stay withdrawable).
