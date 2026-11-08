@@ -16,6 +16,12 @@
   //                             npx wrangler secret put OPENSEA_API_KEY
   //                             npx wrangler secret put YOUTUBE_API_KEY
   //                             npx wrangler secret put ETHERSCAN_API_KEY
+  //   Keyed RPC (api/_lib/rpc.ts), each optional (unset = public RPCs):
+  //                             npx wrangler secret put RPC_URL_1
+  //                             npx wrangler secret put RPC_URL_4663
+  //                             npx wrangler secret put RPC_URL_11155111
+  //                             npx wrangler secret put ALCHEMY_API_KEY
+  //   VITE_RPC_URL_* and VITE_ALCHEMY_KEY are no longer read: remove them from .env.production.local.
   // The API's rate limits in the Worker are per isolate; the global one is a Cloudflare WAF rate-limiting rule on /api/*
   // (dashboard, not this file): see createRateLimiter in api/_lib/zeroex.ts for the recommended rule.
   // Wallets that can remove any track from the radio's community station, comma-separated. miyagod.eth.

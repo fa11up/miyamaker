@@ -7,13 +7,15 @@ import {
   rainbowWallet,
   walletConnectWallet,
 } from '@rainbow-me/rainbowkit/wallets'
-import type { Chain } from 'viem'
+import type { Chain, Transport } from 'viem'
 import { mainnet, robinhood, sepolia } from 'viem/chains'
 import type { CreateConnectorFn } from 'wagmi'
 import { createConfig, fallback, http } from 'wagmi'
 import { reconnect } from 'wagmi/actions'
 
 import { passkeyConnector, socialConnector } from '@/wallet/newcomerWallets'
+
+import { MAX_BATCH, METHODS, RPC_PREFIX } from '../../api/_lib/rpc'
 
 export { mainnet, robinhood, sepolia }
 
@@ -25,13 +27,32 @@ export const pickerChains = chains.filter((c) => import.meta.env.DEV || !('testn
 export type SupportedChainId = (typeof chains)[number]['id']
 
 /**
- * Per-chain RPC overrides from env. Falls back to the chain's public RPCs.
- *   VITE_RPC_URL_1, VITE_RPC_URL_11155111, VITE_RPC_URL_4663
+ * The Worker's keyed RPC (api/_lib/rpc.ts) comes first: the keyed URLs (RPC_URL_<chainId>) are Worker secrets, never
+ * bundled. It serves read methods only, so everything else goes straight to the public RPCs below, and when it says
+ * `x-rpc-proxy: off` (no secret for that chain) this session stops asking it for that chain.
  */
-const RPC_OVERRIDES: Record<number, string | undefined> = {
-  [mainnet.id]: import.meta.env.VITE_RPC_URL_1,
-  [sepolia.id]: import.meta.env.VITE_RPC_URL_11155111,
-  [robinhood.id]: import.meta.env.VITE_RPC_URL_4663,
+const proxyOff = new Set<number>()
+
+function proxiedRpc(chainId: number): Transport {
+  const base = typeof window !== 'undefined' && window.location ? window.location.origin : ''
+  const inner = http(`${base}${RPC_PREFIX}/${chainId}`, {
+    batch: { batchSize: MAX_BATCH },
+    retryCount: 0,
+    methods: { include: [...METHODS].filter((m) => !m.startsWith('alchemy_')) },
+    onFetchResponse(response) {
+      if (response.headers.get('x-rpc-proxy') === 'off') proxyOff.add(chainId)
+    },
+  })
+  return (opts) => {
+    const made = inner(opts)
+    return {
+      ...made,
+      request: (async (args, options) => {
+        if (proxyOff.has(chainId)) throw new Error(`The keyed RPC for chain ${chainId} is off; using public RPCs.`)
+        return made.request(args, options)
+      }) as typeof made.request,
+    }
+  }
 }
 
 const PUBLIC_FALLBACKS: Record<number, string[]> = {
@@ -40,16 +61,15 @@ const PUBLIC_FALLBACKS: Record<number, string[]> = {
   [robinhood.id]: [],
 }
 
+/** The public RPCs for a chain, after the Worker's keyed one. */
 export function rpcUrlsFor(chain: Chain): string[] {
-  const override = RPC_OVERRIDES[chain.id]
-  return [
-    ...(override ? [override] : []),
-    ...(PUBLIC_FALLBACKS[chain.id] || []),
-    ...chain.rpcUrls.default.http,
-  ].filter((url, i, all) => all.indexOf(url) === i)
+  return [...(PUBLIC_FALLBACKS[chain.id] || []), ...chain.rpcUrls.default.http].filter(
+    (url, i, all) => all.indexOf(url) === i
+  )
 }
 
-const transportFor = (chain: Chain) => fallback(rpcUrlsFor(chain).map((url) => http(url, { batch: true })))
+const transportFor = (chain: Chain) =>
+  fallback([proxiedRpc(chain.id), ...rpcUrlsFor(chain).map((url) => http(url, { batch: true }))])
 
 /** WalletConnect project id. Without one, WalletConnect-based wallets are hidden instead of crashing the app. */
 export const walletConnectProjectId: string = import.meta.env.VITE_WC_PROJECT_ID || ''

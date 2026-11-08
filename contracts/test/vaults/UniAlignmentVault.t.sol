@@ -126,6 +126,21 @@ contract UniAlignmentVaultTest is Test {
         assertEq(vault.CONVERSION_REWARD(), 0.0012 ether, "Conversion reward should be 0.0012 ETH");
     }
 
+    // ========== unlockCallback access control ==========
+    // Happy path (PoolManager -> unlockCallback -> modifyLiquidity) runs against a real local PoolManager in
+    // test/v4real/UniAlignmentVaultRealV4.t.sol (every conversion there goes through unlock).
+
+    function test_UnlockCallback_RevertsForNonPoolManager() public {
+        vm.prank(alice);
+        vm.expectRevert(Ownable.Unauthorized.selector);
+        vault.unlockCallback("");
+
+        // Not even the owner.
+        vm.prank(owner);
+        vm.expectRevert(Ownable.Unauthorized.selector);
+        vault.unlockCallback(abi.encode(uint256(1)));
+    }
+
     function _freshClone() internal returns (TestableUniAlignmentVault) {
         return TestableUniAlignmentVault(payable(LibClone.clone(address(vaultImpl))));
     }

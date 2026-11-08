@@ -15,6 +15,7 @@ import { BODY_LIMIT } from './api/_lib/body'
 import { handleMarketRequest, MARKET_PREFIX, memoryCache, openSeaReader } from './api/_lib/market'
 import { handleOpenSeaRequest, OPENSEA_PROXY_PATH, quoteBigInts } from './api/_lib/opensea'
 import { handlePublicAccessRequest, memoryTapeStore, PUBLIC_ACCESS_PATH, youtubeLookup } from './api/_lib/publicaccess'
+import { handleNftRequest, handleRpcRequest, NFT_PREFIX, RPC_BODY_LIMIT, RPC_PREFIX } from './api/_lib/rpc'
 import { kickOnAir, kickReader } from './api/_lib/tvkick'
 import { handleTvLiveRequest, TV_LIVE_PATH } from './api/_lib/tvlive'
 import { gatewayContentType, handleStationRequest, memoryStore, STATION_PATH } from './api/_lib/station'
@@ -22,9 +23,9 @@ import { clientKey, createRateLimiter, handleZeroExRequest, PROXY_PREFIX, sameOr
 
 /** The Worker's POST cap (api/_lib/body.ts) for the dev stand-ins: a 413 (and undefined) when the body says it is too
  * large, otherwise at most BODY_LIMIT bytes of it. */
-async function devBody(req: IncomingMessage, res: ServerResponse): Promise<string | undefined> {
+async function devBody(req: IncomingMessage, res: ServerResponse, limit = BODY_LIMIT): Promise<string | undefined> {
   if (req.method !== 'POST') return ''
-  if (Number(req.headers['content-length'] ?? 0) > BODY_LIMIT) {
+  if (Number(req.headers['content-length'] ?? 0) > limit) {
     res.statusCode = 413
     res.setHeader('content-type', 'application/json')
     res.end(JSON.stringify({ error: 'That is too large.' }))
@@ -33,10 +34,10 @@ async function devBody(req: IncomingMessage, res: ServerResponse): Promise<strin
   const chunks: Buffer[] = []
   let size = 0
   for await (const chunk of req) {
-    const piece = (typeof chunk === 'string' ? Buffer.from(chunk) : (chunk as Buffer)).subarray(0, BODY_LIMIT - size)
+    const piece = (typeof chunk === 'string' ? Buffer.from(chunk) : (chunk as Buffer)).subarray(0, limit - size)
     chunks.push(piece)
     size += piece.byteLength
-    if (size >= BODY_LIMIT) break
+    if (size >= limit) break
   }
   return Buffer.concat(chunks).toString('utf8')
 }
@@ -81,6 +82,48 @@ function zeroExDevProxy(env: Record<string, string>): Plugin {
         res.statusCode = response.status
         response.headers.forEach((value, key) => res.setHeader(key, value))
         res.end(await response.text())
+      })
+    },
+  }
+}
+
+/**
+ * Dev-only stand-in for the Worker's keyed RPC and NFT index (api/_lib/rpc.ts). RPC_URL_<chainId> and ALCHEMY_API_KEY
+ * from the shell or app/.env.local (no VITE_ prefix, never bundled). Unset = the page uses public RPCs, as in production.
+ */
+function rpcDevProxy(env: Record<string, string>): Plugin {
+  const pick = (name: string) => process.env[name] || env[name]
+  const guards = { sameOrigin, clientKey, limiter: createRateLimiter({ capacity: 600, perSecond: 20 }) }
+  const send = async (res: ServerResponse, response: Response) => {
+    res.statusCode = response.status
+    response.headers.forEach((value, key) => res.setHeader(key, value))
+    res.end(await response.text())
+  }
+  return {
+    name: 'miya-rpc-dev-proxy',
+    configureServer(server) {
+      server.middlewares.use(RPC_PREFIX, async (req, res) => {
+        const body = await devBody(req, res, RPC_BODY_LIMIT)
+        if (body === undefined) return
+        const response = await handleRpcRequest(
+          {
+            method: req.method || 'GET',
+            url: `http://${devHost(req)}${RPC_PREFIX}${req.url || ''}`,
+            headers: devHeaders(req),
+            body: req.method === 'POST' ? body : undefined,
+          },
+          { RPC_URL_1: pick('RPC_URL_1'), RPC_URL_11155111: pick('RPC_URL_11155111'), RPC_URL_4663: pick('RPC_URL_4663') },
+          guards
+        )
+        await send(res, response)
+      })
+      server.middlewares.use(NFT_PREFIX, async (req, res) => {
+        const response = await handleNftRequest(
+          { method: req.method || 'GET', url: `http://${devHost(req)}${NFT_PREFIX}${req.url || ''}`, headers: devHeaders(req) },
+          { ALCHEMY_API_KEY: pick('ALCHEMY_API_KEY') },
+          guards
+        )
+        await send(res, response)
       })
     },
   }
@@ -238,6 +281,7 @@ function publicAccessDevProxy(): Plugin {
 export default defineConfig(({ mode }) => ({
   base: '/',
   plugins: [
+    rpcDevProxy(loadEnv(mode, __dirname, ['RPC_URL_', 'ALCHEMY_API_KEY'])),
     zeroExDevProxy(loadEnv(mode, __dirname, ['ZEROX_'])),
     openSeaDevProxy(loadEnv(mode, __dirname, ['OPENSEA_'])),
     stationDevProxy(),

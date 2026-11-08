@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 
-import { setPlaying as tellScreensaver } from '@/desktop/screensaver/playing'
+import { onSoundTaken, setPlaying as tellScreensaver } from '@/desktop/screensaver/playing'
 import { classifyChannels, safeUri } from '@/music/audio'
 import type { EqState } from '@/music/eq'
 import { clampBalance, dbToGain, effectiveGains, EQ_BANDS, sanitizeEq } from '@/music/eq'
@@ -637,6 +637,8 @@ export default function RadioProvider({ children }: { children: ReactNode }) {
   }, [eq, balance])
 
   useEffect(() => tellScreensaver('radio', playing), [playing])
+  // One owner of sound: miyaTV or the Drop Music studio starting pauses the radio. It resumes only when pressed.
+  useEffect(() => onSoundTaken('radio', pause), [pause])
 
   const getAnalyser = useCallback(() => (usingFx ? analyserRef.current : null), [usingFx])
 

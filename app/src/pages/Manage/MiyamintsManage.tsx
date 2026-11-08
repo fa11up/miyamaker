@@ -19,7 +19,7 @@ import { useVaultInfo } from '@/miyamints/useMiyamints'
 import { txWords, useTx } from '@/miyamints/useTx'
 import { color, font, space, text } from '@/theme/tokens'
 
-import { cappedNote, dropWaiting, editionsWaiting } from './payout'
+import { cappedNote, dropWaiting, editionTotals, editionsWaiting, TOTALS_CAP } from './payout'
 
 /** Parked cuts ERC721DropInstance.withdraw() leaves out of the payout (not in the shared drop ABI). */
 const dropPendingAbi = parseAbi([
@@ -615,6 +615,18 @@ export default function MiyamintsManage({
     })),
     query: { enabled: kind === 'editions' && !!editionIds.data },
   })
+  // Every edition (up to TOTALS_CAP) for the overview's totals: the table's page is not the whole collection.
+  const allEditions = useReadContracts({
+    allowFailure: true,
+    contracts: ((editionIds.data as readonly bigint[] | undefined) || []).slice(0, TOTALS_CAP).map((id) => ({
+      address,
+      abi: erc1155InstanceAbi,
+      functionName: 'getEdition' as const,
+      args: [id] as const,
+      chainId,
+    })),
+    query: { enabled: kind === 'editions' && !!editionIds.data },
+  })
   const pieceCount = kind === 'auction' ? Number((auctionReads.data?.[0]?.result as number | undefined) ?? 1) - 1 : 0
   const pieces = useReadContracts({
     allowFailure: true,
@@ -645,6 +657,7 @@ export default function MiyamintsManage({
     editionReads.refetch()
     editionIds.refetch()
     editions.refetch()
+    allEditions.refetch()
     pieces.refetch()
     balance.refetch()
     dropPending.refetch()
@@ -677,18 +690,14 @@ export default function MiyamintsManage({
   }
   const ps = (pieces.data || []).map((p) => p.result as Piece | undefined).filter(Boolean) as Piece[]
 
+  const edTotals = editionTotals(
+    allEditions.data?.map((e) => (e.status === 'success' ? (e.result as Ed) : undefined)),
+    (editionIds.data as readonly bigint[] | undefined)?.length
+  )
   const minted =
-    kind === 'drop'
-      ? r<bigint>(dropReads, 0)
-      : kind === 'auction'
-      ? BigInt(pieceCount)
-      : eds.reduce((s, e) => s + e.minted, 0n)
-  const supply =
-    kind === 'drop'
-      ? BigInt(r<number>(dropReads, 1) ?? 0)
-      : kind === 'editions' && eds.length && !eds.some((e) => e.supply === 0n)
-      ? eds.reduce((s, e) => s + e.supply, 0n)
-      : undefined
+    kind === 'drop' ? r<bigint>(dropReads, 0) : kind === 'auction' ? BigInt(pieceCount) : edTotals.minted
+  const supply = kind === 'drop' ? BigInt(r<number>(dropReads, 1) ?? 0) : kind === 'editions' ? edTotals.supply : undefined
+  const soldFailed = kind === 'editions' && (!!editionIds.error || (!!allEditions.data && minted === undefined))
 
   // What withdraw() would really pay; undefined when any read behind it failed.
   const waiting =
@@ -726,7 +735,13 @@ export default function MiyamintsManage({
     <Stack>
       <Stats>
         <dt>Sold</dt>
-        <dd>{progressLabel(kind, minted, supply) || '…'}</dd>
+        <dd>
+          {soldFailed
+            ? "Couldn't check"
+            : progressLabel(kind, minted, supply)
+            ? `${progressLabel(kind, minted, supply)}${kind === 'editions' && edTotals.scope ? ` (${edTotals.scope})` : ''}`
+            : '…'}
+        </dd>
         {kind !== 'auction' && (
           <>
             <dt>Sales waiting</dt>

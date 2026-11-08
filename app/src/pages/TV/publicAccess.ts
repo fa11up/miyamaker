@@ -1,4 +1,5 @@
 import type { Tape } from '../../../api/_lib/publicaccess'
+import { readTapeList } from './feeds'
 import { NOT_SENT, PUBLIC_ACCESS_PATH, reviewMessage, submitMessage, TapeRefusal } from '../../../api/_lib/publicaccess'
 
 export type PublicAccessList = { tapes: Tape[]; pending: Tape[]; admins: string[] }
@@ -15,7 +16,8 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
 const post = <T>(path: string, body: unknown) =>
   call<T>(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
 
-export const fetchTapes = () => call<PublicAccessList>('')
+/** Checked for shape: a broken answer gives empty lists, never a crash in the line-up. */
+export const fetchTapes = async (): Promise<PublicAccessList> => readTapeList(await call<unknown>(''))
 
 export async function submitTape(videoId: string, wallet: string, sign: Sign) {
   const at = Date.now()

@@ -6,7 +6,7 @@ import { formatDuration } from '@/music/audio'
 import { bevel, color, font, space, text } from '@/theme/tokens'
 
 import StageViz from './StageViz'
-import type { StudioPlayer } from './useStudioPlayer'
+import type { Peaks, StudioPlayer } from './useStudioPlayer'
 import Waveform from './Waveform'
 import { brushedSilver, gel, y2k } from './y2k'
 
@@ -689,7 +689,7 @@ export type StageProps = {
   trackLabel?: string
   player: StudioPlayer
   analysable: boolean
-  peaks?: number[]
+  peaks?: Peaks
   duration?: number
   busy: boolean
   onChooseTrack: () => void

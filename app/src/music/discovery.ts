@@ -9,6 +9,7 @@ import { resolveUri } from '@/utils/resolveUri'
 import { erc1155FactoryAbi, erc1155InstanceAbi, miyaRegistryAbi, tokenMetadataAbi } from './abi'
 import type { ParsedMusic } from './audio'
 import { decodeDataJson, musicTrack, parseMusicMetadata, safeUri } from './audio'
+import { readCappedJson } from './cappedJson'
 import { musicConfig } from './config'
 import { knownCollections } from './known'
 import type { ScanResult } from './scan'
@@ -56,9 +57,8 @@ export async function fetchMetadata(uri: string): Promise<unknown> {
       referrerPolicy: 'no-referrer',
     })
     if (!res.ok) return undefined
-    const text = await res.text()
-    if (text.length > MAX_JSON_BYTES) return undefined
-    return JSON.parse(text)
+    // Capped while reading, not after: a huge or endless body never sits in memory whole.
+    return await readCappedJson(res, MAX_JSON_BYTES)
   } catch {
     return undefined
   } finally {

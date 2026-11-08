@@ -430,6 +430,31 @@ contract ERC721DropTest is Test {
 
     /// Audit Low: per-wallet counters belong to a phase list; a new list (setPhases) starts them fresh rather
     /// than applying old phase-0 mints to whatever the new phase 0 is.
+    /// Phase 0 is [t, t + 1 day); phase 1 is [t + 1 day, forever).
+    function test_isPhaseActive_trueInsideWindow() public {
+        ERC721DropInstance d = _drop(100, 1000);
+        uint256 t = block.timestamp;
+        assertTrue(d.isPhaseActive(0), "phase 0 active at its start (inclusive)");
+        vm.warp(t + 1 days - 1);
+        assertTrue(d.isPhaseActive(0), "phase 0 active on its last second");
+        vm.warp(t + 1 days);
+        assertTrue(d.isPhaseActive(1), "phase 1 active at its start");
+        vm.warp(t + 365 days);
+        assertTrue(d.isPhaseActive(1), "end == 0 never closes");
+    }
+
+    function test_isPhaseActive_falseBeforeStartAtEndAndOutOfRange() public {
+        ERC721DropInstance d = _drop(100, 1000);
+        uint256 t = block.timestamp;
+        assertFalse(d.isPhaseActive(1), "phase 1 before its start");
+        vm.warp(t + 1 days);
+        assertFalse(d.isPhaseActive(0), "phase 0 at its end (exclusive)");
+        vm.warp(t + 2 days);
+        assertFalse(d.isPhaseActive(0), "phase 0 after its end");
+        assertFalse(d.isPhaseActive(2), "out-of-range id");
+        assertFalse(d.isPhaseActive(type(uint256).max), "huge id");
+    }
+
     function test_setPhasesResetsWalletCounters() public {
         ERC721DropInstance d = _drop(100, 1000);
         vm.prank(alice);
