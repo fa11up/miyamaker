@@ -508,7 +508,17 @@ function TokenChooser({
 const acceptedOf = (form: LaunchForm, tokens: readonly PayToken[]) =>
   tokens.filter((t) => form.tokens.some((c) => sameToken(c, t.address)))
 
-export function SaleStep({ form, set, errors, tokens: offered }: StepProps & { tokens: readonly PayToken[] }) {
+export function SaleStep({
+  form,
+  set,
+  errors,
+  tokens: offered,
+  note,
+}: StepProps & {
+  tokens: readonly PayToken[]
+  /** Something changed in the draft on its own (a token miya dropped was taken off): said at the top. */
+  note?: string
+}) {
   const [pickingFolder, setPickingFolder] = useState(false)
   const input = (k: keyof LaunchForm) => ({
     value: form[k] as string,
@@ -526,6 +536,11 @@ export function SaleStep({ form, set, errors, tokens: offered }: StepProps & { t
       form.phases.map((p, n) => (n === i ? { ...p, prices: { ...p.prices, [token]: v } } : p)),
     )
   const accepted = acceptedOf(form, offered)
+  const noted = note ? (
+    <Well role="status" style={{ padding: space[2] }}>
+      <small>{note}</small>
+    </Well>
+  ) : null
   const chooser = (
     <TokenChooser
       tokens={offered}
@@ -541,6 +556,7 @@ export function SaleStep({ form, set, errors, tokens: offered }: StepProps & { t
     return (
       <Stack>
         <Lead>Set how the bidding works. The auction starts as soon as you create it.</Lead>
+        {noted}
         {offered.length > 1 && (
           <Field>
             Bids are in
@@ -604,6 +620,7 @@ export function SaleStep({ form, set, errors, tokens: offered }: StepProps & { t
     return (
       <Stack>
         <Lead>Set the price and how many copies can be bought.</Lead>
+        {noted}
         {chooser}
         <Row2>
           {accepted.map((t) => (
@@ -641,6 +658,7 @@ export function SaleStep({ form, set, errors, tokens: offered }: StepProps & { t
   return (
     <Stack>
       <Lead>Set how many pieces there are, the price and when the sale runs.</Lead>
+        {noted}
       {chooser}
       <Row2>
         <Field>
@@ -896,6 +914,10 @@ export function AlignStep({
         there for good. The pool&apos;s trading fees are paid in INFER and IMD, and you can claim your part in Manager.
         {protocolFeeBps !== undefined && minAlignmentBps !== undefined ? ` miya keeps ${protocolFeeBps / 100}%.` : ''}
       </Lead>
+      <small style={{ color: color.inkMuted }}>
+        A vault cut below the vault&apos;s minimum is parked until the next sale, or until it is sent from Manager. ETH
+        payouts arrive as WETH if your wallet can&apos;t take ETH.
+      </small>
       <div role="radiogroup" aria-label="Community vault" style={{ display: 'grid', gap: space[2] }}>
         <VaultCard
           type="button"

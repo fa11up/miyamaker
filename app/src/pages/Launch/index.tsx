@@ -30,7 +30,15 @@ import {
   validateStep,
   whenWords,
 } from '@/miyamints/launch'
-import { isEth, parseAccepted, parseTokenAmount, payTokens, tokenExact, tokenLabel } from '@/miyamints/tokens'
+import {
+  dropDelisted,
+  isEth,
+  parseAccepted,
+  parseTokenAmount,
+  payTokens,
+  tokenExact,
+  tokenLabel,
+} from '@/miyamints/tokens'
 import { useWalletToken } from '@/miyamints/usePay'
 import { pctLabel } from '@/miyamints/split'
 import { useLaunchChain, useRegistryRules, useVaultInfo } from '@/miyamints/useMiyamints'
@@ -370,7 +378,8 @@ export default function LaunchPage() {
     chainId: net.chainId,
     query: { enabled: !!net.addresses.registry && net.chainId === 1, staleTime: 5 * 60_000 },
   })
-  const offeredTokens = payTokens(net.chainId, allowlist.data as readonly string[] | undefined)
+  const allowed = allowlist.data as readonly string[] | undefined
+  const offeredTokens = payTokens(net.chainId, allowed)
 
   // /launch?type=drop|auction|editions (miyanet's "Launch your own") opens with that kind picked.
   const location = useLocation()
@@ -383,6 +392,15 @@ export default function LaunchPage() {
     if (LAUNCH_TYPES.includes(askedType as LaunchType) && !form.name.trim())
       setForm((f) => ({ ...f, type: askedType as LaunchType }))
   }, [askedType])
+  // A draft (or a resumed launch) can name a token the registry has dropped since: it is taken off, and said so.
+  const [delisted, setDelisted] = useState<string>()
+  useEffect(() => {
+    if (!allowed) return
+    const next = dropDelisted(form, net.chainId, allowed)
+    if (!next.removed.length) return
+    setForm((f) => ({ ...f, tokens: next.tokens, currency: next.currency }))
+    setDelisted(`miya no longer accepts ${next.removed.join(', ')}, so it was taken off this launch. Check the prices.`)
+  }, [allowed, net.chainId, form.tokens.join(','), form.currency])
   const [stepIdx, setStepIdx] = useState(0)
   const [shown, setShown] = useState<Partial<Record<StepKey, boolean>>>({})
   const [image, setImage] = useState<Pick>()
@@ -448,6 +466,7 @@ export default function LaunchPage() {
   const ctx = {
     now,
     chainId: net.chainId,
+    allowed,
     minAlignmentBps: minBps,
     protocolFeeBps: feeBps,
     rulesFailed: rules.failed,
@@ -596,7 +615,7 @@ export default function LaunchPage() {
       FREE_BYTES
     )
   )
-  const currency = form.type === 'auction' ? auctionCurrency(form, net.chainId) : undefined
+  const currency = form.type === 'auction' ? auctionCurrency(form, net.chainId, allowed) : undefined
   const reserve = currency ? parseTokenAmount(form.reserve, currency) : undefined
   const deposit = currency && reserve?.ok ? tokenExact(reserve.amount, currency) : ''
   const erc20Deposit = !!currency && !isEth(currency.address)
@@ -604,7 +623,7 @@ export default function LaunchPage() {
   const depositWallet = useWalletToken(net.chainId, erc20Deposit ? currency?.address : undefined, address)
   const shortOfDeposit =
     erc20Deposit && reserve?.ok && depositWallet.balance !== undefined && depositWallet.balance < reserve.amount
-  const acceptedTokens = parseAccepted(form.tokens, net.chainId)
+  const acceptedTokens = parseAccepted(form.tokens, net.chainId, allowed)
   const hasDraft = !launch.result && draftHasData(form, !!image || !!audio)
   const guard = useCloseGuard({
     draft: hasDraft,
@@ -863,7 +882,7 @@ export default function LaunchPage() {
                     />
                   )}
                   {step === 'sale' && (
-                    <SaleStep form={form} set={set} errors={shownErrors} tokens={offeredTokens} />
+                    <SaleStep form={form} set={set} errors={shownErrors} tokens={offeredTokens} note={delisted} />
                   )}
                   {step === 'align' && (
                     <AlignStep

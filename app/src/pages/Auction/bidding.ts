@@ -228,17 +228,59 @@ export type BidEnding = {
   words: string
 }
 
-/** What a finished bid means, from useTx's state (TxEndError flags from txOutcome.ts). Undefined while it runs. */
+/**
+ * What a finished bid means, from useTx's state (TxEndError flags from txOutcome.ts). Undefined while it runs. A check
+ * the screen made itself before the wallet (useTx.refuse: the lot ended, the minimum moved) keeps its own words.
+ */
 export function bidEnding(
-  tx: { phase: string; stage?: string; error?: unknown },
+  tx: { phase: string; stage?: string; error?: unknown; message?: string },
   chainName = 'Ethereum',
   symbol = 'ETH',
 ): BidEnding | undefined {
   if (tx.phase === 'done') return { kind: 'placed', words: 'Your bid went through.' }
   if (tx.phase !== 'error') return undefined
-  const flags = (tx.error || {}) as { unconfirmed?: boolean; timedOut?: boolean; cancelled?: boolean; reverted?: boolean }
+  const flags = (tx.error || {}) as {
+    unconfirmed?: boolean
+    timedOut?: boolean
+    cancelled?: boolean
+    reverted?: boolean
+    precheck?: boolean
+  }
+  if (flags.precheck && tx.message) return { kind: 'refused', words: tx.message }
   if (flags.unconfirmed) return { kind: 'unconfirmed', words: flags.timedOut ? BID_SLOW : BID_UNCONFIRMED }
   if (flags.cancelled) return { kind: 'cancelled', words: BID_CANCELLED }
   if (flags.reverted) return { kind: 'reverted', words: BID_REVERTED }
   return { kind: 'refused', words: bidErrorWords(tx.error, { checked: tx.stage === 'check', chainName, symbol }) }
+}
+
+export const APPROVAL_FAILED = "The approval didn't go through. No bid was sent."
+export const APPROVAL_UNCONFIRMED = "The approval isn't confirmed yet. No bid was sent. Check your wallet's activity before you bid again."
+export const APPROVAL_CANCELLED = 'You cancelled the approval in your wallet. No bid was sent. You only paid the network fee.'
+const APPROVAL_REJECTED = 'You cancelled the approval in your wallet. No bid was sent.'
+
+/**
+ * How the approval before an ERC-20 bid ended, in its own words: whatever happened to it, the bid itself was never
+ * sent. Undefined unless it failed (its success is only step one). Unconfirmed still holds the screen until Start over,
+ * since the approval may yet land.
+ */
+export function approvalEnding(
+  tx: { phase: string; stage?: string; error?: unknown },
+  symbol = 'ETH',
+): BidEnding | undefined {
+  if (tx.phase !== 'error') return undefined
+  const flags = (tx.error || {}) as { unconfirmed?: boolean; cancelled?: boolean; reverted?: boolean }
+  if (flags.unconfirmed) return { kind: 'unconfirmed', words: APPROVAL_UNCONFIRMED }
+  if (flags.cancelled) return { kind: 'cancelled', words: APPROVAL_CANCELLED }
+  if (flags.reverted) return { kind: 'reverted', words: `${APPROVAL_FAILED} You only paid the network fee.` }
+  const text = errorText(tx.error)
+  if (/user rejected|user denied|rejected the request|denied transaction/i.test(text)) {
+    return { kind: 'refused', words: APPROVAL_REJECTED }
+  }
+  return {
+    kind: 'refused',
+    words:
+      tx.stage === 'check'
+        ? `${APPROVAL_FAILED} No ${symbol} left your wallet. Try again.`
+        : `${APPROVAL_FAILED} Check your wallet's activity, then try again.`,
+  }
 }

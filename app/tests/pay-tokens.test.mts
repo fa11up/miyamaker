@@ -7,11 +7,15 @@ import { parseEther, zeroAddress } from 'viem'
 import {
   approveWords,
   buildPrices,
+  chainSymbol,
   claimArgs,
   CLAIM_MODE,
+  dropDelisted,
   feesWords,
   hasFees,
+  hasFeesFor,
   knownToken,
+  MAX_SYMBOL,
   parseAccepted,
   parseTokenAmount,
   payPlan,
@@ -97,10 +101,13 @@ test('pay plan: ETH sends value; an ERC-20 sends none and approves exactly the c
   assert.match(approveWords(25_000_000n, { address: USDC, ...usdc }), /exactly 25 USDC, and no more/)
 })
 
-test('claim modes: TOKENS and REINVEST need no floor; ETH is refused without a real quoted one', () => {
+test('claim modes: TOKENS needs no floor; ETH and REINVEST are refused without a real quoted one', () => {
   assert.deepEqual(CLAIM_MODE, { TOKENS: 0, ETH: 1, REINVEST: 2 })
   assert.deepEqual(claimArgs('TOKENS'), { ok: true, args: [0, 0n] })
-  assert.deepEqual(claimArgs('REINVEST'), { ok: true, args: [2, 0n] })
+  // REINVEST's second argument is the least shares to mint, and its balancing swap has no price limit: never 0.
+  assert.equal(claimArgs('REINVEST').ok, false)
+  assert.match((claimArgs('REINVEST', 0n) as { error: string }).error, /live price quote/)
+  assert.deepEqual(claimArgs('REINVEST', 7n), { ok: true, args: [2, 7n] })
   assert.equal(claimArgs('ETH').ok, false)
   assert.equal(claimArgs('ETH', 0n).ok, false)
   assert.deepEqual(claimArgs('ETH', 123n), { ok: true, args: [1, 123n] })
@@ -108,4 +115,39 @@ test('claim modes: TOKENS and REINVEST need no floor; ETH is refused without a r
   assert.equal(feesWords(fees), '12.5 INFER + 3 IMD')
   assert.equal(feesWords({ ...fees, eth: parseEther('0.001') }), '12.5 INFER + 3 IMD + 0.001 ETH')
   assert.equal(hasFees({ infer: 0n, imd: 0n, eth: 0n }), false)
+  // Only ETH dust ready: something to take, nothing to reinvest (REINVEST puts back INFER and IMD only).
+  const dust = { infer: 0n, imd: 0n, eth: 5n }
+  assert.equal(hasFeesFor('TOKENS', dust), true)
+  assert.equal(hasFeesFor('REINVEST', dust), false)
+  assert.equal(hasFeesFor('REINVEST', { ...dust, imd: 1n }), true)
+})
+
+test('a symbol read from chain is cut short, cleaned and marked; table symbols are not', () => {
+  assert.equal(chainSymbol('FOO'), 'FOO?')
+  assert.equal(chainSymbol('USDC'), 'USDC?', 'a lookalike never passes for the real one')
+  assert.equal(chainSymbol('A'.repeat(40)), `${'A'.repeat(11)}…?`)
+  assert.equal(chainSymbol('US\u202eDC\u0000'), 'USDC?')
+  assert.equal(chainSymbol(''), 'token?')
+  assert.ok(chainSymbol('🦄'.repeat(20)).length <= MAX_SYMBOL * 2 + 2, 'cut by character, not UTF-16 unit')
+  assert.equal(knownToken(1, USDC)?.fromChain, undefined)
+})
+
+test('a launch draft loses tokens the registry dropped, with their names, and keeps something to pay with', () => {
+  const allowed = [USDC.toLowerCase()]
+  assert.deepEqual(parseAccepted([ETH, USDC.toLowerCase()], 1, allowed).ok, true)
+  assert.match(
+    (parseAccepted([ETH, WBTC.toLowerCase()], 1, allowed) as { error: string }).error,
+    /no longer accepts WBTC/
+  )
+  assert.deepEqual(dropDelisted({ tokens: [ETH, WBTC.toLowerCase()], currency: ETH }, 1, allowed), {
+    tokens: [ETH],
+    currency: ETH,
+    removed: ['WBTC'],
+  })
+  assert.deepEqual(dropDelisted({ tokens: [WBTC.toLowerCase()], currency: WBTC.toLowerCase() }, 1, allowed), {
+    tokens: [ETH],
+    currency: ETH,
+    removed: ['WBTC'],
+  })
+  assert.deepEqual(dropDelisted({ tokens: [ETH, USDC.toLowerCase()], currency: USDC.toLowerCase() }, 1, allowed).removed, [])
 })

@@ -10,7 +10,8 @@ import { formatUnits, getAddress, isAddress, parseUnits, zeroAddress } from 'vie
 
 export const ETH: Address = zeroAddress
 
-export type PayToken = { address: Address; symbol: string; decimals: number }
+/** `fromChain`: the symbol was read from the token itself, not the table below, so it is only what the token says. */
+export type PayToken = { address: Address; symbol: string; decimals: number; fromChain?: boolean }
 
 export const IMD: Address = '0xD34a99Bc0f67aE1bbd63C660e6d0b0dd03E263B7'
 export const INFER: Address = '0x53d0eA0A685220718Dc6a0a6e4617194C6F37921'
@@ -50,6 +51,25 @@ export const sameToken = (a: string, b: string) => a.toLowerCase() === b.toLower
 export function knownToken(chainId: number, token: string): PayToken | undefined {
   if (isEth(token)) return ETH_TOKEN
   return (chainId === 1 ? MAINNET : []).find((t) => sameToken(t.address, token))
+}
+
+/** Longest symbol shown for a token read from chain, before the "?" that marks it. */
+export const MAX_SYMBOL = 12
+
+/**
+ * A symbol read from a token contract, made safe to show: control and direction-changing characters removed, at most
+ * MAX_SYMBOL characters, and a "?" after it so it never passes for one of the tokens in the table above (anyone can
+ * deploy a token that calls itself USDC).
+ */
+export function chainSymbol(raw: unknown): string {
+  const chars = Array.from(
+    String(raw ?? '')
+      // eslint-disable-next-line no-control-regex
+      .replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]/g, '')
+      .trim()
+  )
+  const cut = chars.length > MAX_SYMBOL ? `${chars.slice(0, MAX_SYMBOL - 1).join('')}…` : chars.join('')
+  return `${cut || 'token'}?`
 }
 
 // ── amounts ──────────────────────────────────────────────────────────────────
@@ -112,14 +132,45 @@ export type PriceInputs = Record<string, string>
  * The accepted-token choice in a launch form: at least one, at most MAX_TOKENS, each one we know on this chain.
  * Returns the checksummed addresses in the order of `payTokens`.
  */
-export function parseAccepted(chosen: readonly string[], chainId: number): Result<{ tokens: PayToken[] }> {
-  const offered = payTokens(chainId)
+export function parseAccepted(
+  chosen: readonly string[],
+  chainId: number,
+  allowed?: readonly string[]
+): Result<{ tokens: PayToken[] }> {
+  const offered = payTokens(chainId, allowed)
   const set = new Set(chosen.map((c) => c.toLowerCase()))
   const tokens = offered.filter((t) => set.has(t.address.toLowerCase()))
+  const dropped = payTokens(chainId).filter((t) => set.has(t.address.toLowerCase()) && !tokens.includes(t))
+  if (dropped.length) {
+    return { ok: false, error: `miya no longer accepts ${dropped.map((t) => t.symbol).join(', ')}. Take it off the list.` }
+  }
   if (!tokens.length) return { ok: false, error: 'Pick at least one token buyers can pay with.' }
   if (tokens.length > MAX_TOKENS) return { ok: false, error: `At most ${MAX_TOKENS} tokens.` }
   if (tokens.length !== set.size) return { ok: false, error: 'One of the tokens is not available on this network.' }
   return { ok: true, tokens }
+}
+
+/**
+ * A launch draft against the registry's allowlist (`allowed`, paymentTokens()): tokens it no longer lists are taken
+ * off the accepted list (ETH stays, and is put back if nothing else is left) and a delisted auction currency goes back
+ * to ETH. `removed` names what was taken off, for a note on screen; empty when nothing changed.
+ */
+export function dropDelisted(
+  draft: { tokens: readonly string[]; currency: string },
+  chainId: number,
+  allowed: readonly string[]
+): { tokens: string[]; currency: string; removed: string[] } {
+  const ok = (t: string) => payTokens(chainId, allowed).some((p) => sameToken(p.address, t))
+  const name = (t: string) => knownToken(chainId, t)?.symbol ?? `${t.slice(0, 6)}…`
+  const removed = draft.tokens.filter((t) => !ok(t)).map(name)
+  let tokens = draft.tokens.filter(ok)
+  if (!tokens.length && removed.length) tokens = [ETH]
+  let currency = draft.currency || ETH
+  if (!ok(currency)) {
+    if (!removed.includes(name(currency))) removed.push(name(currency))
+    currency = ETH
+  }
+  return { tokens, currency, removed }
 }
 
 /**
@@ -191,17 +242,23 @@ export const CLAIM_MODE = { TOKENS: 0, ETH: 1, REINVEST: 2 } as const
 export type ClaimModeName = keyof typeof CLAIM_MODE
 
 /**
- * Args for `claimVaultFees(mode, minEthOut)`. TOKENS and REINVEST take no floor (0). ETH needs a real quoted floor:
- * without one (no quote, or 0) the claim is refused here rather than sent with a floor that protects nothing.
+ * Args for `claimVaultFees(mode, floor)`. TOKENS takes no floor (0). The other two need a real quoted floor, and
+ * without one (no quote, or 0) the claim is refused here rather than sent with a floor that protects nothing: ETH's is
+ * the least ETH out of its swap; REINVEST's is the least vault shares minted, and its balancing swap has no price limit
+ * of its own, so a 0 floor would let a moved pool take the fees for almost nothing.
  */
-export function claimArgs(mode: ClaimModeName, minEthOut?: bigint): Result<{ args: readonly [number, bigint] }> {
-  if (mode === 'ETH') {
-    if (!minEthOut || minEthOut <= 0n) {
-      return { ok: false, error: 'Taking fees as ETH needs a live price quote, which is not available yet.' }
+export function claimArgs(mode: ClaimModeName, floor?: bigint): Result<{ args: readonly [number, bigint] }> {
+  if (mode === 'TOKENS') return { ok: true, args: [CLAIM_MODE.TOKENS, 0n] as const }
+  if (!floor || floor <= 0n) {
+    return {
+      ok: false,
+      error:
+        mode === 'ETH'
+          ? 'Taking fees as ETH needs a live price quote, which is not available yet.'
+          : 'Reinvesting fees needs a live price quote, which is not available yet.',
     }
-    return { ok: true, args: [CLAIM_MODE.ETH, minEthOut] as const }
   }
-  return { ok: true, args: [CLAIM_MODE[mode], 0n] as const }
+  return { ok: true, args: [CLAIM_MODE[mode], floor] as const }
 }
 
 /** The vault's claimable fees, from `claimable(benefactor) -> (infer, imd, eth)`. */
@@ -215,3 +272,7 @@ export function feesWords(c: { infer: bigint; imd: bigint; eth: bigint }): strin
 }
 
 export const hasFees = (c: { infer: bigint; imd: bigint; eth: bigint }) => c.infer > 0n || c.imd > 0n || c.eth > 0n
+
+/** Fees `mode` can claim: REINVEST only puts INFER and IMD back, so ETH alone is nothing to reinvest. */
+export const hasFeesFor = (mode: ClaimModeName, c: { infer: bigint; imd: bigint; eth: bigint }) =>
+  mode === 'REINVEST' ? c.infer > 0n || c.imd > 0n : hasFees(c)

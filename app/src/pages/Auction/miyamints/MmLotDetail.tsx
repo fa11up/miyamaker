@@ -10,10 +10,11 @@ import NftImage from '@/components/NftImage'
 import { explorerUrl } from '@/config/wagmi'
 import { shortAddress } from '@/desktop/mints/dedupe'
 import { plainTxError, TX_CHECK_WORDS } from '@/miyamints/errors'
+import { bidGate, COULDNT_CHECK_WORDS } from '@/miyamints/precheck'
 import { approveWords, isEth } from '@/miyamints/tokens'
 import { usePay, useTokenInfo, useWalletToken } from '@/miyamints/usePay'
 import { useTx } from '@/miyamints/useTx'
-import { bidEnding, bidStanding, checkBid } from '@/pages/Auction/bidding'
+import { approvalEnding, bidEnding, bidStanding, checkBid } from '@/pages/Auction/bidding'
 import ImageWrapper from '@/pages/Auction/ImageWrapper'
 import BidContainer, { StuckBid } from '@/pages/Auction/ProductDetail/BidContainer'
 import { useToken } from '@/pages/Auction/useToken'
@@ -380,12 +381,22 @@ export default function MmLotDetail({
   const canSend = isConnected && chain?.id === house.chainId
 
   const bid = usePay()
-  // The approval landing is not the bid landing: only the bid's own ending (or a failed approval) is reported.
+  // The approval landing is not the bid landing: only the bid's own ending (or a failed approval, in its own words) is
+  // reported.
   const ending =
-    bid.tx.id === 'bid' || (bid.tx.id === 'bid:approve' && bid.tx.phase === 'error')
+    bid.tx.id === 'bid'
       ? bidEnding(bid.tx, house.chainName, words.symbol)
-      : undefined
-  const busy = bid.tx.phase === 'wallet' ? 'wallet' : bid.tx.phase === 'pending' ? 'mining' : undefined
+      : bid.tx.id === 'bid:approve'
+        ? approvalEnding(bid.tx, words.symbol)
+        : undefined
+  const busy =
+    bid.step === 'check'
+      ? 'checking'
+      : bid.tx.phase === 'wallet'
+        ? 'wallet'
+        : bid.tx.phase === 'pending'
+          ? 'mining'
+          : undefined
   const stuck = ending?.kind === 'unconfirmed'
   const [actionBusy, setActionBusy] = useState(false)
   useEffect(() => onBusy?.(!!busy || stuck || actionBusy), [busy, stuck, actionBusy])
@@ -446,6 +457,16 @@ export default function MmLotDetail({
         args: [tokenId, amount, cleanBidMessage(bidMessage)],
         value: eth ? amount : 0n,
         chainId: house.chainId,
+      },
+      // The lot read again first: someone may have outbid, or it may have ended, since the screen's last read.
+      prepare: async () => {
+        const r = await read.refetch()
+        const fresh = r.data?.lot
+        if (r.isError || !fresh) return { ok: false, error: COULDNT_CHECK_WORDS }
+        const stop = bidGate(fresh, minimumNextBid(fresh, house.bidIncrement), amount, Math.floor(Date.now() / 1000), (v) =>
+          unitAmount(v, words)
+        )
+        return stop ? { ok: false, error: stop } : { ok: true }
       },
     })
   }

@@ -1,16 +1,20 @@
 import { useQuery } from '@tanstack/react-query'
+import { readContract } from '@wagmi/core'
 import PlaceholderImage from 'assets/explorer/sample/collections.jpeg'
 import { useEffect, useRef, useState } from 'react'
 import styled from 'styled-components/macro'
 import { isAddress, zeroHash } from 'viem'
 import { useAccount } from 'wagmi'
 
+import { revertName } from '@/miyamints/errors'
+import { editionGate, freshCost, priceRoseWords } from '@/miyamints/precheck'
 import { approveWords, isEth, payPlan, pickToken, sameToken, tokenLabel } from '@/miyamints/tokens'
 import { TX_CANCELLED_WORDS, TX_UNCONFIRMED_WORDS } from '@/miyamints/txOutcome'
-import { usePay, useTokenInfo } from '@/miyamints/usePay'
+import { readTokenGate, usePay, useTokenInfo } from '@/miyamints/usePay'
 import { ConnectedButton } from '@/components/Button'
 import { Skeleton, StatusBox } from '@/components/Retro'
-import { explorerUrl } from '@/config/wagmi'
+import type { SupportedChainId } from '@/config/wagmi'
+import { explorerUrl, wagmiConfig } from '@/config/wagmi'
 import { useRadio } from '@/context/RadioProvider'
 import { erc1155InstanceAbi } from '@/music/abi'
 import { formatDuration } from '@/music/audio'
@@ -205,7 +209,8 @@ const Picker = styled.select`
   font-family: inherit;
 `
 
-function MintEdition({ item }: { item: MusicItem }) {
+/** `onStale`: the price or the sale changed on chain, so the list reads again and shows what is true now. */
+function MintEdition({ item, onStale }: { item: MusicItem; onStale: () => void }) {
   const nav = useHandheld()
   const ed = item.edition
   const offered = (ed?.prices || []).map((p) => p.token)
@@ -220,6 +225,13 @@ function MintEdition({ item }: { item: MusicItem }) {
   const unconfirmed = buy.unconfirmed
   const holding = busy || unconfirmed
   useEffect(() => (holding ? nav.hold?.() : undefined), [holding])
+  // The price read just before paying, when it differs from the list's: said on screen while the wallet is open.
+  const [fresh, setFresh] = useState<bigint>()
+  useEffect(() => setFresh(undefined), [picked])
+  // The price went up between the check and the mint (a copy sold in between): read the list again.
+  useEffect(() => {
+    if (tx.phase === 'error' && tx.id === 'mint' && revertName(tx.error) === 'ExceedsMaxCost') onStale()
+  }, [tx.phase, tx.id])
   // Wakes up when the edition opens, so its button doesn't stay on "Not open yet".
   const [now, setNow] = useState(() => Date.now())
   const opensAt = Number(ed?.openTime ?? 0n) * 1000
@@ -237,23 +249,50 @@ function MintEdition({ item }: { item: MusicItem }) {
   const minted = tx.phase === 'done' && tx.id === 'mint'
   const erc20 = !!token && !isEth(token)
   const failed = tx.phase === 'error' && !(tx.error as { cancelled?: boolean } | undefined)?.cancelled
+  const mintCall = (cost: bigint) => {
+    const plan = payPlan(token!, cost)
+    return {
+      address: item.collection,
+      abi: erc1155InstanceAbi,
+      chainId: item.chainId,
+      functionName: 'mint',
+      // amount 1, open gating, no message, maxCost = the cost just read (reverts if the price moved up since)
+      args: [item.tokenId, 1n, zeroHash, '', token, plan.maxCost],
+      value: plan.value,
+    }
+  }
   const mint = () => {
     if (unconfirmed) return buy.reset()
-    if (price === undefined || !token) return undefined
-    const plan = payPlan(token, price)
+    if (price === undefined || !token || !unit) return undefined
+    setFresh(undefined)
+    const read = { address: item.collection, abi: erc1155InstanceAbi, chainId: item.chainId as SupportedChainId }
     return buy.pay('mint', {
       chainId: item.chainId,
       token,
       spender: item.collection,
       amount: price,
-      call: {
-        address: item.collection,
-        abi: erc1155InstanceAbi,
-        chainId: item.chainId,
-        functionName: 'mint',
-        // amount 1, open gating, no message, maxCost = the quoted price (reverts if the price moved up)
-        args: [item.tokenId, 1n, zeroHash, '', token, plan.maxCost],
-        value: plan.value,
+      call: mintCall(price),
+      // Rising-price editions move with every copy sold: the cost, the edition and the token are read again first,
+      // and the fresh cost is what is approved and passed as maxCost.
+      prepare: async () => {
+        const [gate, edition, cost] = await Promise.all([
+          readTokenGate(item.chainId, item.collection, token, unit.symbol),
+          readContract(wagmiConfig, { ...read, functionName: 'getEdition', args: [item.tokenId] }),
+          readContract(wagmiConfig, { ...read, functionName: 'calculateMintCost', args: [item.tokenId, 1n, token] }),
+        ])
+        if (gate) return { ok: false, error: gate }
+        const closed = editionGate(edition, 1n, Math.floor(Date.now() / 1000))
+        if (closed) {
+          onStale()
+          return { ok: false, error: closed }
+        }
+        const f = freshCost(price, cost)
+        if (f.changed) {
+          setFresh(f.amount)
+          onStale()
+        }
+        if (f.rose) return { ok: false, error: priceRoseWords(tokenLabel(f.amount, unit)) }
+        return { ok: true, amount: f.amount, call: mintCall(f.amount) }
       },
     })
   }
@@ -283,7 +322,9 @@ function MintEdition({ item }: { item: MusicItem }) {
         onClick={mint}
       >
         {busy
-          ? buy.step === 'approve'
+          ? buy.step === 'check'
+            ? 'Checking price…'
+            : buy.step === 'approve'
             ? 'Approving…'
             : 'Minting…'
           : minted
@@ -296,9 +337,14 @@ function MintEdition({ item }: { item: MusicItem }) {
           ? 'Not open yet'
           : mintLabel(noPrice ? undefined : price, (amount) => tokenLabel(amount, unit!))}
       </ConnectedButton>
+      {fresh !== undefined && unit && !minted && !failed && (
+        <StatusBox tone="info" role="status" style={{ fontSize: text.xs }}>
+          <span>The price is now {tokenLabel(fresh, unit)}.</span>
+        </StatusBox>
+      )}
       {erc20 && unit && price !== undefined && !minted && !failed && !soldOut && !notOpen && (
         <Sub as="p" style={{ whiteSpace: 'normal' }}>
-          {approveWords(price, unit, 'this edition')}
+          {approveWords(fresh ?? price, unit, 'this edition')}
         </Sub>
       )}
       {tx.phase === 'error' && (tx.error as { cancelled?: boolean } | undefined)?.cancelled && (
@@ -424,7 +470,7 @@ export default function MusicDrops() {
                       Add to radio
                     </Small>
                   </Actions>
-                  <MintEdition item={item} />
+                  <MintEdition item={item} onStale={() => query.refetch()} />
                   <Sub>
                     <a href={`${explorerUrl(item.chainId)}/address/${item.collection}`} target="_blank" rel="noreferrer">
                       {item.collectionName || `${item.collection.slice(0, 6)}…${item.collection.slice(-4)}`}

@@ -360,6 +360,8 @@ export type ValidationContext = {
   now: bigint
   /** The chain the launch goes to: which tokens exist there. */
   chainId: number
+  /** The registry's allowlist (paymentTokens()) once read: a token it dropped can't be picked. */
+  allowed?: readonly string[]
   /** Undefined until the registry has been read: the share can't be checked against a guess. */
   minAlignmentBps?: number
   protocolFeeBps?: number
@@ -413,7 +415,7 @@ export function validateStep(step: StepKey, f: LaunchForm, ctx: ValidationContex
   }
 
   if (step === 'sale') {
-    const accepted = parseAccepted(f.tokens, ctx.chainId)
+    const accepted = parseAccepted(f.tokens, ctx.chainId, ctx.allowed)
     if (f.type !== 'auction' && !accepted.ok) e.tokens = accepted.error
     const tokens = accepted.ok ? accepted.tokens : []
     if (f.type === 'drop') {
@@ -432,8 +434,13 @@ export function validateStep(step: StepKey, f: LaunchForm, ctx: ValidationContex
       const reveal = parseLink(f.revealUri, false)
       if (!reveal.ok) e.revealUri = reveal.error
     } else if (f.type === 'auction') {
-      const cur = auctionCurrency(f, ctx.chainId)
-      if (!cur) e.currency = 'Pick the token bids are made in.'
+      const cur = auctionCurrency(f, ctx.chainId, ctx.allowed)
+      if (!cur) {
+        const was = knownToken(ctx.chainId, f.currency || ETH)
+        e.currency = was
+          ? `miya no longer accepts ${was.symbol}. Pick another token for bids.`
+          : 'Pick the token bids are made in.'
+      }
       else {
         const r = parseTokenAmount(f.reserve, cur, { label: 'Starting bid' })
         if (!r.ok) e.reserve = r.error
@@ -501,10 +508,14 @@ function clean(f: LaunchForm) {
   }
 }
 
-/** The auction house's currency as a known token on this chain, or undefined. */
-export function auctionCurrency(f: Pick<LaunchForm, 'currency'>, chainId: number): PayToken | undefined {
+/** The auction house's currency as a known token on this chain (and on `allowed`, once read), or undefined. */
+export function auctionCurrency(
+  f: Pick<LaunchForm, 'currency'>,
+  chainId: number,
+  allowed?: readonly string[]
+): PayToken | undefined {
   const t = knownToken(chainId, f.currency || ETH)
-  return t && parseAccepted([t.address], chainId).ok ? t : undefined
+  return t && parseAccepted([t.address], chainId, allowed).ok ? t : undefined
 }
 
 /** The accepted tokens, or throws: only for builders, after validateStep passed. */

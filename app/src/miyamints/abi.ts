@@ -38,6 +38,8 @@ const phaseComponents = [
  */
 const paymentAbi = [
   { type: 'function', name: 'acceptedTokens', stateMutability: 'view', inputs: [], outputs: [{ type: 'address[]' }] },
+  /** The registry whose allowlist (isPaymentToken) the collection checks on every sale. */
+  view('registry', 'address'),
   view('ownerBalance', 'uint256', [...tokenArg]),
   view('pendingVaultCut', 'uint256', [...tokenArg]),
   view('pendingProtocolCut', 'uint256', [...tokenArg]),

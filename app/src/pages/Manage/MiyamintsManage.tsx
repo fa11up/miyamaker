@@ -21,14 +21,14 @@ import {
   buildPrices,
   claimArgs,
   feesWords,
-  hasFees,
+  hasFeesFor,
   isEth,
   parseTokenAmount,
   pricesWords,
   tokenExact,
   tokenLabel,
 } from '@/miyamints/tokens'
-import { usePay, useTokenInfo } from '@/miyamints/usePay'
+import { readTokenGate, usePay, useTokenInfoState } from '@/miyamints/usePay'
 import { useVaultInfo } from '@/miyamints/useMiyamints'
 import { txWords } from '@/miyamints/useTx'
 import { color, font, space, text } from '@/theme/tokens'
@@ -96,6 +96,41 @@ const Table = styled.table`
   }
   tbody tr:nth-child(odd) {
     background: rgba(255, 255, 255, 0.5);
+  }
+  /* Phone: a table marked data-stack shows each row as label / value pairs (each cell's data-label), and a cell
+     without a label (a button) on its own line, so nothing scrolls sideways. */
+  @media only screen and (max-width: 480px) {
+    &[data-stack] thead {
+      display: none;
+    }
+    &[data-stack] tr {
+      display: block;
+      padding: 4px 0;
+    }
+    &[data-stack] td {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: ${space[2]};
+      text-align: right;
+      overflow-wrap: anywhere;
+    }
+    &[data-stack] td::before {
+      content: attr(data-label);
+      flex: 0 0 auto;
+      text-align: left;
+      font-size: ${text.xs};
+      color: ${color.inkMuted};
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+    &[data-stack] td:not([data-label]) {
+      display: block;
+      text-align: left;
+    }
+    &[data-stack] td:not([data-label])::before {
+      content: none;
+    }
   }
 `
 
@@ -234,7 +269,7 @@ function DropActions({
   return (
     <Stack>
       <Eyebrow>Sale phases</Eyebrow>
-      <Table>
+      <Table data-stack>
         <thead>
           <tr>
             <th>#</th>
@@ -249,12 +284,12 @@ function DropActions({
           {phases.map((p, i) => (
             // eslint-disable-next-line react/no-array-index-key
             <tr key={i}>
-              <td>{i + 1}</td>
-              <td>{priceListWords(p.prices, info)}</td>
-              <td>{new Date(Number(p.start) * 1000).toLocaleString()}</td>
-              <td>{p.end === 0n ? 'No end' : new Date(Number(p.end) * 1000).toLocaleString()}</td>
-              <td>{p.maxPerWallet || 'No limit'}</td>
-              <td>{p.supplyCap || 'No limit'}</td>
+              <td data-label="#">{i + 1}</td>
+              <td data-label="Price">{priceListWords(p.prices, info)}</td>
+              <td data-label="Starts">{new Date(Number(p.start) * 1000).toLocaleString()}</td>
+              <td data-label="Ends">{p.end === 0n ? 'No end' : new Date(Number(p.end) * 1000).toLocaleString()}</td>
+              <td data-label="Per wallet">{p.maxPerWallet || 'No limit'}</td>
+              <td data-label="For sale">{p.supplyCap || 'No limit'}</td>
             </tr>
           ))}
         </tbody>
@@ -336,7 +371,7 @@ function AuctionPieces({
   const erc20 = !!currency && !isEth(currency.address)
   return (
     <Stack>
-      <Table>
+      <Table data-stack>
         <thead>
           <tr>
             <th>#</th>
@@ -359,9 +394,9 @@ function AuctionPieces({
               : `Live until ${new Date(x.endTime * 1000).toLocaleString()}`
             return (
               <tr key={x.tokenId}>
-                <td>{x.tokenId}</td>
-                <td>{status}</td>
-                <td>{x.highBid > 0n ? money(x.highBid) : `from ${money(x.minBid)}`}</td>
+                <td data-label="#">{x.tokenId}</td>
+                <td data-label="Status">{status}</td>
+                <td data-label="Top bid">{x.highBid > 0n ? money(x.highBid) : `from ${money(x.minBid)}`}</td>
                 <td>
                   {!x.settled && ended && x.highBid > 0n && (
                     <SmallButton
@@ -444,6 +479,11 @@ function AuctionPieces({
                 [jsonDataUri(tokenJson({ name: n.name, description: '', image: l.uri, website: '' })), p.amount],
                 { value: isEth(currency.address) ? p.amount : 0n }
               ),
+              // queuePiece refuses a currency the registry has since dropped: checked before any approval.
+              prepare: async () => {
+                const stop = await readTokenGate(chainId, address, currency.address, currency.symbol)
+                return stop ? { ok: false, error: stop } : { ok: true }
+              },
             })
           }
         >
@@ -497,7 +537,7 @@ function EditionsTab({
   const c = parseWhole(copies, { min: 1, max: 1_000_000, label: 'Copies', blank: 0 })
   return (
     <Stack>
-      <Table>
+      <Table data-stack>
         <thead>
           <tr>
             <th>#</th>
@@ -509,10 +549,10 @@ function EditionsTab({
         <tbody>
           {eds.map((e) => (
             <tr key={e.id.toString()}>
-              <td>{e.id.toString()}</td>
-              <td>{e.pieceTitle}</td>
-              <td>{priceListWords(e.prices, info)}</td>
-              <td>{e.supply === 0n ? `${e.minted} (open)` : `${e.minted} / ${e.supply}`}</td>
+              <td data-label="#">{e.id.toString()}</td>
+              <td data-label="Title">{e.pieceTitle}</td>
+              <td data-label="Price">{priceListWords(e.prices, info)}</td>
+              <td data-label="Sold">{e.supply === 0n ? `${e.minted} (open)` : `${e.minted} / ${e.supply}`}</td>
             </tr>
           ))}
         </tbody>
@@ -606,10 +646,13 @@ const CLAIM_MODES: { mode: ClaimModeName; label: string; words: string }[] = [
   {
     mode: 'REINVEST',
     label: 'Reinvest',
-    words: 'Adds them back into the INFER/IMD pool for this collection. Nothing is sent to you.',
+    words: 'Not available yet: it needs a live price quote to set a safe minimum.',
   },
   { mode: 'ETH', label: 'Take as ETH', words: 'Not available yet: it needs a live price quote to set a safe minimum.' },
 ]
+
+/** Modes that need a quoted floor (claimArgs): off until the app can quote the vault's pool. */
+const NEEDS_QUOTE: readonly ClaimModeName[] = ['REINVEST', 'ETH']
 
 /**
  * Money on a collection, per token (contracts/src/libraries/PaymentLib.sol): what withdraw(token) pays now, cuts
@@ -623,6 +666,7 @@ function MoneyPanel({
   tokens,
   tokensFailed,
   info,
+  infoLoading,
   split,
   vault,
   isOwner,
@@ -636,6 +680,8 @@ function MoneyPanel({
   tokens: readonly Address[] | undefined
   tokensFailed: boolean
   info: Tokens
+  /** The tokens' symbols and decimals are still being read: an unknown one is "…", not "Couldn't check". */
+  infoLoading: boolean
   split: { p?: number; a?: number; vault?: Address }
   vault: { symbol?: string }
   isOwner: boolean
@@ -691,7 +737,8 @@ function MoneyPanel({
   const loading = (!tokens && !tokensFailed) || reads.isLoading
   const amount = (v: bigint | undefined, token: Address) => {
     const unit = info[token.toLowerCase()]
-    if (v === undefined || !unit) return loading ? '…' : "Couldn't check"
+    if (v === undefined) return loading ? '…' : "Couldn't check"
+    if (!unit) return infoLoading ? '…' : "Couldn't check"
     return tokenLabel(v, unit)
   }
   const parked = rows.filter((r) => (r.parkedVault ?? 0n) > 0n || (r.parkedProtocol ?? 0n) > 0n)
@@ -728,7 +775,7 @@ function MoneyPanel({
       ) : tokensFailed ? (
         <p>Couldn&apos;t read which tokens this collection takes. Try again later.</p>
       ) : (
-        <Table>
+        <Table data-stack>
           <thead>
             <tr>
               <th>Token</th>
@@ -741,8 +788,10 @@ function MoneyPanel({
               const unit = info[r.token.toLowerCase()]
               return (
                 <tr key={r.token}>
-                  <td>{unit?.symbol ?? `${r.token.slice(0, 6)}…`}</td>
-                  <td>{amount(r.payout, r.token)}</td>
+                  <td data-label="Token" title={unit?.fromChain ? 'Name read from the token contract' : undefined}>
+                    {unit?.symbol ?? `${r.token.slice(0, 6)}…`}
+                  </td>
+                  <td data-label="Ready to withdraw">{amount(r.payout, r.token)}</td>
                   <td>
                     <SmallButton
                       type="button"
@@ -833,7 +882,7 @@ function MoneyPanel({
               type="radio"
               name={`claim-${address}`}
               checked={mode === m.mode}
-              disabled={m.mode === 'ETH'}
+              disabled={NEEDS_QUOTE.includes(m.mode)}
               onChange={() => setMode(m.mode)}
             />
             <span>
@@ -845,10 +894,10 @@ function MoneyPanel({
       <div>
         <SmallButton
           type="button"
-          disabled={busy || !isOwner || !claimCall.ok || !claimable || !hasFees(claimable)}
+          disabled={busy || !isOwner || !claimCall.ok || !claimable || !hasFeesFor(mode, claimable)}
           onClick={() => claimCall.ok && run('fees', call('claimVaultFees', [...claimCall.args]))}
         >
-          {claimable && !hasFees(claimable)
+          {claimable && !hasFeesFor(mode, claimable)
             ? 'No fees to claim yet'
             : mode === 'REINVEST'
             ? 'Reinvest my vault fees'
@@ -1013,7 +1062,7 @@ export default function MiyamintsManage({
       )),
     ])
   )
-  const info = useTokenInfo(chainId, allPriced)
+  const { info, loading: infoLoading } = useTokenInfoState(chainId, allPriced)
   const accepted = acceptedAddrs?.every((t) => info[t.toLowerCase()])
     ? (acceptedAddrs.map((t) => info[t.toLowerCase()]) as PayToken[])
     : undefined
@@ -1105,6 +1154,7 @@ export default function MiyamintsManage({
         tokens={known}
         tokensFailed={tokensFailed}
         info={info}
+        infoLoading={infoLoading}
         split={split}
         vault={vault}
         isOwner={isOwner}

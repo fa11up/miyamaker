@@ -123,6 +123,12 @@ export function useTx(onDone?: (id: string) => void) {
     unconfirmed: tx.phase === 'error' && !!(tx.error as { unconfirmed?: boolean } | undefined)?.unconfirmed,
     /** Replaced by the wallet's cancel: nothing moved, so the same thing may be offered again. */
     cancelled: tx.phase === 'error' && !!(tx.error as { cancelled?: boolean } | undefined)?.cancelled,
+    /**
+     * Stops before the wallet with `message`, as a failed dry run: nothing was sent. For a check a screen makes itself
+     * (the price moved, the sale ended) before it would send anything.
+     */
+    refuse: (id: string, message: string) =>
+      setTx({ id, phase: 'error', message, stage: 'check', error: { precheck: true, message } }),
     /** Starts over: also lets a call that ended unconfirmed be sent again, which only the person should choose. */
     reset: () => {
       unsettled.current.clear()

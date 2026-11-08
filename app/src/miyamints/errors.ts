@@ -50,6 +50,13 @@ const FRIENDLY: Record<string, string> = {
   RandomRequiresERC721: 'Random pools work only for ERC-721 collections.',
 }
 
+/** The contract's own error name in a viem error (`ExceedsMaxCost`), or undefined. */
+export function revertName(error: unknown): string | undefined {
+  if (!(error instanceof BaseError)) return undefined
+  const revert = error.walk((e) => e instanceof ContractFunctionRevertedError) as ContractFunctionRevertedError | null
+  return revert?.data?.errorName
+}
+
 /**
  * A wallet / contract error as one plain sentence. One we can't read may come after the transaction was sent, so it
  * can't promise nothing moved: only the wallet's activity can say.

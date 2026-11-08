@@ -196,7 +196,8 @@ export default function BidContainer({
   onRetry: () => void
   minimum: bigint
   check: { valid: boolean; value?: bigint; label: string }
-  busy: 'wallet' | 'mining' | undefined
+  /** 'checking': the lot is being read again before anything is signed. */
+  busy: 'checking' | 'wallet' | 'mining' | undefined
   /** A bid went out and its ending is unknown: it replaces the bid button until the person starts over. */
   stuck?: { words: string; href?: string; onStartOver: () => void }
   /** The wallet is connected and on the auction's chain, so the button places a bid rather than connecting or switching. */
@@ -238,7 +239,13 @@ export default function BidContainer({
   if (phase === 'ended') return ended ? <>{ended}</> : <Message>This auction ended {monthYear(endTime)}.</Message>
 
   const buttonWords =
-    busy === 'wallet' ? 'Confirm in your wallet…' : busy === 'mining' ? `Waiting for ${chainName}…` : check.label
+    busy === 'checking'
+      ? 'Checking the lot…'
+      : busy === 'wallet'
+      ? 'Confirm in your wallet…'
+      : busy === 'mining'
+      ? `Waiting for ${chainName}…`
+      : check.label
 
   return (
     <>
