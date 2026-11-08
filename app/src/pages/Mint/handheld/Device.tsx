@@ -329,6 +329,11 @@ const Pills = styled.div`
   display: flex;
   justify-content: center;
   gap: 14px;
+  /* As wide as the button whatever the label: a label that grows as the font loads would move the buttons, and rebuild
+     the model. */
+  > div {
+    width: 48px;
+  }
   button {
     display: block;
     width: 48px;
@@ -355,7 +360,7 @@ const Pills = styled.div`
   }
   span {
     display: block;
-    margin-top: 5px;
+    margin: 5px -12px 0;
     text-align: center;
     font-size: 11px;
     font-style: italic;
@@ -600,7 +605,8 @@ export default function Device({
   // Tell the model where the controls are laid out, and when they go down.
   useLayoutEffect(() => {
     const el = root.current
-    if (!el) return
+    // Inside a minimized window everything measures 0 by 0: not a layout, and building from it only means building twice.
+    if (!el || saved || !el.offsetWidth || !el.offsetHeight) return
     const rect = (q: string): Rect | undefined => {
       const n = el.querySelector<HTMLElement>(q)
       if (!n) return undefined

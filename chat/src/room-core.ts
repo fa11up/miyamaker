@@ -13,12 +13,15 @@ export type ConnMeta = {
   exp: number
   /** The slow-mode clock, kept here too so it survives hibernation. Other sockets of that address don't see it. */
   lastSent?: { address: string; at: number }
+  /** Refused frames (bad, or sent signed out) in the current window; too many and the socket is closed. */
+  strikes?: { n: number; since: number }
 }
 
 export interface Conn {
   send(data: string): void
   getMeta(): ConnMeta
   setMeta(meta: ConnMeta): void
+  close(code: number, reason: string): void
 }
 
 /** Minimal async KV (Durable Object storage satisfies it). */
@@ -37,10 +40,18 @@ export type RoomDeps = {
   badgesFor(address: string): Promise<Badge[]>
   isMod(address: string): boolean
   newId(): string
+  /** Run `onViewersDue` at `at` unless a run is already pending (the Durable Object alarm, so it survives hibernation). */
+  scheduleViewers(at: number): void | Promise<void>
 }
 
 export const ADDRESS_LIMIT = { capacity: 5, windowMs: 10_000 }
 export const IP_LIMIT = { capacity: 10, windowMs: 10_000 }
+/** Sockets per IP and per room; more are refused at the upgrade with a 429. */
+export const CONNECTION_LIMITS = { perIp: 12, perRoom: 2000 }
+/** The viewer count goes out at most this often, and only when it changed: not to every socket on every join. */
+export const VIEWERS_EVERY_MS = 5_000
+/** This many refused frames within the window and the socket is closed. */
+export const STRIKES = { limit: 5, windowMs: 10_000 }
 
 const K_HISTORY = 'history'
 const K_SLOW = 'slow'
@@ -60,6 +71,8 @@ export class RoomCore {
   private lastSent = new Map<string, number>()
   private byAddress = new RateLimiter(ADDRESS_LIMIT.capacity, ADDRESS_LIMIT.windowMs)
   private byIp = new RateLimiter(IP_LIMIT.capacity, IP_LIMIT.windowMs)
+  /** The count last broadcast. Forgotten on hibernation, which costs at most one repeated broadcast. */
+  private lastViewers: number | undefined
 
   constructor(private readonly deps: RoomDeps) {}
 
@@ -104,20 +117,57 @@ export class RoomCore {
     const frame: ServerFrame = { t: 'err', code, message }
     if (retryAfterMs !== undefined) frame.retryAfter = Math.max(1, Math.ceil(retryAfterMs / 1000))
     this.send(conn, frame)
+    if (code === 'bad' || code === 'auth') this.strike(conn)
+  }
+
+  /** Counts a refused frame; closes the socket once there are too many in a short while. */
+  private strike(conn: Conn) {
+    const now = this.deps.now()
+    const meta = conn.getMeta()
+    const prev = meta.strikes && now - meta.strikes.since < STRIKES.windowMs ? meta.strikes : { n: 0, since: now }
+    const strikes = { n: prev.n + 1, since: prev.since }
+    conn.setMeta({ ...meta, strikes })
+    if (strikes.n < STRIKES.limit) return
+    try {
+      conn.close(1008, 'too many bad frames')
+    } catch {
+      /* already closed */
+    }
   }
 
   /* ---------- lifecycle ---------- */
 
-  async onOpen(conn: Conn, room: string) {
-    await this.load()
-    const viewers = this.deps.connections().length
-    this.send(conn, { t: 'hello', room, slowMode: this.slowMode, viewers, history: this.history })
-    this.broadcast({ t: 'viewers', count: viewers }, conn)
+  /** Whether one more socket from `ip` may join, checked before the upgrade is accepted. */
+  admit(ip: string): { ok: true } | { ok: false; message: string } {
+    const conns = this.deps.connections()
+    if (conns.length >= CONNECTION_LIMITS.perRoom) return { ok: false, message: 'room is full' }
+    let fromIp = 0
+    for (const c of conns) if (c.getMeta().ip === ip) fromIp++
+    return fromIp < CONNECTION_LIMITS.perIp ? { ok: true } : { ok: false, message: 'too many connections' }
   }
 
-  onClose(closing: Conn) {
-    const count = this.deps.connections().filter((c) => c !== closing).length
-    this.broadcast({ t: 'viewers', count }, closing)
+  async onOpen(conn: Conn, room: string) {
+    await this.load()
+    // The new socket hears the exact count now; everyone else at the next viewers tick.
+    const viewers = this.deps.connections().length
+    this.send(conn, { t: 'hello', room, slowMode: this.slowMode, viewers, history: this.history })
+    await this.viewersChanged()
+  }
+
+  async onClose(_closing: Conn) {
+    await this.viewersChanged()
+  }
+
+  private viewersChanged() {
+    return this.deps.scheduleViewers(this.deps.now() + VIEWERS_EVERY_MS)
+  }
+
+  /** The viewers tick: one broadcast of the count, if it changed since the last one. */
+  onViewersDue() {
+    const count = this.deps.connections().length
+    if (count === this.lastViewers) return
+    this.lastViewers = count
+    this.broadcast({ t: 'viewers', count })
   }
 
   /* ---------- inbound ---------- */

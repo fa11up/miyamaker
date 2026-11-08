@@ -34,8 +34,11 @@ const FRIENDLY: Record<string, string> = {
   RandomRequiresERC721: 'Random pools work only for ERC-721 collections.',
 }
 
-/** A wallet / contract error as one plain sentence. */
-const TX_GENERIC_WORDS = 'That did not go through. Nothing moved. Try again.'
+/**
+ * A wallet / contract error as one plain sentence. One we can't read may come after the transaction was sent, so it
+ * can't promise nothing moved: only the wallet's activity can say.
+ */
+const TX_GENERIC_WORDS = "That did not go through. Check your wallet's activity, then try again."
 
 export function describeError(error: unknown): string {
   if (!error) return ''
@@ -56,7 +59,7 @@ export function describeError(error: unknown): string {
 }
 
 /** For a step that may already have spent something, where only the wallet's activity can say what went through. */
-export const TX_RETRY_WORDS = "That did not go through. Check your wallet's activity, then try again."
+export const TX_RETRY_WORDS = TX_GENERIC_WORDS
 /** For a dry run: nothing was sent. */
 export const TX_CHECK_WORDS = 'That did not go through. Nothing was charged for this step. Try again.'
 

@@ -1,15 +1,42 @@
 /* eslint-disable @typescript-eslint/return-await */
 /* eslint-disable no-underscore-dangle */
 import { WebIrys } from '@irys/sdk'
-import { getAccount, switchChain } from '@wagmi/core'
+import { getAccount, getTransaction, getTransactionReceipt, switchChain } from '@wagmi/core'
 import type { Address, Chain } from 'viem'
-import { createWalletClient, custom } from 'viem'
+import { createWalletClient, custom, TransactionNotFoundError, TransactionReceiptNotFoundError } from 'viem'
 import { mainnet } from 'viem/chains'
 
 import { wagmiConfig } from '@/config/wagmi'
 
+import type { TxState } from './irysPayment'
+
 /** The chain Irys is paid on for a token. Storage is paid on Ethereum whatever network the wallet is on for the rest. */
 const PAYMENT_CHAIN: Record<string, Chain> = { ethereum: mainnet }
+/** Payments are sent on this chain, which is also where they are looked up. */
+const payChains = new WeakMap<WebIrys, Chain>()
+
+/**
+ * Where a storage payment stands on the chain it was paid on. Throws when the chain can't be asked, so a node that is
+ * down is never taken for a payment that doesn't exist.
+ */
+export async function paymentTxState(irys: WebIrys, txId: string): Promise<TxState> {
+  const hash = txId as `0x${string}`
+  const chainId = (payChains.get(irys) ?? mainnet).id as 1
+  try {
+    const receipt = await getTransactionReceipt(wagmiConfig, { hash, chainId })
+    return receipt.status === 'success' ? 'success' : 'reverted'
+  } catch (e) {
+    if (!(e instanceof TransactionReceiptNotFoundError)) throw e
+  }
+
+  try {
+    await getTransaction(wagmiConfig, { hash, chainId })
+    return 'pending'
+  } catch (e) {
+    if (e instanceof TransactionNotFoundError) return 'missing'
+    throw e
+  }
+}
 
 /**
  * Creates a new Irys object with the specified configuration.
@@ -42,6 +69,27 @@ const getIrys = async (
   const wallet = { name: 'viem', provider }
   const webIrys = new WebIrys({ url, token, wallet })
   await webIrys.ready()
+  payChains.set(webIrys, payChain)
+
+  /*
+   * The SDK looks a payment up with `getTransaction` on the wallet it was given, which a viem wallet client doesn't
+   * have, so every lookup threw and every payment sat out the SDK's full 30 s wait before Irys was told. This asks the
+   * payment chain instead, and calls a payment ready once it is mined: Irys checks it again itself.
+   */
+  const getTx = async (txId: string) => {
+    const hash = txId as `0x${string}`
+    const chainId = payChain.id as 1
+    const tx = await getTransaction(wagmiConfig, { hash, chainId })
+    const receipt =
+      tx.blockNumber != null
+        ? await getTransactionReceipt(wagmiConfig, { hash, chainId }).catch(() => undefined)
+        : undefined
+    if (receipt?.status === 'reverted') throw new Error('The storage payment failed on chain.')
+    // Only `confirmed` is read by the SDK's wait.
+    return { from: tx.from, to: tx.to ?? '', pending: !receipt, confirmed: !!receipt }
+  }
+
+  Object.assign(webIrys.tokenConfig, { getTx })
 
   // @ts-expect-error injected
   webIrys.tokenConfig.getFee = async (_amount, _to): Promise<number> => {

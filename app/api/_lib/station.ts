@@ -334,7 +334,11 @@ export function memoryStore(): StationStore {
 /** The file's Content-Type at the Irys gateway. Ids are validated before they get here. */
 export async function gatewayContentType(txId: string): Promise<string | undefined> {
   try {
-    const res = await fetch(`https://gateway.irys.xyz/${txId}`, { method: 'HEAD', redirect: 'follow' })
+    const res = await fetch(`https://gateway.irys.xyz/${txId}`, {
+      method: 'HEAD',
+      redirect: 'follow',
+      signal: AbortSignal.timeout(8_000),
+    })
     return res.ok ? res.headers.get('content-type') ?? undefined : undefined
   } catch {
     return undefined

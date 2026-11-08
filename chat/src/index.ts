@@ -6,7 +6,7 @@ import { makeNonce, signToken, verifySiweLogin } from './auth'
 import { BadgeResolver, viemHoldingReader } from './badges'
 import type { Env } from './env'
 import { allowedOrigins, modSet, rpcUrl } from './env'
-import { ROOM_RE } from './protocol'
+import { ROOM_RE, ROOMS } from './protocol'
 import { RateLimiter } from './ratelimit'
 
 export { ChatRoom } from './room'
@@ -125,6 +125,7 @@ export default {
     if (roomMatch) {
       const room = decodeURIComponent(roomMatch[1]!)
       if (!ROOM_RE.test(room)) return json(request, env, { error: 'bad room' }, 400)
+      if (!ROOMS.includes(room)) return json(request, env, { error: 'no such room' }, 404)
       if (request.headers.get('Upgrade')?.toLowerCase() !== 'websocket')
         return json(request, env, { error: 'expected websocket' }, 426)
       const origin = request.headers.get('Origin')

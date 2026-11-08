@@ -3,16 +3,18 @@
 // import TwitterIcon from 'assets/explorer/icon/twitter.svg'
 // import WebsiteIcon from 'assets/explorer/icon/website.svg'
 import NFTImage from 'assets/explorer/sample/milady.png'
-import { get } from 'lodash'
 import numeral from 'numeral'
 import type { CSSProperties } from 'react'
 import { useState } from 'react'
 import styled from 'styled-components/macro'
 import type { Address } from 'viem'
 import { formatUnits } from 'viem'
-import { useAccount } from 'wagmi'
+import { useAccount, useSwitchChain } from 'wagmi'
 
+import type { SupportedChainId } from '@/config/wagmi'
 import { explorerUrl } from '@/config/wagmi'
+import { INDEXER_CHAIN_ID } from '@/constants/indexer'
+import { plainTxError } from '@/miyamints/errors'
 import { useWaitForTransaction } from '@/hooks/useWaitForTransaction'
 
 import { NormalButton } from '@/components/Button/NormalButton'
@@ -296,13 +298,22 @@ export default function CollectionDetail({
   const [hash, setHash] = useState<string>('')
 
   const { image, description } = useContractMetadata({ metadataUri: selectedCollection.metadataUri })
-  const { price } = useNFTPrice({ address: selectedCollection.address as Address })
+  const collectionChain = selectedCollection.chainId ?? INDEXER_CHAIN_ID
+  const { price, loading: priceLoading } = useNFTPrice({
+    address: selectedCollection.address as Address,
+    chainId: collectionChain,
+  })
 
   const { chainId } = useAccount()
-  const payValue = Number.isSafeInteger(payMintAmount) && payMintAmount > 0 ? price * BigInt(payMintAmount) : 0n
+  const { switchChain, isPending: switching } = useSwitchChain()
+  const wrongChain = isConnected && chainId !== collectionChain
+  const countOk = Number.isSafeInteger(payMintAmount) && payMintAmount > 0
+  // Unknown until read: never 0, which would send an underpaid mint or look free.
+  const payValue = price !== undefined && countOk ? price * BigInt(payMintAmount) : undefined
   const { mint } = useMintWithFee({
     address: selectedCollection.address as Address,
-    value: payValue,
+    value: payValue ?? 0n,
+    chainId: collectionChain,
   })
 
   useWaitForTransaction({
@@ -339,11 +350,11 @@ export default function CollectionDetail({
   })
 
   const calculateTotalPayment = () => {
-    return numeral(formatUnits(payValue, 18)).format('0,0.[00000]')
+    return payValue === undefined ? '–' : `${numeral(formatUnits(payValue, 18)).format('0,0.[00000]')} ETH`
   }
 
   const handlePayMint = async () => {
-    if (!isConnected) return
+    if (!isConnected || payValue === undefined || wrongChain) return
     setTransacting(true)
     setIsOpenNotification(true)
     try {
@@ -354,9 +365,10 @@ export default function CollectionDetail({
       setTransacting(false)
       setIsOpenNotification(false)
       setToggleFetchRecentMint(!toggleFetchRecentMint)
-      // warn message
-      setErrorMessage(get(e, 'shortMessage') || '')
-      setErrorName(get(e, 'name') || '')
+      // Plain words only: what a wallet or contract library writes is for developers.
+      const words = plainTxError(e)
+      setErrorMessage(words)
+      setErrorName(words === 'You cancelled in your wallet.' ? 'Mint cancelled' : 'Mint not sent')
     }
   }
 
@@ -399,9 +411,9 @@ export default function CollectionDetail({
               <MintPriceDetail>
                 <span>{payMintAmount}</span>
                 <span>*</span>
-                <span>{formatUnits(price, 18)}</span>
+                <span>{price !== undefined ? formatUnits(price, 18) : priceLoading ? '…' : 'Price unavailable'}</span>
                 <span>=</span>
-                <span style={{ color: '#00ba7c' }}>{calculateTotalPayment()} ETH</span>
+                <span style={{ color: '#00ba7c' }}>{calculateTotalPayment()}</span>
               </MintPriceDetail>
               <MintInputWrapper>
                 <MintInput
@@ -410,7 +422,20 @@ export default function CollectionDetail({
                   value={payMintAmount}
                   onChange={(e) => setPayMintAmount(Number(e.target.value))}
                 />
-                <Button disabled={transacting} text={transacting ? 'Minting...' : `Mint`} onClick={handlePayMint} />
+                {wrongChain ? (
+                  <Button
+                    disabled={switching}
+                    text={switching ? 'Switching…' : 'Switch network'}
+                    onClick={() => switchChain({ chainId: collectionChain as SupportedChainId })}
+                  />
+                ) : (
+                  // No mint until the price is known: the button can't send a guess.
+                  <Button
+                    disabled={transacting || payValue === undefined}
+                    text={transacting ? 'Minting...' : `Mint`}
+                    onClick={handlePayMint}
+                  />
+                )}
               </MintInputWrapper>
             </MintInputContainer>
           </MintWrapper>
@@ -451,7 +476,7 @@ export default function CollectionDetail({
                   <NotificationMessage>
                     <div>
                       <div style={{ paddingRight: '0.5rem' }}>Mint success!</div>
-                      <a href={`${explorerUrl(chainId)}/tx/${hash}`} target="_blank" rel="noreferrer noopener">
+                      <a href={`${explorerUrl(collectionChain)}/tx/${hash}`} target="_blank" rel="noreferrer noopener">
                         Go to scan
                       </a>
                     </div>

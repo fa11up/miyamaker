@@ -21,7 +21,7 @@ import { bestQuote, collectionUrl, formatAmount, formatPrice, lowerPrice, venues
 import { DEFAULT_PAIR_SYMBOL, pickPair } from './pairs'
 import type { PoolMode } from './pool'
 import { KIND, MODE, MODE_HINT, MODE_LABEL } from './pool'
-import { MAX_SWEEP, pickCheapest, sumPrices, sweepable } from './sweep'
+import { MAX_SWEEP, pickCheapest, sessionStore, sumPrices, sweepable, unconfirmedHashes } from './sweep'
 import SweepReview from './SweepReview'
 import { Action, Card, Chips, Field, Head, Hint, LinkButton, Mono, Prose, PushButton, SwitchNote } from './ui'
 import { useMarketListings, useMarketSales, useOpenSeaCollection, useOpenSeaNftImage } from './useMarkets'
@@ -388,7 +388,12 @@ export default function CollectionView({
   const [sweepBusy, setSweepBusy] = useState(false)
   const listed = (listings.listings ?? []).filter((l) => l.tokenId)
   const shownListings = listed.slice(0, tileLimit)
-  const canSweep = sweepable(listings.listings ?? [], me)
+  // A buy of it still unconfirmed this session is not swept again: it may yet land.
+  const stillUnconfirmed = unconfirmedHashes(sessionStore())
+  const canSweep = sweepable(
+    (listings.listings ?? []).filter((l) => !stillUnconfirmed.has(l.hash)),
+    me
+  )
   const pickedListings = pickCheapest(canSweep, Math.min(sweepCount, canSweep.length))
   const create = useTx(() => pools.refetch())
   const busy = sweepBusy || create.busy
@@ -529,7 +534,14 @@ export default function CollectionView({
             <div>
               <dt title="The cheapest one for sale right now">Floor</dt>
               <dd>
-                {floor ? formatPrice(floor) : 'None for sale'}
+                {/* No floor from a listings read that failed is unknown, not "none". */}
+                {floor
+                  ? formatPrice(floor)
+                  : listings.loading
+                  ? '…'
+                  : listings.error && !listings.needsKey
+                  ? 'Prices unavailable'
+                  : 'None for sale'}
                 {floor?.symbol === 'ETH' && <small>{ethInUsd(floor.amount, ethUsd)}</small>}
                 {buyHere && <small>Cheapest to buy here: {formatPrice(buyHere)}</small>}
               </dd>

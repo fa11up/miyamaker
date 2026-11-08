@@ -189,8 +189,14 @@ export async function handleMarketRequest(
     let body: object
     if (kind === 'listings') {
       const path = `/api/v2/listings/collection/${encodeURIComponent(slug)}/best`
-      // As many as OpenSea gives in one call; the proxy's known-good 20 if it turns the larger page down.
-      const j = obj(await deps.openSea(path, { limit: '100' }).catch(() => deps.openSea(path, { limit: '20' })))
+      // As many as OpenSea gives in one call; the proxy's known-good 20 if it turns the larger page down. Only a 400 is
+      // that: after a 429 or a timeout a second call would only spend more of the key's quota.
+      const j = obj(
+        await deps.openSea(path, { limit: '100' }).catch((e: unknown) => {
+          if (e instanceof Error && e.message === 'OpenSea 400') return deps.openSea(path, { limit: '20' })
+          throw e
+        })
+      )
       const rows = arr(j?.listings)
         .map(fromOpenSea)
         .filter((l): l is MarketListing => !!l)

@@ -57,3 +57,7 @@ export const panBy = (view: ZoomView, dx: number, dy: number, size: number): Zoo
   x: clampPan(view.x + dx, view.zoom, size),
   y: clampPan(view.y + dy, view.zoom, size),
 })
+
+/** Sharpness of the 3D plastic: a phone's is capped lower, and once a machine could not keep up it stays at 1. */
+export const pixelRatio = (dpr: number, coarse: boolean, slow: boolean): number =>
+  slow ? 1 : Math.min(dpr || 1, coarse ? 1.5 : 2)

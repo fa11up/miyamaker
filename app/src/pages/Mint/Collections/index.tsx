@@ -1,6 +1,6 @@
 import { useQuery } from '@apollo/client'
 import CollectionsImage from 'assets/explorer/sample/collections.jpeg'
-import { INDEXER_ENABLED } from '@/constants/indexer'
+import { INDEXER_CHAIN_ID, INDEXER_ENABLED } from '@/constants/indexer'
 import styled from 'styled-components/macro'
 
 import SearchIcon from '@/assets/explorer/icon/search.svg'
@@ -149,7 +149,7 @@ export default function Collections({
   const { loading, error, data } = useQuery(GET_COLLECTIONS, { variables: { offset: 0, limit: 20 }, skip: !INDEXER_ENABLED })
 
   const handleClickCollection = (collection: Collection) => {
-    setSelectedCollection(collection)
+    setSelectedCollection({ ...collection, chainId: collection.chainId ?? INDEXER_CHAIN_ID })
     setPageSection(EXPLORER_PAGE_SECTION.COLLECTION_SECTION)
   }
 

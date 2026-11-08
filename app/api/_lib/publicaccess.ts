@@ -260,7 +260,8 @@ export async function handlePublicAccessRequest(
 /** YouTube's public oEmbed: 200 for a public video that may be embedded, 401 or 404 otherwise. Needs no key. */
 export async function youtubeLookup(videoId: string) {
   const res = await fetch(
-    `https://www.youtube.com/oembed?format=json&url=${encodeURIComponent(`https://www.youtube.com/watch?v=${videoId}`)}`
+    `https://www.youtube.com/oembed?format=json&url=${encodeURIComponent(`https://www.youtube.com/watch?v=${videoId}`)}`,
+    { signal: AbortSignal.timeout(8_000) }
   ).catch(() => undefined)
   if (!res?.ok) return undefined
   const json = (await res.json().catch(() => undefined)) as { title?: string; author_name?: string } | undefined

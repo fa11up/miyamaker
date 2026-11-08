@@ -44,6 +44,8 @@ declare module 'filereader-stream'
 interface ImportMetaEnv {
   readonly VITE_WC_PROJECT_ID?: string
   readonly VITE_GRAPHQL_URL?: string
+  /** The chain the indexer's collections live on. Default 1 (Ethereum). */
+  readonly VITE_GRAPHQL_CHAIN_ID?: string
   readonly VITE_ANALYTICS_ID?: string
   /** Dev only: a local INFER BOX (wrangler dev), e.g. http://localhost:8813/ */
   readonly VITE_BOX_URL?: string

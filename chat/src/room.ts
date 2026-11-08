@@ -29,6 +29,9 @@ export class ChatRoom extends DurableObject<Env> {
       badgesFor: (address) => this.badges.badgesFor(address),
       isMod: (address) => this.badges.isMod(address),
       newId: () => crypto.randomUUID().replace(/-/g, '').slice(0, 16),
+      scheduleViewers: async (at) => {
+        if ((await ctx.storage.getAlarm()) === null) await ctx.storage.setAlarm(at)
+      },
     })
   }
 
@@ -39,6 +42,7 @@ export class ChatRoom extends DurableObject<Env> {
         send: (data) => ws.send(data),
         getMeta: () => (ws.deserializeAttachment() as ConnMeta | null) ?? { ip: '0.0.0.0', address: null, badges: [], mod: false, exp: 0 },
         setMeta: (meta) => ws.serializeAttachment(meta),
+        close: (code, reason) => ws.close(code, reason),
       }
       this.conns.set(ws, c)
     }
@@ -49,6 +53,8 @@ export class ChatRoom extends DurableObject<Env> {
     if (request.headers.get('Upgrade')?.toLowerCase() !== 'websocket') return new Response('expected websocket', { status: 426 })
     const room = request.headers.get('x-miyatv-room') || 'unknown'
     const ip = request.headers.get('x-miyatv-ip') || '0.0.0.0'
+    const admitted = this.core.admit(ip)
+    if (!admitted.ok) return new Response(admitted.message, { status: 429, headers: { 'Retry-After': '30' } })
     const pair = new WebSocketPair()
     const [client, server] = [pair[0], pair[1]]
     this.ctx.acceptWebSocket(server)
@@ -62,8 +68,13 @@ export class ChatRoom extends DurableObject<Env> {
     await this.core.onMessage(this.conn(ws), message)
   }
 
+  /** The viewers tick (RoomCore.onViewersDue). */
+  async alarm() {
+    this.core.onViewersDue()
+  }
+
   async webSocketClose(ws: WebSocket, code: number) {
-    this.core.onClose(this.conn(ws))
+    await this.core.onClose(this.conn(ws))
     try {
       ws.close(code === 1005 || code === 1006 ? 1000 : code, 'bye')
     } catch {
@@ -72,6 +83,6 @@ export class ChatRoom extends DurableObject<Env> {
   }
 
   async webSocketError(ws: WebSocket) {
-    this.core.onClose(this.conn(ws))
+    await this.core.onClose(this.conn(ws))
   }
 }

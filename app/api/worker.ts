@@ -3,6 +3,7 @@
 import { createPublicClient, http } from 'viem'
 import { mainnet } from 'viem/chains'
 
+import { jsonReply, noSniff, readCappedText } from './_lib/body'
 import { edgeCache, handleMarketRequest, MARKET_PREFIX, openSeaReader } from './_lib/market'
 import { handleOpenSeaRequest, OPENSEA_PROXY_PATH, quoteBigInts } from './_lib/opensea'
 import { d1TapeStore, handlePublicAccessRequest, PUBLIC_ACCESS_PATH, youtubeLookup } from './_lib/publicaccess'
@@ -54,94 +55,7 @@ export default {
       url.hostname = `www.${APEX}`
       return Response.redirect(url.toString(), 308)
     }
-
-    if (url.pathname.startsWith(`${PROXY_PREFIX}/`)) {
-      return handleZeroExRequest(request, { ZEROX_API_KEY: env.ZEROX_API_KEY })
-    }
-
-    if (url.pathname === OPENSEA_PROXY_PATH) {
-      const body = request.method === 'POST' ? (await request.text()).slice(0, 4096) : undefined
-      return handleOpenSeaRequest(
-        { method: request.method, url: request.url, headers: request.headers, body },
-        { OPENSEA_API_KEY: env.OPENSEA_API_KEY },
-        guards
-      )
-    }
-
-    if (url.pathname.startsWith(`${MARKET_PREFIX}/`)) {
-      return handleMarketRequest(
-        { method: request.method, url: request.url, headers: request.headers },
-        {
-          openSea: openSeaReader(env.OPENSEA_API_KEY, quoteBigInts),
-          cache: edgeCache((caches as unknown as { default?: Cache }).default),
-          sameOrigin,
-          clientKey,
-          limiter: marketLimiter,
-        }
-      )
-    }
-
-    if (url.pathname === STATION_PATH || url.pathname.startsWith(`${STATION_PATH}/`)) {
-      const body = request.method === 'POST' ? (await request.text()).slice(0, 4096) : undefined
-      return handleStationRequest(
-        { method: request.method, url: request.url, headers: request.headers, body },
-        {
-          store: env.DB ? d1Store(env.DB) : undefined,
-          admins: (env.STATION_ADMINS ?? '')
-            .split(',')
-            .map((a) => a.trim())
-            .filter(Boolean),
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          verify: (address, message, signature) =>
-            signatureClient.verifyMessage({ address: address as any, message, signature: signature as any }).catch(() => false),
-          contentType: gatewayContentType,
-          sameOrigin,
-          clientKey,
-          limiter: stationLimiter,
-        }
-      )
-    }
-
-    if (url.pathname === CONTRACT_CHECK_PATH) {
-      return handleContractCheck(request, {
-        key: env.ETHERSCAN_API_KEY,
-        etherscan: env.ETHERSCAN_API_KEY ? etherscanReader(env.ETHERSCAN_API_KEY) : undefined,
-        cache: edgeCache((caches as unknown as { default?: Cache }).default),
-        sameOrigin,
-        clientKey,
-        limiter: contractCheckLimiter,
-      })
-    }
-
-    if (url.pathname === TV_LIVE_PATH) {
-      const cache = edgeCache((caches as unknown as { default?: Cache }).default)
-      return handleTvLiveRequest(request, {
-        key: env.YOUTUBE_API_KEY,
-        cache,
-        kick: () => kickOnAir({ read: kickReader, cache, now: Date.now() }),
-      })
-    }
-
-    if (url.pathname === PUBLIC_ACCESS_PATH || url.pathname.startsWith(`${PUBLIC_ACCESS_PATH}/`)) {
-      const body = request.method === 'POST' ? (await request.text()).slice(0, 4096) : undefined
-      return handlePublicAccessRequest(
-        { method: request.method, url: request.url, headers: request.headers, body },
-        {
-          store: env.DB ? d1TapeStore(env.DB) : undefined,
-          admins: (env.STATION_ADMINS ?? '')
-            .split(',')
-            .map((a) => a.trim())
-            .filter(Boolean),
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          verify: (address, message, signature) =>
-            signatureClient.verifyMessage({ address: address as any, message, signature: signature as any }).catch(() => false),
-          lookup: youtubeLookup,
-          sameOrigin,
-          clientKey,
-          limiter: publicAccessLimiter,
-        }
-      )
-    }
+    if (url.pathname.startsWith('/api/')) return noSniff(await api(request, env, url))
 
     if (url.pathname.startsWith('/commercials/')) {
       // Asked for without its range, because the asset store answers those whole anyway.
@@ -150,4 +64,100 @@ export default {
 
     return env.ASSETS.fetch(request)
   },
+}
+
+async function api(request: Request, env: Env, url: URL): Promise<Response> {
+  if (url.pathname.startsWith(`${PROXY_PREFIX}/`)) {
+    return handleZeroExRequest(request, { ZEROX_API_KEY: env.ZEROX_API_KEY })
+  }
+
+  if (url.pathname === OPENSEA_PROXY_PATH) {
+    const body = request.method === 'POST' ? await readCappedText(request) : undefined
+    if (body === undefined && request.method === 'POST') return jsonReply(413, { error: 'That is too large.' })
+    return handleOpenSeaRequest(
+      { method: request.method, url: request.url, headers: request.headers, body },
+      { OPENSEA_API_KEY: env.OPENSEA_API_KEY },
+      guards
+    )
+  }
+
+  if (url.pathname.startsWith(`${MARKET_PREFIX}/`)) {
+    return handleMarketRequest(
+      { method: request.method, url: request.url, headers: request.headers },
+      {
+        openSea: openSeaReader(env.OPENSEA_API_KEY, quoteBigInts),
+        cache: edgeCache((caches as unknown as { default?: Cache }).default),
+        sameOrigin,
+        clientKey,
+        limiter: marketLimiter,
+      }
+    )
+  }
+
+  if (url.pathname === STATION_PATH || url.pathname.startsWith(`${STATION_PATH}/`)) {
+    const body = request.method === 'POST' ? await readCappedText(request) : undefined
+    if (body === undefined && request.method === 'POST') return jsonReply(413, { error: 'That is too large.' })
+    return handleStationRequest(
+      { method: request.method, url: request.url, headers: request.headers, body },
+      {
+        store: env.DB ? d1Store(env.DB) : undefined,
+        admins: (env.STATION_ADMINS ?? '')
+          .split(',')
+          .map((a) => a.trim())
+          .filter(Boolean),
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        verify: (address, message, signature) =>
+          signatureClient.verifyMessage({ address: address as any, message, signature: signature as any }).catch(() => false),
+        contentType: gatewayContentType,
+        sameOrigin,
+        clientKey,
+        limiter: stationLimiter,
+      }
+    )
+  }
+
+  if (url.pathname === CONTRACT_CHECK_PATH) {
+    return handleContractCheck(request, {
+      key: env.ETHERSCAN_API_KEY,
+      etherscan: env.ETHERSCAN_API_KEY ? etherscanReader(env.ETHERSCAN_API_KEY) : undefined,
+      cache: edgeCache((caches as unknown as { default?: Cache }).default),
+      sameOrigin,
+      clientKey,
+      limiter: contractCheckLimiter,
+    })
+  }
+
+  if (url.pathname === TV_LIVE_PATH) {
+    const cache = edgeCache((caches as unknown as { default?: Cache }).default)
+    return handleTvLiveRequest(request, {
+      key: env.YOUTUBE_API_KEY,
+      cache,
+      kick: () => kickOnAir({ read: kickReader, cache, now: Date.now() }),
+    })
+  }
+
+  if (url.pathname === PUBLIC_ACCESS_PATH || url.pathname.startsWith(`${PUBLIC_ACCESS_PATH}/`)) {
+    const body = request.method === 'POST' ? await readCappedText(request) : undefined
+    if (body === undefined && request.method === 'POST') return jsonReply(413, { error: 'That is too large.' })
+    return handlePublicAccessRequest(
+      { method: request.method, url: request.url, headers: request.headers, body },
+      {
+        store: env.DB ? d1TapeStore(env.DB) : undefined,
+        admins: (env.STATION_ADMINS ?? '')
+          .split(',')
+          .map((a) => a.trim())
+          .filter(Boolean),
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        verify: (address, message, signature) =>
+          signatureClient.verifyMessage({ address: address as any, message, signature: signature as any }).catch(() => false),
+        lookup: youtubeLookup,
+        sameOrigin,
+        clientKey,
+        limiter: publicAccessLimiter,
+      }
+    )
+  }
+
+  // Not the app's page: a JSON answer the caller can read, not index.html with a 200.
+  return jsonReply(404, { error: 'Not found.' })
 }

@@ -513,11 +513,14 @@ function CollectionRow({
   /** Each row loads its own numbers, so it tells the table what to sort by. */
   onFigures: (slug: string, figures: CollectionFigures) => void
 }) {
-  const { info, stats, loading } = useCollectionRow(slug)
+  const { info, stats, loading, error } = useCollectionRow(slug)
   const market = useMarketListings(slug)
   const floor = lowerPrice(stats?.floor, market.floor)
   const floorEth = floor ? Number(floor.amount) / 10 ** floor.decimals : undefined
-  const nothingForSale = !loading && !market.loading && !floor
+  const waiting = loading || market.loading
+  // A read that failed says nothing about what is for sale: only two clean answers with no floor mean none.
+  const failed = !!error || !!market.error
+  const nothingForSale = !waiting && !failed && !floor
   useEffect(() => {
     onFigures(slug, { floor: floorEth, sales: stats?.sales7d, volume: stats?.volume7d, nothingForSale })
   }, [slug, floorEth, stats?.sales7d, stats?.volume7d, nothingForSale, onFigures])
@@ -541,7 +544,7 @@ function CollectionRow({
         </button>
       </td>
       <td>
-        {floor ? formatPrice(floor) : loading ? dash : 'None for sale'}
+        {floor ? formatPrice(floor) : waiting ? '…' : failed ? 'Prices unavailable' : 'None for sale'}
         {floor?.symbol === 'ETH' && <span className="usd">{ethInUsd(floor.amount, ethUsd)}</span>}
       </td>
       <td className="opt">{stats?.sales7d ?? dash}</td>

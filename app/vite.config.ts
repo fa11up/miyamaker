@@ -1,4 +1,5 @@
 import react from '@vitejs/plugin-react'
+import type { IncomingMessage, ServerResponse } from 'http'
 import path from 'path'
 import type { Plugin } from 'vite'
 import { defineConfig, loadEnv, searchForWorkspaceRoot } from 'vite'
@@ -10,6 +11,7 @@ import { nodePolyfills } from 'vite-plugin-node-polyfills'
 import { VitePWA } from 'vite-plugin-pwa'
 import svgr from 'vite-plugin-svgr'
 
+import { BODY_LIMIT } from './api/_lib/body'
 import { handleMarketRequest, MARKET_PREFIX, memoryCache, openSeaReader } from './api/_lib/market'
 import { handleOpenSeaRequest, OPENSEA_PROXY_PATH, quoteBigInts } from './api/_lib/opensea'
 import { handlePublicAccessRequest, memoryTapeStore, PUBLIC_ACCESS_PATH, youtubeLookup } from './api/_lib/publicaccess'
@@ -17,6 +19,27 @@ import { kickOnAir, kickReader } from './api/_lib/tvkick'
 import { handleTvLiveRequest, TV_LIVE_PATH } from './api/_lib/tvlive'
 import { gatewayContentType, handleStationRequest, memoryStore, STATION_PATH } from './api/_lib/station'
 import { clientKey, createRateLimiter, handleZeroExRequest, PROXY_PREFIX, sameOrigin } from './api/_lib/zeroex'
+
+/** The Worker's POST cap (api/_lib/body.ts) for the dev stand-ins: a 413 (and undefined) when the body says it is too
+ * large, otherwise at most BODY_LIMIT bytes of it. */
+async function devBody(req: IncomingMessage, res: ServerResponse): Promise<string | undefined> {
+  if (req.method !== 'POST') return ''
+  if (Number(req.headers['content-length'] ?? 0) > BODY_LIMIT) {
+    res.statusCode = 413
+    res.setHeader('content-type', 'application/json')
+    res.end(JSON.stringify({ error: 'That is too large.' }))
+    return undefined
+  }
+  const chunks: Buffer[] = []
+  let size = 0
+  for await (const chunk of req) {
+    const piece = (typeof chunk === 'string' ? Buffer.from(chunk) : (chunk as Buffer)).subarray(0, BODY_LIMIT - size)
+    chunks.push(piece)
+    size += piece.byteLength
+    if (size >= BODY_LIMIT) break
+  }
+  return Buffer.concat(chunks).toString('utf8')
+}
 
 /**
  * Dev-only stand-in for the Worker's 0x routes (api/worker.ts): same validation and key injection
@@ -57,13 +80,8 @@ function openSeaDevProxy(env: Record<string, string>): Plugin {
       server.middlewares.use(OPENSEA_PROXY_PATH, async (req, res) => {
         const headers = new Headers()
         for (const [k, v] of Object.entries(req.headers)) if (typeof v === 'string') headers.set(k, v)
-        let body = ''
-        if (req.method === 'POST') {
-          for await (const chunk of req) {
-            body += chunk
-            if (body.length > 4096) break
-          }
-        }
+        const body = await devBody(req, res)
+        if (body === undefined) return
 
         const host = req.headers.host || 'localhost'
         const rest = req.url && req.url !== '/' ? req.url.replace(/^\/(?=\?)/, '') : ''
@@ -118,8 +136,8 @@ function stationDevProxy(): Plugin {
       server.middlewares.use(STATION_PATH, async (req, res) => {
         const headers = new Headers()
         for (const [k, v] of Object.entries(req.headers)) if (typeof v === 'string') headers.set(k, v)
-        let body = ''
-        if (req.method === 'POST') for await (const chunk of req) body += chunk
+        const body = await devBody(req, res)
+        if (body === undefined) return
         const host = req.headers.host || 'localhost'
         const rest = req.url && req.url !== '/' ? req.url : ''
         const response = await handleStationRequest(
@@ -176,8 +194,8 @@ function publicAccessDevProxy(): Plugin {
       server.middlewares.use(PUBLIC_ACCESS_PATH, async (req, res) => {
         const headers = new Headers()
         for (const [k, v] of Object.entries(req.headers)) if (typeof v === 'string') headers.set(k, v)
-        let body = ''
-        if (req.method === 'POST') for await (const chunk of req) body += chunk
+        const body = await devBody(req, res)
+        if (body === undefined) return
         const host = req.headers.host || 'localhost'
         const rest = req.url && req.url !== '/' ? req.url : ''
         const response = await handlePublicAccessRequest(
