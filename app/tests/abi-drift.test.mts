@@ -1,6 +1,7 @@
 // The app's hand-written contract ABIs must match the contracts. Run: yarn test
 //
-// Compares every function, event and error in src/miyamints/abi.ts, src/music/abi.ts and src/pages/Swap/nft/abi.ts
+// Compares every function, event and error in src/miyamints/abi.ts, src/music/abi.ts, src/pages/Auction/miyamints/abi.ts
+// and src/pages/Swap/nft/abi.ts
 // with the committed ABI snapshots in contracts/abi/*.json (regenerate with contracts/script/export-abis.sh after
 // changing a contract's interface; see contracts/DEPLOY.md). A wrong parameter list encodes calldata the contract
 // doesn't recognise (or decodes the wrong fields), so a mismatch here means a call that reverts or misreads on chain.
@@ -43,6 +44,7 @@ const contracts: Record<string, Item[]> = Object.fromEntries(
 const miyamints = await import('../src/miyamints/abi.ts')
 const music = await import('../src/music/abi.ts')
 const nft = await import('../src/pages/Swap/nft/abi.ts')
+const auction = await import('../src/pages/Auction/miyamints/abi.ts')
 
 /** Which contract each app ABI talks to. Generic ERC-20/721/1155 reads are checked against our own collections. */
 const MAP: [label: string, abi: readonly Item[], contract: string][] = [
@@ -53,6 +55,7 @@ const MAP: [label: string, abi: readonly Item[], contract: string][] = [
   ['miyamints editionsManageAbi', miyamints.editionsManageAbi, 'ERC1155Instance'],
   ['miyamints registryAbi', miyamints.registryAbi, 'MiyaRegistry'],
   ['miyamints vaultAbi', miyamints.vaultAbi, 'UniAlignmentVault'],
+  ['auction mmAuctionAbi', auction.mmAuctionAbi, 'ERC721AuctionInstance'],
   ['music erc1155FactoryAbi', music.erc1155FactoryAbi, 'ERC1155Factory'],
   ['music erc1155InstanceAbi', music.erc1155InstanceAbi, 'ERC1155Instance'],
   ['music miyaRegistryAbi', music.miyaRegistryAbi, 'MiyaRegistry'],
@@ -149,6 +152,16 @@ test('the drift check catches a stale parameter list', () => {
   const found = drift(stale, contracts.ERC721DropFactory!)
   assert.equal(found.length, 1)
   assert.match(found[0]!, /^function createDrop\(\(string,string,uint32,string,/)
+})
+
+test('the drift check catches a missing payment token argument', () => {
+  // Before multi-token sales, mint took no token or maxCost and createBid took no amount.
+  const stale = structuredClone(auction.mmAuctionAbi) as unknown as Item[]
+  const bid = stale.find((i) => i.name === 'createBid')!
+  ;(bid as unknown as { inputs: Param[] }).inputs = bid.inputs!.filter((p) => p.name !== 'amount')
+  assert.deepEqual(drift(stale, contracts.ERC721AuctionInstance!), [
+    'function createBid(uint24,string): not on the contract (contract has createBid(uint24,uint256,string))',
+  ])
 })
 
 test('the drift check catches a renamed field of the same type', () => {

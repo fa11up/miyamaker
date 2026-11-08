@@ -4,7 +4,11 @@
  * bid plus the increment, the bidder it beats is refunded in the same transaction, and a bid never moves the end time.
  * Pure, so `node --test` can load it.
  */
-import { formatEther, parseEther } from 'viem'
+import { formatEther, formatUnits, parseUnits } from 'viem'
+
+/** The token bids are in. ETH unless the lot's house says otherwise (miyamints auctions have one currency each). */
+export type BidUnit = { symbol: string; decimals: number }
+export const ETH_UNIT: BidUnit = { symbol: 'ETH', decimals: 18 }
 
 export type LotPhase = 'loading' | 'failed' | 'missing' | 'upcoming' | 'live' | 'ended'
 
@@ -31,11 +35,12 @@ export function lotPhase({ status, startTime, endTime, settled }: LotRead, nowMs
 export const lotReadStatus = (hasAnswer: boolean, failed: boolean): LotRead['status'] =>
   hasAnswer ? 'ready' : failed ? 'failed' : 'loading'
 
-/** Parses a user-typed ETH amount; undefined for '' or anything parseEther rejects (never throws). */
-export function parseBidAmount(bidAmount: string): bigint | undefined {
+/** Parses a typed amount at the unit's decimals; undefined for '', too many decimals or anything else (never throws). */
+export function parseBidAmount(bidAmount: string, decimals = 18): bigint | undefined {
   if (!/^(\d+\.?\d*|\.\d+)$/.test(bidAmount)) return undefined
+  if ((bidAmount.split('.')[1] || '').length > decimals) return undefined
   try {
-    const value = parseEther(bidAmount)
+    const value = parseUnits(bidAmount.startsWith('.') ? `0${bidAmount}` : bidAmount, decimals)
     return value > 0n ? value : undefined
   } catch {
     return undefined
@@ -61,19 +66,21 @@ export function checkBid(
   input: string,
   minimum: bigint,
   balance: bigint | undefined,
+  unit: BidUnit = ETH_UNIT,
 ): { valid: boolean; value?: bigint; label: string } {
-  const value = parseBidAmount(input)
+  const value = parseBidAmount(input, unit.decimals)
   if (value === undefined || value < minimum) {
-    return { valid: false, label: `Enter at least ${formatEther(minimum)} ETH` }
+    return { valid: false, label: `Enter at least ${formatUnits(minimum, unit.decimals)} ${unit.symbol}` }
   }
-  if (balance !== undefined && value > balance) return { valid: false, value, label: 'Not enough ETH' }
-  return { valid: true, value, label: `Bid ${formatEther(value)} ETH` }
+  if (balance !== undefined && value > balance) return { valid: false, value, label: `Not enough ${unit.symbol}` }
+  return { valid: true, value, label: `Bid ${formatUnits(value, unit.decimals)} ${unit.symbol}` }
 }
 
 /** Rounded down to three places, so it never says more than the wallet holds. */
-export function balanceWords(wei: bigint): string {
-  const thousandths = wei / 10n ** 15n
-  return `${thousandths / 1000n}.${(thousandths % 1000n).toString().padStart(3, '0')} ETH`
+export function balanceWords(amount: bigint, unit: BidUnit = ETH_UNIT): string {
+  if (unit.decimals < 3) return `${formatUnits(amount, unit.decimals)} ${unit.symbol}`
+  const thousandths = amount / 10n ** BigInt(unit.decimals - 3)
+  return `${thousandths / 1000n}.${(thousandths % 1000n).toString().padStart(3, '0')} ${unit.symbol}`
 }
 
 const NO_BIDDER = /^0x0{40}$/
@@ -177,7 +184,7 @@ const BID_REJECTED = 'You cancelled in your wallet. No bid was placed.'
 /** For a failure that can't vouch nothing was sent: only the wallet's activity can say. */
 const BID_CHECK_WALLET = "The bid didn't go through. Check your wallet's activity before you bid again."
 /** For a failure in the dry run before the wallet opened: nothing was sent. */
-const BID_NOTHING_SENT = "The bid didn't go through. No ETH left your wallet. Try again."
+const nothingSent = (symbol: string) => `The bid didn't go through. No ${symbol} left your wallet. Try again.`
 
 /**
  * Plain words for a bid that failed before it was sent. The raw error is for the console. "No ETH left your wallet" is
@@ -187,7 +194,7 @@ const BID_NOTHING_SENT = "The bid didn't go through. No ETH left your wallet. Tr
  */
 export function bidErrorWords(
   error: unknown,
-  { checked = false, chainName = 'Ethereum' }: { checked?: boolean; chainName?: string } = {},
+  { checked = false, chainName = 'Ethereum', symbol = 'ETH' }: { checked?: boolean; chainName?: string; symbol?: string } = {},
 ): string {
   const text = errorText(error)
   if (/user rejected|user denied|rejected the request|denied transaction/i.test(text)) return BID_REJECTED
@@ -202,9 +209,14 @@ export function bidErrorWords(
     return 'This lot is no longer up for auction.'
   }
   if (/insufficient funds|exceeds the balance/i.test(text)) {
-    return "This wallet doesn't have enough ETH for this bid and gas."
+    return symbol === 'ETH'
+      ? "This wallet doesn't have enough ETH for this bid and gas."
+      : `This wallet doesn't have enough ${symbol} for this bid, or enough ETH for gas.`
   }
-  return checked ? BID_NOTHING_SENT : BID_CHECK_WALLET
+  if (/insufficient allowance|TransferFromFailed|ShortTransfer/i.test(text)) {
+    return `The auction house couldn't take the ${symbol}. Approve the bid amount, then try again.`
+  }
+  return checked ? nothingSent(symbol) : BID_CHECK_WALLET
 }
 
 export type BidEnding = {
@@ -220,6 +232,7 @@ export type BidEnding = {
 export function bidEnding(
   tx: { phase: string; stage?: string; error?: unknown },
   chainName = 'Ethereum',
+  symbol = 'ETH',
 ): BidEnding | undefined {
   if (tx.phase === 'done') return { kind: 'placed', words: 'Your bid went through.' }
   if (tx.phase !== 'error') return undefined
@@ -227,5 +240,5 @@ export function bidEnding(
   if (flags.unconfirmed) return { kind: 'unconfirmed', words: flags.timedOut ? BID_SLOW : BID_UNCONFIRMED }
   if (flags.cancelled) return { kind: 'cancelled', words: BID_CANCELLED }
   if (flags.reverted) return { kind: 'reverted', words: BID_REVERTED }
-  return { kind: 'refused', words: bidErrorWords(tx.error, { checked: tx.stage === 'check', chainName }) }
+  return { kind: 'refused', words: bidErrorWords(tx.error, { checked: tx.stage === 'check', chainName, symbol }) }
 }

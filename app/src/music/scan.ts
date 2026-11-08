@@ -48,6 +48,7 @@ export function scanNote(scan: Pick<ScanResult<unknown>, 'failed' | 'capped'>): 
 }
 
 /** The edition's price line on the Mint button: an unread price is never a guess. */
-export function mintLabel(price: bigint | undefined, format: (wei: bigint) => string): string {
-  return price === undefined ? 'Price unavailable' : `Mint · ${format(price)} ETH`
+/** The mint button: `format` gives the amount with its unit ("0.01 ETH", "25 USDC"). */
+export function mintLabel(price: bigint | undefined, format: (amount: bigint) => string): string {
+  return price === undefined ? 'Price unavailable' : `Mint · ${format(price)}`
 }

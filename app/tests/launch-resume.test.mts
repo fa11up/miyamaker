@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { makeSalt } from '../src/miyamints/launch.ts'
+import { makeSalt } from '../src/music/drop.ts'
 import type { KeyStore, LaunchProgress, SavedLaunch } from '../src/pages/Launch/resume.ts'
 import {
   batchInstance,

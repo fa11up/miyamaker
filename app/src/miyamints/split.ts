@@ -42,8 +42,8 @@ export type SplitPart = {
 }
 
 /**
- * The three shares in plain words for an example sale amount (default 1 ETH), artist first.
- * `vaultName` is what the alignment vault buys, e.g. "INFER".
+ * The three shares in plain words for an example sale amount (default 1 ETH), artist first. Every token splits the
+ * same way, in the token paid. `vaultName` is the pair the vault builds liquidity in, e.g. "INFER/IMD".
  */
 export function describeSplit(p: { protocolBps: number; alignmentBps: number; vaultName?: string; example?: bigint }): {
   parts: SplitPart[]
@@ -54,20 +54,14 @@ export function describeSplit(p: { protocolBps: number; alignmentBps: number; va
   const valid = p.alignmentBps >= 0 && p.protocolBps >= 0 && p.protocolBps + p.alignmentBps <= BPS
   const a = splitAmount(example, p.protocolBps, valid ? p.alignmentBps : 0)
   const artistBps = BPS - p.protocolBps - (valid ? p.alignmentBps : 0)
-  const vault = p.vaultName ? `the ${p.vaultName} vault` : 'the community vault'
+  const vault = p.vaultName ? `becomes ${p.vaultName} liquidity` : 'goes to the community vault'
   const parts: SplitPart[] = [
     { key: 'artist', bps: artistBps, pct: pctLabel(artistBps), amount: a.artist, words: 'goes to you' },
-    {
-      key: 'vault',
-      bps: p.alignmentBps,
-      pct: pctLabel(p.alignmentBps),
-      amount: a.vault,
-      words: `buys into ${vault}`,
-    },
+    { key: 'vault', bps: p.alignmentBps, pct: pctLabel(p.alignmentBps), amount: a.vault, words: vault },
     { key: 'protocol', bps: p.protocolBps, pct: pctLabel(p.protocolBps), amount: a.protocol, words: 'goes to miya' },
   ]
   const sentence = `Of every ${ethLabel(example)} collected, ${ethLabel(a.artist)} goes to you, ${ethLabel(
     a.vault
-  )} buys into ${vault} and ${ethLabel(a.protocol)} goes to miya.`
+  )} ${vault} and ${ethLabel(a.protocol)} goes to miya. A sale in another token splits the same way, in that token.`
   return { parts, sentence, valid }
 }

@@ -16,7 +16,7 @@ import {
 
 import { isRevert, readOutcome } from '../src/hooks/readFailure.ts'
 import { MusicScanError, combineScan, mintLabel, scanNote } from '../src/music/scan.ts'
-import { cappedNote, dropWaiting, editionTotals, editionsWaiting } from '../src/pages/Manage/payout.ts'
+import { anyPayout, cappedNote, editionTotals, tokenPayout } from '../src/pages/Manage/payout.ts'
 import { freeModesFrom, freeUnits, heldAmount, MODE } from '../src/pages/Swap/nft/pool.ts'
 
 const abi = [{ type: 'function', name: 'f', inputs: [], outputs: [], stateMutability: 'view' }] as const
@@ -61,21 +61,28 @@ test('music scan: some failing, part-read or capped is partial and says so', () 
 
 test('an unread edition price is never a guess on the Mint button', () => {
   assert.equal(mintLabel(undefined, String), 'Price unavailable')
-  assert.equal(mintLabel(10n, () => '0.01'), 'Mint · 0.01 ETH')
+  assert.equal(mintLabel(10n, () => '0.01 ETH'), 'Mint · 0.01 ETH')
+  assert.equal(mintLabel(25_000_000n, () => '25 USDC'), 'Mint · 25 USDC')
 })
 
-test('Manage payouts: unknown unless every read landed, and the drop leaves parked cuts out', () => {
-  assert.equal(editionsWaiting(undefined, 0n), undefined)
-  assert.equal(editionsWaiting(10n, undefined), undefined)
-  assert.equal(editionsWaiting(10n, 4n), 6n)
-  assert.equal(editionsWaiting(4n, 10n), 0n)
-  assert.equal(dropWaiting(100n, undefined, 0n), undefined)
-  assert.equal(dropWaiting(undefined, 0n, 0n), undefined)
-  assert.equal(dropWaiting(100n, 20n, 5n), 75n, 'withdraw() pays balance - pendingVaultCut - pendingProtocolCut')
-  assert.equal(dropWaiting(10n, 20n, 5n), 0n)
-  assert.equal(cappedNote(50, 120, 'editions'), 'Showing the first 50 of 120 editions.')
-  assert.equal(cappedNote(50, 50, 'editions'), undefined)
-  assert.equal(cappedNote(50, undefined, 'pieces'), undefined)
+test('Manage payouts per token: unknown unless every read landed, unsplit proceeds split as PaymentLib does', () => {
+  assert.equal(tokenPayout(undefined, 0n, 100, 1000), undefined)
+  assert.equal(tokenPayout(10n, undefined, 100, 1000), undefined)
+  assert.equal(tokenPayout(10n, 0n, undefined, undefined), 10n, 'nothing to split: the balance is the payout')
+  assert.equal(tokenPayout(10n, 5n, undefined, 1000), undefined, 'split terms unread')
+  // 1% protocol, 10% vault: 1_000_000 unsplit → 10_000 + 100_000 cut, 890_000 to the artist, plus the balance.
+  assert.equal(tokenPayout(7n, 1_000_000n, 100, 1000), 890_007n)
+  // Cuts round down, the artist gets the dust: 99 * 1% = 0, 99 * 10% = 9.
+  assert.equal(tokenPayout(0n, 99n, 100, 1000), 90n)
+  assert.equal(anyPayout([{ token: '0x0000000000000000000000000000000000000000', payout: 0n }]), false)
+  assert.equal(anyPayout([{ token: '0x0000000000000000000000000000000000000000', payout: undefined }]), undefined)
+  assert.equal(
+    anyPayout([
+      { token: '0x0000000000000000000000000000000000000000', payout: undefined },
+      { token: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', payout: 3n },
+    ]),
+    true
+  )
 })
 
 test('pools: a failed poolOf read is neither free nor taken', () => {

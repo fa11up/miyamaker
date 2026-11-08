@@ -29,6 +29,8 @@ export type MmHouse = {
   timeBuffer: number
   protocolFeeBps: number
   alignmentBps: number
+  /** The one token every bid, deposit and refund here is in: address(0) = ETH. */
+  currency: Address
   /** More lots than were read. */
   truncated: boolean
 }
@@ -52,7 +54,7 @@ const client = (chainId: number) =>
 async function readHouse(c: PublicClient, chainId: number, chainName: string, address: Address): Promise<MmLotRef[]> {
   const read = <T>(functionName: string, args?: readonly unknown[]) =>
     c.readContract({ address, abi: mmAuctionAbi, functionName, args } as never) as Promise<T>
-  const [name, owner, next, bidIncrement, timeBuffer, protocolFeeBps, alignmentBps] = await Promise.all([
+  const [name, owner, next, bidIncrement, timeBuffer, protocolFeeBps, alignmentBps, currency] = await Promise.all([
     read<string>('name'),
     read<Address>('owner'),
     read<number>('nextTokenId'),
@@ -60,6 +62,7 @@ async function readHouse(c: PublicClient, chainId: number, chainName: string, ad
     read<number>('timeBuffer'),
     read<number>('protocolFeeBps'),
     read<number>('alignmentBps'),
+    read<Address>('currency'),
   ])
   const ids = lotIds(Number(next), LOTS_PER_HOUSE)
   const house: MmHouse = {
@@ -72,6 +75,7 @@ async function readHouse(c: PublicClient, chainId: number, chainName: string, ad
     timeBuffer: Number(timeBuffer),
     protocolFeeBps: Number(protocolFeeBps),
     alignmentBps: Number(alignmentBps),
+    currency: getAddress(currency),
     truncated: Number(next) - 1 > ids.length,
   }
   const lots = await Promise.all(ids.map((id) => read<MmLot>('getAuction', [id])))
@@ -180,6 +184,25 @@ export function useMmLot(house: MmHouse | undefined, tokenId: number | undefined
     updatedAt: good?.at ?? 0,
     refetch: q.refetch,
   }
+}
+
+/**
+ * ERC-20 houses: what this wallet was outbid by and can claim back (refundOf). Undefined for ETH houses (refunds are
+ * sent at once) and while unread; read again every 15s and after `bump` changes.
+ */
+export function useRefund(house: MmHouse | undefined, account: Address | undefined, bump?: string) {
+  const erc20 = !!house && !/^0x0{40}$/i.test(house.currency)
+  const q = useQuery({
+    queryKey: ['mm-refund', house?.chainId, house?.address, account, bump],
+    enabled: erc20 && !!account,
+    refetchInterval: LIVE_REFRESH_MS,
+    queryFn: async () => {
+      const c = client(house!.chainId)
+      if (!c) throw new Error('No client')
+      return c.readContract({ address: house!.address, abi: mmAuctionAbi, functionName: 'refundOf', args: [account!] })
+    },
+  })
+  return { amount: q.data as bigint | undefined, failed: q.isError, refetch: q.refetch }
 }
 
 export type BidRow = { bidder: Address; amount: bigint; hash: string; block: bigint }

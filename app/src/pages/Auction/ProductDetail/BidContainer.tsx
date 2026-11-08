@@ -1,12 +1,12 @@
 import type { ReactNode } from 'react'
-import { formatEther } from 'viem'
+import { formatUnits } from 'viem'
 import styled from 'styled-components/macro'
 
 import { ConnectedButton } from '@/components/Button'
 import { NormalButton } from '@/components/Button/NormalButton'
 import { AUCTION_CHAIN_ID } from '@/constants/contracts'
-import type { LotPhase } from '@/pages/Auction/bidding'
-import { balanceWords, monthYear, timeLeftWords } from '@/pages/Auction/bidding'
+import type { BidUnit, LotPhase } from '@/pages/Auction/bidding'
+import { balanceWords, ETH_UNIT, monthYear, timeLeftWords } from '@/pages/Auction/bidding'
 
 const BidWrapper = styled.div`
   display: flex;
@@ -183,6 +183,8 @@ export default function BidContainer({
   upcoming,
   ended,
   notes = ['If someone outbids you, your ETH comes back automatically.'],
+  unit = ETH_UNIT,
+  payNote,
 }: {
   phase: LotPhase
   startTime: number
@@ -210,6 +212,10 @@ export default function BidContainer({
   ended?: ReactNode
   /** The lot's rules under the bid, in its contract's words. */
   notes?: string[]
+  /** The token bids are in (ETH unless the house says otherwise). */
+  unit?: BidUnit
+  /** Said under a valid amount before the wallet opens, e.g. the ERC-20 approval that comes first. */
+  payNote?: string
 }) {
   // Whatever the lot says now, a bid that may still land comes first.
   if (stuck) return <StuckBid {...stuck} />
@@ -243,19 +249,19 @@ export default function BidContainer({
       )}
       <InfoRow>
         <TimeLeft>{timeLeftWords(endTime * 1000 - now)}</TimeLeft>
-        {balance !== undefined && <span>Your balance: {balanceWords(balance)}</span>}
+        {balance !== undefined && <span>Your balance: {balanceWords(balance, unit)}</span>}
       </InfoRow>
       <BidWrapper>
         <InputWrapper>
           <TextInput
             value={bidAmount}
             inputMode="decimal"
-            aria-label="Your bid in ETH"
+            aria-label={`Your bid in ${unit.symbol}`}
             disabled={!!busy}
             onChange={(event) => onBidAmount(event.target.value)}
-            placeholder={`${formatEther(minimum)} or more`}
+            placeholder={`${formatUnits(minimum, unit.decimals)} or more`}
           />
-          <Unit>ETH</Unit>
+          <Unit>{unit.symbol}</Unit>
         </InputWrapper>
         <ActionWrapper>
           <ConnectedButton withChain={[chainId]} disabled={canSend && (!!busy || !check.valid)} onClick={onBid}>
@@ -265,7 +271,8 @@ export default function BidContainer({
       </BidWrapper>
       {check.valid && check.value !== undefined && (
         <Note>
-          You send {formatEther(check.value)} ETH now on {chainName}, plus gas.
+          You send {formatUnits(check.value, unit.decimals)} {unit.symbol} now on {chainName}, plus gas.
+          {payNote ? ` ${payNote}` : ''}
         </Note>
       )}
       {notes.map((note) => (

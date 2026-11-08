@@ -2,12 +2,12 @@ import { useQuery } from '@tanstack/react-query'
 import PlaceholderImage from 'assets/explorer/sample/collections.jpeg'
 import { useEffect, useRef, useState } from 'react'
 import styled from 'styled-components/macro'
-import type { Hash } from 'viem'
-import { formatEther, isAddress, zeroHash } from 'viem'
-import { useAccount, useWriteContract } from 'wagmi'
+import { isAddress, zeroHash } from 'viem'
+import { useAccount } from 'wagmi'
 
-import { TX_REVERTED_WORDS, TX_CANCELLED_WORDS, TX_UNCONFIRMED_WORDS } from '@/miyamints/txOutcome'
-import { useTxOutcome } from '@/miyamints/useTxOutcome'
+import { approveWords, isEth, payPlan, pickToken, sameToken, tokenLabel } from '@/miyamints/tokens'
+import { TX_CANCELLED_WORDS, TX_UNCONFIRMED_WORDS } from '@/miyamints/txOutcome'
+import { usePay, useTokenInfo } from '@/miyamints/usePay'
 import { ConnectedButton } from '@/components/Button'
 import { Skeleton, StatusBox } from '@/components/Retro'
 import { explorerUrl } from '@/config/wagmi'
@@ -23,7 +23,6 @@ import { useAddToRadio } from '@/music/useAddToRadio'
 import { PAINTED } from '@/pages/Mint/handheld/Carousel'
 import Device, { Lcd } from '@/pages/Mint/handheld/Device'
 import { useHandheld } from '@/pages/Mint/handheld/nav'
-import { describeError } from '@/pages/Mint/Miyamini/useMiyamini'
 import { space, text } from '@/theme/tokens'
 import { resolveUri } from '@/utils/resolveUri'
 
@@ -195,13 +194,31 @@ function Cover({ uri, alt }: { uri?: string; alt: string }) {
   )
 }
 
+const Picker = styled.select`
+  height: 34px;
+  min-width: 0;
+  width: 100%;
+  border: none;
+  border-radius: 3px;
+  padding: 0 4px;
+  font-size: 16px;
+  font-family: inherit;
+`
+
 function MintEdition({ item }: { item: MusicItem }) {
-  const write = useWriteContract()
-  const { outcome } = useTxOutcome(item.chainId, write.data as Hash | undefined)
   const nav = useHandheld()
   const ed = item.edition
-  const busy = write.isPending || outcome === 'waiting'
-  const holding = busy || outcome === 'unknown'
+  const offered = (ed?.prices || []).map((p) => p.token)
+  const info = useTokenInfo(item.chainId, offered)
+  const [picked, setPicked] = useState<string>()
+  const token = pickToken(offered, picked)
+  const choice = ed?.prices.find((p) => token && sameToken(p.token, token))
+  const unit = token ? info[token.toLowerCase()] : undefined
+  const buy = usePay()
+  const { tx } = buy
+  const busy = buy.busy
+  const unconfirmed = buy.unconfirmed
+  const holding = busy || unconfirmed
   useEffect(() => (holding ? nav.hold?.() : undefined), [holding])
   // Wakes up when the edition opens, so its button doesn't stay on "Not open yet".
   const [now, setNow] = useState(() => Date.now())
@@ -214,35 +231,61 @@ function MintEdition({ item }: { item: MusicItem }) {
   if (!ed) return null
   const soldOut = ed.supply > 0n && ed.minted >= ed.supply
   const notOpen = opensAt > now
-  // getCurrentPrice couldn't be read: no mint is offered at a guessed price.
-  const { price } = ed
-  const noPrice = price === undefined
-  const minted = outcome === 'success'
-  // Sent, but its receipt couldn't be read: it may still land, so the same mint isn't offered again.
-  const unconfirmed = outcome === 'unknown'
-  const err = describeError(write.error)
+  // The price couldn't be read (or its token's decimals): no mint is offered at a guessed price.
+  const price = choice?.price
+  const noPrice = price === undefined || !unit
+  const minted = tx.phase === 'done' && tx.id === 'mint'
+  const erc20 = !!token && !isEth(token)
+  const failed = tx.phase === 'error' && !(tx.error as { cancelled?: boolean } | undefined)?.cancelled
+  const mint = () => {
+    if (unconfirmed) return buy.reset()
+    if (price === undefined || !token) return undefined
+    const plan = payPlan(token, price)
+    return buy.pay('mint', {
+      chainId: item.chainId,
+      token,
+      spender: item.collection,
+      amount: price,
+      call: {
+        address: item.collection,
+        abi: erc1155InstanceAbi,
+        chainId: item.chainId,
+        functionName: 'mint',
+        // amount 1, open gating, no message, maxCost = the quoted price (reverts if the price moved up)
+        args: [item.tokenId, 1n, zeroHash, '', token, plan.maxCost],
+        value: plan.value,
+      },
+    })
+  }
   return (
     <>
+      {offered.length > 1 && (
+        <Picker
+          aria-label="Pay with"
+          value={token?.toLowerCase()}
+          disabled={busy || unconfirmed}
+          onChange={(e) => setPicked(e.target.value)}
+        >
+          {ed.prices.map((p) => {
+            const t = info[p.token.toLowerCase()]
+            return (
+              <option key={p.token} value={p.token.toLowerCase()}>
+                {t && p.price !== undefined ? tokenLabel(p.price, t) : t ? `${t.symbol}: price unavailable` : 'Token unavailable'}
+              </option>
+            )
+          })}
+        </Picker>
+      )}
       <ConnectedButton
         withChain={[item.chainId]}
         disabled={busy || minted || (!unconfirmed && (soldOut || notOpen || noPrice))}
         style={{ width: '100%', minWidth: 0 }}
-        onClick={() =>
-          unconfirmed ? write.reset() :
-          price !== undefined &&
-          write.writeContract({
-            address: item.collection,
-            abi: erc1155InstanceAbi,
-            chainId: item.chainId as never,
-            functionName: 'mint',
-            // amount 1, open gating, no message, maxCost = the quoted price (reverts if the price moved up)
-            args: [item.tokenId, 1n, zeroHash, '', price],
-            value: price,
-          })
-        }
+        onClick={mint}
       >
         {busy
-          ? 'Minting…'
+          ? buy.step === 'approve'
+            ? 'Approving…'
+            : 'Minting…'
           : minted
           ? 'Minted!'
           : unconfirmed
@@ -251,18 +294,21 @@ function MintEdition({ item }: { item: MusicItem }) {
           ? 'Sold out'
           : notOpen
           ? 'Not open yet'
-          : mintLabel(price, formatEther)}
+          : mintLabel(noPrice ? undefined : price, (amount) => tokenLabel(amount, unit!))}
       </ConnectedButton>
-      {outcome === 'cancelled' && (
+      {erc20 && unit && price !== undefined && !minted && !failed && !soldOut && !notOpen && (
+        <Sub as="p" style={{ whiteSpace: 'normal' }}>
+          {approveWords(price, unit, 'this edition')}
+        </Sub>
+      )}
+      {tx.phase === 'error' && (tx.error as { cancelled?: boolean } | undefined)?.cancelled && (
         <StatusBox tone="info" role="status" style={{ fontSize: text.xs }}>
           <span>{TX_CANCELLED_WORDS}</span>
         </StatusBox>
       )}
-      {(outcome === 'reverted' || unconfirmed || (write.error && !err.cancelled)) && (
+      {failed && (
         <StatusBox tone="error" role="alert" style={{ fontSize: text.xs }}>
-          <span>
-            {outcome === 'reverted' ? TX_REVERTED_WORDS : unconfirmed ? TX_UNCONFIRMED_WORDS : err.message}
-          </span>
+          <span>{unconfirmed ? TX_UNCONFIRMED_WORDS : tx.message}</span>
         </StatusBox>
       )}
     </>

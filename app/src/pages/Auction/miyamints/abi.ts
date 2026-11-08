@@ -32,6 +32,10 @@ export const mmAuctionAbi = [
   view('protocolFeeBps', 'uint16'),
   view('alignmentBps', 'uint16'),
   view('escrowedWinner', 'address', [{ name: 'tokenId', type: 'uint24' }]),
+  /** The one currency of this house's auctions: address(0) = ETH. */
+  view('currency', 'address'),
+  /** ERC-20 houses: outbid bids credited to a bidder, claimed with claimRefund(to). Always 0 for ETH. */
+  view('refundOf', 'uint256', [{ name: 'bidder', type: 'address' }]),
   {
     type: 'function',
     name: 'getAuction',
@@ -45,8 +49,16 @@ export const mmAuctionAbi = [
     stateMutability: 'payable',
     inputs: [
       { name: 'tokenId', type: 'uint24' },
+      { name: 'amount', type: 'uint256' },
       { name: 'message', type: 'string' },
     ],
+    outputs: [],
+  },
+  {
+    type: 'function',
+    name: 'claimRefund',
+    stateMutability: 'nonpayable',
+    inputs: [{ name: 'to', type: 'address' }],
     outputs: [],
   },
   {
@@ -103,5 +115,8 @@ export const mmAuctionAbi = [
   noArgs('Unauthorized'),
   noArgs('SettlementGasTooLow'),
   noArgs('NotEscrowedWinner'),
+  noArgs('WrongPayment'),
+  noArgs('NothingToRefund'),
+  noArgs('ShortTransfer'),
   noArgs('Reentrancy'),
 ] as const

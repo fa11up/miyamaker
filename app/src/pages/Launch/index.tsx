@@ -3,8 +3,7 @@ import { Fragment, useEffect, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import styled from 'styled-components/macro'
 import { useElementSize } from 'usehooks-ts'
-import { formatEther } from 'viem'
-import { useAccount, useSwitchChain } from 'wagmi'
+import { useAccount, useReadContract, useSwitchChain } from 'wagmi'
 
 import LoadingHourglass from '@/assets/loading_hourglass.gif'
 import { CloseGuardBox, DropZone, SmallButton, SplitMeter, TxSteps, useCloseGuard } from '@/components/LaunchKit'
@@ -15,20 +14,24 @@ import WindowWrapper from '@/components/WindowWrapper'
 import { explorerUrl } from '@/config/wagmi'
 import Pages from '@/constants/pages'
 import type { LaunchForm, LaunchType, StepKey } from '@/miyamints/launch'
+import { registryAbi } from '@/miyamints/abi'
 import {
   AUCTION_TIME_BUFFER_SECONDS,
+  auctionCurrency,
   draftHasData,
   EMPTY_FORM,
   parseAlignmentPct,
-  parseEth,
   parseRoyaltyPct,
   parseVault,
   phaseLine,
   STEP_ORDER,
   txPlan,
+  upgradeForm,
   validateStep,
   whenWords,
 } from '@/miyamints/launch'
+import { isEth, parseAccepted, parseTokenAmount, payTokens, tokenExact, tokenLabel } from '@/miyamints/tokens'
+import { useWalletToken } from '@/miyamints/usePay'
 import { pctLabel } from '@/miyamints/split'
 import { useLaunchChain, useRegistryRules, useVaultInfo } from '@/miyamints/useMiyamints'
 import { validateAudioFile, validateImageFile } from '@/music/audio'
@@ -358,6 +361,16 @@ export default function LaunchPage() {
   const feeBps = rules.protocolFeeBps
   const rulesKnown = minBps !== undefined && feeBps !== undefined
   const launch = useLaunch()
+  // The registry's allowlist: a token it no longer lists isn't offered. Unread, the known table stands (the dry run
+  // still refuses a token the registry doesn't allow).
+  const allowlist = useReadContract({
+    address: net.addresses.registry,
+    abi: registryAbi,
+    functionName: 'paymentTokens',
+    chainId: net.chainId,
+    query: { enabled: !!net.addresses.registry && net.chainId === 1, staleTime: 5 * 60_000 },
+  })
+  const offeredTokens = payTokens(net.chainId, allowlist.data as readonly string[] | undefined)
 
   // /launch?type=drop|auction|editions (miyanet's "Launch your own") opens with that kind picked.
   const location = useLocation()
@@ -434,6 +447,7 @@ export default function LaunchPage() {
   const now = BigInt(Math.floor(Date.now() / 1000))
   const ctx = {
     now,
+    chainId: net.chainId,
     minAlignmentBps: minBps,
     protocolFeeBps: feeBps,
     rulesFailed: rules.failed,
@@ -556,7 +570,7 @@ export default function LaunchPage() {
   const continueSaved = () => {
     if (!launch.saved) return
     const input = launch.resume(launch.saved)
-    setForm(input.form)
+    setForm(upgradeForm(input.form))
     setImage(undefined)
     setAudio(undefined)
     setShown({})
@@ -582,8 +596,15 @@ export default function LaunchPage() {
       FREE_BYTES
     )
   )
-  const reserve = form.type === 'auction' ? parseEth(form.reserve) : undefined
-  const deposit = reserve?.ok ? `${formatEther(reserve.wei)} ETH` : ''
+  const currency = form.type === 'auction' ? auctionCurrency(form, net.chainId) : undefined
+  const reserve = currency ? parseTokenAmount(form.reserve, currency) : undefined
+  const deposit = currency && reserve?.ok ? tokenExact(reserve.amount, currency) : ''
+  const erc20Deposit = !!currency && !isEth(currency.address)
+  // An ERC-20 deposit is paid after the house is created: check the wallet holds it before anything is sent.
+  const depositWallet = useWalletToken(net.chainId, erc20Deposit ? currency?.address : undefined, address)
+  const shortOfDeposit =
+    erc20Deposit && reserve?.ok && depositWallet.balance !== undefined && depositWallet.balance < reserve.amount
+  const acceptedTokens = parseAccepted(form.tokens, net.chainId)
   const hasDraft = !launch.result && draftHasData(form, !!image || !!audio)
   const guard = useCloseGuard({
     draft: hasDraft,
@@ -629,14 +650,16 @@ export default function LaunchPage() {
     if (firstBlocked !== -1)
       return { label: `Fix: ${STEP_LABEL[STEP_ORDER[firstBlocked] as StepKey]}`, onClick: () => goTo(firstBlocked) }
 
-    if (form.type === 'auction')
+    if (form.type === 'auction') {
+      if (shortOfDeposit) return { label: `Not enough ${currency?.symbol} for the deposit`, disabled: true }
       return { label: `Create auction and pay ${deposit}`, onClick: create, disabled: launch.check.state === 'error' }
+    }
     if (form.type === 'editions')
       return { label: 'Create edition', onClick: create, disabled: launch.check.state === 'error' }
     return { label: 'Create collection', onClick: create, disabled: launch.check.state === 'error' }
   })()
 
-  const plan = form.type ? txPlan(form.type) : []
+  const plan = form.type ? txPlan(form.type, currency) : []
   const pipeline = [
     {
       id: 'image',
@@ -661,9 +684,9 @@ export default function LaunchPage() {
   ]
 
   const vaultLabel = defaultVault.symbol
-    ? `${defaultVault.targetName ? `${defaultVault.targetName} vault` : 'Default vault'} (buys ${
+    ? `${defaultVault.targetName ? `${defaultVault.targetName} vault` : 'Default vault'} (${
         defaultVault.symbol
-      }), recommended`
+      } liquidity), recommended`
     : 'Default vault, recommended'
 
   // Before launch the note under the header says so.
@@ -774,6 +797,7 @@ export default function LaunchPage() {
                 </small>
               </Panel>
               <Preview
+                chainId={net.chainId}
                 form={form}
                 imageUrl={imageUrl}
                 protocolBps={feeBps}
@@ -806,6 +830,7 @@ export default function LaunchPage() {
               <Body>
                 {narrow && stepIdx > 0 && (
                   <Preview
+                    chainId={net.chainId}
                     form={form}
                     imageUrl={imageUrl}
                     protocolBps={feeBps}
@@ -837,7 +862,9 @@ export default function LaunchPage() {
                       }
                     />
                   )}
-                  {step === 'sale' && <SaleStep form={form} set={set} errors={shownErrors} />}
+                  {step === 'sale' && (
+                    <SaleStep form={form} set={set} errors={shownErrors} tokens={offeredTokens} />
+                  )}
                   {step === 'align' && (
                     <AlignStep
                       form={form}
@@ -851,7 +878,7 @@ export default function LaunchPage() {
                         symbol: defaultVault.symbol,
                         detail: net.addresses.defaultVault
                           ? defaultVault.symbol
-                            ? `Your share buys ${defaultVault.symbol} and adds it to the ${defaultVault.symbol} pool.`
+                            ? `Your share goes in as paid and becomes ${defaultVault.symbol} liquidity in one shared pool.`
                             : 'The vault miya set up for this network.'
                           : 'The community vault opens with launch.',
                       }}
@@ -861,7 +888,9 @@ export default function LaunchPage() {
                             chosenVault.loading ? (
                               <small>Checking the vault…</small>
                             ) : chosenVault.registered ? (
-                              <small>Registered vault{chosenVault.symbol ? `: buys ${chosenVault.symbol}` : ''}.</small>
+                              <small>
+                                Registered vault{chosenVault.symbol ? `: builds ${chosenVault.symbol} liquidity` : ''}.
+                              </small>
                             ) : null
                           ) : null,
                       }}
@@ -881,7 +910,16 @@ export default function LaunchPage() {
                           {form.type !== 'editions' && form.symbol ? ` (${form.symbol.trim().toUpperCase()})` : ''}
                         </dd>
                         <dt>Price</dt>
-                        <dd>{priceLine(form)}</dd>
+                        <dd>{priceLine(form, net.chainId)}</dd>
+                        {form.type !== 'auction' && acceptedTokens.ok && (
+                          <>
+                            <dt>Buyers pay in</dt>
+                            <dd>
+                              {acceptedTokens.tokens.map((t) => t.symbol).join(', ')}. You collect each token exactly as
+                              paid: nothing is converted.
+                            </dd>
+                          </>
+                        )}
                         <dt>Supply</dt>
                         <dd>{supplyLine(form)}</dd>
                         {form.type === 'drop' && (
@@ -890,7 +928,7 @@ export default function LaunchPage() {
                               // eslint-disable-next-line react/no-array-index-key
                               <Fragment key={i}>
                                 <dt>{form.phases.length > 1 ? `Phase ${i + 1}` : 'Sale'}</dt>
-                                <dd>{phaseLine(p)}</dd>
+                                <dd>{phaseLine(p, acceptedTokens.ok ? acceptedTokens.tokens : [])}</dd>
                               </Fragment>
                             ))}
                             <dt>Kept back</dt>
@@ -901,8 +939,17 @@ export default function LaunchPage() {
                         )}
                         {form.type === 'auction' && (
                           <>
+                            <dt>Bids in</dt>
+                            <dd>
+                              {currency?.symbol}. The deposit, every bid and every refund are in {currency?.symbol}.
+                            </dd>
                             <dt>Bid step</dt>
-                            <dd>{form.bidStep.trim()} ETH</dd>
+                            <dd>
+                              {(() => {
+                                const b = currency ? parseTokenAmount(form.bidStep, currency) : undefined
+                                return currency && b?.ok ? tokenLabel(b.amount, currency) : '—'
+                              })()}
+                            </dd>
                             <dt>Length</dt>
                             <dd>
                               {form.durationHours} hours. A bid in the last {AUCTION_TIME_BUFFER_SECONDS / 60} minutes
@@ -912,6 +959,9 @@ export default function LaunchPage() {
                             <dd>
                               <b>{deposit} deposit.</b> You get it back when the piece sells. If nobody bids, miya keeps
                               it and the piece is not minted.
+                              {erc20Deposit &&
+                                ` Your wallet first lets the new auction house take exactly ${deposit}, and no more, then pays it.`}
+                              {shortOfDeposit && ` This wallet holds less than ${deposit}.`}
                             </dd>
                           </>
                         )}
@@ -925,7 +975,7 @@ export default function LaunchPage() {
                         <dd>{net.chain.name}</dd>
                         <dt>Vault</dt>
                         <dd>
-                          {vaultName ? `Buys ${vaultName}` : 'Community vault'}{' '}
+                          {vaultName ? `${vaultName} liquidity` : 'Community vault'}{' '}
                           <span className="mono">{short(vaultAddr)}</span>
                         </dd>
                       </Summary>
@@ -1013,6 +1063,7 @@ export default function LaunchPage() {
                 </Panel>
                 {!narrow && (
                   <Preview
+                    chainId={net.chainId}
                     form={form}
                     imageUrl={imageUrl}
                     protocolBps={feeBps}

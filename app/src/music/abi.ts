@@ -24,6 +24,18 @@ const createParams = {
         { name: 'scope', type: 'uint8' },
       ],
     },
+    { name: 'acceptedTokens', type: 'address[]' },
+  ],
+} as const
+
+/** TokenPrice{token, price}[]: one price per accepted token (address(0) = ETH). */
+const tokenPrices = {
+  name: 'prices',
+  type: 'tuple[]',
+  internalType: 'struct TokenPrice[]',
+  components: [
+    { name: 'token', type: 'address' },
+    { name: 'price', type: 'uint256' },
   ],
 } as const
 
@@ -91,13 +103,13 @@ const edition = {
   components: [
     { name: 'id', type: 'uint256' },
     { name: 'pieceTitle', type: 'string' },
-    { name: 'basePrice', type: 'uint256' },
     { name: 'supply', type: 'uint256' },
     { name: 'minted', type: 'uint256' },
     { name: 'metadataURI', type: 'string' },
     { name: 'pricingModel', type: 'uint8' },
     { name: 'priceIncreaseRate', type: 'uint256' },
     { name: 'openTime', type: 'uint256' },
+    tokenPrices,
   ],
 } as const
 
@@ -122,16 +134,31 @@ export const erc1155InstanceAbi = [
     type: 'function',
     name: 'getCurrentPrice',
     stateMutability: 'view',
-    inputs: [{ name: 'editionId', type: 'uint256' }],
-    outputs: [{ type: 'uint256' }],
+    inputs: [
+      { name: 'editionId', type: 'uint256' },
+      { name: 'token', type: 'address' },
+    ],
+    outputs: [{ name: 'price', type: 'uint256' }],
   },
+  {
+    type: 'function',
+    name: 'calculateMintCost',
+    stateMutability: 'view',
+    inputs: [
+      { name: 'editionId', type: 'uint256' },
+      { name: 'amount', type: 'uint256' },
+      { name: 'token', type: 'address' },
+    ],
+    outputs: [{ name: 'totalCost', type: 'uint256' }],
+  },
+  { type: 'function', name: 'acceptedTokens', stateMutability: 'view', inputs: [], outputs: [{ type: 'address[]' }] },
   {
     type: 'function',
     name: 'addEdition',
     stateMutability: 'nonpayable',
     inputs: [
       { name: 'pieceTitle', type: 'string' },
-      { name: 'basePrice', type: 'uint256' },
+      tokenPrices,
       { name: 'supply', type: 'uint256' },
       { name: 'metadataURI', type: 'string' },
       { name: 'pricingModel', type: 'uint8' },
@@ -149,6 +176,7 @@ export const erc1155InstanceAbi = [
       { name: 'amount', type: 'uint256' },
       { name: 'gatingData', type: 'bytes32' },
       { name: 'message', type: 'string' },
+      { name: 'token', type: 'address' },
       { name: 'maxCost', type: 'uint256' },
     ],
     outputs: [],
@@ -159,7 +187,7 @@ export const erc1155InstanceAbi = [
     inputs: [
       { name: 'editionId', type: 'uint256', indexed: true },
       { name: 'pieceTitle', type: 'string', indexed: false },
-      { name: 'basePrice', type: 'uint256', indexed: false },
+      { ...tokenPrices, indexed: false },
       { name: 'supply', type: 'uint256', indexed: false },
       { name: 'pricingModel', type: 'uint8', indexed: false },
     ],
@@ -173,6 +201,11 @@ export const erc1155InstanceAbi = [
   { type: 'error', name: 'ExceedsSupply', inputs: [] },
   { type: 'error', name: 'ExceedsMaxCost', inputs: [] },
   { type: 'error', name: 'InsufficientPayment', inputs: [] },
+  { type: 'error', name: 'WrongPayment', inputs: [] },
+  { type: 'error', name: 'TokenNotPriced', inputs: [] },
+  { type: 'error', name: 'TokenNotAccepted', inputs: [{ name: 'token', type: 'address' }] },
+  { type: 'error', name: 'TokenNotAllowed', inputs: [{ name: 'token', type: 'address' }] },
+  { type: 'error', name: 'ShortTransfer', inputs: [] },
   { type: 'error', name: 'GatingCheckFailed', inputs: [] },
   { type: 'error', name: 'UnlimitedMustHaveZeroSupply', inputs: [] },
   { type: 'error', name: 'LimitedMustHavePositiveSupply', inputs: [] },

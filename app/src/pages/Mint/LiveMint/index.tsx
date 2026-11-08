@@ -1,7 +1,8 @@
 import { useConnectModal } from '@rainbow-me/rainbowkit'
+import { readContract } from '@wagmi/core'
 import { useEffect, useState } from 'react'
 import type { Address, Hash } from 'viem'
-import { isAddress } from 'viem'
+import { erc20Abi, isAddress } from 'viem'
 import {
   useAccount,
   useBalance,
@@ -13,7 +14,11 @@ import {
 
 import NftImage from '@/components/NftImage'
 import type { SupportedChainId } from '@/config/wagmi'
-import { explorerUrl } from '@/config/wagmi'
+import { explorerUrl, wagmiConfig } from '@/config/wagmi'
+import type { PayToken } from '@/miyamints/tokens'
+import { approveWords, ETH, isEth, knownToken, payPlan, pickToken, sameToken, tokenLabel } from '@/miyamints/tokens'
+import { useTokenInfo, useWalletToken } from '@/miyamints/usePay'
+import { useTx } from '@/miyamints/useTx'
 import ArtistTag from '@/pages/Mint/ArtistTag'
 import type { LiveMintCard } from '@/pages/Mint/liveMints'
 import { formatEthShort, mintableNow, toCard } from '@/pages/Mint/liveMints'
@@ -33,7 +38,8 @@ import { mintedWhere } from './where'
 
 /**
  * Generic mint view for any live mint that has no dedicated page: legacy ERC721M clones (mint(amount)) and miyamints
- * drops (public phase: mint(phaseId, qty, [])). Same layout as MIYAMINI so every collection feels the same.
+ * drops (public phase: mint(phaseId, qty, [], token, maxCost), paid in any token the phase sells for: an ERC-20 is
+ * approved for exactly the total first). Same layout as MIYAMINI so every collection feels the same.
  */
 
 const MAX_PER_TX = 10
@@ -56,20 +62,47 @@ function useMint(card: LiveMintCard, phaseId: number | undefined) {
   const balance = useBalance({ address, chainId, query: { enabled: !!address } })
   const write = useWriteContract()
   const { outcome } = useTxOutcome(chainId, write.data as Hash | undefined)
+  /** The ERC-20 approval before a drop mint paid in that token (exactly the total, never unlimited). */
+  const approval = useTx()
 
   useEffect(() => {
     if (outcome === 'success') balance.refetch()
   }, [outcome])
 
-  const mint = (qty: number, price: bigint, to?: Address) => {
+  const mint = async (qty: number, price: bigint, to?: Address, token: Address = ETH) => {
     const value = price * BigInt(qty)
     if (card.kind === 'drop') {
       if (phaseId === undefined) return
-      const common = { address: card.address as Address, abi: dropAbi, chainId, value }
+      const plan = payPlan(token, value)
+      if (!isEth(token) && value > 0n && address) {
+        const allowance = await readContract(wagmiConfig, {
+          address: token,
+          abi: erc20Abi,
+          functionName: 'allowance',
+          args: [address, card.address as Address],
+          chainId,
+        }).catch(() => undefined)
+        const need = payPlan(token, value, allowance).approve
+        if (need !== undefined) {
+          const ok = await approval.run('approve', {
+            address: token,
+            abi: erc20Abi,
+            functionName: 'approve',
+            args: [card.address as Address, need],
+            chainId,
+          })
+          if (!ok) return
+        }
+      }
+      const common = { address: card.address as Address, abi: dropAbi, chainId, value: plan.value }
       if (to) {
-        write.writeContract({ ...common, functionName: 'mintTo', args: [to, BigInt(phaseId), BigInt(qty), []] })
+        write.writeContract({
+          ...common,
+          functionName: 'mintTo',
+          args: [to, BigInt(phaseId), BigInt(qty), [], token, plan.maxCost],
+        })
       } else {
-        write.writeContract({ ...common, functionName: 'mint', args: [BigInt(phaseId), BigInt(qty), []] })
+        write.writeContract({ ...common, functionName: 'mint', args: [BigInt(phaseId), BigInt(qty), [], token, plan.maxCost] })
       }
 
       return
@@ -97,6 +130,12 @@ function useMint(card: LiveMintCard, phaseId: number | undefined) {
     sentTo:
       write.variables?.functionName === 'mintTo' ? String((write.variables.args as readonly unknown[])[0]) : undefined,
     isAwaitingWallet: write.isPending,
+    /** The approval step: its wallet prompt or its wait, and how it ended. */
+    approving: approval.busy,
+    approvalStuck: approval.unconfirmed,
+    approvalError:
+      approval.tx.phase === 'error' && !approval.unconfirmed ? approval.tx.message : undefined,
+    resetApproval: approval.reset,
     isConfirming: outcome === 'waiting',
     isConfirmed: outcome === 'success',
     reverted: outcome === 'reverted',
@@ -119,6 +158,18 @@ export default function LiveMintView({ card }: { card: LiveMintCard }) {
   const [recipient, setRecipient] = useState('')
   const { address: account } = useAccount()
   const maxPerWallet = reads?.maxPerWallet
+  // Drops sell for any token their live phase prices; the legacy ERC721M is ETH only.
+  const offered = card.kind === 'drop' ? (reads?.prices || []).map((p) => p.token) : [ETH]
+  const info = useTokenInfo(card.chainId, offered)
+  const [picked, setPicked] = useState<string>()
+  const token = pickToken(offered, picked) ?? ETH
+  const unit: PayToken | undefined = isEth(token) ? knownToken(card.chainId, ETH) : info[token.toLowerCase()]
+  const unitPrice =
+    card.kind === 'drop' ? reads?.prices?.find((p) => sameToken(p.token, token))?.price : live.price
+  const erc20 = !isEth(token)
+  const tokenWallet = useWalletToken(card.chainId, erc20 ? token : undefined, card.address as Address)
+  const money = (amount: bigint | undefined) =>
+    amount === undefined || !unit ? '…' : isEth(token) ? formatEthShort(amount) : amount === 0n ? 'Free' : tokenLabel(amount, unit)
   const walletReads = useReadContract({
     address: card.address as Address,
     abi: dropAbi,
@@ -134,9 +185,10 @@ export default function LiveMintView({ card }: { card: LiveMintCard }) {
   const mintable = mintableNow({ maxPerTx: MAX_PER_TX, left: remaining, maxPerWallet, walletMinted })
   const maxQty = Math.max(1, mintable)
   const badRecipient = sendElsewhere && !isAddress(recipient.trim())
-  const total = live.price !== undefined ? live.price * BigInt(quantity) : undefined
-  const insufficient = tx.balance !== undefined && total !== undefined && tx.balance < total
-  const busy = tx.isAwaitingWallet || tx.isConfirming
+  const total = unitPrice !== undefined ? unitPrice * BigInt(quantity) : undefined
+  const walletBalance = erc20 ? tokenWallet.balance : tx.balance
+  const insufficient = walletBalance !== undefined && total !== undefined && walletBalance < total
+  const busy = tx.isAwaitingWallet || tx.isConfirming || tx.approving
   const err = describeError(tx.error)
   const explorer = explorerUrl(card.chainId)
   const txUrl = tx.hash ? `${explorer}/tx/${tx.hash}` : undefined
@@ -148,12 +200,15 @@ export default function LiveMintView({ card }: { card: LiveMintCard }) {
     if (tx.isConfirmed || tx.reverted) {
       refetch()
       walletReads.refetch()
+      tokenWallet.refetch()
     }
   }, [tx.isConfirmed, tx.reverted])
 
   const action = (() => {
     const off = (label: string) => ({ label, disabled: true, onClick: () => {} })
     // What is under way comes first: the last piece going to someone else doesn't change what this one is doing.
+    if (tx.approving) return off(`Approving ${unit?.symbol ?? ''}…`)
+    if (tx.approvalStuck) return { label: 'Start over', disabled: false, onClick: tx.resetApproval }
     if (tx.isAwaitingWallet) return off('Confirm in wallet…')
     if (tx.isConfirming) return off('Minting…')
     if (tx.unconfirmed) return { label: 'Start over', disabled: false, onClick: tx.reset }
@@ -171,18 +226,24 @@ export default function LiveMintView({ card }: { card: LiveMintCard }) {
         onClick: tx.switchChain,
       }
     if (mintable === 0) return off('Wallet limit reached')
-    if (insufficient) return off('Not enough ETH')
+    if (insufficient) return off(`Not enough ${unit?.symbol ?? 'funds'}`)
     if (badRecipient) return off('Enter a wallet address')
     return {
-      label: `Mint ${quantity} for ${formatEthShort(total)}`,
-      disabled: live.price === undefined,
+      label: `Mint ${quantity} for ${money(total)}`,
+      disabled: unitPrice === undefined || !unit,
       onClick: () =>
-        live.price !== undefined &&
-        tx.mint(quantity, live.price, sendElsewhere ? (recipient.trim() as Address) : undefined),
+        unitPrice !== undefined &&
+        tx.mint(quantity, unitPrice, sendElsewhere ? (recipient.trim() as Address) : undefined, token),
     }
   })()
 
-  const status: MachineStatus | undefined = tx.isAwaitingWallet
+  const status: MachineStatus | undefined = tx.approving
+    ? { tone: 'info', body: `Step 1 of 2: approve exactly ${money(total)} in your wallet, then confirm the mint.` }
+    : tx.approvalStuck
+    ? { tone: 'info', alert: true, body: TX_UNCONFIRMED_WORDS }
+    : tx.approvalError
+    ? { tone: 'error', alert: true, body: tx.approvalError }
+    : tx.isAwaitingWallet
     ? { tone: 'info', body: 'Confirm the transaction in your wallet.' }
     : tx.isConfirming
     ? {
@@ -240,7 +301,7 @@ export default function LiveMintView({ card }: { card: LiveMintCard }) {
       ]}
       art={<NftImage src={live.image || cover.data || undefined} alt={live.name} eager />}
       blurb={live.blurb}
-      price={formatEthShort(live.price)}
+      price={money(unitPrice)}
       loading={isLoading}
       minted={live.minted}
       supply={live.supply}
@@ -253,11 +314,34 @@ export default function LiveMintView({ card }: { card: LiveMintCard }) {
       quantity={quantity}
       maxQty={maxQty}
       busy={busy}
-      stay={tx.unconfirmed}
+      stay={tx.unconfirmed || tx.approvalStuck}
       onQuantity={setQuantity}
       extras={
         card.kind === 'drop' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: space[1] }}>
+            {offered.length > 1 && (
+              <label style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                Pay with
+                <select
+                  value={token.toLowerCase()}
+                  disabled={busy}
+                  onChange={(e) => setPicked(e.target.value)}
+                  style={{ minHeight: 36, fontSize: 16 }}
+                >
+                  {(reads?.prices || []).map((p) => {
+                    const t = info[p.token.toLowerCase()]
+                    return (
+                      <option key={p.token} value={p.token.toLowerCase()}>
+                        {t ? (p.price === 0n ? `Free (${t.symbol})` : `${tokenLabel(p.price, t)} each`) : 'Token unavailable'}
+                      </option>
+                    )
+                  })}
+                </select>
+              </label>
+            )}
+            {erc20 && unit && total !== undefined && total > 0n && (
+              <span style={{ fontSize: text.xs }}>{approveWords(total, unit, 'this collection')}</span>
+            )}
             <label style={{ display: 'flex', gap: space[2], alignItems: 'center', cursor: 'pointer' }}>
               <input
                 type="checkbox"
@@ -283,8 +367,14 @@ export default function LiveMintView({ card }: { card: LiveMintCard }) {
           </div>
         )
       }
-      total={formatEthShort(total)}
-      balance={tx.isConnected && tx.balance !== undefined ? formatEthShort(tx.balance) : undefined}
+      total={money(total)}
+      balance={
+        tx.isConnected && walletBalance !== undefined
+          ? erc20 && unit
+            ? tokenLabel(walletBalance, unit)
+            : money(walletBalance)
+          : undefined
+      }
       action={action}
       status={status}
       needs={!tx.isConnected ? <MintNeeds chainName={live.chainName} /> : undefined}

@@ -8,7 +8,7 @@ import { Chip, ProgressMeter, Skeleton } from '@/components/Retro'
 import { useLaunchChain } from '@/miyamints/useMiyamints'
 import { StatusChip } from '@/pages/Mint/Home'
 import type { LiveMintCard } from '@/pages/Mint/liveMints'
-import { formatEthShort } from '@/pages/Mint/liveMints'
+import { cardPrice } from '@/pages/Mint/liveMints'
 import { useContractImage, useLiveMints } from '@/pages/Mint/useLiveMints'
 import { bevel, color, font, space, text } from '@/theme/tokens'
 
@@ -142,7 +142,7 @@ export function NowMinting({ id }: { id?: string }) {
             {featured.blurb && <span style={{ fontSize: text.sm }}>{featured.blurb}</span>}
             <dl>
               <dt>Price</dt>
-              <dd>{isLoading ? '…' : formatEthShort(featured.price)}</dd>
+              <dd>{isLoading ? '…' : cardPrice(featured)}</dd>
               {featured.supply !== undefined && (
                 <>
                   <dt>Minted</dt>

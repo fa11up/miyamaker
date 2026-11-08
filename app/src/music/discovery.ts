@@ -26,8 +26,11 @@ export type MusicItem = {
   tokenId: bigint
   music: ParsedMusic
   track: Track
-  /** ERC1155Instance editions only. `price` is undefined when getCurrentPrice couldn't be read. */
-  edition?: { price?: bigint; supply: bigint; minted: bigint; openTime: bigint }
+  /**
+   * ERC1155Instance editions only. One entry per token the edition is priced in (address(0) = ETH), in the order the
+   * artist set them; `price` is the price of the next copy (getCurrentPrice), undefined when it couldn't be read.
+   */
+  edition?: { prices: { token: Address; price?: bigint }[]; supply: bigint; minted: bigint; openTime: bigint }
 }
 
 const MAX_COLLECTIONS = 40
@@ -132,12 +135,17 @@ async function loadMiya1155(c: PublicClient, chainId: number, address: Address):
       }
       const music = parseMusicMetadata(await fetchMetadata(ed.metadataURI))
       if (!music) return null
-      // An unread price stays unread: basePrice is not what a dynamic edition costs now.
-      const price = await c
-        .readContract({ address, abi: erc1155InstanceAbi, functionName: 'getCurrentPrice', args: [id] })
-        .catch(() => undefined)
+      // An unread price stays unread: the base price is not what a dynamic edition costs now.
+      const prices = await Promise.all(
+        ed.prices.map(async ({ token }) => ({
+          token,
+          price: await c
+            .readContract({ address, abi: erc1155InstanceAbi, functionName: 'getCurrentPrice', args: [id, token] })
+            .catch(() => undefined),
+        }))
+      )
       return item(chainId, address, name, 'miya1155', id, music, {
-        price,
+        prices,
         supply: ed.supply,
         minted: ed.minted,
         openTime: ed.openTime,

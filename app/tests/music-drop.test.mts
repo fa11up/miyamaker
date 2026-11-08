@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { editionArgs, makeSalt, parseAlignmentPct, parsePriceEth, parseSupply, PRICING_MODEL } from '../src/music/drop.ts'
+import { editionArgs, makeSalt, MUSIC_TOKENS, parseAlignmentPct, parsePriceEth, parseSupply, PRICING_MODEL } from '../src/music/drop.ts'
 
 test('prices are parsed exactly with parseEther (no float rounding) and must be > 0', () => {
   assert.deepEqual(parsePriceEth('0.1'), { ok: true, wei: 100000000000000000n })
@@ -32,9 +32,26 @@ test('alignment percent → bps respects the registry minimum and the 100% cap',
   assert.equal(parseAlignmentPct('ten', 1000).ok, false)
 })
 
-test('editionArgs matches ERC1155Instance.addEdition and opens immediately', () => {
+test('editionArgs matches ERC1155Instance.addEdition(title, TokenPrice[], …) and opens immediately', () => {
+  const eth = '0x0000000000000000000000000000000000000000'
   const args = editionArgs({ title: 'Song', priceWei: 10n, supply: 0n, model: 0, metadataURI: 'ar://m' })
-  assert.deepEqual(args, ['Song', 10n, 0n, 'ar://m', 0, 0n, 0n])
+  assert.deepEqual(args, ['Song', [{ token: eth, price: 10n }], 0n, 'ar://m', 0, 0n, 0n])
+  const usdc = '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'
+  const two = editionArgs({
+    title: 'Song',
+    prices: [
+      { token: eth, price: 10n },
+      { token: usdc, price: 5_000_000n },
+    ],
+    supply: 5n,
+    model: 1,
+    metadataURI: 'ar://m',
+  })
+  assert.deepEqual(two[1], [
+    { token: eth, price: 10n },
+    { token: usdc, price: 5_000_000n },
+  ])
+  assert.deepEqual(MUSIC_TOKENS, [eth], 'Drop Music releases accept ETH')
 })
 
 test('makeSalt is a CreateX permissioned salt: factory ‖ 0x00 ‖ 11 random bytes', () => {
