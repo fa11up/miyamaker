@@ -20,6 +20,7 @@ import { UniswapVaultPriceValidator } from "../src/peripherals/UniswapVaultPrice
 import { IVaultPriceValidator } from "../src/interfaces/IVaultPriceValidator.sol";
 import { UniAlignmentVault } from "../src/vaults/uni/UniAlignmentVault.sol";
 import { UniAlignmentVaultFactory } from "../src/vaults/uni/UniAlignmentVaultFactory.sol";
+import { RouteHop } from "../src/vaults/uni/IVaultRoutes.sol";
 import { ERC721DropFactory } from "../src/factories/erc721drop/ERC721DropFactory.sol";
 import { ERC721AuctionFactory } from "../src/factories/erc721/ERC721AuctionFactory.sol";
 import { ERC1155Factory } from "../src/factories/erc1155/ERC1155Factory.sol";
@@ -274,10 +275,7 @@ contract DeployMiyamints is Script {
         );
 
         // 3. Vault factory (Ownable(msg.sender) → CREATE). Deploys its own vault implementation.
-        // TODO(vault v2 deploy): allow the payment tokens (registry.setPaymentToken: IMD, INFER, USDC, imdUSD, cbBTC,
-        // WBTC on mainnet) and set the route table (vaultFactory.setRoute for ETH, imdUSD, USDC, WBTC, cbBTC per
-        // docs/IMD-INFER-VAULT.md) from config before the ownership handoff. Until then collections accept ETH only and
-        // vaults refuse ERC-20s without a route.
+        // Payment tokens and routes come from config (`paymentTokens`, `routes`) in step 9b, before the handoff.
         UniAlignmentVaultFactory vaultFactory = new UniAlignmentVaultFactory(
             IMiyaRegistry(d.registry), IPoolManager(c.poolManager), c.zRouter, c.alignmentToken, c.imd, _alignmentKey(c)
         );
@@ -312,6 +310,10 @@ contract DeployMiyamints is Script {
         registry.setComponent(d.dynamicPricingModule, true);
         if (d.gatingModule != address(0)) registry.setComponent(d.gatingModule, true);
         erc1155Factory.setDynamicPricingModule(d.dynamicPricingModule);
+
+        // 9b. Payment-token allowlist (registry) and conversion routes to IMD (vault factory), per
+        //     docs/IMD-INFER-VAULT.md. ETH is always allowed; IMD and INFER need no route.
+        _wirePayments(registry, vaultFactory);
 
         // 10. Default alignment target + vault (VITE_MUSIC_VAULT_<chainId>).
         address[] memory tokens = new address[](2);
@@ -398,6 +400,60 @@ contract DeployMiyamints is Script {
 
         _eq(Ownable(d.dynamicPricingModule).owner(), c.owner, "dynamicPricing.owner");
         _t(d.poolFactory.code.length > 0, "pool factory code");
+        _checkPayments(d);
+    }
+
+    // ── payment tokens and routes ──────────────────────────────────────────
+
+    /// @dev JSON keys in alphabetical order, as vm.parseJson decodes struct fields.
+    struct ConfigHop {
+        uint256 fee;
+        uint256 kind;
+        int256 tickSpacing;
+        address tokenIn;
+        address tokenOut;
+    }
+
+    function _configJson() internal view returns (string memory) {
+        return vm.readFile(vm.envOr("MIYAMINTS_CONFIG", configPath(block.chainid)));
+    }
+
+    function _wirePayments(MiyaRegistry registry, UniAlignmentVaultFactory vaultFactory) internal {
+        string memory json = _configJson();
+        if (vm.keyExistsJson(json, ".paymentTokens")) {
+            address[] memory toks = vm.parseJsonAddressArray(json, ".paymentTokens");
+            for (uint256 i; i < toks.length; ++i) registry.setPaymentToken(toks[i], true);
+        }
+        for (uint256 i; vm.keyExistsJson(json, string.concat(".routes[", i.toString(), "]")); ++i) {
+            string memory at = string.concat(".routes[", i.toString(), "]");
+            address token = vm.parseJsonAddress(json, string.concat(at, ".token"));
+            ConfigHop[] memory ch = abi.decode(vm.parseJson(json, string.concat(at, ".hops")), (ConfigHop[]));
+            RouteHop[] memory hops = new RouteHop[](ch.length);
+            for (uint256 k; k < ch.length; ++k) {
+                hops[k] = RouteHop({
+                    kind: uint8(ch[k].kind),
+                    tokenIn: ch[k].tokenIn,
+                    tokenOut: ch[k].tokenOut,
+                    fee: uint24(ch[k].fee),
+                    tickSpacing: int24(ch[k].tickSpacing)
+                });
+            }
+            vaultFactory.setRoute(token, hops);
+        }
+    }
+
+    /// @dev Every configured token is allowed, and every allowed ERC-20 other than IMD and INFER has a route.
+    function _checkPayments(Deployment memory d) internal view {
+        string memory json = _configJson();
+        if (!vm.keyExistsJson(json, ".paymentTokens")) return;
+        MiyaRegistry r = MiyaRegistry(d.registry);
+        UniAlignmentVaultFactory vf = UniAlignmentVaultFactory(d.vaultFactory);
+        address[] memory toks = vm.parseJsonAddressArray(json, ".paymentTokens");
+        for (uint256 i; i < toks.length; ++i) {
+            _t(r.isPaymentToken(toks[i]), "payment token allowed");
+            if (toks[i] != vf.infer() && toks[i] != vf.imd()) _t(vf.hasRoute(toks[i]), "payment token routed");
+        }
+        _t(vf.hasRoute(address(0)), "ETH routed");
     }
 
     // ── output ──────────────────────────────────────────────────────────────

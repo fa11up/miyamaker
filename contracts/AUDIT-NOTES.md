@@ -264,6 +264,30 @@ Nothing here shares state with the launchpad contracts above.
 Tests are in `test/markets/`: unit tests, fuzz tests, an invariant suite over random stake / lock / propose /
 dispute / panel / council / claim / refund / sweep sequences, and a replay of a real production oracle signature.
 
+## Collections v2: multi-token sales (2026-11-08, not yet reviewed)
+
+Drops, 1155 editions and auctions take any token on the registry allowlist (`isPaymentToken`); see
+docs/IMD-INFER-VAULT.md. Earlier sections describe the ETH-only collections; where they name a function, read it as below.
+
+- Proceeds are booked per token as `unsplitProceeds[token]`. `distribute(token)` is permissionless and does the split
+  (protocol cut to the treasury, vault cut to `vault.receiveContribution(token, …)`, the rest to `ownerBalance[token]`), so
+  nobody can hold the cuts back. `withdraw(token)` is owner-only and runs `distribute` first. `withdrawAll()` walks every
+  token ever accepted, so a delisted token stays withdrawable.
+- The 1155's `retryVaultContribution` is now `flushPendingVaultCut(token, topUp)`, the same on all three types. Parked cuts
+  (`pendingProtocolCut[token]`, `pendingVaultCut[token]`) are per token. `sweepUntrackedETH` is now `sweepUntracked(token)`.
+- ERC-20 payments: `maxCost` is required, `msg.value` must be 0, exactly the cost is pulled and the balance change checked
+  (`ShortTransfer` refuses fee-on-transfer tokens). The vault is approved for exactly the cut, and the approval is reset if
+  the call fails.
+- Auctions: one currency per auction collection, fixed at creation. ETH auctions keep the old push paths. ERC-20 outbid
+  refunds are pull (`refundOf`, `claimRefund(to)`), so a blocklisted bidder cannot stop a higher bid; `escrowed(token)`
+  equals deposits, live bids and refunds owed.
+- `claimVaultFees(mode, minEthOut)` forwards the INFER, IMD and ETH that arrived, by balance change. INFER and IMD are
+  mainnet constants in PaymentLib.
+- Factory size: the factories store the instance init code in SSTORE2 data contracts (`InitCodeStore`) to stay under
+  EIP-170. A collection now costs about 1.3M more gas to create.
+- Deploy: `script/config/1.json` holds `paymentTokens` and `routes`; the script sets both before the ownership handoff and
+  `_check` confirms each allowed ERC-20 (other than IMD and INFER) and ETH has a route.
+
 ## Known risks (accepted for testnet; re-assess before any mainnet use)
 
 - **Two-wallet self-hedge against the door caps.** The ExitDesk pays 1:1 only up to each wallet's own door

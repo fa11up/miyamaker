@@ -22,6 +22,11 @@
   },
   {
     "type": "error",
+    "name": "InitCodeTooLarge",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "InvalidAddress",
     "inputs": []
   },
@@ -294,6 +299,11 @@
                 "internalType": "enum GatingScope"
               }
             ]
+          },
+          {
+            "name": "acceptedTokens",
+            "type": "address[]",
+            "internalType": "address[]"
           }
         ]
       }

@@ -17,6 +17,11 @@
   },
   {
     "type": "error",
+    "name": "InitCodeTooLarge",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "InvalidAddress",
     "inputs": []
   },
@@ -117,6 +122,11 @@
             "internalType": "uint96"
           },
           {
+            "name": "acceptedTokens",
+            "type": "address[]",
+            "internalType": "address[]"
+          },
+          {
             "name": "phases",
             "type": "tuple[]",
             "internalType": "struct ERC721DropInstance.Phase[]",
@@ -132,11 +142,6 @@
                 "internalType": "uint64"
               },
               {
-                "name": "price",
-                "type": "uint128",
-                "internalType": "uint128"
-              },
-              {
                 "name": "maxPerWallet",
                 "type": "uint32",
                 "internalType": "uint32"
@@ -150,6 +155,23 @@
                 "name": "supplyCap",
                 "type": "uint32",
                 "internalType": "uint32"
+              },
+              {
+                "name": "prices",
+                "type": "tuple[]",
+                "internalType": "struct TokenPrice[]",
+                "components": [
+                  {
+                    "name": "token",
+                    "type": "address",
+                    "internalType": "address"
+                  },
+                  {
+                    "name": "price",
+                    "type": "uint256",
+                    "internalType": "uint256"
+                  }
+                ]
               }
             ]
           }

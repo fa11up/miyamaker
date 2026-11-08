@@ -13,6 +13,7 @@ import {MiyaPool} from "../../../src/pools/MiyaPool.sol";
 import {MiyaPoolFactory} from "../../../src/pools/MiyaPoolFactory.sol";
 import {ICreateX, CREATEX} from "../../../src/shared/CreateXConstants.sol";
 import {CREATEX_BYTECODE} from "createx-forge/script/CreateX.d.sol";
+import {TokenPrice} from "../../../src/factories/interfaces/TokenPrice.sol";
 
 contract MockVaultERC1155FM {
     function supportsCapability(bytes32) external pure returns (bool) { return true; }
@@ -36,6 +37,11 @@ contract ERC1155FreeMintTest is Test {
     function _nextSalt() internal returns (bytes32) {
         _saltCounter++;
         return bytes32(abi.encodePacked(address(factory), uint8(0x00), bytes11(uint88(_saltCounter))));
+    }
+
+    function _eth(uint256 price) internal pure returns (TokenPrice[] memory p) {
+        p = new TokenPrice[](1);
+        p[0] = TokenPrice(address(0), price);
     }
 
     function setUp() public {
@@ -63,7 +69,8 @@ contract ERC1155FreeMintTest is Test {
                 alignmentBps: 1900,
                 styleUri: "",
                 gatingModule: address(0),
-                freeMint: FreeMintParams({allocation: alloc, scope: scope})
+                freeMint: FreeMintParams({allocation: alloc, scope: scope}),
+                acceptedTokens: new address[](1)
             })
         );
         vm.stopPrank();
@@ -73,7 +80,7 @@ contract ERC1155FreeMintTest is Test {
     function _addEdition(ERC1155Instance inst, uint256 supply) internal returns (uint256 editionId) {
         vm.prank(creator);
         inst.addEdition(
-            "Piece 1", 0.01 ether, supply, "ipfs://edition",
+            "Piece 1", _eth(0.01 ether), supply, "ipfs://edition",
             ERC1155Instance.PricingModel.LIMITED_FIXED, 0, 0
         );
         return inst.nextEditionId() - 1;
@@ -135,7 +142,7 @@ contract ERC1155FreeMintTest is Test {
         uint256 openAt = block.timestamp + 1 days;
         vm.prank(creator);
         inst.addEdition(
-            "Timed", 0.01 ether, 100, "ipfs://timed", ERC1155Instance.PricingModel.LIMITED_FIXED, 0, openAt
+            "Timed", _eth(0.01 ether), 100, "ipfs://timed", ERC1155Instance.PricingModel.LIMITED_FIXED, 0, openAt
         );
         uint256 editionId = inst.nextEditionId() - 1;
 
@@ -224,7 +231,9 @@ contract ERC1155FreeMintTest is Test {
                 alignmentBps: 1900,
                 gatingModule: address(0),
                 dynamicPricingModule: address(0),
-                weth: address(0xBEEF)
+                weth: address(0xBEEF),
+                registry: address(registry),
+                acceptedTokens: new address[](1)
             })
         );
         assertEq(inst.freeMintAllocation(), 0);

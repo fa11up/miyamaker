@@ -53,6 +53,11 @@
             "internalType": "uint96"
           },
           {
+            "name": "acceptedTokens",
+            "type": "address[]",
+            "internalType": "address[]"
+          },
+          {
             "name": "phases",
             "type": "tuple[]",
             "internalType": "struct ERC721DropInstance.Phase[]",
@@ -68,11 +73,6 @@
                 "internalType": "uint64"
               },
               {
-                "name": "price",
-                "type": "uint128",
-                "internalType": "uint128"
-              },
-              {
                 "name": "maxPerWallet",
                 "type": "uint32",
                 "internalType": "uint32"
@@ -86,6 +86,23 @@
                 "name": "supplyCap",
                 "type": "uint32",
                 "internalType": "uint32"
+              },
+              {
+                "name": "prices",
+                "type": "tuple[]",
+                "internalType": "struct TokenPrice[]",
+                "components": [
+                  {
+                    "name": "token",
+                    "type": "address",
+                    "internalType": "address"
+                  },
+                  {
+                    "name": "price",
+                    "type": "uint256",
+                    "internalType": "uint256"
+                  }
+                ]
               }
             ]
           }
@@ -103,6 +120,11 @@
       },
       {
         "name": "vault_",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "registry_",
         "type": "address",
         "internalType": "address"
       },
@@ -141,7 +163,28 @@
   },
   {
     "type": "error",
+    "name": "DuplicateToken",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ExceedsMaxCost",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "InvalidParams",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidPrice",
     "inputs": []
   },
   {
@@ -156,7 +199,17 @@
   },
   {
     "type": "error",
+    "name": "NoFeesToClaim",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "NoHandoverRequest",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NoTokens",
     "inputs": []
   },
   {
@@ -167,6 +220,11 @@
   {
     "type": "error",
     "name": "NotOwnerNorApproved",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NothingParked",
     "inputs": []
   },
   {
@@ -216,6 +274,11 @@
   },
   {
     "type": "error",
+    "name": "ShortTransfer",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "SmartTransferFailed",
     "inputs": [
       {
@@ -247,6 +310,38 @@
   },
   {
     "type": "error",
+    "name": "TokenNotAccepted",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "TokenNotAllowed",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "TokenNotPriced",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "TooManyTokens",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "TransferFromIncorrectOwner",
     "inputs": []
   },
@@ -274,6 +369,24 @@
     "type": "error",
     "name": "WrongPayment",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "WrongValue",
+    "inputs": []
+  },
+  {
+    "type": "event",
+    "name": "AcceptedTokensSet",
+    "inputs": [
+      {
+        "name": "tokens",
+        "type": "address[]",
+        "indexed": false,
+        "internalType": "address[]"
+      }
+    ],
+    "anonymous": false
   },
   {
     "type": "event",
@@ -423,7 +536,38 @@
         "internalType": "uint256"
       },
       {
+        "name": "token",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
         "name": "paid",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "OwnerWithdrawn",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "to",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -478,6 +622,37 @@
   },
   {
     "type": "event",
+    "name": "PhasePricesSet",
+    "inputs": [
+      {
+        "name": "phaseId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "prices",
+        "type": "tuple[]",
+        "indexed": false,
+        "internalType": "struct TokenPrice[]",
+        "components": [
+          {
+            "name": "token",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "price",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "PhasesSet",
     "inputs": [
       {
@@ -497,11 +672,6 @@
             "internalType": "uint64"
           },
           {
-            "name": "price",
-            "type": "uint128",
-            "internalType": "uint128"
-          },
-          {
             "name": "maxPerWallet",
             "type": "uint32",
             "internalType": "uint32"
@@ -515,6 +685,23 @@
             "name": "supplyCap",
             "type": "uint32",
             "internalType": "uint32"
+          },
+          {
+            "name": "prices",
+            "type": "tuple[]",
+            "internalType": "struct TokenPrice[]",
+            "components": [
+              {
+                "name": "token",
+                "type": "address",
+                "internalType": "address"
+              },
+              {
+                "name": "price",
+                "type": "uint256",
+                "internalType": "uint256"
+              }
+            ]
           }
         ]
       }
@@ -523,8 +710,45 @@
   },
   {
     "type": "event",
+    "name": "ProceedsSplit",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "toOwner",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "toVault",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "toProtocol",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "ProtocolCutParked",
     "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
       {
         "name": "amount",
         "type": "uint256",
@@ -602,6 +826,12 @@
     "name": "VaultContributionFailed",
     "inputs": [
       {
+        "name": "token",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
         "name": "amount",
         "type": "uint256",
         "indexed": false,
@@ -612,22 +842,53 @@
   },
   {
     "type": "event",
-    "name": "Withdrawn",
+    "name": "VaultContributionRetried",
     "inputs": [
       {
-        "name": "toOwner",
+        "name": "token",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "VaultFeesForwarded",
+    "inputs": [
+      {
+        "name": "to",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "mode",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "enum ClaimMode"
+      },
+      {
+        "name": "infer",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
       },
       {
-        "name": "toVault",
+        "name": "imd",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
       },
       {
-        "name": "toProtocol",
+        "name": "eth",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -657,6 +918,19 @@
         "name": "",
         "type": "uint96",
         "internalType": "uint96"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "acceptedTokens",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address[]",
+        "internalType": "address[]"
       }
     ],
     "stateMutability": "view"
@@ -734,10 +1008,31 @@
   {
     "type": "function",
     "name": "claimVaultFees",
-    "inputs": [],
+    "inputs": [
+      {
+        "name": "mode",
+        "type": "uint8",
+        "internalType": "enum ClaimMode"
+      },
+      {
+        "name": "minEthOut",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
     "outputs": [
       {
-        "name": "claimed",
+        "name": "inferOut",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "imdOut",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "ethOut",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -772,15 +1067,45 @@
   },
   {
     "type": "function",
+    "name": "distribute",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "flushPendingProtocolCut",
-    "inputs": [],
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
     "outputs": [],
     "stateMutability": "nonpayable"
   },
   {
     "type": "function",
     "name": "flushPendingVaultCut",
-    "inputs": [],
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "topUp",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
     "outputs": [],
     "stateMutability": "payable"
   },
@@ -815,6 +1140,25 @@
       }
     ],
     "stateMutability": "pure"
+  },
+  {
+    "type": "function",
+    "name": "isAcceptedToken",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -855,6 +1199,19 @@
         "name": "",
         "type": "bool",
         "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "knownTokens",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address[]",
+        "internalType": "address[]"
       }
     ],
     "stateMutability": "view"
@@ -917,6 +1274,16 @@
         "name": "proof",
         "type": "bytes32[]",
         "internalType": "bytes32[]"
+      },
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "maxCost",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [],
@@ -945,6 +1312,16 @@
         "name": "proof",
         "type": "bytes32[]",
         "internalType": "bytes32[]"
+      },
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "maxCost",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [],
@@ -996,6 +1373,25 @@
         "name": "result",
         "type": "address",
         "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "ownerBalance",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -1085,7 +1481,13 @@
   {
     "type": "function",
     "name": "pendingProtocolCut",
-    "inputs": [],
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
     "outputs": [
       {
         "name": "",
@@ -1098,7 +1500,13 @@
   {
     "type": "function",
     "name": "pendingVaultCut",
-    "inputs": [],
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
     "outputs": [
       {
         "name": "",
@@ -1142,11 +1550,6 @@
             "internalType": "uint64"
           },
           {
-            "name": "price",
-            "type": "uint128",
-            "internalType": "uint128"
-          },
-          {
             "name": "maxPerWallet",
             "type": "uint32",
             "internalType": "uint32"
@@ -1160,6 +1563,23 @@
             "name": "supplyCap",
             "type": "uint32",
             "internalType": "uint32"
+          },
+          {
+            "name": "prices",
+            "type": "tuple[]",
+            "internalType": "struct TokenPrice[]",
+            "components": [
+              {
+                "name": "token",
+                "type": "address",
+                "internalType": "address"
+              },
+              {
+                "name": "price",
+                "type": "uint256",
+                "internalType": "uint256"
+              }
+            ]
           }
         ]
       }
@@ -1194,6 +1614,35 @@
   },
   {
     "type": "function",
+    "name": "priceOf",
+    "inputs": [
+      {
+        "name": "phaseId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "priced",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "price",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "protocolBps",
     "inputs": [],
     "outputs": [
@@ -1214,6 +1663,19 @@
         "name": "",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "registry",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
       }
     ],
     "stateMutability": "view"
@@ -1327,6 +1789,19 @@
   },
   {
     "type": "function",
+    "name": "setAcceptedTokens",
+    "inputs": [
+      {
+        "name": "tokens",
+        "type": "address[]",
+        "internalType": "address[]"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "setApprovalForAll",
     "inputs": [
       {
@@ -1368,6 +1843,36 @@
   },
   {
     "type": "function",
+    "name": "setPhasePrices",
+    "inputs": [
+      {
+        "name": "phaseId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "prices",
+        "type": "tuple[]",
+        "internalType": "struct TokenPrice[]",
+        "components": [
+          {
+            "name": "token",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "price",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "setPhases",
     "inputs": [
       {
@@ -1386,11 +1891,6 @@
             "internalType": "uint64"
           },
           {
-            "name": "price",
-            "type": "uint128",
-            "internalType": "uint128"
-          },
-          {
             "name": "maxPerWallet",
             "type": "uint32",
             "internalType": "uint32"
@@ -1404,6 +1904,23 @@
             "name": "supplyCap",
             "type": "uint32",
             "internalType": "uint32"
+          },
+          {
+            "name": "prices",
+            "type": "tuple[]",
+            "internalType": "struct TokenPrice[]",
+            "components": [
+              {
+                "name": "token",
+                "type": "address",
+                "internalType": "address"
+              },
+              {
+                "name": "price",
+                "type": "uint256",
+                "internalType": "uint256"
+              }
+            ]
           }
         ]
       }
@@ -1447,6 +1964,19 @@
       }
     ],
     "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "sweepUntracked",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -1557,6 +2087,25 @@
   },
   {
     "type": "function",
+    "name": "unsplitProceeds",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "vault",
     "inputs": [],
     "outputs": [
@@ -1584,6 +2133,19 @@
   {
     "type": "function",
     "name": "withdraw",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "withdrawAll",
     "inputs": [],
     "outputs": [],
     "stateMutability": "nonpayable"
