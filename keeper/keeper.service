@@ -1,0 +1,32 @@
+# systemd USER unit template (NOT installed anywhere yet). The keeper never runs as root.
+#
+#   mkdir -p ~/.config/systemd/user
+#   cp keeper.service ~/.config/systemd/user/miyamaker-vault-keeper.service
+#   # edit WorkingDirectory / EnvironmentFile below
+#   loginctl enable-linger $USER
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now miyamaker-vault-keeper
+#   journalctl --user -u miyamaker-vault-keeper -f
+#
+# Report-only until you add --execute to ExecStart. Run it without, read a few cycles, then decide.
+[Unit]
+Description=miyamaker alignment vault conversion keeper
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/miyamaker-vault-keeper
+# .env holds KEEPER_KEY_FILE (or KEEPER_PRIVATE_KEY), PRIVATE_RPC_URL, VAULTS; mode 600, never committed.
+EnvironmentFile=%h/miyamaker-vault-keeper/.env
+ExecStart=/usr/bin/env node index.mjs
+Restart=always
+RestartSec=30
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/miyamaker-vault-keeper/state
+
+[Install]
+WantedBy=default.target
