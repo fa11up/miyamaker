@@ -12,13 +12,16 @@ import { spawn } from "node:child_process";
 import { readFileSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createPublicClient, createWalletClient, getAddress, http, parseEther, maxUint256, parseAbi, encodePacked, keccak256, formatEther } from "viem";
+import { createPublicClient, createWalletClient, getAddress, http, parseEther, maxUint256, parseAbi, encodePacked, keccak256, formatEther, toFunctionSelector } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { mainnet } from "viem/chains";
 import base from "../config.example.mjs";
 import { applyEnv } from "../lib/config.mjs";
 import { describePlan, planVault, sendConvert, settlePending } from "../lib/keeper.mjs";
-import { vaultContext } from "../lib/plan.mjs";
+import { feeless, vaultContext } from "../lib/plan.mjs";
+import { quoteRoute } from "../lib/quote.mjs";
+import { ETH as ETH_, routesFromConfig } from "../lib/routes.mjs";
+import { imdFeedAbi } from "../lib/reference.mjs";
 import { privateSender } from "../lib/rpc.mjs";
 
 const FORK = process.env.FORK_URL ?? "https://ethereum-rpc.publicnode.com";
@@ -163,6 +166,27 @@ async function convertOnce(label, hooks) {
 }
 
 const read = (functionName, args = []) => pub.readContract({ address: vaultAddr, abi: vault.abi, functionName, args });
+
+// The IMD price feed as it is on mainnet: if it is stale, the ETH leg must not convert (fail closed). Report-only plan.
+const feedStale = await pub.readContract({ address: cfg.IMD_PRICE_FEED, abi: imdFeedAbi, functionName: "isStale" });
+const p0 = await planVault(pub, cfg, ctx, { from: keeperAccount.address });
+console.log(`\n== with the mainnet IMD price feed as it is (isStale() = ${feedStale}), report-only\n${describePlan(ctx, p0)}`);
+if (feedStale && p0.quoted?.leg) throw new Error("the ETH leg was planned on a stale IMD price feed");
+// FORK ONLY: put a fresh feed at that address (latestValue = the ETH route's spot, updatedAt = now; isStale() = false),
+// so the rest of the run exercises a conversion with the ETH leg. Nothing like this exists on mainnet.
+{
+  const ethRoute = routesFromConfig(json).get(ETH_);
+  const probe = 10n ** 16n;
+  const spot = feeless(ethRoute, (await quoteRoute(pub, cfg, ethRoute, probe)).at(-1)); // IMD per 0.01 ETH, before fees
+  const ethPerImd = (probe * 10n ** 18n) / spot;
+  const sel = toFunctionSelector("isStale()").slice(2);
+  // if (selector == isStale()) return 0; else return (ethPerImd, block.timestamp)
+  const code = `0x600035${"60e01c"}63${sel}14603c577f${ethPerImd.toString(16).padStart(64, "0")}6000524260205260406000f35b60206000f3`;
+  await pub.request({ method: "anvil_setCode", params: [cfg.IMD_PRICE_FEED, code] });
+  const [v] = await pub.readContract({ address: cfg.IMD_PRICE_FEED, abi: imdFeedAbi, functionName: "latestValue" });
+  if (v !== ethPerImd) throw new Error("mock feed did not take");
+  console.log(`\nFORK ONLY: mock IMD price feed at ${cfg.IMD_PRICE_FEED}: ${ethPerImd} wei per IMD (the ETH route's spot), fresh`);
+}
 const p1 = await convertOnce("mixed batch: ETH, USDC, cbBTC, imdUSD, IMD");
 const skipped = p1.quoted.items.filter((x) => x.skip).map((x) => x.token);
 console.log(`  skipped (left pending): ${skipped.join(", ") || "none"}; imdUSD still pending: ${await read("pendingOf", [ALICE.address, IMDUSD])}`);

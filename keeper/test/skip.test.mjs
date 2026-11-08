@@ -6,7 +6,8 @@ import { quoteBatch, readBatch } from "../lib/plan.mjs";
 import { planVault } from "../lib/keeper.mjs";
 import { CBBTC, ETH, IMD, IMDUSD, USDC, WETH, cfg as base, fakeChain, fakeCtx } from "./fake.mjs";
 
-// The fake's default imdUSD pool is off market; these tests are about the other rules (the reference check has its own).
+// The fake's default imdUSD pool is off market; these tests are about the other rules (the reference checks have their
+// own tests here and in test/reference.test.mjs).
 const cfg = { ...base, MAX_REFERENCE_DEVIATION_BPS: 9999 };
 
 const E = 10n ** 18n;
@@ -26,14 +27,17 @@ test("reference check, mainnet numbers of 2026-11-08: imdUSD (pool stuck at IMD 
     [`${USDC}>${ETH}`]: [10n ** 12n, 2229n],
     [`${IMDUSD}>${IMD}`]: [2398n, 10_000n],
   });
+  // The independent references at the same market: Chainlink ETH/USD 2,228; the IMD price feed at 907 IMD per ETH.
+  c.state.chainlink["0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419"].answer = 2228n * 10n ** 8n;
+  c.state.imdFeed.value = 10n ** 18n / 907n;
   const plan = await planVault(c, base, fakeCtx());
   assert.equal(plan.action, "convert", plan.why);
   assert.deepEqual(plan.params.tokens, [ETH, USDC, CBBTC], "imdUSD left pending; USDC (at market) and the rest convert");
   const by = Object.fromEntries(plan.quoted.items.map((x) => [x.token, x]));
   assert.ok(by[IMDUSD].refDeviationBps > 4000 && by[IMDUSD].refDeviationBps < 4200, `${by[IMDUSD].refDeviationBps}`);
-  assert.match(by[IMDUSD].skip, /under the market reference/);
+  assert.match(by[IMDUSD].skip, /under the reference \(1 USD at Chainlink ETH\/USD and the IMD price feed/);
   assert.ok(by[USDC].refDeviationBps <= 10, `USDC at market: ${by[USDC].refDeviationBps}`);
-  assert.equal(by[CBBTC].refDeviationBps, null, "no independent reference for BTC: its ETH hop is its market");
+  assert.equal(by[CBBTC].refDeviationBps, 0, "cbBTC checked against Chainlink BTC/ETH (at market here)");
   // With imdUSD's pool back at market (1 imdUSD = 0.405 IMD), it converts.
   c.state.rates[`${IMDUSD}>${IMD}`] = [405n, 1000n];
   const ok = await planVault(c, base, fakeCtx());

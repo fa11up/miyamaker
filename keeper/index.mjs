@@ -8,9 +8,10 @@
 // One process, one key, one tx in flight at a time (lib/outcome.mjs). A tick that throws is logged and the loop goes
 // on: a keeper that dies on the first RPC hiccup is worse than one that reports it.
 import { loadConfig } from "./lib/config.mjs";
-import { privateSender, readClient } from "./lib/rpc.mjs";
+import { crossCheckClient, hostOf, privateSender, readClient } from "./lib/rpc.mjs";
 import { keeperAccount } from "./lib/signer.mjs";
-import { discoverVaults, tick } from "./lib/keeper.mjs";
+import { tick, vaultsToKeep } from "./lib/keeper.mjs";
+import { describeReferences } from "./lib/reference.mjs";
 import { verifyQuoters } from "./lib/quote.mjs";
 import { killSwitch } from "./lib/guards.mjs";
 
@@ -26,7 +27,8 @@ const client = readClient(cfg);
 const sender = privateSender(cfg, { log });
 const account = keeperAccount();
 
-log(`starting ${EXECUTE ? "IN EXECUTE MODE" : "in report-only mode"}; reads via ${cfg.READ_RPC_URLS.length} RPC(s)`);
+const crossClient = crossCheckClient(cfg);
+log(`starting ${EXECUTE ? "IN EXECUTE MODE" : "in report-only mode"}; reads via ${cfg.READ_RPC_URLS.length} RPC(s); ETH leg cross-checked on ${crossClient ? hostOf(cfg.READ_RPC_URLS[1]) : "no second RPC (only one configured)"}`);
 if (EXECUTE) {
   if (!account) {
     log("--execute without KEEPER_PRIVATE_KEY or KEEPER_KEY_FILE: refusing to start");
@@ -48,6 +50,11 @@ if (chainId !== cfg.CHAIN_ID) {
 }
 await verifyQuoters(client, cfg);
 log(`quoters checked: V4Quoter ${cfg.V4_QUOTER}, QuoterV2 ${cfg.V3_QUOTER}`);
+try {
+  for (const line of await describeReferences(client, cfg)) log(`reference ${line}`);
+} catch (e) {
+  log(`reference check at startup failed: ${(e.shortMessage ?? e.message).slice(0, 200)} (each tick re-reads them; tokens without one are skipped)`);
+}
 
 for (const signal of ["SIGINT", "SIGTERM"]) {
   process.on(signal, () => {
@@ -60,9 +67,10 @@ const contexts = new Map();
 const discovered = {};
 for (;;) {
   try {
-    const vaults = await discoverVaults(client, cfg, discovered);
+    // Discovery failing (getLogs limits, a 5xx) never stops the fixed VAULTS or the settling of a tx in flight.
+    const vaults = await vaultsToKeep(client, cfg, discovered, log);
     if (!vaults.length) log("no vaults configured (VAULTS, or FACTORY + DISCOVER_FROM_BLOCK)");
-    await tick({ client, cfg, account, sender, execute: EXECUTE, vaults, contexts, log });
+    await tick({ client, cfg, account, sender, execute: EXECUTE, vaults, contexts, crossClient, log });
   } catch (e) {
     log(`tick error: ${(e.shortMessage ?? e.message).slice(0, 200)}`);
   }

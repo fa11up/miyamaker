@@ -9,8 +9,9 @@
 //             manual tx, or a copy with other fees). Ours can never land. The vault's closedBatches says whether the
 //             batch was converted anyway.
 //   expired   no receipt, nonce not used, and the chain is past ConvertParams.deadline: if it ever lands it reverts
-//             with Expired, so it is dead. The next send REUSES its nonce with fees at least 12.5% higher, which
-//             replaces it in any mempool still holding it.
+//             with Expired, so it is dead. The record STAYS on disk, marked expired, until a replacement is signed and
+//             sent: that send REUSES its nonce with fees at least 12.5% over the expired record's own, which replaces
+//             it in any mempool still holding it. Across restarts and ticks with nothing to convert, nothing is lost.
 //   pending   none of the above: wait. Nothing new is sent.
 import { join } from "node:path";
 import { rmSync } from "node:fs";

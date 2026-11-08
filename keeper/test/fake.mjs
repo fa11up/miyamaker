@@ -1,6 +1,7 @@
 // A fake viem client: just enough chain for the keeper's reads, quotes and simulations, all in memory.
 import { encodeAbiParameters, encodeEventTopics, getAddress, zeroAddress } from "viem";
 import { vaultAbi } from "../lib/abi.mjs";
+import { DEFAULT_CHAINLINK, DEFAULT_IMD_PRICE_FEED } from "../lib/reference.mjs";
 
 export const ETH = zeroAddress;
 export const IMD = getAddress("0xD34a99Bc0f67aE1bbd63C660e6d0b0dd03E263B7");
@@ -8,6 +9,11 @@ export const INFER = getAddress("0x53d0eA0A685220718Dc6a0a6e4617194C6F37921");
 export const USDC = getAddress("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48");
 export const IMDUSD = getAddress("0x61aAF8a992A3143e2B0C9cB0030b9fE702854a25");
 export const CBBTC = getAddress("0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf");
+export const WBTC = getAddress("0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599");
+export const FEED_ETH_USD = getAddress(DEFAULT_CHAINLINK.ETH_USD.address);
+export const FEED_BTC_ETH = getAddress(DEFAULT_CHAINLINK.BTC_ETH.address);
+export const FEED_BTC_USD = getAddress(DEFAULT_CHAINLINK.BTC_USD.address);
+export const IMD_FEED = getAddress(DEFAULT_IMD_PRICE_FEED);
 export const WETH = getAddress("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
 export const VAULT = getAddress("0x00000000000000000000000000000000000Fa017");
 export const ROUTES = getAddress("0x0000000000000000000000000000000000000F4C");
@@ -32,7 +38,8 @@ export const cfg = {
   MIN_BATCH_ETH: 0.1, MAX_GAS_SHARE_BPS: 100, MAX_GAS_GWEI: 30, HOP_MARGIN_BPS: 50, SPLIT_MARGIN_BPS: 100,
   DEADLINE_SECONDS: 120, MAX_REQUOTES: 2, MAX_IMPACT_BPS: 300, MAX_REFERENCE_DEVIATION_BPS: 300,
   USD_TOKENS: { [getAddress("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48")]: 6, [getAddress("0x61aAF8a992A3143e2B0C9cB0030b9fE702854a25")]: 18 },
-  REFERENCE_USD_POOL: { token: getAddress("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"), decimals: 6, fee: 500, tickSpacing: 10 }, MIN_ETH: 0.02, MAX_ETH_PER_DAY: 0.05, TIP_GWEI: 0.3, GAS_MARGIN_BPS: 2500,
+  BTC_TOKENS: { [getAddress("0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf")]: 8, [getAddress("0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599")]: 8 },
+  MAX_FEED_DEVIATION_BPS: 300, CROSS_RPC_MAX_BPS: 0, CROSS_RPC_RETRY_MS: 1, RECEIPT_POLL_MS: 5, MIN_ETH: 0.02, MAX_ETH_PER_DAY: 0.05, TIP_GWEI: 0.3, GAS_MARGIN_BPS: 2500,
   TX_WAIT_SECONDS: 0, VAULTS: [], READ_RPC_URLS: ["http://fake"], PRIVATE_RPC_URL: [],
 };
 
@@ -55,7 +62,7 @@ export function fakeChain(over = {}) {
       [`${USDC}>${ETH}`]: [45n * 10n ** 7n, 1n], // 1 USDC (1e6 units) -> 0.00045 ETH
       [`${ETH}>${USDC}`]: [20_000n, 9n * 10n ** 12n], // 1 ETH -> 2,222.2 USDC
       [`${WETH}>${CBBTC}`]: [1n, 1n],
-      [`${CBBTC}>${WETH}`]: [33n * 10n ** 9n, 1n], // 1e8 -> 33 ETH
+      [`${CBBTC}>${WETH}`]: [33n * 10n ** 9n, 1n], // 1e8 -> 3.3 ETH
       [`${IMDUSD}>${IMD}`]: [1n, 4n],
       [`${INFER}>${IMD}`]: [1n, 3700n],
       [`${IMD}>${INFER}`]: [3700n, 1n],
@@ -75,6 +82,16 @@ export function fakeChain(over = {}) {
     depth: {},
     fail: {},
     calls: [],
+    // Independent references, consistent with the rates above: ETH/USD 2,222.22 (8 decimals), BTC/ETH 3.3 (18),
+    // BTC/USD = their product, the IMD feed at 850 IMD per ETH (value = ETH per IMD, 1e18). `age` in seconds.
+    chainlink: {
+      [FEED_ETH_USD]: { description: "ETH / USD", decimals: 8, answer: 222_222_222_222n, age: 100n },
+      [FEED_BTC_ETH]: { description: "BTC / ETH", decimals: 18, answer: 33n * 10n ** 17n, age: 100n },
+      [FEED_BTC_USD]: { description: "BTC / USD", decimals: 8, answer: 733_333_333_333n, age: 100n },
+    },
+    imdFeed: { value: 10n ** 18n / 850n, age: 600n, stale: false },
+    failRead: {}, // functionName or `${address}.${functionName}` -> true: that read throws
+    receiptErrors: 0, // the next N receipt lookups throw (an RPC 429)
     ...over,
   };
   const rate = (a, b, amt) => {
@@ -104,7 +121,7 @@ export function fakeChain(over = {}) {
       return state.tokens.includes(a) && p.amounts[i] > 0n && p.amounts[i] <= pend;
     });
   };
-  const SPLIT_OUT = 1_000_000n * 10n ** 18n;
+  const SPLIT_OUT = 100_000_000n * 10n ** 18n; // above any off-chain pass-1 quote the fake pool gives (passes 2-3 add to it)
   const client = {
     state,
     async getBlock() {
@@ -123,13 +140,27 @@ export function fakeChain(over = {}) {
       return state.balance;
     },
     async getTransactionReceipt({ hash }) {
+      if (state.receiptErrors > 0) {
+        state.receiptErrors--;
+        throw new Error("HTTP request failed. Status: 429 Too Many Requests");
+      }
       const r = state.receipts[hash];
       if (!r) throw new Error(`Transaction receipt with hash "${hash}" could not be found.`);
       return r;
     },
     async readContract({ address, functionName, args }) {
       state.calls.push(functionName);
+      const at = address ? getAddress(address) : null;
+      if (state.failRead[functionName] || state.failRead[`${at}.${functionName}`]) throw new Error(`fake: ${functionName} failed (HTTP 503)`);
+      const feed = state.chainlink[at];
+      if (feed && ["decimals", "description", "latestRoundData"].includes(functionName)) {
+        if (functionName === "decimals") return feed.decimals;
+        if (functionName === "description") return feed.description;
+        return [7n, feed.answer, state.timestamp - feed.age, state.timestamp - feed.age, 7n];
+      }
       switch (functionName) {
+        case "latestValue": return [state.imdFeed.value, state.timestamp - state.imdFeed.age];
+        case "isStale": return state.imdFeed.stale;
         case "openBatchTokens": return [...state.tokens];
         case "pendingByToken": return state.amounts[getAddress(args[0])] ?? 0n;
         case "closedBatches": return state.closedBatches;
@@ -138,6 +169,7 @@ export function fakeChain(over = {}) {
         case "imd": return IMD;
         case "routes": return ROUTES;
         case "registry": return REGISTRY;
+        case "isVault": return (state.deployed ?? []).some((d) => getAddress(d.vault) === getAddress(args[0]) && d.isVault !== false);
         case "poolManager": return PM;
         case "alignmentPoolKey": return ALIGN_KEY;
         case "CONVERSION_REWARD": return 1_200_000_000_000_000n;
@@ -168,11 +200,21 @@ export function fakeChain(over = {}) {
       if (!state.simulateV1) throw new Error("the method eth_simulateV1 does not exist/is not available");
       state.calls.push("eth_simulateV1");
       const { decodeFunctionData } = await import("viem");
-      const { args } = decodeFunctionData({ abi: vaultAbi, data: params[0].blockStateCalls[0].calls[0].data });
+      const call = params[0].blockStateCalls[0].calls[0];
+      const { args } = decodeFunctionData({ abi: vaultAbi, data: call.data });
       if (!ok(args[0])) return [{ calls: [{ status: "0x0", logs: [], gasUsed: "0x0", error: { message: "execution reverted", data: "0x019af637" } }] }];
       const topics = encodeEventTopics({ abi: vaultAbi, eventName: "SplitSwap" });
-      const data = encodeAbiParameters([{ type: "bool" }, { type: "uint256" }, { type: "uint256" }], [false, 400n * 10n ** 18n, SPLIT_OUT]);
-      return [{ calls: [{ status: "0x1", gasUsed: "0xc3500", logs: [{ address: VAULT, topics, data }] }] }];
+      const data = encodeAbiParameters([{ type: "bool" }, { type: "uint256" }, { type: "uint256" }], [false, 400n * 10n ** 18n, state.simSplitOut ?? SPLIT_OUT]);
+      const logs = [{ address: call.to, topics, data }];
+      // state.simLegOut: an EthLegSwapped(ethIn, imdOut) event too (what the leg "really" yields in the simulation).
+      if (state.simLegOut != null) {
+        logs.push({
+          address: call.to,
+          topics: encodeEventTopics({ abi: vaultAbi, eventName: "EthLegSwapped", args: { batchId: 1n } }),
+          data: encodeAbiParameters([{ type: "uint256" }, { type: "uint256" }], [0n, state.simLegOut]),
+        });
+      }
+      return [{ calls: [{ status: "0x1", gasUsed: "0xc3500", logs }] }];
     },
     async simulateContract({ args }) {
       state.calls.push("simulateContract");
@@ -190,6 +232,11 @@ export function fakeChain(over = {}) {
     },
     async estimateContractGas() {
       return state.gas;
+    },
+    async getLogs({ fromBlock, toBlock }) {
+      state.logRanges = [...(state.logRanges ?? []), [fromBlock, toBlock]];
+      if (state.getLogsError) throw new Error(state.getLogsError);
+      return (state.deployed ?? []).filter((d) => d.block >= fromBlock && d.block <= toBlock).map((d) => ({ args: { vault: d.vault } }));
     },
   };
   return client;

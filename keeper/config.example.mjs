@@ -39,18 +39,41 @@ export default {
   DEADLINE_SECONDS: 120, // ConvertParams.deadline = latest block time + this; an unmined tx is dead after it
   MAX_IMPACT_BPS: 300, // a token whose route (or the batch's ETH leg) would move its price more than this is left out of
   //                      the batch (it stays pending); impact = how much worse than a 1/1000-size probe through the same pools
-  // Reference check: floors only protect against slippage from the LIVE quote, not against a pool that is far off market
-  // (2026-11-08: imdUSD/IMD sits at IMD = 4.17 imdUSD, market ~2.47, its only liquidity out of range). Tokens worth
-  // ~1 USD (USD_TOKENS: address -> decimals) are priced at 1 USD through the ETH/USDC pool (REFERENCE_USD_POOL) and the
-  // ETH route (IMD/ETH), both at spot (probe quotes with the pool fee added back); a token whose route yields worse
-  // than that by more than MAX_REFERENCE_DEVIATION_BPS is left pending. Other tokens (BTC, ETH, IMD, INFER) have no
-  // independent reference: their ETH hop is their market.
+  // Reference checks (lib/reference.mjs). Floors only protect against slippage from the LIVE quote, not against a pool
+  // that is far off market (2026-11-08: imdUSD/IMD sits at IMD = 4.17 imdUSD, market ~2.47, its only liquidity out of
+  // range). So every route is compared with a price that does NOT come from a pool it swaps through:
+  //   USD_TOKENS (address -> decimals): 1 USD each, in ETH at Chainlink ETH/USD;
+  //   BTC_TOKENS (address -> decimals): in ETH at Chainlink BTC/ETH (or BTC/USD / ETH/USD if BTC/ETH fails its checks);
+  //   a route ending in IMD (imdUSD): that ETH in IMD at the IMD price feed (IMD_PRICE_FEED).
+  // A token whose route pays more than MAX_REFERENCE_DEVIATION_BPS under its reference, or whose reference cannot be
+  // read (stale, wrong decimals, call failed), is left pending; the rest converts.
   MAX_REFERENCE_DEVIATION_BPS: 300,
   USD_TOKENS: {
     "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48": 6, // USDC
     "0x61aAF8a992A3143e2B0C9cB0030b9fE702854a25": 18, // imdUSD (treated as 1 USD)
   },
-  REFERENCE_USD_POOL: { token: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", decimals: 6, fee: 500, tickSpacing: 10 }, // v4 ETH/USDC
+  BTC_TOKENS: {
+    "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599": 8, // WBTC
+    "0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf": 8, // cbBTC
+  },
+  // Chainlink feeds, checked on chain 2026-11-08 (description and decimals are re-checked on every read; maxAge is
+  // against the block's timestamp; BTC/ETH's heartbeat is 24 h, the other two 1 h).
+  CHAINLINK: {
+    ETH_USD: { address: "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419", description: "ETH / USD", decimals: 8, maxAge: 3600 },
+    BTC_ETH: { address: "0xdeb288F737066589598e9214E782fa5A8eD689e8", description: "BTC / ETH", decimals: 18, maxAge: 86400 },
+    BTC_USD: { address: "0xF4030086522a5bEEa4988F8cA5B36dbC97BeE88c", description: "BTC / USD", decimals: 8, maxAge: 3600 },
+  },
+  // The IMD price feed (latestValue(): ETH per IMD, 18 decimals; isStale()). The ETH -> IMD leg's rate before pool
+  // fees must be at most MAX_FEED_DEVIATION_BPS under it. Stale (isStale(), or older than IMD_FEED_MAX_AGE_SECONDS when
+  // set) = the ETH leg is NOT converted that tick (fail closed), nor imdUSD (its reference needs the IMD price).
+  IMD_PRICE_FEED: "0x070e0603737242B01aBC1D223f7C92D63E86EC97",
+  MAX_FEED_DEVIATION_BPS: 300,
+  IMD_FEED_MAX_AGE_SECONDS: null,
+  // With two or more READ_RPC_URLS, the ETH leg is also quoted on the second one at the same block; the two must agree
+  // within this (same block, same state: they should be identical). One RPC configured: no cross-check.
+  CROSS_RPC_MAX_BPS: 0,
+  // The simulated balancing-swap output must not be under the off-chain pass-1 quote by more than this (0 = not under it).
+  SPLIT_CHECK_TOLERANCE_BPS: 0,
   MAX_REQUOTES: 2, // after a BadParams (should not happen any more: the vault takes any subset at exact amounts): re-read
   //                  and re-quote at most this often
 
@@ -63,4 +86,5 @@ export default {
   STATE_DIR: "./state", // pending.json (the unknown-outcome record), spend.json (ledger), STOP (kill switch)
 
   INTERVAL_SECONDS: 300,
+  LOG_CHUNK: 9999, // vault discovery reads VaultDeployed logs in chunks of this many blocks (many RPCs cap at 10,000)
 };

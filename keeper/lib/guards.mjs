@@ -1,15 +1,37 @@
 // The guard rails every send passes (as in imd-keeper/lib/tx.mjs): kill switch, gas ceiling, ETH floor, daily spend.
-import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync } from "node:fs";
-import { join, resolve } from "node:path";
+import * as nodeFs from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { formatEther, formatGwei, parseEther, parseGwei } from "viem";
 
 export const stateDir = (cfg) => resolve(new URL("..", import.meta.url).pathname, cfg.STATE_DIR ?? "./state");
 
-export function writeJson(file, obj) {
-  mkdirSync(join(file, ".."), { recursive: true });
+/**
+ * Durable, atomic write: the temp file is written and fsynced, renamed over the target, then the directory is fsynced
+ * so the rename itself survives a power cut. A crash at any point leaves either the old record or the new one, whole.
+ * Files are created mode 600. `fs` is injectable for tests.
+ */
+export function writeJson(file, obj, fs = nodeFs) {
+  const dir = dirname(file);
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   const tmp = `${file}.tmp`;
-  writeFileSync(tmp, `${JSON.stringify(obj, (_, v) => (typeof v === "bigint" ? v.toString() : v), 2)}\n`);
-  renameSync(tmp, file); // atomic: a crash mid-write never leaves half a record
+  const fd = fs.openSync(tmp, "w", 0o600);
+  try {
+    fs.writeSync(fd, `${JSON.stringify(obj, (_, v) => (typeof v === "bigint" ? v.toString() : v), 2)}\n`);
+    fs.fsyncSync(fd);
+  } finally {
+    fs.closeSync(fd);
+  }
+  fs.renameSync(tmp, file);
+  const dfd = fs.openSync(dir, "r");
+  try {
+    fs.fsyncSync(dfd);
+  } catch (e) {
+    // Some platforms refuse fsync on a directory handle (EINVAL/EISDIR/EPERM); the rename is still atomic there.
+    if (!["EINVAL", "EISDIR", "EPERM", "ENOTSUP", "EBADF"].includes(e.code)) throw e;
+  } finally {
+    fs.closeSync(dfd);
+  }
 }
 export const readJson = (file) => (existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : null);
 

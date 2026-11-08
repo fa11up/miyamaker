@@ -12,7 +12,8 @@ import { applyEnv } from "../lib/config.mjs";
 import base from "../config.example.mjs";
 import { ETH, endsInEth, reverseRoute, routesFromConfig } from "../lib/routes.mjs";
 import { applyMargin, quoteRoute, quoteV4, v4Key, verifyQuoters } from "../lib/quote.mjs";
-import { deviationBps, quoteBatch, usdReference } from "../lib/plan.mjs";
+import { deviationBps, feeless, quoteBatch } from "../lib/plan.mjs";
+import { describeReferences, imdFeedAbi, referenceReader } from "../lib/reference.mjs";
 import { estimateSplit, poolState } from "../lib/split.mjs";
 import { simulateV1 } from "../lib/rpc.mjs";
 import { worthIt } from "../lib/decide.mjs";
@@ -23,6 +24,9 @@ const json = JSON.parse(readFileSync(file, "utf8"));
 const cfg = applyEnv(base, {});
 const url = process.env.SMOKE_RPC_URL ?? "https://ethereum-rpc.publicnode.com";
 const client = createPublicClient({ chain: mainnet, transport: http(url, { timeout: 30_000, retryCount: 2 }) });
+// A second, independent read RPC for the ETH leg's cross-check (as the keeper does with two READ_RPC_URLS).
+const crossUrl = process.env.SMOKE_CROSS_RPC_URL ?? cfg.READ_RPC_URLS.find((u) => new URL(u).host !== new URL(url).host);
+const crossClient = crossUrl ? createPublicClient({ chain: mainnet, transport: http(crossUrl, { timeout: 30_000, retryCount: 2 }) }) : null;
 
 const IMD = getAddress(json.imd);
 const INFER = getAddress(json.alignmentToken);
@@ -35,7 +39,7 @@ const key = {
 };
 const inferIsCurrency0 = key.currency0 === INFER;
 
-const blockNumber = await client.getBlockNumber();
+const { number: blockNumber, timestamp: blockTs } = await client.getBlock({ blockTag: "latest" });
 console.log(`block ${blockNumber} via ${new URL(url).host}; config ${file.split("/").slice(-3).join("/")}`);
 console.log(`margins: HOP_MARGIN_BPS ${cfg.HOP_MARGIN_BPS} (compounding per hop), SPLIT_MARGIN_BPS ${cfg.SPLIT_MARGIN_BPS}`);
 
@@ -43,6 +47,9 @@ const qc = await verifyQuoters(client, cfg);
 console.log(`quoters OK: V4Quoter.poolManager ${qc.poolManager}; QuoterV2.factory ${qc.v3Factory}, WETH9 ${qc.weth}`);
 const probe = await simulateV1(client, { from: "0x0000000000000000000000000000000000000001", to: "0x0000000000000000000000000000000000000002", data: "0x" }, blockNumber);
 console.log(`eth_simulateV1: ${probe ? "supported (minSplitOut from the vault's own SplitSwap event)" : "NOT supported (off-chain pass-1 fallback)"}`);
+console.log("\nindependent references (lib/reference.mjs):");
+for (const line of await describeReferences(client, cfg)) console.log(`  ${line}`);
+console.log(`  ETH leg cross-check RPC: ${crossClient ? new URL(crossUrl).host : "none"}`);
 
 const routes = routesFromConfig(json);
 const ethRoute = routes.get(ETH);
@@ -74,16 +81,17 @@ const tokens = [...routes.keys(), IMD, INFER];
 const amounts = [];
 for (const t of tokens) amounts.push(t === IMD ? imdFor02 : t === INFER ? inferSample : (SAMPLES[t] ?? (await spotSample(t, imdFor02))));
 const ctx = { imd: IMD, infer: INFER, key, inferIsCurrency0, reward: 1_200_000_000_000_000n, rewardBps: 100n, routes: null };
-const q = await quoteBatch(client, cfg, ctx, { tokens, amounts, blockNumber }, { routes });
-console.log(`MAX_IMPACT_BPS ${cfg.MAX_IMPACT_BPS}, MAX_REFERENCE_DEVIATION_BPS ${cfg.MAX_REFERENCE_DEVIATION_BPS} (USD tokens)`);
+const q = await quoteBatch(client, cfg, ctx, { tokens, amounts, blockNumber }, { routes, crossClient });
+console.log(`\nMAX_IMPACT_BPS ${cfg.MAX_IMPACT_BPS}, MAX_REFERENCE_DEVIATION_BPS ${cfg.MAX_REFERENCE_DEVIATION_BPS} (USD and BTC tokens), MAX_FEED_DEVIATION_BPS ${cfg.MAX_FEED_DEVIATION_BPS} (ETH leg), CROSS_RPC_MAX_BPS ${cfg.CROSS_RPC_MAX_BPS}`);
+for (const a of q.alerts) console.log(`ALERT: ${a}`);
 for (const x of q.items) {
   const head = `\n${symbolOf(x.token)}  in ${fmt(x.token, x.amount)}  (~${formatEther(x.ethValue)} ETH)${x.impactBps != null ? `  impact ${x.impactBps} bps` : ""}`;
   if (x.skip) {
-    const also = x.refDeviationBps != null && !/reference/.test(x.skip) ? ` (and ${x.refDeviationBps} bps under the market reference)` : "";
+    const also = x.refDeviationBps != null && !/reference/.test(x.skip) ? ` (its own route is ${x.refDeviationBps} bps under its reference)` : "";
     console.log(`${head}\n  SKIPPED (would stay pending): ${x.skip}${also}`);
     continue;
   }
-  console.log(`${head}${x.hops.length ? "" : x.kind === "eth" ? `  -> ETH leg with ${formatEther(x.ethIn)} ETH (net of the keeper reward)` : "  no route"}`);
+  console.log(`${head}${x.refDeviationBps != null ? `  ${x.refDeviationBps} bps under its reference` : ""}${x.hops.length ? "" : x.kind === "eth" ? `  -> ETH leg with ${formatEther(x.ethIn)} ETH (net of the keeper reward)` : "  no route"}`);
   x.hops.forEach((h, i) => {
     const pool = h.kind === 4 ? `v4 ${h.fee}/${h.tickSpacing}` : `v3 ${h.fee}`;
     console.log(`  hop ${i} ${symbolOf(h.tokenIn)}->${symbolOf(h.tokenOut)} [${pool}]  quote ${fmt(h.tokenOut, x.outs[i])}  floor ${fmt(h.tokenOut, x.floors[i])}  (raw ${x.floors[i]})`);
@@ -93,6 +101,25 @@ for (const x of q.items) {
 if (q.leg) {
   const h = q.leg.hops[0];
   console.log(`\nETH leg [v4 ${h.fee}/${h.tickSpacing}]: ${formatEther(q.leg.ethIn)} ETH -> ${fmt(IMD, q.leg.outs.at(-1))} in one swap, impact ${q.leg.impactBps} bps, floor ${fmt(IMD, q.leg.floors.at(-1))} (raw ${q.leg.floors.at(-1)}, margin compounded ${q.leg.offset + 1}x)`);
+  console.log(`  ${q.leg.feedDeviationBps} bps under the IMD price feed before pool fees${q.leg.crossRpc ? `; second RPC quoted ${q.leg.crossRpc.other} (${q.leg.crossRpc.bps} bps apart)` : ""}`);
+} else {
+  // For information only: how the leg compares with the feed's last value even when the feed is stale.
+  const legIn = q.items.filter((x) => x.kind === "eth" || x.kind === "toEth").reduce((s, x) => s + (x.ethIn ?? 0n), 0n);
+  if (legIn > 0n) {
+    const [v, at] = await client.readContract({ address: cfg.IMD_PRICE_FEED, abi: imdFeedAbi, functionName: "latestValue", blockNumber });
+    const out = (await quoteRoute(client, cfg, ethRoute, legIn, blockNumber)).at(-1);
+    const want = (legIn * 10n ** 18n) / v;
+    console.log(`\nETH leg NOT converted at this block. For information: ${formatEther(legIn)} ETH -> ${fmt(IMD, out)}; the feed's last value (${Number(blockTs - at)}s old) implies ${fmt(IMD, want)}; the leg before pool fees is ${deviationBps(feeless(ethRoute, out), want)} bps under it`);
+    if (crossClient) {
+      try {
+        const other = (await quoteRoute(crossClient, cfg, ethRoute, legIn, blockNumber)).at(-1);
+        const diff = other > out ? other - out : out - other;
+        console.log(`  same leg quoted on ${new URL(crossUrl).host} at block ${blockNumber}: ${fmt(IMD, other)} (${Number((diff * 10_000n) / out)} bps apart; CROSS_RPC_MAX_BPS ${cfg.CROSS_RPC_MAX_BPS})`);
+      } catch (e) {
+        console.log(`  second RPC could not quote the leg: ${(e.shortMessage ?? e.message).split("\n")[0]}`);
+      }
+    }
+  }
 }
 const skipped = q.items.filter((x) => x.skip).map((x) => symbolOf(x.token));
 if (skipped.length) console.log(`\nskipped at the sample size: ${skipped.join(", ")} (they would stay pending; the rest converts)`);
@@ -111,6 +138,7 @@ else {
 }
 // The configured contribution minimums (vault factory setMinContribution): what each is worth at this block.
 console.log("\nminimum contributions (config/1.json minContributions):");
+const refs = referenceReader(client, cfg, { blockNumber, now: blockTs });
 for (const m of json.minContributions ?? []) {
   const t = getAddress(m.token);
   const amt = BigInt(m.amount);
@@ -123,13 +151,22 @@ for (const m of json.minContributions ?? []) {
     eth = endsInEth(hops) ? out : await imdToEthQ(out);
   }
   let refNote = "";
-  if (cfg.USD_TOKENS[t] != null && routes.get(t)) {
-    const r = await usdReference(client, cfg, ethRoute, blockNumber);
+  if (refs.has(t) && routes.get(t)) {
     const hops = routes.get(t);
     const out = (await quoteRoute(client, cfg, hops, amt, blockNumber)).at(-1);
-    const want = endsInEth(hops) ? r.ethFor(t, amt) : r.imdFor(t, amt);
-    const d = deviationBps(out, want);
-    refNote = `  reference check at this size: ${d} bps under market (${d > cfg.MAX_REFERENCE_DEVIATION_BPS ? "SKIPPED" : "ok"})`;
+    const r = await refs.ethFor(t, amt);
+    let want = r.err ? null : r.wei;
+    let err = r.err;
+    if (want != null && !endsInEth(hops)) {
+      const m = await refs.imdForEth(want);
+      want = m.err ? null : m.imd;
+      err = m.err;
+    }
+    if (want == null) refNote = `  reference unavailable (SKIPPED): ${err}`;
+    else {
+      const d = deviationBps(out, want);
+      refNote = `  reference check at this size: ${d} bps under (${d > cfg.MAX_REFERENCE_DEVIATION_BPS ? "SKIPPED" : "ok"})`;
+    }
   }
   console.log(`  ${symbolOf(t).padEnd(6)} ${fmt(t, amt)}  ~ ${formatEther(eth)} ETH${refNote}`);
 }

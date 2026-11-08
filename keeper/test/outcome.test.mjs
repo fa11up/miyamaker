@@ -81,21 +81,35 @@ test("send: the record is on disk before the tx leaves; a timeout leaves it as u
   assert.match(lines.join("\n"), /still pending/);
   assert.match(lines.join("\n"), /still in flight/);
 
-  // Past the deadline: expired, and the next send reuses nonce 0 with bumped fees.
+  // Past the deadline: expired, and the next send reuses nonce 0 with bumped fees. The record stays on disk, marked
+  // expired, until that replacement is actually sent (test/inflight.test.mjs).
   c.state.timestamp = plan.params.deadline + 1n;
   const s = await settlePending(c, cfg);
   assert.equal(s.blocked, false);
   assert.equal(s.reuse.nonce, 0n);
-  assert.equal(store.get(), null);
+  assert.equal(store.get().hash, r.hash);
+  assert.equal(store.get().expired, true);
 });
 
-test("send: refused outright (nonce too low) clears the record and the ledger entry", async () => {
+test("send: nonce too low, our hash not mined (another tx took the nonce): resolved as replaced, cleared, costs 0", async () => {
   const cfg = fresh();
   const c = fakeChain({ keeper: account.address, amounts: { "0x0000000000000000000000000000000000000000": 10n ** 18n, "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48": 300_000_000n } });
   const plan = await convertPlan(c, cfg);
-  const sender = { configured: true, hosts: ["p"], sendRaw: async () => { throw new Error("nonce too low"); } };
+  const sender = { configured: true, hosts: ["p"], sendRaw: async () => { c.state.nonce = 1n; throw new Error("nonce too low"); } };
   const r = await sendConvert({ client: c, cfg, account, sender, ctx: fakeCtx(), plan, log: () => {} });
-  assert.match(r.failed, /nonce too low/);
+  assert.match(r.nonceTaken, /nonce too low/);
+  assert.match(r.settled, /replaced/);
+  assert.equal(pendingStore(cfg).get(), null);
+  assert.equal(ledger(cfg).spentToday(), 0n);
+});
+
+test("send: refused outright (underpriced) clears the record and the ledger entry", async () => {
+  const cfg = fresh();
+  const c = fakeChain({ keeper: account.address, amounts: { "0x0000000000000000000000000000000000000000": 10n ** 18n, "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48": 300_000_000n } });
+  const plan = await convertPlan(c, cfg);
+  const sender = { configured: true, hosts: ["p"], sendRaw: async () => { throw new Error("transaction underpriced"); } };
+  const r = await sendConvert({ client: c, cfg, account, sender, ctx: fakeCtx(), plan, log: () => {} });
+  assert.match(r.failed, /underpriced/);
   assert.equal(pendingStore(cfg).get(), null);
   assert.equal(ledger(cfg).spentToday(), 0n);
 });

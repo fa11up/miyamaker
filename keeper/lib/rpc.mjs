@@ -22,10 +22,25 @@ export function readClient(cfg) {
   });
 }
 
+/**
+ * A client on the SECOND read RPC alone (READ_RPC_URLS[1]), for cross-checking the ETH leg's quote against an
+ * independent node; null when only one is configured (the keeper then works without the cross-check). Note the main
+ * client fails over to the same URL when the first is down: then both answers come from one node (the check passes
+ * trivially), which is no worse than having one RPC.
+ */
+export function crossCheckClient(cfg) {
+  const url = cfg.READ_RPC_URLS?.[1];
+  if (!url) return null;
+  return createPublicClient({ chain: { ...mainnet, id: cfg.CHAIN_ID ?? 1 }, transport: http(url, { timeout: 20_000, retryCount: 1 }) });
+}
+
 // A signed transaction can go to a second RPC safely (same hash, same nonce: at most one copy is mined). So the next is
 // asked when one fails as a provider (rate limit, 5xx, timeout), not when the transaction itself is refused.
 const REFUSED = /nonce too low|nonce has already been used|insufficient funds|underpriced|intrinsic gas|exceeds block gas limit|invalid sender|max fee per gas less than/i;
 const KNOWN = /already known|known transaction|alreadyknown|already imported|already in (the )?(mempool|pool)/i;
+// A provider failure that shows the transaction was NOT taken (turned away before it was read). Anything else (a
+// timeout, a reset connection, a 5xx, an unreadable reply) may have delivered it.
+const NOT_TAKEN = /\b429\b|rate.?limit|too many requests|HTTP 40[0-9]\b|unauthori[sz]ed|forbidden|api key|ECONNREFUSED|ENOTFOUND|EAI_AGAIN/i;
 
 async function rpc(url, method, params, fetchImpl) {
   const res = await fetchImpl(url, {
@@ -45,7 +60,12 @@ async function rpc(url, method, params, fetchImpl) {
   return body.result;
 }
 
-/** Send a signed raw transaction through the private RPCs; returns its hash. Never touches a read RPC. */
+/**
+ * Send a signed raw transaction through the private RPCs; returns its hash. Never touches a read RPC.
+ * A refusal ("nonce too low", "underpriced", ...) after an earlier RPC failed AMBIGUOUSLY (it may have delivered the
+ * tx) is thrown with `ambiguous: true`: e.g. "nonce too low" there can mean our own tx already landed. The caller keeps
+ * the record as unknown. The final error, when every RPC failed, is also marked ambiguous when any failure was.
+ */
 export function privateSender(cfg, { fetchImpl = fetch, log = console.log } = {}) {
   const urls = cfg.PRIVATE_RPC_URL;
   const scrub = (msg) => urls.reduce((m, u) => m.split(u).join(hostOf(u)), String(msg));
@@ -56,18 +76,25 @@ export function privateSender(cfg, { fetchImpl = fetch, log = console.log } = {}
       if (!urls.length) throw new Error("PRIVATE_RPC_URL is not set: refusing to send (no public mempool fallback)");
       const hash = keccak256(signed);
       let last;
+      let ambiguous = null; // the first earlier failure that may have delivered the tx
       for (const [i, url] of urls.entries()) {
         try {
           await rpc(url, "eth_sendRawTransaction", [signed], fetchImpl);
           if (i > 0) log(`send: ${hostOf(urls[0])} failed (${scrub(last?.message).slice(0, 100)}); sent via ${hostOf(url)}`);
           return hash;
         } catch (e) {
-          const msg = scrub(e.message);
+          const msg = scrub(e.message ?? e);
           if (KNOWN.test(msg)) return hash;
-          if (REFUSED.test(msg)) throw new Error(msg);
-          last = new Error(msg);
+          if (REFUSED.test(msg)) {
+            const err = new Error(ambiguous ? `${msg} (from ${hostOf(url)}, after ${ambiguous} may have delivered it)` : msg);
+            if (ambiguous) err.ambiguous = true;
+            throw err;
+          }
+          last = new Error(`${hostOf(url)}: ${msg}`);
+          if (!NOT_TAKEN.test(msg)) ambiguous ??= `${hostOf(url)} (${msg.slice(0, 80)})`;
         }
       }
+      if (ambiguous) last.ambiguous = true;
       throw last;
     },
   };
