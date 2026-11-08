@@ -1,11 +1,6 @@
 [
   {
     "type": "error",
-    "name": "AlignmentTokenNotInPool",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "AlreadyInitialized",
     "inputs": []
   },
@@ -21,18 +16,40 @@
   },
   {
     "type": "error",
+    "name": "BadParams",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "BadRoute",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "ContributionBelowMinimum",
     "inputs": []
   },
   {
     "type": "error",
-    "name": "HooksNotAllowed",
+    "name": "Expired",
     "inputs": []
   },
   {
     "type": "error",
-    "name": "InsufficientBalance",
-    "inputs": []
+    "name": "Insolvent",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
   },
   {
     "type": "error",
@@ -51,32 +68,12 @@
   },
   {
     "type": "error",
-    "name": "InvalidCurrencyOrdering",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "InvalidFeeTier",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "InvalidPoolKey",
     "inputs": []
   },
   {
     "type": "error",
-    "name": "InvalidTickSpacing",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "NewOwnerIsZeroAddress",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "NoAlignmentTarget",
     "inputs": []
   },
   {
@@ -91,8 +88,14 @@
   },
   {
     "type": "error",
-    "name": "NoPendingETH",
-    "inputs": []
+    "name": "NoRoute",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
   },
   {
     "type": "error",
@@ -116,17 +119,17 @@
   },
   {
     "type": "error",
-    "name": "PoolKeyAlreadySet",
+    "name": "NothingPending",
     "inputs": []
   },
   {
     "type": "error",
-    "name": "PoolKeyNotSet",
+    "name": "PoolNotInitialized",
     "inputs": []
   },
   {
     "type": "error",
-    "name": "PoolMustContainETH",
+    "name": "ReceivedLess",
     "inputs": []
   },
   {
@@ -141,7 +144,23 @@
   },
   {
     "type": "error",
+    "name": "TokenNotAllowed",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "TokenNotInTarget",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "TooManyTokens",
     "inputs": []
   },
   {
@@ -158,6 +177,53 @@
     "type": "error",
     "name": "Unauthorized",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "UnknownFeeToken",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ZeroFloor",
+    "inputs": []
+  },
+  {
+    "type": "event",
+    "name": "BatchConverted",
+    "inputs": [
+      {
+        "name": "batchId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "sharesIssued",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "inferAdded",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "imdAdded",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "callerReward",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
   },
   {
     "type": "event",
@@ -184,6 +250,12 @@
     "inputs": [
       {
         "name": "benefactor",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "token",
         "type": "address",
         "indexed": true,
         "internalType": "address"
@@ -240,6 +312,12 @@
     "name": "FeesAccumulated",
     "inputs": [
       {
+        "name": "token",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
         "name": "amount",
         "type": "uint256",
         "indexed": false,
@@ -259,44 +337,25 @@
         "internalType": "address"
       },
       {
-        "name": "ethAmount",
-        "type": "uint256",
+        "name": "mode",
+        "type": "uint8",
         "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "LiquidityAdded",
-    "inputs": [
+        "internalType": "enum ClaimMode"
+      },
       {
-        "name": "ethSwapped",
+        "name": "inferOut",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
       },
       {
-        "name": "tokenReceived",
+        "name": "imdOut",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
       },
       {
-        "name": "lpPositionValue",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "sharesIssued",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "callerReward",
+        "name": "ethOut",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -354,6 +413,12 @@
     "name": "ProtocolFeesWithdrawn",
     "inputs": [
       {
+        "name": "token",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
         "name": "amount",
         "type": "uint256",
         "indexed": false,
@@ -367,6 +432,12 @@
     "name": "ProtocolYieldCollected",
     "inputs": [
       {
+        "name": "token",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
         "name": "amount",
         "type": "uint256",
         "indexed": false,
@@ -377,13 +448,87 @@
   },
   {
     "type": "event",
-    "name": "V4PoolKeyUpdated",
+    "name": "Reinvested",
     "inputs": [
       {
-        "name": "poolId",
-        "type": "bytes32",
+        "name": "benefactor",
+        "type": "address",
         "indexed": true,
-        "internalType": "bytes32"
+        "internalType": "address"
+      },
+      {
+        "name": "inferIn",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "imdIn",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "sharesIssued",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "SplitSwap",
+    "inputs": [
+      {
+        "name": "inferToImd",
+        "type": "bool",
+        "indexed": false,
+        "internalType": "bool"
+      },
+      {
+        "name": "amountIn",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "amountOut",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "TokenConverted",
+    "inputs": [
+      {
+        "name": "batchId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "token",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "amountIn",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "imdValue",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
       }
     ],
     "anonymous": false
@@ -422,7 +567,46 @@
   },
   {
     "type": "function",
+    "name": "FEE_COLLECTION_INTERVAL",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "MAX_BATCH_TOKENS",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "MAX_CONVERSION_REWARD_BPS",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "MAX_ROUTE_HOPS",
     "inputs": [],
     "outputs": [
       {
@@ -448,7 +632,7 @@
   },
   {
     "type": "function",
-    "name": "accFeePerShare",
+    "name": "PROTOCOL_YIELD_CUT_BPS",
     "inputs": [],
     "outputs": [
       {
@@ -461,26 +645,40 @@
   },
   {
     "type": "function",
-    "name": "accumulatedFees",
+    "name": "alignmentPoolKey",
     "inputs": [],
     "outputs": [
       {
         "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "accumulatedProtocolFees",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
+        "type": "tuple",
+        "internalType": "struct PoolKey",
+        "components": [
+          {
+            "name": "currency0",
+            "type": "address",
+            "internalType": "Currency"
+          },
+          {
+            "name": "currency1",
+            "type": "address",
+            "internalType": "Currency"
+          },
+          {
+            "name": "fee",
+            "type": "uint24",
+            "internalType": "uint24"
+          },
+          {
+            "name": "tickSpacing",
+            "type": "int24",
+            "internalType": "int24"
+          },
+          {
+            "name": "hooks",
+            "type": "address",
+            "internalType": "contract IHooks"
+          }
+        ]
       }
     ],
     "stateMutability": "view"
@@ -500,26 +698,24 @@
   },
   {
     "type": "function",
-    "name": "alignmentToken",
-    "inputs": [],
-    "outputs": [
+    "name": "batchSharesPerUnit",
+    "inputs": [
       {
-        "name": "",
+        "name": "batchId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "token",
         "type": "address",
         "internalType": "address"
       }
     ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "alignmentTokenDecimals",
-    "inputs": [],
     "outputs": [
       {
         "name": "",
-        "type": "uint8",
-        "internalType": "uint8"
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -564,44 +760,6 @@
   },
   {
     "type": "function",
-    "name": "benefactorTotalETH",
-    "inputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "calculateClaimableAmount",
-    "inputs": [
-      {
-        "name": "benefactor",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "cancelOwnershipHandover",
     "inputs": [],
     "outputs": [],
@@ -610,10 +768,31 @@
   {
     "type": "function",
     "name": "claimFees",
-    "inputs": [],
+    "inputs": [
+      {
+        "name": "mode",
+        "type": "uint8",
+        "internalType": "enum ClaimMode"
+      },
+      {
+        "name": "minEthOut",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
     "outputs": [
       {
-        "name": "ethClaimed",
+        "name": "inferOut",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "imdOut",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "ethOut",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -628,16 +807,65 @@
         "name": "benefactors",
         "type": "address[]",
         "internalType": "address[]"
+      },
+      {
+        "name": "mode",
+        "type": "uint8",
+        "internalType": "enum ClaimMode"
+      },
+      {
+        "name": "minEthOut",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [
       {
-        "name": "totalClaimed",
+        "name": "inferOut",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "imdOut",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "ethOut",
         "type": "uint256",
         "internalType": "uint256"
       }
     ],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "claimable",
+    "inputs": [
+      {
+        "name": "benefactor",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -654,6 +882,13 @@
   },
   {
     "type": "function",
+    "name": "collectFees",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "completeOwnershipHandover",
     "inputs": [
       {
@@ -667,64 +902,68 @@
   },
   {
     "type": "function",
-    "name": "convertAndAddLiquidity",
+    "name": "contributionOf",
     "inputs": [
       {
-        "name": "minOutTarget",
-        "type": "uint256",
-        "internalType": "uint256"
+        "name": "",
+        "type": "address",
+        "internalType": "address"
       },
       {
-        "name": "minEthOutForFees",
-        "type": "uint256",
-        "internalType": "uint256"
+        "name": "",
+        "type": "address",
+        "internalType": "address"
       }
     ],
     "outputs": [
       {
-        "name": "lpPositionValue",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "convertFeeTokens",
-    "inputs": [
-      {
-        "name": "minEthOut",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "convertedBatches",
-    "inputs": [
-      {
-        "name": "batchId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "sharesPerEth",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "accFeePerShareAtClose",
+        "name": "",
         "type": "uint256",
         "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "convertAndAddLiquidity",
+    "inputs": [
+      {
+        "name": "p",
+        "type": "tuple",
+        "internalType": "struct UniAlignmentVault.ConvertParams",
+        "components": [
+          {
+            "name": "tokens",
+            "type": "address[]",
+            "internalType": "address[]"
+          },
+          {
+            "name": "minOuts",
+            "type": "uint256[][]",
+            "internalType": "uint256[][]"
+          },
+          {
+            "name": "minSplitOut",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "deadline",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "sharesIssued",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -754,13 +993,6 @@
   },
   {
     "type": "function",
-    "name": "depositFees",
-    "inputs": [],
-    "outputs": [],
-    "stateMutability": "payable"
-  },
-  {
-    "type": "function",
     "name": "description",
     "inputs": [],
     "outputs": [
@@ -781,36 +1013,32 @@
   },
   {
     "type": "function",
-    "name": "feeCheckpoint",
+    "name": "feeStats",
     "inputs": [
       {
-        "name": "",
+        "name": "token",
         "type": "address",
         "internalType": "address"
       }
     ],
     "outputs": [
       {
-        "name": "",
+        "name": "accPerShare",
         "type": "uint256",
         "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getBenefactorContribution",
-    "inputs": [
+      },
       {
-        "name": "benefactor",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
+        "name": "distributed",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
       {
-        "name": "",
+        "name": "claimed",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "protocolFees",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -857,19 +1085,26 @@
   },
   {
     "type": "function",
-    "name": "getUnclaimedFees",
-    "inputs": [
+    "name": "imd",
+    "inputs": [],
+    "outputs": [
       {
-        "name": "benefactor",
+        "name": "",
         "type": "address",
         "internalType": "address"
       }
     ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "infer",
+    "inputs": [],
     "outputs": [
       {
         "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
+        "type": "address",
+        "internalType": "address"
       }
     ],
     "stateMutability": "view"
@@ -879,52 +1114,74 @@
     "name": "initialize",
     "inputs": [
       {
-        "name": "_initialOwner",
+        "name": "owner_",
         "type": "address",
         "internalType": "address"
       },
       {
-        "name": "_weth",
+        "name": "poolManager_",
+        "type": "address",
+        "internalType": "contract IPoolManager"
+      },
+      {
+        "name": "zRouter_",
         "type": "address",
         "internalType": "address"
       },
       {
-        "name": "_poolManager",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "_alignmentToken",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "_zRouter",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "_zRouterFee",
-        "type": "uint24",
-        "internalType": "uint24"
-      },
-      {
-        "name": "_zRouterTickSpacing",
-        "type": "int24",
-        "internalType": "int24"
-      },
-      {
-        "name": "_priceValidator",
-        "type": "address",
-        "internalType": "contract IVaultPriceValidator"
-      },
-      {
-        "name": "_registry",
+        "name": "registry_",
         "type": "address",
         "internalType": "contract IMiyaRegistry"
       },
       {
-        "name": "_alignmentTargetId",
+        "name": "routes_",
+        "type": "address",
+        "internalType": "contract IVaultRoutes"
+      },
+      {
+        "name": "infer_",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "imd_",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "key_",
+        "type": "tuple",
+        "internalType": "struct PoolKey",
+        "components": [
+          {
+            "name": "currency0",
+            "type": "address",
+            "internalType": "Currency"
+          },
+          {
+            "name": "currency1",
+            "type": "address",
+            "internalType": "Currency"
+          },
+          {
+            "name": "fee",
+            "type": "uint24",
+            "internalType": "uint24"
+          },
+          {
+            "name": "tickSpacing",
+            "type": "int24",
+            "internalType": "int24"
+          },
+          {
+            "name": "hooks",
+            "type": "address",
+            "internalType": "contract IHooks"
+          }
+        ]
+      },
+      {
+        "name": "alignmentTargetId_",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -934,7 +1191,7 @@
   },
   {
     "type": "function",
-    "name": "lastClaimTimestamp",
+    "name": "isBenefactor",
     "inputs": [
       {
         "name": "",
@@ -945,47 +1202,34 @@
     "outputs": [
       {
         "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
+        "type": "bool",
+        "internalType": "bool"
       }
     ],
     "stateMutability": "view"
   },
   {
     "type": "function",
-    "name": "lastTickLower",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "int24",
-        "internalType": "int24"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "lastTickUpper",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "int24",
-        "internalType": "int24"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "lastVaultFeeCollectionTime",
+    "name": "lastFeeCollectionTime",
     "inputs": [],
     "outputs": [
       {
         "name": "",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "openBatchTokens",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address[]",
+        "internalType": "address[]"
       }
     ],
     "stateMutability": "view"
@@ -1024,10 +1268,10 @@
   },
   {
     "type": "function",
-    "name": "pendingETH",
+    "name": "pendingByToken",
     "inputs": [
       {
-        "name": "benefactor",
+        "name": "",
         "type": "address",
         "internalType": "address"
       }
@@ -1043,8 +1287,19 @@
   },
   {
     "type": "function",
-    "name": "pendingFeeTokens",
-    "inputs": [],
+    "name": "pendingOf",
+    "inputs": [
+      {
+        "name": "benefactor",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
     "outputs": [
       {
         "name": "",
@@ -1062,20 +1317,7 @@
       {
         "name": "",
         "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "priceValidator",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "contract IVaultPriceValidator"
+        "internalType": "contract IPoolManager"
       }
     ],
     "stateMutability": "view"
@@ -1089,19 +1331,6 @@
         "name": "",
         "type": "address",
         "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "protocolYieldCutBps",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -1158,59 +1387,13 @@
   },
   {
     "type": "function",
-    "name": "setV4PoolKey",
-    "inputs": [
-      {
-        "name": "newPoolKey",
-        "type": "tuple",
-        "internalType": "struct PoolKey",
-        "components": [
-          {
-            "name": "currency0",
-            "type": "address",
-            "internalType": "Currency"
-          },
-          {
-            "name": "currency1",
-            "type": "address",
-            "internalType": "Currency"
-          },
-          {
-            "name": "fee",
-            "type": "uint24",
-            "internalType": "uint24"
-          },
-          {
-            "name": "tickSpacing",
-            "type": "int24",
-            "internalType": "int24"
-          },
-          {
-            "name": "hooks",
-            "type": "address",
-            "internalType": "contract IHooks"
-          }
-        ]
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "settledFees",
-    "inputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
+    "name": "routes",
+    "inputs": [],
     "outputs": [
       {
         "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
+        "type": "address",
+        "internalType": "contract IVaultRoutes"
       }
     ],
     "stateMutability": "view"
@@ -1236,26 +1419,26 @@
   },
   {
     "type": "function",
-    "name": "totalEthLocked",
+    "name": "tickLower",
     "inputs": [],
     "outputs": [
       {
         "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
+        "type": "int24",
+        "internalType": "int24"
       }
     ],
     "stateMutability": "view"
   },
   {
     "type": "function",
-    "name": "totalFeesClaimed",
+    "name": "tickUpper",
     "inputs": [],
     "outputs": [
       {
         "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
+        "type": "int24",
+        "internalType": "int24"
       }
     ],
     "stateMutability": "view"
@@ -1263,19 +1446,6 @@
   {
     "type": "function",
     "name": "totalLPUnits",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "totalPendingETH",
     "inputs": [],
     "outputs": [
       {
@@ -1346,52 +1516,6 @@
   },
   {
     "type": "function",
-    "name": "v3PreferredFee",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint24",
-        "internalType": "uint24"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "v4PoolKey",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "currency0",
-        "type": "address",
-        "internalType": "Currency"
-      },
-      {
-        "name": "currency1",
-        "type": "address",
-        "internalType": "Currency"
-      },
-      {
-        "name": "fee",
-        "type": "uint24",
-        "internalType": "uint24"
-      },
-      {
-        "name": "tickSpacing",
-        "type": "int24",
-        "internalType": "int24"
-      },
-      {
-        "name": "hooks",
-        "type": "address",
-        "internalType": "contract IHooks"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "validateCompliance",
     "inputs": [
       {
@@ -1411,26 +1535,6 @@
   },
   {
     "type": "function",
-    "name": "validateCurrentPoolKey",
-    "inputs": [],
-    "outputs": [],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "vaultFeeCollectionInterval",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "vaultType",
     "inputs": [],
     "outputs": [
@@ -1444,21 +1548,14 @@
   },
   {
     "type": "function",
-    "name": "weth",
-    "inputs": [],
-    "outputs": [
+    "name": "withdrawProtocolFees",
+    "inputs": [
       {
-        "name": "",
+        "name": "token",
         "type": "address",
         "internalType": "address"
       }
     ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "withdrawProtocolFees",
-    "inputs": [],
     "outputs": [],
     "stateMutability": "nonpayable"
   },
@@ -1471,32 +1568,6 @@
         "name": "",
         "type": "address",
         "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "zRouterFee",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint24",
-        "internalType": "uint24"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "zRouterTickSpacing",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "int24",
-        "internalType": "int24"
       }
     ],
     "stateMutability": "view"

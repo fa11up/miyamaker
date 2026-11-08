@@ -1,106 +1,138 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.24;
 
 import {UniAlignmentVault} from "./UniAlignmentVault.sol";
-import {IVaultPriceValidator} from "../../interfaces/IVaultPriceValidator.sol";
+import {IVaultRoutes, RouteHop, HOP_V3, HOP_V4} from "./IVaultRoutes.sol";
 import {IMiyaRegistry} from "../../registry/interfaces/IMiyaRegistry.sol";
+import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
 import {PoolKey} from "v4-core/types/PoolKey.sol";
 import {Currency} from "v4-core/types/Currency.sol";
 import {IHooks} from "v4-core/interfaces/IHooks.sol";
 import {ICreateX, CREATEX} from "../../shared/CreateXConstants.sol";
 import {Ownable} from "solady/auth/Ownable.sol";
 
-/// @title UniAlignmentVaultFactory
-/// @notice Deploys UniAlignmentVault clones and registers each in the MiyaRegistry (this factory must be
-///         registered there via setVaultFactory); zRouter config is shared across all vaults.
-///         The factory owns every vault it deploys and sets its V4 pool key exactly once, at deploy: the hookless
-///         native-ETH/alignment-token pool at the shared zRouter fee tier, i.e. the same pool zRouter swaps on.
-///         There is no way to repoint a vault's pool afterwards.
-contract UniAlignmentVaultFactory is Ownable {
+/// @title UniAlignmentVaultFactory (v2)
+/// @notice Deploys UniAlignmentVault clones aligned to one INFER/IMD pool and registers each in the MiyaRegistry (this
+///         factory must be registered there via setVaultFactory). The factory owns every vault (no passthrough: a
+///         vault's config is fixed at deploy) and holds the route table every vault reads at conversion time: for each
+///         payment token, the zRouter hops that turn it into IMD. The table is owner-managed (a Safe), so a thin or broken
+///         route can be replaced for all vaults at once.
+contract UniAlignmentVaultFactory is Ownable, IVaultRoutes {
+    uint256 public constant MAX_ROUTE_HOPS = 4;
+    address internal constant ETH = address(0);
+
     address public immutable vaultImplementation;
-    IVaultPriceValidator public immutable defaultPriceValidator;
     IMiyaRegistry public immutable registry;
-
-    address public immutable weth;
-    address public immutable poolManager;
+    IPoolManager public immutable poolManager;
     address public immutable zRouter;
-    uint24  public immutable zRouterFee;
-    int24   public immutable zRouterTickSpacing;
+    address public immutable infer;
+    address public immutable imd;
 
-    event VaultDeployed(address indexed vault, address indexed alignmentToken);
+    /// @notice The alignment pool every vault provides liquidity to (INFER/IMD, hooked, fixed at construction).
+    PoolKey internal _poolKey;
+
+    mapping(address token => RouteHop[]) internal _routes;
+    address[] internal _routedTokens;
+    mapping(address token => bool) internal _everRouted;
+
+    event VaultDeployed(address indexed vault, uint256 indexed alignmentTargetId);
+    event RouteSet(address indexed token, RouteHop[] hops);
 
     error InvalidVaultSalt();
+    error InvalidAddress();
+    error BadRoute();
 
     constructor(
-        // slither-disable-next-line missing-zero-check
-        address _weth,
-        // slither-disable-next-line missing-zero-check
-        address _poolManager,
-        // slither-disable-next-line missing-zero-check
-        address _zRouter,
-        uint24  _zRouterFee,
-        int24   _zRouterTickSpacing,
-        IVaultPriceValidator _defaultPriceValidator,
-        IMiyaRegistry _registry
+        IMiyaRegistry registry_,
+        IPoolManager poolManager_,
+        address zRouter_,
+        address infer_,
+        address imd_,
+        PoolKey memory alignmentPoolKey_
     ) {
+        if (
+            address(registry_) == address(0) || address(poolManager_) == address(0) || zRouter_ == address(0)
+                || infer_ == address(0) || imd_ == address(0)
+        ) revert InvalidAddress();
         _initializeOwner(msg.sender);
-        weth = _weth;
-        poolManager = _poolManager;
-        zRouter = _zRouter;
-        zRouterFee = _zRouterFee;
-        zRouterTickSpacing = _zRouterTickSpacing;
-        defaultPriceValidator = _defaultPriceValidator;
-        registry = _registry;
+        registry = registry_;
+        poolManager = poolManager_;
+        zRouter = zRouter_;
+        infer = infer_;
+        imd = imd_;
+        _poolKey = alignmentPoolKey_;
         UniAlignmentVault implementation = new UniAlignmentVault();
         implementation.disableInitializer();
         vaultImplementation = address(implementation);
     }
 
-    /// @notice Deploy a new vault clone via CREATE3
-    /// @param salt CREATE3 deployment salt for deterministic vanity address
-    /// @param alignmentToken The token this vault aligns to
-    /// @param alignmentTargetId The alignment target this vault is bound to
-    /// @param priceValidator Custom price validator; uses defaultPriceValidator if address(0)
-    /// @return vault Address of the deployed vault clone
+    // ── routes ──────────────────────────────────────────────────────────────
+
+    /// @notice Set (or, with no hops, clear) the route that turns `token` into IMD. address(0) = ETH; the ETH route is
+    ///         also run in reverse for claims taken as ETH.
+    /// @dev Checks shape only: hops chain from `token` to IMD, each a v3 hop (fee tier) or a hookless v4 hop (static
+    ///      fee, positive spacing). Pool depth is the owner's and the keeper's call.
+    function setRoute(address token, RouteHop[] calldata hops) external onlyOwner {
+        if (token == infer || token == imd) revert BadRoute();
+        uint256 h = hops.length;
+        if (h > MAX_ROUTE_HOPS) revert BadRoute();
+        delete _routes[token];
+        if (h != 0) {
+            if (hops[0].tokenIn != token || hops[h - 1].tokenOut != imd) revert BadRoute();
+            for (uint256 i; i < h; ++i) {
+                RouteHop calldata hop = hops[i];
+                if (hop.tokenIn == hop.tokenOut) revert BadRoute();
+                if (i != 0 && hop.tokenIn != hops[i - 1].tokenOut) revert BadRoute();
+                if (hop.kind == HOP_V4) {
+                    if (hop.fee >= 1_000_000 || hop.tickSpacing <= 0) revert BadRoute();
+                } else if (hop.kind == HOP_V3) {
+                    if (hop.fee != 100 && hop.fee != 500 && hop.fee != 3000 && hop.fee != 10000) revert BadRoute();
+                } else {
+                    revert BadRoute();
+                }
+                _routes[token].push(hop);
+            }
+            if (!_everRouted[token]) {
+                _everRouted[token] = true;
+                _routedTokens.push(token);
+            }
+        }
+        emit RouteSet(token, hops);
+    }
+
+    function getRoute(address token) external view returns (RouteHop[] memory) {
+        return _routes[token];
+    }
+
+    function hasRoute(address token) external view returns (bool) {
+        return _routes[token].length != 0;
+    }
+
+    /// @notice Every token that has had a route (some may be cleared since).
+    function routedTokens() external view returns (address[] memory) {
+        return _routedTokens;
+    }
+
+    function alignmentPoolKey() external view returns (PoolKey memory) {
+        return _poolKey;
+    }
+
+    // ── vaults ──────────────────────────────────────────────────────────────
+
+    /// @notice Deploy a vault clone via CREATE3, bound to `alignmentTargetId` (active, containing INFER).
     // slither-disable-next-line reentrancy-events
-    function deployVault(
-        bytes32 salt,
-        address alignmentToken,
-        uint256 alignmentTargetId,
-        IVaultPriceValidator priceValidator
-    ) external onlyOwner returns (address vault) {
+    function deployVault(bytes32 salt, uint256 alignmentTargetId) external onlyOwner returns (address vault) {
         _requireFactorySalt(salt);
         bytes memory proxyCreationCode = abi.encodePacked(
-            hex"3d602d80600a3d3981f3363d3d373d3d3d363d73",
-            vaultImplementation,
-            hex"5af43d82803e903d91602b57fd5bf3"
+            hex"3d602d80600a3d3981f3363d3d373d3d3d363d73", vaultImplementation, hex"5af43d82803e903d91602b57fd5bf3"
         );
         vault = ICreateX(CREATEX).deployCreate3(salt, proxyCreationCode);
-
         UniAlignmentVault(payable(vault)).initialize(
-            address(this),
-            weth,
-            poolManager,
-            alignmentToken,
-            zRouter,
-            zRouterFee,
-            zRouterTickSpacing,
-            priceValidator == IVaultPriceValidator(address(0)) ? defaultPriceValidator : priceValidator,
-            registry,
+            address(this), poolManager, zRouter, registry, IVaultRoutes(address(this)), infer, imd, _poolKey,
             alignmentTargetId
         );
-        UniAlignmentVault(payable(vault)).setV4PoolKey(
-            PoolKey({
-                currency0: Currency.wrap(address(0)),
-                currency1: Currency.wrap(alignmentToken),
-                fee: zRouterFee,
-                tickSpacing: zRouterTickSpacing,
-                hooks: IHooks(address(0))
-            })
-        );
         registry.registerVault(vault);
-
-        emit VaultDeployed(vault, alignmentToken);
+        emit VaultDeployed(vault, alignmentTargetId);
     }
 
     /// @notice Preview the deterministic address for a given salt

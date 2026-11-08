@@ -3,39 +3,61 @@
     "type": "constructor",
     "inputs": [
       {
-        "name": "_weth",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "_poolManager",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "_zRouter",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "_zRouterFee",
-        "type": "uint24",
-        "internalType": "uint24"
-      },
-      {
-        "name": "_zRouterTickSpacing",
-        "type": "int24",
-        "internalType": "int24"
-      },
-      {
-        "name": "_defaultPriceValidator",
-        "type": "address",
-        "internalType": "contract IVaultPriceValidator"
-      },
-      {
-        "name": "_registry",
+        "name": "registry_",
         "type": "address",
         "internalType": "contract IMiyaRegistry"
+      },
+      {
+        "name": "poolManager_",
+        "type": "address",
+        "internalType": "contract IPoolManager"
+      },
+      {
+        "name": "zRouter_",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "infer_",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "imd_",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "alignmentPoolKey_",
+        "type": "tuple",
+        "internalType": "struct PoolKey",
+        "components": [
+          {
+            "name": "currency0",
+            "type": "address",
+            "internalType": "Currency"
+          },
+          {
+            "name": "currency1",
+            "type": "address",
+            "internalType": "Currency"
+          },
+          {
+            "name": "fee",
+            "type": "uint24",
+            "internalType": "uint24"
+          },
+          {
+            "name": "tickSpacing",
+            "type": "int24",
+            "internalType": "int24"
+          },
+          {
+            "name": "hooks",
+            "type": "address",
+            "internalType": "contract IHooks"
+          }
+        ]
       }
     ],
     "stateMutability": "nonpayable"
@@ -43,6 +65,16 @@
   {
     "type": "error",
     "name": "AlreadyInitialized",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "BadRoute",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidAddress",
     "inputs": []
   },
   {
@@ -112,6 +144,52 @@
   },
   {
     "type": "event",
+    "name": "RouteSet",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "hops",
+        "type": "tuple[]",
+        "indexed": false,
+        "internalType": "struct RouteHop[]",
+        "components": [
+          {
+            "name": "kind",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "tokenIn",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "tokenOut",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "fee",
+            "type": "uint24",
+            "internalType": "uint24"
+          },
+          {
+            "name": "tickSpacing",
+            "type": "int24",
+            "internalType": "int24"
+          }
+        ]
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "VaultDeployed",
     "inputs": [
       {
@@ -121,13 +199,66 @@
         "internalType": "address"
       },
       {
-        "name": "alignmentToken",
-        "type": "address",
+        "name": "alignmentTargetId",
+        "type": "uint256",
         "indexed": true,
-        "internalType": "address"
+        "internalType": "uint256"
       }
     ],
     "anonymous": false
+  },
+  {
+    "type": "function",
+    "name": "MAX_ROUTE_HOPS",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "alignmentPoolKey",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct PoolKey",
+        "components": [
+          {
+            "name": "currency0",
+            "type": "address",
+            "internalType": "Currency"
+          },
+          {
+            "name": "currency1",
+            "type": "address",
+            "internalType": "Currency"
+          },
+          {
+            "name": "fee",
+            "type": "uint24",
+            "internalType": "uint24"
+          },
+          {
+            "name": "tickSpacing",
+            "type": "int24",
+            "internalType": "int24"
+          },
+          {
+            "name": "hooks",
+            "type": "address",
+            "internalType": "contract IHooks"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -170,19 +301,6 @@
   },
   {
     "type": "function",
-    "name": "defaultPriceValidator",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "contract IVaultPriceValidator"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "deployVault",
     "inputs": [
       {
@@ -191,19 +309,9 @@
         "internalType": "bytes32"
       },
       {
-        "name": "alignmentToken",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
         "name": "alignmentTargetId",
         "type": "uint256",
         "internalType": "uint256"
-      },
-      {
-        "name": "priceValidator",
-        "type": "address",
-        "internalType": "contract IVaultPriceValidator"
       }
     ],
     "outputs": [
@@ -214,6 +322,97 @@
       }
     ],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "getRoute",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple[]",
+        "internalType": "struct RouteHop[]",
+        "components": [
+          {
+            "name": "kind",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "tokenIn",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "tokenOut",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "fee",
+            "type": "uint24",
+            "internalType": "uint24"
+          },
+          {
+            "name": "tickSpacing",
+            "type": "int24",
+            "internalType": "int24"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "hasRoute",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "imd",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "infer",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -255,7 +454,7 @@
       {
         "name": "",
         "type": "address",
-        "internalType": "address"
+        "internalType": "contract IPoolManager"
       }
     ],
     "stateMutability": "view"
@@ -289,6 +488,64 @@
   },
   {
     "type": "function",
+    "name": "routedTokens",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address[]",
+        "internalType": "address[]"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "setRoute",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "hops",
+        "type": "tuple[]",
+        "internalType": "struct RouteHop[]",
+        "components": [
+          {
+            "name": "kind",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "tokenIn",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "tokenOut",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "fee",
+            "type": "uint24",
+            "internalType": "uint24"
+          },
+          {
+            "name": "tickSpacing",
+            "type": "int24",
+            "internalType": "int24"
+          }
+        ]
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "transferOwnership",
     "inputs": [
       {
@@ -315,19 +572,6 @@
   },
   {
     "type": "function",
-    "name": "weth",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "zRouter",
     "inputs": [],
     "outputs": [
@@ -335,32 +579,6 @@
         "name": "",
         "type": "address",
         "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "zRouterFee",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint24",
-        "internalType": "uint24"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "zRouterTickSpacing",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "int24",
-        "internalType": "int24"
       }
     ],
     "stateMutability": "view"

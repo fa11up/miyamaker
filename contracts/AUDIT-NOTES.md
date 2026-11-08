@@ -209,6 +209,43 @@ Fixed:
 
 ---
 
+## Vault v2: multi-token, aligned to the INFER/IMD pool (2026-11-08, not yet reviewed)
+
+Spec: `docs/IMD-INFER-VAULT.md`. `UniAlignmentVault` and `UniAlignmentVaultFactory` were replaced in place (nothing was
+deployed); the v1 notes above describe the hardening it keeps. New review surface:
+
+- **Contributions** (`receiveContribution(Currency, amount, benefactor)`): ETH (`msg.value == amount`, 0.001 ETH minimum,
+  also via `receive()`), or an ERC-20 that is on `MiyaRegistry.isPaymentToken` AND has a route (IMD and INFER need none).
+  The vault pulls the ERC-20 from msg.sender and reverts unless its balance grew by exactly `amount`. A batch holds at
+  most 16 distinct tokens.
+- **Conversion** (keeper only, `ConvertParams{tokens, minOuts, minSplitOut, deadline}`): collect the position's fees for
+  current holders; reward 0.0012 ETH capped at 1% of the batch's ETH (0 without ETH); each token along its route
+  through zRouter (`swapV3`/`swapV4`, the keeper's floor per hop, output measured by balance delta); then the free
+  INFER/IMD (everything beyond fees owed) balanced by vault-side swaps in the hooked pool through `PoolManager.unlock`
+  and added full range, up to 3 passes in one direction. INFER is valued at the balancing swap's realized rate (pool
+  price if no swap). Shares = liquidity units, split per token by realized IMD value (`batchSharesPerUnit`), collected
+  lazily as in v1. ETH beyond what is owed (router refunds, strays) is dust for current holders. A solvency check
+  (`balance >= fees owed + protocol cut + pending`, for INFER, IMD and ETH) ends every conversion and claim.
+- **Route table** lives in the vault factory (`setRoute`, owner = Safe), read live by every vault: a route change
+  applies to all vaults at once, including batches already pending. The vault re-checks that a route starts at the
+  token and ends at IMD. Removing a route while that token is pending blocks conversions until it is restored.
+- **Pool key** fixed at deploy; the hook may only hold initialize permissions (no swap, liquidity, donate or delta
+  flags) and the fee must be static, checked in `initialize`.
+- **Fees**: INFER and IMD index per share (1% protocol cut each, `withdrawProtocolFees(token)`) and an ETH dust index
+  (rejected rewards, refunds; no cut). `claimFees(mode, minEthOut)`: TOKENS pays INFER + IMD (+ ETH dust); ETH swaps
+  INFER -> IMD in the pool and IMD -> ETH along the reverse of the ETH route, `minEthOut` must be non-zero and is the
+  claimant's only protection; REINVEST balances and adds the claim to the position (1 share per liquidity unit),
+  `minEthOut` is then the minimum shares, and what the add can't use stays claimable. `claimFeesAsDelegate` takes
+  TOKENS or ETH. Claims and reinvests are permissionless for one's own fees, so their swaps are sandwichable up to the
+  claimant's floor; they cannot touch anyone else's balance.
+- **Removed from v1**: the price validator (no on-chain reference exists for these pools), `pendingFeeTokens` /
+  `convertFeeTokens` (fees are paid in the tokens earned, so the keeper never swaps them), `depositFees`.
+- Tests: `test/vaults/` (unit with a simulated pool, invariants: per-token solvency, claims within distributed,
+  monotonic shares and fee indexes, pending bookkeeping) and `test/fork/UniAlignmentVaultFork.t.sol` (real pools: each
+  route, a 7-token batch from 7 benefactors, keeper floors, real swaps generating fees, each claim mode, reinvest pricing).
+
+---
+
 # Scope: prediction markets (`src/markets/`, testnet only)
 
 A new, separate scope, added on branch `contracts/markets`. **Not for mainnet**: see the gate list in

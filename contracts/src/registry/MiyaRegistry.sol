@@ -10,7 +10,9 @@ import { IMiyaRegistry } from "./interfaces/IMiyaRegistry.sol";
  *         - set the treasury, the protocol fee (capped) and the minimum alignment share for FUTURE launches;
  *         - add and deactivate alignment targets;
  *         - approve and revoke add-on components;
- *         - register and unregister factories and vault factories.
+ *         - register and unregister factories and vault factories;
+ *         - allow and drop payment tokens (ERC-20s collections may price in; ETH is always allowed). Dropping a token
+ *           only stops new sales and contributions in it; balances already held stay withdrawable.
  *         It cannot touch deployed collections, their fee terms, their vaults, or any pool. Collections snapshot
  *         their fee terms at launch.
  */
@@ -43,6 +45,9 @@ contract MiyaRegistry is Ownable, IMiyaRegistry {
     mapping(address instance => address) public factoryOf;
     address[] public instances;
 
+    mapping(address token => bool) internal _paymentToken;
+    address[] internal _paymentTokens;
+
     event TreasuryUpdated(address treasury);
     event ConversionKeeperUpdated(address keeper);
     event FeesUpdated(uint16 protocolFeeBps, uint16 minAlignmentBps);
@@ -52,6 +57,7 @@ contract MiyaRegistry is Ownable, IMiyaRegistry {
     event FactorySet(address indexed factory, bool registered);
     event VaultFactorySet(address indexed factory, bool registered);
     event VaultRegistered(address indexed vault, address indexed factory);
+    event PaymentTokenSet(address indexed token, bool allowed);
     event InstanceRegistered(address indexed instance, address indexed factory, address indexed vault, address creator);
 
     error InvalidAddress();
@@ -149,6 +155,40 @@ contract MiyaRegistry is Ownable, IMiyaRegistry {
         if (factory == address(0)) revert InvalidAddress();
         isVaultFactoryRegistered[factory] = registered;
         emit VaultFactorySet(factory, registered);
+    }
+
+    // ── payment tokens ──────────────────────────────────────────────────────
+
+    /// @notice True for ETH (address(0)) and for allowlisted ERC-20s.
+    function isPaymentToken(address token) external view returns (bool) {
+        return token == address(0) || _paymentToken[token];
+    }
+
+    /// @notice Allow or drop an ERC-20 as a payment token. ETH is always allowed and can't be set.
+    /// @dev Fee-on-transfer or rebasing tokens must never be allowed: collections and the vault check balance deltas
+    ///      and revert on a short transfer.
+    function setPaymentToken(address token, bool allowed) external onlyOwner {
+        if (token == address(0) || token.code.length == 0) revert InvalidAddress();
+        if (_paymentToken[token] == allowed) return;
+        _paymentToken[token] = allowed;
+        if (allowed) {
+            _paymentTokens.push(token);
+        } else {
+            uint256 n = _paymentTokens.length;
+            for (uint256 i; i < n; ++i) {
+                if (_paymentTokens[i] == token) {
+                    _paymentTokens[i] = _paymentTokens[n - 1];
+                    _paymentTokens.pop();
+                    break;
+                }
+            }
+        }
+        emit PaymentTokenSet(token, allowed);
+    }
+
+    /// @notice The allowlisted ERC-20s (ETH, always allowed, is not listed).
+    function paymentTokens() external view returns (address[] memory) {
+        return _paymentTokens;
     }
 
     // ── vaults ──────────────────────────────────────────────────────────────

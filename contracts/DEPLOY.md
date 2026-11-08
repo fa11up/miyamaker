@@ -3,6 +3,16 @@
 One script, `script/DeployMiyamints.s.sol`, deploys and wires everything the app needs on one chain, including the
 music drops (ERC1155 editions). Markets (`src/markets`) are not part of this deployment.
 
+## Vault v2 (INFER/IMD) status
+
+The vault and its factory are v2 (`docs/IMD-INFER-VAULT.md`): the factory takes `(registry, poolManager, zRouter,
+INFER, IMD, alignmentPoolKey)` and holds the route table; `deployVault(salt, targetId)`. `config/1.json` carries `imd` and
+`alignmentPool` (INFER/IMD, fee 12500, spacing 60, hook `0x784F…6000`) and the script checks that pool is initialized
+with liquidity. **Not done yet:** the script does not allowlist the payment tokens (`registry.setPaymentToken` for IMD,
+INFER, USDC, imdUSD, cbBTC, WBTC) or set the routes (`vaultFactory.setRoute` for ETH, imdUSD, USDC, WBTC, cbBTC), so a
+deploy from it today accepts ETH only and cannot convert until the ETH route is set. The price validator it still deploys is no longer used by vaults. Other chains have
+no INFER/IMD config (mainnet only).
+
 ## Release rules
 
 - **Deploy from `main` only**, through `script/deploy.sh` (or from a release tag with `DEPLOY_TAG=<tag>`). It refuses a
