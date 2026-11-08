@@ -32,7 +32,8 @@ const FRIENDLY: Record<string, string> = {
   // MiyaPool / MiyaPoolFactory (Trade → NFTs)
   NotHeld: 'That NFT is no longer in the pool. Someone may have just taken it. Pick another.',
   InsufficientHeld: 'The pool does not have that many NFTs free right now.',
-  InsufficientBalance: 'Not enough pool tokens in this wallet.',
+  // Raised by MiyaPool (pool tokens) and by ERC1155Instance.withdraw (nothing owed in that token).
+  InsufficientBalance: 'Not enough balance for that: no pool tokens to spend, or nothing to withdraw in that token.',
   TooEarly: 'Too early: wait one more block, then reveal.',
   UnknownCommit: 'That draw was already revealed.',
   NotNextCommit: 'Draws settle in order, and an earlier draw is still open.',
