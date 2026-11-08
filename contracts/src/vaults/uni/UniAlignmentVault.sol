@@ -19,18 +19,23 @@ import {CurrencySettler} from "../../libraries/v4/CurrencySettler.sol";
 import {LiquidityAmounts} from "../../libraries/v4/LiquidityAmounts.sol";
 import {IAlignmentVault, ClaimMode} from "../../interfaces/IAlignmentVault.sol";
 import {IMiyaRegistry} from "../../registry/interfaces/IMiyaRegistry.sol";
-import {IVaultRoutes, IzRouter, RouteHop, HOP_V3, HOP_V4} from "./IVaultRoutes.sol";
+import {IVaultRoutes} from "./IVaultRoutes.sol";
+import {PendingLedger} from "./PendingLedger.sol";
+import {VaultSwaps} from "./VaultSwaps.sol";
 
 /**
  * @title UniAlignmentVault (v2: multi-token, aligned to the INFER/IMD pool)
  * @notice Collections send their vault share in the token paid (ETH or a registry-allowlisted ERC-20). The keeper converts
- *         each batch: every token to IMD along the owner-set route (zRouter, v3/v4 hookless hops), the balanced part of the
- *         IMD to INFER in the hooked INFER/IMD pool (vault-side, through PoolManager.unlock), then INFER + IMD as one
- *         full-range position. Shares (= liquidity units) go to each benefactor in proportion to the IMD value its
- *         contribution realized in that batch. The position's INFER and IMD fees (1% to the protocol) are paid to shares,
- *         as tokens, as ETH, or reinvested. Shares are never redeemable for liquidity. Spec: docs/IMD-INFER-VAULT.md.
+ *         a batch: any subset of the pending tokens, an exact amount of each. Every token whose route ends in ETH goes to
+ *         ETH first, then all of the batch's ETH goes to IMD in ONE swap along the ETH route, its output shared by each
+ *         token's ETH; other routes (imdUSD) go to IMD on their own. The balanced part of the IMD goes to INFER in the
+ *         hooked INFER/IMD pool (vault-side, through PoolManager.unlock), then INFER + IMD as one full-range position.
+ *         Shares (= liquidity units) go to each token's benefactors in proportion to the IMD value the converted amount
+ *         realized, pro rata to each benefactor's pending balance in it (PendingLedger). The position's INFER and IMD
+ *         fees (1% to the protocol) are paid to shares, as tokens, as ETH, or reinvested. Shares are never redeemable
+ *         for liquidity. Spec: docs/IMD-INFER-VAULT.md.
  * @dev Clone (EIP-1167), initialized once by the factory, which owns it. Keeps v1's hardening:
- *      - batches close in O(tokens) whatever the number of contributors; each benefactor collects its shares lazily;
+ *      - conversions cost O(tokens) whatever the number of contributors; each benefactor collects its shares lazily;
  *      - per-share fee indexes with checkpoints (each payout rounds down once), fees booked before every share change;
  *      - conversions are keeper-only (registry.conversionKeeper) with the keeper's floors as the price protection;
  *      - the keeper reward comes out of the batch's ETH only (0.0012 ETH, capped at 1% of it);
@@ -77,7 +82,7 @@ contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignm
     // ========== Constants ==========
 
     address internal constant ETH = address(0);
-    /// @notice Least ETH a contribution can carry (ERC-20 contributions only need to be non-zero).
+    /// @notice Least ETH a contribution can carry. ERC-20 minimums are per token in the route table (minContribution).
     uint256 public constant MIN_CONTRIBUTION = 0.001 ether;
     /// @notice Most distinct tokens one batch (and one benefactor's pending batch) can hold.
     uint256 public constant MAX_BATCH_TOKENS = 16;
@@ -142,29 +147,39 @@ contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignm
     /// @notice Lifetime contributions per benefactor per token (bragging rights; never decreases).
     mapping(address => mapping(address => uint256)) public contributionOf;
 
-    // ========== Batches ==========
-    // The open batch is closedBatches + 1. Closing one records, per token, the shares per unit contributed and the fee
-    // indexes the new shares earn from; each benefactor collects its shares the next time it is touched.
+    // ========== Pending contributions ==========
+    // Per token, a pro-rata pool (PendingLedger): a conversion of part of a token's pending converts that fraction of
+    // every benefactor's balance in it and records the shares it made; each benefactor collects its shares (and the
+    // fees they earned since) the next time it is touched.
 
+    /// @notice Conversions so far (each convertAndAddLiquidity call is one batch).
     uint256 public closedBatches;
-    mapping(uint256 batchId => mapping(address token => uint256)) public batchSharesPerUnit; // ACC_PRECISION scale
-    mapping(uint256 batchId => uint256[3]) internal _batchAcc;
     address[] internal _openTokens;
-    /// @notice Contributions per token in the open batch.
+    /// @notice Pending (not yet converted) contributions per token.
     mapping(address => uint256) public pendingByToken;
-    mapping(address => uint256) internal _pendingBatch;
+    mapping(address => PendingLedger.Pool) internal _pools;
+    mapping(address => mapping(address => PendingLedger.Record)) internal _records;
+    /// @dev The tokens a benefactor has a record in (pending, or converted and not yet collected).
     mapping(address => address[]) internal _benefactorTokens;
-    mapping(address => mapping(address => uint256)) internal _pending;
 
     // ========== Keeper call ==========
 
-    /// @param tokens Exactly openBatchTokens(), in that order.
-    /// @param minOuts Per token, one floor per route hop (the last is the IMD out); empty for IMD and INFER.
+    /// @param tokens Which pending tokens to convert: any non-empty subset of openBatchTokens(), any order, no
+    ///        duplicates. Tokens left out stay pending, their benefactors' balances untouched.
+    /// @param amounts Per token, exactly how much to convert: 0 < amount <= pendingByToken(token). What arrives after
+    ///        the keeper read it stays pending for a later batch. Each benefactor's balance converts pro rata.
+    /// @param minOuts Per token, one floor per hop of its own route: for a route ending in ETH, the last is that ETH;
+    ///        otherwise the last is the IMD out. Empty for ETH, IMD and INFER.
+    /// @param ethLegMinOuts One floor per hop of the ETH route (the last is the IMD out), for the one swap of all the
+    ///        batch's ETH (pending ETH net of the keeper reward, plus every route that ended in ETH). Ignored when no ETH
+    ///        reaches it.
     /// @param minSplitOut Floor on the INFER/IMD balancing swap's total output (non-zero if a swap happens).
     /// @param deadline Last timestamp the call may land.
     struct ConvertParams {
         address[] tokens;
+        uint256[] amounts;
         uint256[][] minOuts;
+        uint256[] ethLegMinOuts;
         uint256 minSplitOut;
         uint256 deadline;
     }
@@ -175,6 +190,8 @@ contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignm
         uint256 indexed batchId, uint256 sharesIssued, uint256 inferAdded, uint256 imdAdded, uint256 callerReward
     );
     event TokenConverted(uint256 indexed batchId, address indexed token, uint256 amountIn, uint256 imdValue);
+    /// @notice The batch's one ETH -> IMD swap: all its ETH in, the IMD out shared by each token's ETH.
+    event EthLegSwapped(uint256 indexed batchId, uint256 ethIn, uint256 imdOut);
     event SplitSwap(bool inferToImd, uint256 amountIn, uint256 amountOut);
     event Reinvested(address indexed benefactor, uint256 inferIn, uint256 imdIn, uint256 sharesIssued);
     event ConversionRewardPaid(address indexed caller, uint256 reward);
@@ -273,6 +290,7 @@ contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignm
             if (msg.value != 0) revert AmountMismatch();
             if (!registry.isPaymentToken(token)) revert TokenNotAllowed(token);
             if (token != imd && token != infer && !routes.hasRoute(token)) revert NoRoute(token);
+            if (amount < routes.minContribution(token)) revert ContributionBelowMinimum();
             uint256 before = SafeTransferLib.balanceOf(token, address(this));
             SafeTransferLib.safeTransferFrom(token, msg.sender, address(this), amount);
             if (SafeTransferLib.balanceOf(token, address(this)) - before != amount) revert ReceivedLess();
@@ -282,13 +300,13 @@ contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignm
 
     function _book(address benefactor, address token, uint256 amount) internal {
         if (token == ETH && amount < MIN_CONTRIBUTION) revert ContributionBelowMinimum();
-        _settle(benefactor); // collects a converted batch of theirs first, so they are only ever in one
-        _pendingBatch[benefactor] = closedBatches + 1;
-        if (_pending[benefactor][token] == 0) {
+        _settle(benefactor); // collects what was converted first, so every record is current
+        PendingLedger.Record storage r = _records[benefactor][token];
+        if (r.amount == 0) {
             if (_benefactorTokens[benefactor].length >= MAX_BATCH_TOKENS) revert TooManyTokens();
             _benefactorTokens[benefactor].push(token);
         }
-        _pending[benefactor][token] += amount;
+        PendingLedger.add(_pools[token], r, amount);
         if (pendingByToken[token] == 0) {
             if (_openTokens.length >= MAX_BATCH_TOKENS) revert TooManyTokens();
             _openTokens.push(token);
@@ -304,9 +322,10 @@ contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignm
 
     // ========== Conversion ==========
 
-    /// @notice Convert the open batch into INFER/IMD liquidity and issue its shares. Keeper only.
+    /// @notice Convert part of what is pending into INFER/IMD liquidity and issue its shares. Keeper only.
     /// @dev The keeper quotes every hop, simulates, and sends through a private mempool: its floors are the only price
-    ///      protection (no on-chain reference exists for these pools).
+    ///      protection (no on-chain reference exists for these pools). Order independent: the per-token hops each use
+    ///      their own pool and every token's ETH meets in one ETH -> IMD swap, so permuting `tokens` changes nothing.
     // slither-disable-next-line reentrancy-benign,reentrancy-eth
     function convertAndAddLiquidity(ConvertParams calldata p)
         external
@@ -315,107 +334,112 @@ contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignm
         returns (uint256 sharesIssued)
     {
         if (block.timestamp > p.deadline) revert Expired();
-        uint256 n = _openTokens.length;
-        if (n == 0) revert NothingPending();
-        if (p.tokens.length != n || p.minOuts.length != n) revert BadParams();
+        if (_openTokens.length == 0) revert NothingPending();
+        uint256 n = p.tokens.length;
+        if (n == 0 || p.amounts.length != n || p.minOuts.length != n) revert BadParams();
 
         // Yield earned so far belongs to current holders: book it before any share change.
         _collectFees();
 
-        uint256 reward = _conversionReward(pendingByToken[ETH]);
-        uint256[] memory amounts = new uint256[](n);
-        uint256[] memory values = new uint256[](n);
-        uint256 inferSlot = type(uint256).max;
-        for (uint256 i; i < n; ++i) {
-            address t = _openTokens[i];
-            if (p.tokens[i] != t) revert BadParams();
-            uint256 amt = pendingByToken[t];
-            amounts[i] = amt;
-            if (t == imd) {
-                values[i] = amt;
-            } else if (t == infer) {
-                inferSlot = i;
-            } else {
-                values[i] = _route(t, t == ETH ? amt - reward : amt, p.minOuts[i], false);
-            }
-        }
+        // Take the converted amounts out of pending first, so the balancing below sees only what is free.
+        (uint256[] memory pendingBefore, uint256 reward) = _takePending(p);
+        (uint256[] memory values, uint256 inferSlot) = _toImd(p, reward);
 
         (uint256 liquidity, uint256 inferAdded, uint256 imdAdded, uint256 rateImd, uint256 rateInfer) =
             _balanceAndAdd(p.minSplitOut);
         if (liquidity == 0) revert InsufficientLiquidity();
         if (inferSlot != type(uint256).max) {
-            values[inferSlot] = FixedPointMathLib.fullMulDiv(amounts[inferSlot], rateImd, rateInfer);
+            values[inferSlot] = FixedPointMathLib.fullMulDiv(p.amounts[inferSlot], rateImd, rateInfer);
         }
 
         // ETH beyond what is owed (router refunds, strays) is dust for current holders, before the new shares.
-        uint256 ethHeld = address(this).balance;
-        uint256 ethOwed = _feeOwed(I_ETH) + reward;
-        if (ethHeld > ethOwed) _distribute(I_ETH, ethHeld - ethOwed);
+        uint256 ethOwed = _feeOwed(I_ETH) + pendingByToken[ETH] + reward;
+        if (address(this).balance > ethOwed) _distribute(I_ETH, address(this).balance - ethOwed);
 
-        _closeBatch(liquidity, amounts, values);
+        _closeBatch(p, liquidity, values, pendingBefore);
         sharesIssued = liquidity;
         emit BatchConverted(closedBatches, liquidity, inferAdded, imdAdded, reward);
         _payCallerReward(reward);
         _checkSolvent();
     }
 
-    /// @dev Caller reward for a batch holding `ethPending` wei.
-    function _conversionReward(uint256 ethPending) internal pure returns (uint256) {
-        uint256 cap = (ethPending * MAX_CONVERSION_REWARD_BPS) / 10000; // round down: favors benefactors
+    /// @dev Check the listed tokens and amounts and take the amounts out of pending. Returns what was pending before,
+    ///      per token, and the keeper reward (from the ETH converted, if any).
+    function _takePending(ConvertParams calldata p)
+        private
+        returns (uint256[] memory pendingBefore, uint256 reward)
+    {
+        uint256 n = p.tokens.length;
+        pendingBefore = new uint256[](n);
+        for (uint256 i; i < n; ++i) {
+            address t = p.tokens[i];
+            uint256 amt = p.amounts[i];
+            for (uint256 j; j < i; ++j) {
+                if (p.tokens[j] == t) revert BadParams();
+            }
+            uint256 pend = pendingByToken[t];
+            if (amt == 0 || amt > pend) revert BadParams();
+            pendingBefore[i] = pend;
+            pendingByToken[t] = pend - amt;
+            if (t == ETH) reward = _conversionReward(amt);
+        }
+    }
+
+    /// @dev Each listed token to IMD (its own route), or to ETH for the batch's one ETH -> IMD swap, whose output is
+    ///      shared by each token's ETH in. Returns the IMD each token realized (INFER's is filled in after the split).
+    function _toImd(ConvertParams calldata p, uint256 reward)
+        private
+        returns (uint256[] memory values, uint256 inferSlot)
+    {
+        uint256 n = p.tokens.length;
+        values = new uint256[](n);
+        uint256[] memory ethIn = new uint256[](n);
+        uint256 ethTotal;
+        inferSlot = type(uint256).max;
+        for (uint256 i; i < n; ++i) {
+            address t = p.tokens[i];
+            if (t == imd) {
+                values[i] = p.amounts[i];
+            } else if (t == infer) {
+                inferSlot = i;
+            } else if (t == ETH) {
+                ethIn[i] = p.amounts[i] - reward;
+            } else {
+                (uint256 out, bool toEth) = _route(t, p.amounts[i], p.minOuts[i], false);
+                if (toEth) ethIn[i] = out;
+                else values[i] = out;
+            }
+            ethTotal += ethIn[i];
+        }
+        if (ethTotal != 0) {
+            (uint256 imdOut,) = _route(ETH, ethTotal, p.ethLegMinOuts, false);
+            emit EthLegSwapped(closedBatches + 1, ethTotal, imdOut);
+            for (uint256 i; i < n; ++i) {
+                if (ethIn[i] != 0) values[i] = FixedPointMathLib.fullMulDiv(imdOut, ethIn[i], ethTotal); // round down
+            }
+        }
+    }
+
+    /// @dev Caller reward for a batch converting `ethAmount` wei of pending ETH.
+    function _conversionReward(uint256 ethAmount) internal pure returns (uint256) {
+        uint256 cap = (ethAmount * MAX_CONVERSION_REWARD_BPS) / 10000; // round down: favors benefactors
         return cap < CONVERSION_REWARD ? cap : CONVERSION_REWARD;
     }
 
-    /// @dev Run `token`'s route (or its reverse) through zRouter; returns the final output. A hop that receives nothing
-    ///      (dust) ends the route at 0.
+    /// @dev Run `token`'s route (or its reverse) through zRouter (VaultSwaps.route, by DELEGATECALL).
     function _route(address token, uint256 amountIn, uint256[] memory minOuts, bool reverse)
         internal
-        returns (uint256 amount)
+        returns (uint256, bool)
     {
-        RouteHop[] memory hops = routes.getRoute(token);
-        uint256 h = hops.length;
-        if (h == 0) revert NoRoute(token);
-        if (h > MAX_ROUTE_HOPS) revert BadRoute(token);
-        if (!reverse && minOuts.length != h) revert BadParams();
-        // Re-checked here so a bad table can never send the vault's tokens anywhere but to IMD (or back to ETH).
-        address first = reverse ? hops[h - 1].tokenOut : hops[0].tokenIn;
-        address last = reverse ? hops[0].tokenIn : hops[h - 1].tokenOut;
-        if (first != (reverse ? imd : token) || last != (reverse ? token : imd)) revert BadRoute(token);
-
-        amount = amountIn;
-        for (uint256 k; k < h; ++k) {
-            if (amount == 0) return 0;
-            RouteHop memory hop = hops[reverse ? h - 1 - k : k];
-            if (reverse) (hop.tokenIn, hop.tokenOut) = (hop.tokenOut, hop.tokenIn);
-            amount = _swapHop(hop, amount, reverse ? 0 : minOuts[k]);
-        }
+        return VaultSwaps.route(routes, zRouter, imd, token, amountIn, minOuts, reverse);
     }
 
-    // slither-disable-next-line arbitrary-send-eth,unused-return
-    function _swapHop(RouteHop memory hop, uint256 amountIn, uint256 minOut) internal returns (uint256 amountOut) {
-        uint256 before = _balanceOf(hop.tokenOut);
-        uint256 value;
-        if (hop.tokenIn == ETH) value = amountIn;
-        else SafeTransferLib.safeApproveWithRetry(hop.tokenIn, zRouter, amountIn);
-
-        // zRouter pays ETH outputs and refunds into receive(): not contributions.
-        _setCollecting(true);
-        if (hop.kind == HOP_V4) {
-            IzRouter(zRouter).swapV4{value: value}(
-                address(this), false, hop.fee, hop.tickSpacing, hop.tokenIn, hop.tokenOut, amountIn, minOut,
-                block.timestamp
-            );
-        } else if (hop.kind == HOP_V3) {
-            IzRouter(zRouter).swapV3{value: value}(
-                address(this), false, hop.fee, hop.tokenIn, hop.tokenOut, amountIn, minOut, block.timestamp
-            );
-        } else {
-            revert BadRoute(hop.tokenIn);
-        }
-        _setCollecting(false);
-        if (hop.tokenIn != ETH) SafeTransferLib.safeApprove(hop.tokenIn, zRouter, 0);
-
-        amountOut = _balanceOf(hop.tokenOut) - before;
-        if (amountOut < minOut) revert InsufficientOutput();
+    function _splitAmount(uint256 amtInfer, uint256 amtImd, uint160 sqrtP, uint128 poolL)
+        internal
+        view
+        returns (bool, uint256, uint256)
+    {
+        return VaultSwaps.splitAmount(amtInfer, amtImd, sqrtP, poolL, _inferIsCurrency0, _poolKey.fee);
     }
 
     /// @dev Balance the free INFER and IMD (everything held beyond fees owed: this batch's IMD and INFER plus earlier
@@ -470,8 +494,8 @@ contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignm
         }
     }
 
-    /// @dev INFER and IMD held beyond fees owed (and beyond pending contributions of the open batch when not converting:
-    ///      callers only use this inside a conversion or a reinvest, where those are spent or accounted for).
+    /// @dev INFER and IMD held beyond fees owed and beyond what is still pending (a conversion takes its amounts out of
+    ///      pending before it balances, so this batch's INFER and IMD are free, the rest stays put).
     function _freeAlignmentBalances() internal view returns (uint256 freeInfer, uint256 freeImd) {
         freeInfer = _free(infer, I_INFER);
         freeImd = _free(imd, I_IMD);
@@ -479,48 +503,8 @@ contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignm
 
     function _free(address token, uint256 i) private view returns (uint256) {
         uint256 bal = SafeTransferLib.balanceOf(token, address(this));
-        uint256 owed = _feeOwed(i);
+        uint256 owed = _feeOwed(i) + pendingByToken[token];
         return bal > owed ? bal - owed : 0;
-    }
-
-    /// @dev How much of the side in excess to swap so what is left pairs at the pool's ratio after the swap has moved
-    ///      its price: the single-sided add formula on the excess against the pool's virtual reserve of that token.
-    ///      Returns the direction (true = INFER -> IMD), the amount, and the excess.
-    function _splitAmount(uint256 amtInfer, uint256 amtImd, uint160 sqrtP, uint128 poolL)
-        internal
-        view
-        returns (bool inferToImd, uint256 swapAmount, uint256 excess)
-    {
-        (uint256 a0, uint256 a1) = _inferIsCurrency0 ? (amtInfer, amtImd) : (amtImd, amtInfer);
-        // Value of a0 in token1 units: a0 * P, P = (sqrtP / 2^96)^2.
-        uint256 a0In1 = FixedPointMathLib.fullMulDiv(FixedPointMathLib.fullMulDiv(a0, sqrtP, Q96), sqrtP, Q96);
-        bool zeroForOne;
-        uint256 reserve;
-        if (a1 > a0In1) {
-            excess = a1 - a0In1; // token1 in excess: swap token1 -> token0
-            reserve = FixedPointMathLib.fullMulDiv(poolL, sqrtP, Q96);
-            zeroForOne = false;
-        } else {
-            uint256 a1In0 = FixedPointMathLib.fullMulDiv(FixedPointMathLib.fullMulDiv(a1, Q96, sqrtP), Q96, sqrtP);
-            excess = a0 > a1In0 ? a0 - a1In0 : 0;
-            reserve = FixedPointMathLib.fullMulDiv(poolL, Q96, sqrtP);
-            zeroForOne = true;
-        }
-        swapAmount = _balancedSwap(excess, reserve, _poolKey.fee);
-        inferToImd = zeroForOne == _inferIsCurrency0;
-    }
-
-    /// @dev Bounded by the no-price-impact answer, amount / (2 - fee), which also covers depth too large to compute.
-    function _balancedSwap(uint256 amount, uint256 reserve, uint24 fee) internal pure returns (uint256) {
-        if (amount == 0) return 0;
-        uint256 afterFee = 1e6 - fee;
-        uint256 feeTerm = 2e6 - fee;
-        uint256 bound = FixedPointMathLib.fullMulDiv(amount, 1e6, feeTerm);
-        if (reserve == 0 || reserve > 1e30 || amount > 1e30) return bound;
-        uint256 root = FixedPointMathLib.sqrt(reserve * (reserve * feeTerm * feeTerm + 4 * afterFee * 1e6 * amount));
-        uint256 base = reserve * feeTerm;
-        uint256 balanced = root > base ? (root - base) / (2 * afterFee) : 0;
-        return balanced < bound ? balanced : bound;
     }
 
     /// @dev Swap exactly `amountIn` of INFER (inferToImd) or IMD in the alignment pool; returns the output.
@@ -557,23 +541,38 @@ contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignm
         _creditYield(I_IMD, fImd);
     }
 
-    function _closeBatch(uint256 liquidity, uint256[] memory amounts, uint256[] memory values) private {
+    /// @dev Split the batch's liquidity across its tokens by realized IMD value; each token's pool pays its part to that
+    ///      token's benefactors pro rata (PendingLedger.convert), from the fee indexes as they stand now.
+    function _closeBatch(ConvertParams calldata p, uint256 liquidity, uint256[] memory values, uint256[] memory pendingBefore)
+        private
+    {
         uint256 batchId = closedBatches + 1;
         uint256 totalValue;
-        uint256 n = amounts.length;
+        uint256 n = values.length;
         for (uint256 i; i < n; ++i) totalValue += values[i];
         if (totalValue == 0) revert InsufficientOutput();
+        uint256[3] memory acc = _accPerShare; // new shares earn from here
         for (uint256 i; i < n; ++i) {
-            address t = _openTokens[i];
+            address t = p.tokens[i];
             uint256 tokenShares = FixedPointMathLib.fullMulDiv(liquidity, values[i], totalValue); // round down
-            batchSharesPerUnit[batchId][t] = FixedPointMathLib.fullMulDiv(tokenShares, ACC_PRECISION, amounts[i]);
-            emit TokenConverted(batchId, t, amounts[i], values[i]);
-            pendingByToken[t] = 0;
+            PendingLedger.convert(_pools[t], pendingBefore[i], p.amounts[i], tokenShares, acc);
+            emit TokenConverted(batchId, t, p.amounts[i], values[i]);
+            if (pendingByToken[t] == 0) _removeOpenToken(t);
+            else if (t != ETH && t != infer && t != imd && _balanceOf(t) < pendingByToken[t]) revert Insolvent(t);
         }
-        delete _openTokens;
-        _batchAcc[batchId] = _accPerShare; // new shares earn from here
         closedBatches = batchId;
         totalShares += liquidity;
+    }
+
+    function _removeOpenToken(address t) private {
+        uint256 last = _openTokens.length - 1;
+        for (uint256 k; k <= last; ++k) {
+            if (_openTokens[k] == t) {
+                _openTokens[k] = _openTokens[last];
+                _openTokens.pop();
+                return;
+            }
+        }
     }
 
     // slither-disable-next-line arbitrary-send-eth
@@ -645,52 +644,45 @@ contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignm
         revert UnknownFeeToken();
     }
 
-    /// @dev A benefactor's state as if a converted batch of theirs were collected: shares, the indexes they earn from,
-    ///      and the fees their earlier shares earned up to that batch.
-    function _collected(address b)
-        internal
-        view
-        returns (uint256 shares, uint256[3] memory checkpoint, uint256[3] memory earlier)
-    {
+    /// @dev A benefactor's shares and the fees owed since its checkpoint, as if everything converted were collected:
+    ///      its collected shares times the index growth since the checkpoint, plus, per token record, the shares the
+    ///      conversions since its snapshot made for it and what those earned since each conversion.
+    function _owedSinceCheckpoint(address b) internal view returns (uint256 shares, uint256[3] memory owed) {
         shares = _shares[b];
-        checkpoint = _checkpoint[b];
-        uint256 batchId = _pendingBatch[b];
-        if (batchId == 0 || batchId > closedBatches) return (shares, checkpoint, earlier);
-        uint256[3] memory acc = _batchAcc[batchId];
-        for (uint256 i; i < 3; ++i) {
-            earlier[i] = FixedPointMathLib.fullMulDiv(shares, acc[i] - checkpoint[i], ACC_PRECISION);
-        }
+        uint256[3] memory acc = _accPerShare;
+        uint256[3] storage cp = _checkpoint[b];
+        for (uint256 i; i < 3; ++i) owed[i] = FixedPointMathLib.fullMulDiv(shares, acc[i] - cp[i], ACC_PRECISION);
         address[] storage toks = _benefactorTokens[b];
         for (uint256 k; k < toks.length; ++k) {
-            shares += FixedPointMathLib.fullMulDiv(
-                _pending[b][toks[k]], batchSharesPerUnit[batchId][toks[k]], ACC_PRECISION
-            ); // round down
-        }
-        checkpoint = acc;
-    }
-
-    function _owedSinceCheckpoint(address b) internal view returns (uint256 shares, uint256[3] memory owed) {
-        uint256[3] memory checkpoint;
-        (shares, checkpoint, owed) = _collected(b);
-        for (uint256 i; i < 3; ++i) {
-            owed[i] += FixedPointMathLib.fullMulDiv(shares, _accPerShare[i] - checkpoint[i], ACC_PRECISION);
+            address t = toks[k];
+            (uint256 s, uint256[3] memory f,) = PendingLedger.accrued(_pools[t], _records[b][t], acc);
+            shares += s;
+            for (uint256 i; i < 3; ++i) owed[i] += f[i];
         }
     }
 
-    /// @dev Collect a converted batch and move fees earned so far into settled.
+    /// @dev Collect what was converted for `b` and move fees earned so far into settled.
     function _settle(address b) internal {
-        (uint256 shares, uint256[3] memory owed) = _owedSinceCheckpoint(b);
-        uint256 batchId = _pendingBatch[b];
-        if (batchId != 0 && batchId <= closedBatches) {
-            _shares[b] = shares;
-            address[] storage toks = _benefactorTokens[b];
-            for (uint256 k; k < toks.length; ++k) delete _pending[b][toks[k]];
-            delete _benefactorTokens[b];
-            delete _pendingBatch[b];
+        uint256 shares = _shares[b];
+        uint256[3] memory acc = _accPerShare;
+        uint256[3] memory owed;
+        uint256[3] storage cp = _checkpoint[b];
+        for (uint256 i; i < 3; ++i) owed[i] = FixedPointMathLib.fullMulDiv(shares, acc[i] - cp[i], ACC_PRECISION);
+        address[] storage toks = _benefactorTokens[b];
+        for (uint256 k = toks.length; k != 0;) {
+            address t = toks[--k];
+            (uint256 s, uint256[3] memory f, uint256 left) = PendingLedger.settle(_pools[t], _records[b][t], acc);
+            shares += s;
+            for (uint256 i; i < 3; ++i) owed[i] += f[i];
+            if (left == 0) {
+                toks[k] = toks[toks.length - 1];
+                toks.pop();
+            }
         }
+        _shares[b] = shares;
         for (uint256 i; i < 3; ++i) {
             if (owed[i] != 0) _settled[b][i] += owed[i];
-            _checkpoint[b][i] = _accPerShare[i];
+            cp[i] = acc[i];
         }
     }
 
@@ -778,7 +770,10 @@ contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignm
             uint256 imdTotal = a[1];
             if (a[0] != 0) imdTotal += _alignSwap(true, a[0]);
             ethOut = a[2];
-            if (imdTotal != 0) ethOut += _route(ETH, imdTotal, new uint256[](0), true);
+            if (imdTotal != 0) {
+                (uint256 out,) = _route(ETH, imdTotal, new uint256[](0), true);
+                ethOut += out;
+            }
             if (ethOut < minEthOut) revert InsufficientOutput();
         }
         if (ethOut != 0) {
@@ -938,17 +933,11 @@ contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignm
         }
     }
 
-    function _setCollecting(bool collecting) private {
-        assembly ("memory-safe") {
-            tstore(_COLLECTING_SLOT, collecting)
-        }
-    }
-
     // ========== Views ==========
 
     /// @notice Shares the benefactor holds, including any from a converted batch it has not touched since.
     function benefactorShares(address benefactor) public view returns (uint256 shares) {
-        (shares,,) = _collected(benefactor);
+        (shares,) = _owedSinceCheckpoint(benefactor);
     }
 
     function getBenefactorShares(address benefactor) external view override returns (uint256) {
@@ -957,7 +946,7 @@ contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignm
 
     /// @inheritdoc IAlignmentVault
     function pendingOf(address benefactor, address token) external view override returns (uint256) {
-        return _pendingBatch[benefactor] > closedBatches ? _pending[benefactor][token] : 0;
+        return PendingLedger.pendingOf(_pools[token], _records[benefactor][token]);
     }
 
     /// @inheritdoc IAlignmentVault
@@ -967,7 +956,7 @@ contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignm
         return (s[0] + owed[0], s[1] + owed[1], s[2] + owed[2]);
     }
 
-    /// @notice The tokens in the open batch, in the order convertAndAddLiquidity expects them.
+    /// @notice The tokens with something pending (any order; convertAndAddLiquidity takes any subset of them).
     function openBatchTokens() external view returns (address[] memory) {
         return _openTokens;
     }

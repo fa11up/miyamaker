@@ -275,7 +275,8 @@ contract DeployMiyamints is Script {
         );
 
         // 3. Vault factory (Ownable(msg.sender) → CREATE). Deploys its own vault implementation.
-        // Payment tokens and routes come from config (`paymentTokens`, `routes`) in step 9b, before the handoff.
+        // Payment tokens, routes and per-token minimums come from config (`paymentTokens`, `routes`,
+        // `minContributions`) in step 9b, before the handoff.
         UniAlignmentVaultFactory vaultFactory = new UniAlignmentVaultFactory(
             IMiyaRegistry(d.registry), IPoolManager(c.poolManager), c.zRouter, c.alignmentToken, c.imd, _alignmentKey(c)
         );
@@ -311,8 +312,8 @@ contract DeployMiyamints is Script {
         if (d.gatingModule != address(0)) registry.setComponent(d.gatingModule, true);
         erc1155Factory.setDynamicPricingModule(d.dynamicPricingModule);
 
-        // 9b. Payment-token allowlist (registry) and conversion routes to IMD (vault factory), per
-        //     docs/IMD-INFER-VAULT.md. ETH is always allowed; IMD and INFER need no route.
+        // 9b. Payment-token allowlist (registry), conversion routes to IMD or ETH and per-token contribution minimums
+        //     (vault factory), per docs/IMD-INFER-VAULT.md. ETH is always allowed; IMD and INFER need no route.
         _wirePayments(registry, vaultFactory);
 
         // 10. Default alignment target + vault (VITE_MUSIC_VAULT_<chainId>).
@@ -414,6 +415,17 @@ contract DeployMiyamints is Script {
         address tokenOut;
     }
 
+    /// @dev JSON keys in alphabetical order, as vm.parseJson decodes struct fields.
+    struct ConfigMin {
+        uint256 amount;
+        address token;
+    }
+
+    function _configMins(string memory json) internal view returns (ConfigMin[] memory mins) {
+        if (!vm.keyExistsJson(json, ".minContributions")) return mins;
+        mins = abi.decode(vm.parseJson(json, ".minContributions"), (ConfigMin[]));
+    }
+
     function _configJson() internal view returns (string memory) {
         return vm.readFile(vm.envOr("MIYAMINTS_CONFIG", configPath(block.chainid)));
     }
@@ -440,9 +452,12 @@ contract DeployMiyamints is Script {
             }
             vaultFactory.setRoute(token, hops);
         }
+        ConfigMin[] memory mins = _configMins(json);
+        for (uint256 i; i < mins.length; ++i) vaultFactory.setMinContribution(mins[i].token, mins[i].amount);
     }
 
-    /// @dev Every configured token is allowed, and every allowed ERC-20 other than IMD and INFER has a route.
+    /// @dev Every configured token is allowed, every allowed ERC-20 other than IMD and INFER has a route, and every
+    ///      configured minimum is set (an allowed token without one in the config is flagged: it would take dust).
     function _checkPayments(Deployment memory d) internal view {
         string memory json = _configJson();
         if (!vm.keyExistsJson(json, ".paymentTokens")) return;
@@ -454,6 +469,13 @@ contract DeployMiyamints is Script {
             if (toks[i] != vf.infer() && toks[i] != vf.imd()) _t(vf.hasRoute(toks[i]), "payment token routed");
         }
         _t(vf.hasRoute(address(0)), "ETH routed");
+        ConfigMin[] memory mins = _configMins(json);
+        for (uint256 i; i < mins.length; ++i) {
+            _t(vf.minContribution(mins[i].token) == mins[i].amount, "min contribution set");
+        }
+        if (mins.length != 0) {
+            for (uint256 i; i < toks.length; ++i) _t(vf.minContribution(toks[i]) != 0, "payment token has a minimum");
+        }
     }
 
     // ── output ──────────────────────────────────────────────────────────────

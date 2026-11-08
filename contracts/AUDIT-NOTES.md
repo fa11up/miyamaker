@@ -216,19 +216,48 @@ deployed); the v1 notes above describe the hardening it keeps. New review surfac
 
 - **Contributions** (`receiveContribution(Currency, amount, benefactor)`): ETH (`msg.value == amount`, 0.001 ETH minimum,
   also via `receive()`), or an ERC-20 that is on `MiyaRegistry.isPaymentToken` AND has a route (IMD and INFER need none).
-  The vault pulls the ERC-20 from msg.sender and reverts unless its balance grew by exactly `amount`. A batch holds at
-  most 16 distinct tokens.
-- **Conversion** (keeper only, `ConvertParams{tokens, minOuts, minSplitOut, deadline}`): collect the position's fees for
-  current holders; reward 0.0012 ETH capped at 1% of the batch's ETH (0 without ETH); each token along its route
-  through zRouter (`swapV3`/`swapV4`, the keeper's floor per hop, output measured by balance delta); then the free
-  INFER/IMD (everything beyond fees owed) balanced by vault-side swaps in the hooked pool through `PoolManager.unlock`
-  and added full range, up to 3 passes in one direction. INFER is valued at the balancing swap's realized rate (pool
-  price if no swap). Shares = liquidity units, split per token by realized IMD value (`batchSharesPerUnit`), collected
-  lazily as in v1. ETH beyond what is owed (router refunds, strays) is dust for current holders. A solvency check
-  (`balance >= fees owed + protocol cut + pending`, for INFER, IMD and ETH) ends every conversion and claim.
+  The vault pulls the ERC-20 from msg.sender and reverts unless its balance grew by exactly `amount`, and refuses less
+  than the token's `minContribution` in the factory's table (owner-set, 0 = none; the deploy sets ~0.001 ETH worth per
+  token). At most 16 distinct tokens pending, and per benefactor.
+- **Conversion** (keeper only, `ConvertParams{tokens, amounts, minOuts, ethLegMinOuts, minSplitOut, deadline}`, revised
+  2026-11-08 after the keeper build's fork runs, see below): any non-empty subset of the pending tokens, no duplicates,
+  any order, and exactly `amounts[i]` (0 < amount <= pending) of each. Collect the position's fees for current
+  holders; take the amounts out of pending; reward 0.0012 ETH capped at 1% of the ETH converted (0 without ETH); each
+  token along its own route through zRouter (`swapV3`/`swapV4`, floor per hop, output by balance delta). A route ends
+  in IMD (swapped on its own) or in ETH: all ETH (converted ETH net of the reward + every route ending in ETH) goes to
+  IMD in ONE swap along the ETH route (`ethLegMinOuts`, `EthLegSwapped`), its IMD attributed pro rata to each token's
+  ETH. Then the free INFER/IMD (beyond fees owed AND beyond what is still pending) is balanced and added full range,
+  up to 3 passes. INFER is valued at the balancing swap's realized rate (pool price if no swap). Shares = liquidity
+  units, split per token by realized IMD value. ETH beyond fees, pending and the reward is dust for current holders. A
+  solvency check (`balance >= fees owed + protocol cut + pending`, for INFER, IMD and ETH; and balance >= pending for
+  every partially converted routed token) ends every conversion and claim.
+- **Pending ledger** (`PendingLedger`, linked library): per token a pro-rata pool. Converting `a` of `P` pending
+  converts the fraction a/P of every benefactor's balance in it and pays that token's shares pro rata, in O(1) per
+  (benefactor, token): Liquity's product-and-sum (product p of remaining/pending with epochs and a scale factor, sum s of
+  shares per unit, and per fee index a sum sa of shares x fee index at each conversion, so lazily collected shares earn
+  only the fees after their conversion). Rounding: balances, shares and fees down, `sa` up. A holder's shares round down by
+  up to its pending in raw units / p (<= 1e-15 of them in the tests); balances are exact to 1 part in 1e9 per conversion; a remainder that can't be rescaled (< 1e-18 of pending in a fresh pool) or a balance across two
+  rescales (< 1e-9 of it) is dropped as unowned dust that stays in `pendingByToken`. Magnitudes: `s` grows by
+  shares x p / pending, so a dust pending that gets a big batch's shares grows it fast; with p <= 1e18 a 1-wei pending
+  earning 1e30 shares at a fee index of 1e40 still fits. An overflow there would revert conversions of that token (the
+  keeper can leave it out) and benefactor touches; the invariant handler found one with p = 1e36 (a 3-sat conversion
+  taking 3e25 of leftover liquidity at a mock fee index of 7.6e54), which is why p is 1e18.
+- **Why the revision**: on a mainnet fork, (1) one token whose route couldn't absorb its pending amount blocked every
+  batch (the call had to convert exactly `openBatchTokens()`); (2) ETH, USDC, WBTC and cbBTC each ran their own ETH ->
+  IMD swap in turn, so order changed shares (block 26,371,711: cbBTC -0.40% going last vs first, ETH +0.41% first vs
+  last); (3) any 1-unit contribution in a new token between quote and landing made the call revert `BadParams`; (4) more
+  of a listed token arriving before landing was converted under floors sized for less. Now: subsets, exact amounts
+  (top-ups and new tokens stay pending, so the call can't be broken), one ETH leg (identical shares in any order, on the
+  fork), per-token minimums.
 - **Route table** lives in the vault factory (`setRoute`, owner = Safe), read live by every vault: a route change
-  applies to all vaults at once, including batches already pending. The vault re-checks that a route starts at the
-  token and ends at IMD. Removing a route while that token is pending blocks conversions until it is restored.
+  applies to all vaults at once, including what is already pending. A route ends in IMD, or (not for ETH) in ETH; the
+  ETH route ends in IMD. The vault re-checks both ends. Removing a route while that token is pending blocks only that
+  token (the keeper leaves it out). Order independence needs every route's own hops in pools no other route (nor the
+  ETH route) uses; the spec's table does, the factory doesn't enforce it.
+- **Code size**: the vault is 23,123 bytes (EIP-170 limit 24,576; `PendingLedger` 2,946, `VaultSwaps` 3,583) with route execution and the balancing math in a
+  linked library (`VaultSwaps`, by DELEGATECALL: swaps, approvals and the transient "collecting" flag are the vault's
+  own) and the ledger in `PendingLedger`. Both are deployed once and linked into the implementation the factory
+  deploys (forge links them in tests and scripts; `keeper/scripts/fork-e2e.mjs` links by hand).
 - **Pool key** fixed at deploy; the hook may only hold initialize permissions (no swap, liquidity, donate or delta
   flags) and the fee must be static, checked in `initialize`.
 - **Fees**: INFER and IMD index per share (1% protocol cut each, `withdrawProtocolFees(token)`) and an ETH dust index
@@ -240,9 +269,17 @@ deployed); the v1 notes above describe the hardening it keeps. New review surfac
   claimant's floor; they cannot touch anyone else's balance.
 - **Removed from v1**: the price validator (no on-chain reference exists for these pools), `pendingFeeTokens` /
   `convertFeeTokens` (fees are paid in the tokens earned, so the keeper never swaps them), `depositFees`.
-- Tests: `test/vaults/` (unit with a simulated pool, invariants: per-token solvency, claims within distributed,
-  monotonic shares and fee indexes, pending bookkeeping) and `test/fork/UniAlignmentVaultFork.t.sol` (real pools: each
-  route, a 7-token batch from 7 benefactors, keeper floors, real swaps generating fees, each claim mode, reinvest pricing).
+- **Still awkward**: leftovers from earlier adds (INFER/IMD the balancing could not pair) feed the next batch and are
+  credited to whatever tokens it converts, as in v1; with subsets a small batch can collect a large leftover. The
+  keeper is trusted to choose sensible batches. Pro rata means a late top-up is converted in part with the rest (its
+  holder's balance shrinks by the same fraction as everyone's), not first-in-first-out.
+- Tests: `test/vaults/` (unit with a simulated pool: subsets, exact amounts, several tokens per benefactor partly
+  converted, the merged ETH leg and order independence, griefing after the quote, minimums, rescale and dust paths;
+  invariants with random subsets, partial amounts and orders: per-token solvency, claims within distributed, monotonic
+  shares and fee indexes, pending balances against an independent pro-rata model) and
+  `test/fork/UniAlignmentVaultFork.t.sol` (real pools: each route, a 7-token batch from 7 benefactors, order
+  independence, a subset batch with a half-converted token, keeper floors including the leg, real swaps generating
+  fees, each claim mode, reinvest pricing).
 
 ---
 

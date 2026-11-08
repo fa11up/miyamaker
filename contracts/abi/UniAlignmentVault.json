@@ -309,6 +309,31 @@
   },
   {
     "type": "event",
+    "name": "EthLegSwapped",
+    "inputs": [
+      {
+        "name": "batchId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "ethIn",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "imdOut",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "FeesAccumulated",
     "inputs": [
       {
@@ -698,30 +723,6 @@
   },
   {
     "type": "function",
-    "name": "batchSharesPerUnit",
-    "inputs": [
-      {
-        "name": "batchId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "token",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "benefactorDelegate",
     "inputs": [
       {
@@ -939,9 +940,19 @@
             "internalType": "address[]"
           },
           {
+            "name": "amounts",
+            "type": "uint256[]",
+            "internalType": "uint256[]"
+          },
+          {
             "name": "minOuts",
             "type": "uint256[][]",
             "internalType": "uint256[][]"
+          },
+          {
+            "name": "ethLegMinOuts",
+            "type": "uint256[]",
+            "internalType": "uint256[]"
           },
           {
             "name": "minSplitOut",

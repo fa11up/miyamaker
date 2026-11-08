@@ -265,14 +265,23 @@ contract DeployMiyamintsForkTest is Test {
         }
         assertTrue(vf.hasRoute(address(0)), "ETH routed");
         assertEq(vf.getRoute(toks[4])[0].kind, HOP_V3, "cbBTC via v3");
+        // USDC, cbBTC and WBTC end in ETH (the batch's one ETH -> IMD swap); imdUSD goes straight to IMD.
+        assertEq(vf.getRoute(toks[2]).length, 1);
+        assertEq(vf.getRoute(toks[2])[0].tokenOut, address(0));
+        assertEq(vf.getRoute(toks[3])[0].tokenOut, IMD);
+        // Per-token minimums from config, about 0.001 ETH each.
+        uint256[6] memory mins = [uint256(1e18), 3500e18, 2e6, 3e18, 3000, 3000];
+        for (uint256 i; i < 6; ++i) assertEq(vf.minContribution(toks[i]), mins[i], "min contribution");
         assertEq(vf.owner(), safe);
     }
 
     function _ethParams(UniAlignmentVault v) internal view returns (UniAlignmentVault.ConvertParams memory p) {
         p.tokens = v.openBatchTokens();
+        p.amounts = new uint256[](p.tokens.length);
+        p.amounts[0] = v.pendingByToken(p.tokens[0]);
         p.minOuts = new uint256[][](p.tokens.length);
-        p.minOuts[0] = new uint256[](1);
-        p.minOuts[0][0] = 1;
+        p.ethLegMinOuts = new uint256[](1);
+        p.ethLegMinOuts[0] = 1;
         p.minSplitOut = 1;
         p.deadline = block.timestamp;
     }

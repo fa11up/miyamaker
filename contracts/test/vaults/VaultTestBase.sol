@@ -139,14 +139,13 @@ abstract contract VaultTestBase is Test {
         factory.setRoute(ETH, r);
         r[0] = _hop(HOP_V4, IMDUSD_ADDR, IMD_ADDR, 3000, 60);
         factory.setRoute(IMDUSD_ADDR, r);
-        RouteHop[] memory r2 = new RouteHop[](2);
-        r2[1] = _hop(HOP_V4, ETH, IMD_ADDR, 10000, 200);
-        r2[0] = _hop(HOP_V4, USDC_ADDR, ETH, 500, 10);
-        factory.setRoute(USDC_ADDR, r2);
-        r2[0] = _hop(HOP_V4, WBTC_ADDR, ETH, 500, 10);
-        factory.setRoute(WBTC_ADDR, r2);
-        r2[0] = _hop(HOP_V3, CBBTC_ADDR, ETH, 3000, 0);
-        factory.setRoute(CBBTC_ADDR, r2);
+        // Routes that end in ETH: that ETH joins the batch's one ETH -> IMD swap along the ETH route.
+        r[0] = _hop(HOP_V4, USDC_ADDR, ETH, 500, 10);
+        factory.setRoute(USDC_ADDR, r);
+        r[0] = _hop(HOP_V4, WBTC_ADDR, ETH, 500, 10);
+        factory.setRoute(WBTC_ADDR, r);
+        r[0] = _hop(HOP_V3, CBBTC_ADDR, ETH, 3000, 0);
+        factory.setRoute(CBBTC_ADDR, r);
     }
 
     // ── helpers ─────────────────────────────────────────────────────────────
@@ -173,19 +172,61 @@ abstract contract VaultTestBase is Test {
         _giveToken(who, t, amount, vault);
     }
 
-    /// @dev Keeper params with permissive floors (1 wei per hop, 1 wei split): unit tests check accounting, not prices.
+    /// @dev Keeper params converting everything pending, with permissive floors (1 wei per hop, 1 wei split): unit
+    ///      tests check accounting, not prices.
     function _params(TestableUniAlignmentVault v) internal view returns (UniAlignmentVault.ConvertParams memory p) {
         address[] memory toks = v.openBatchTokens();
+        uint256[] memory amts = new uint256[](toks.length);
+        for (uint256 i; i < toks.length; ++i) amts[i] = v.pendingByToken(toks[i]);
+        return _paramsFor(toks, amts);
+    }
+
+    /// @dev Keeper params converting exactly `amts` of `toks` (any subset, any order), permissive floors.
+    function _paramsFor(address[] memory toks, uint256[] memory amts)
+        internal
+        view
+        returns (UniAlignmentVault.ConvertParams memory p)
+    {
         p.tokens = toks;
+        p.amounts = amts;
         p.minOuts = new uint256[][](toks.length);
         for (uint256 i; i < toks.length; ++i) {
-            if (toks[i] == INFER_ADDR || toks[i] == IMD_ADDR) continue;
+            if (toks[i] == INFER_ADDR || toks[i] == IMD_ADDR || toks[i] == ETH) continue;
             uint256 h = factory.getRoute(toks[i]).length;
             p.minOuts[i] = new uint256[](h);
             for (uint256 k; k < h; ++k) p.minOuts[i][k] = 1;
         }
+        uint256 e = factory.getRoute(ETH).length;
+        p.ethLegMinOuts = new uint256[](e);
+        for (uint256 k; k < e; ++k) p.ethLegMinOuts[k] = 1;
         p.minSplitOut = 1;
         p.deadline = block.timestamp;
+    }
+
+    function _one(address a) internal pure returns (address[] memory r) {
+        r = new address[](1);
+        r[0] = a;
+    }
+
+    function _two(address a, address b) internal pure returns (address[] memory r) {
+        r = new address[](2);
+        (r[0], r[1]) = (a, b);
+    }
+
+    function _amts(uint256 a) internal pure returns (uint256[] memory r) {
+        r = new uint256[](1);
+        r[0] = a;
+    }
+
+    function _amts(uint256 a, uint256 b) internal pure returns (uint256[] memory r) {
+        r = new uint256[](2);
+        (r[0], r[1]) = (a, b);
+    }
+
+    function _convertSome(address[] memory toks, uint256[] memory amts) internal returns (uint256 shares) {
+        UniAlignmentVault.ConvertParams memory p = _paramsFor(toks, amts);
+        vm.prank(keeper);
+        shares = vault.convertAndAddLiquidity(p);
     }
 
     function _convert() internal returns (uint256 shares) {

@@ -15,12 +15,16 @@ struct RouteHop {
     int24 tickSpacing;
 }
 
-/// @notice The owner-set route table vaults read at conversion time: for each payment token, the hops that turn it
-///         into IMD. IMD and INFER have no route (IMD is used as is; INFER is the pool's other side).
+/// @notice The owner-set route table vaults read: for each payment token, the hops that turn it into IMD, or into ETH
+///         (the vault then sends all of a batch's ETH to IMD in one swap along the ETH route), and the least a
+///         contribution in it may carry. IMD and INFER have no route (IMD is used as is; INFER is the pool's other side).
 interface IVaultRoutes {
     function getRoute(address token) external view returns (RouteHop[] memory);
 
     function hasRoute(address token) external view returns (bool);
+
+    /// @notice Least amount of `token` (an ERC-20) one contribution may carry; 0 = no minimum.
+    function minContribution(address token) external view returns (uint256);
 }
 
 /// @notice zRouter 0x000000000000FB114709235f1ccBFfb925F600e4 (Sourcify-verified source, mainnet). With

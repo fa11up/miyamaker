@@ -60,7 +60,8 @@ interface IAlignmentVault {
     /// @notice Fees `benefactor` could claim now from fees already collected from the position.
     function claimable(address benefactor) external view returns (uint256 infer, uint256 imd, uint256 eth);
 
-    /// @notice `benefactor`'s contribution in `token` waiting for the next conversion (0 once converted).
+    /// @notice `benefactor`'s contribution in `token` still waiting to be converted (0 once all converted; a partial
+    ///         conversion of the token converts the same fraction of every benefactor's balance in it).
     function pendingOf(address benefactor, address token) external view returns (uint256);
 
     // ========== Shares ==========

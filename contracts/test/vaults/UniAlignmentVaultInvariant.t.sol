@@ -29,6 +29,10 @@ contract VaultHandler is Test {
     bytes4 public unexpected;
     bytes public unexpectedErr;
     uint256 public claims;
+    uint256 public partials;
+    /// @dev Pro-rata model of each benefactor's pending balance, kept independently of the vault's ledger.
+    mapping(address => mapping(address => uint256)) public expectedPending;
+    mapping(address => uint256) public conversionsOf;
 
     constructor(
         TestableUniAlignmentVault v,
@@ -56,6 +60,7 @@ contract VaultHandler is Test {
             vm.deal(who, amount);
             vm.prank(who);
             vault.receiveContribution{value: amount}(Currency.wrap(t), amount, who);
+            expectedPending[who][t] += amount;
         } else {
             uint8 dec = MockToken(t).decimals();
             amount = bound(amount, 1, 100_000 * 10 ** dec);
@@ -64,25 +69,54 @@ contract VaultHandler is Test {
             MockToken(t).approve(address(vault), amount);
             vault.receiveContribution(Currency.wrap(t), amount, who);
             vm.stopPrank();
+            expectedPending[who][t] += amount;
         }
         _check();
     }
 
-    function convert() external {
-        address[] memory toks = vault.openBatchTokens();
-        if (toks.length == 0) return;
+    /// @dev A random non-empty subset of the pending tokens, each converted in full or in part, in a random order.
+    function convert(uint256 maskSeed, uint256 fracSeed) external {
+        address[] memory open = vault.openBatchTokens();
+        uint256 n = open.length;
+        if (n == 0) return;
+        uint256 mask = bound(maskSeed, 1, (1 << n) - 1);
+        uint256 m;
+        for (uint256 i; i < n; ++i) if (mask & (1 << i) != 0) ++m;
         UniAlignmentVault.ConvertParams memory p;
-        p.tokens = toks;
-        p.minOuts = new uint256[][](toks.length);
-        for (uint256 i; i < toks.length; ++i) {
-            if (toks[i] == INFER || toks[i] == IMD) continue;
-            p.minOuts[i] = new uint256[](factory.getRoute(toks[i]).length);
+        p.tokens = new address[](m);
+        p.amounts = new uint256[](m);
+        p.minOuts = new uint256[][](m);
+        uint256[] memory pend = new uint256[](m);
+        uint256 rot = fracSeed % m; // rotate the order
+        uint256 k;
+        for (uint256 i; i < n; ++i) {
+            if (mask & (1 << i) == 0) continue;
+            uint256 slot = (k + rot) % m;
+            address t = open[i];
+            uint256 pending = vault.pendingByToken(t);
+            uint256 r = uint256(keccak256(abi.encode(fracSeed, i)));
+            uint256 amt = r % 3 == 0 ? pending : pending * (1 + (r >> 8) % 10_000) / 10_000;
+            if (amt == 0) amt = pending;
+            p.tokens[slot] = t;
+            p.amounts[slot] = amt;
+            pend[slot] = pending;
+            if (t != INFER && t != IMD && t != address(0)) p.minOuts[slot] = new uint256[](factory.getRoute(t).length);
+            ++k;
         }
+        p.ethLegMinOuts = new uint256[](factory.getRoute(address(0)).length);
         p.minSplitOut = 1;
         p.deadline = block.timestamp;
         vm.prank(keeper);
         try vault.convertAndAddLiquidity(p) {
             ++conversions;
+            for (uint256 j; j < m; ++j) {
+                if (p.amounts[j] < pend[j]) ++partials;
+                for (uint256 a; a < actors.length; ++a) {
+                    uint256 e = expectedPending[actors[a]][p.tokens[j]];
+                    expectedPending[actors[a]][p.tokens[j]] = e * (pend[j] - p.amounts[j]) / pend[j];
+                }
+                ++conversionsOf[p.tokens[j]];
+            }
         } catch (bytes memory err) {
             // A batch too small to make liquidity, or a split too small to clear the floor, may fail; nothing else.
             bytes4 sel = bytes4(err);
@@ -206,11 +240,23 @@ contract UniAlignmentVaultInvariantTest is VaultTestBase {
         assertLe(vault.totalShares(), vault.totalLPUnits());
     }
 
+    /// @dev Per token, benefactors' balances add up to what is pending, up to rounding dust (partial conversions round
+    ///      each balance down); each balance matches an independent pro-rata model of it.
     function invariant_pendingMatchesBenefactors() public view {
         for (uint256 t; t < tokenList.length; ++t) {
+            address tok = tokenList[t];
             uint256 sum;
-            for (uint256 a; a < actorList.length; ++a) sum += vault.pendingOf(actorList[a], tokenList[t]);
-            assertEq(sum, vault.pendingByToken(tokenList[t]));
+            uint256 c = handler.conversionsOf(tok);
+            for (uint256 a; a < actorList.length; ++a) {
+                uint256 got = vault.pendingOf(actorList[a], tok);
+                uint256 want = handler.expectedPending(actorList[a], tok);
+                // The model rounds once per conversion; the ledger's product rounds at 1 part in 1e9 per conversion.
+                assertApproxEqAbs(got, want, c + 1 + want * (c + 1) / 1e8, "pending matches the pro-rata model");
+                sum += got;
+            }
+            uint256 total = vault.pendingByToken(tok);
+            assertLe(sum, total, "no more owed than pending");
+            assertLe(total - sum, (c + 1) * actorList.length * (2 + total / 1e8), "dust only");
         }
     }
 
@@ -224,5 +270,6 @@ contract UniAlignmentVaultInvariantTest is VaultTestBase {
     function afterInvariant() external view {
         // The campaign must actually exercise conversions and claims.
         assertGt(handler.conversions(), 0, "no conversion ran");
+        assertGt(handler.partials(), 0, "no partial conversion ran");
     }
 }

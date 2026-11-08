@@ -14,9 +14,10 @@ import {Ownable} from "solady/auth/Ownable.sol";
 /// @title UniAlignmentVaultFactory (v2)
 /// @notice Deploys UniAlignmentVault clones aligned to one INFER/IMD pool and registers each in the MiyaRegistry (this
 ///         factory must be registered there via setVaultFactory). The factory owns every vault (no passthrough: a
-///         vault's config is fixed at deploy) and holds the route table every vault reads at conversion time: for each
-///         payment token, the zRouter hops that turn it into IMD. The table is owner-managed (a Safe), so a thin or broken
-///         route can be replaced for all vaults at once.
+///         vault's config is fixed at deploy) and holds the route table every vault reads: for each payment token, the
+///         zRouter hops that turn it into IMD (or into ETH, which then goes to IMD with the rest of the batch's ETH along
+///         the ETH route), and the least an ERC-20 contribution in it may carry. The table is owner-managed (a Safe), so
+///         a thin or broken route can be replaced, and a minimum raised, for all vaults at once.
 contract UniAlignmentVaultFactory is Ownable, IVaultRoutes {
     uint256 public constant MAX_ROUTE_HOPS = 4;
     address internal constant ETH = address(0);
@@ -35,8 +36,12 @@ contract UniAlignmentVaultFactory is Ownable, IVaultRoutes {
     address[] internal _routedTokens;
     mapping(address token => bool) internal _everRouted;
 
+    /// @inheritdoc IVaultRoutes
+    mapping(address token => uint256) public minContribution;
+
     event VaultDeployed(address indexed vault, uint256 indexed alignmentTargetId);
     event RouteSet(address indexed token, RouteHop[] hops);
+    event MinContributionSet(address indexed token, uint256 amount);
 
     error InvalidVaultSalt();
     error InvalidAddress();
@@ -68,17 +73,20 @@ contract UniAlignmentVaultFactory is Ownable, IVaultRoutes {
 
     // ── routes ──────────────────────────────────────────────────────────────
 
-    /// @notice Set (or, with no hops, clear) the route that turns `token` into IMD. address(0) = ETH; the ETH route is
-    ///         also run in reverse for claims taken as ETH.
-    /// @dev Checks shape only: hops chain from `token` to IMD, each a v3 hop (fee tier) or a hookless v4 hop (static
-    ///      fee, positive spacing). Pool depth is the owner's and the keeper's call.
+    /// @notice Set (or, with no hops, clear) the route that turns `token` into IMD. address(0) = ETH: its route ends in
+    ///         IMD, carries every batch's ETH, and is run in reverse for claims taken as ETH. Any other token's route ends
+    ///         in IMD (run on its own) or in ETH (that ETH joins the batch's one swap along the ETH route).
+    /// @dev Checks shape only: hops chain from `token` to IMD (or ETH), each a v3 hop (fee tier) or a hookless v4 hop
+    ///      (static fee, positive spacing). Pool depth is the owner's and the keeper's call. For conversions to be order
+    ///      independent, no two routes' own hops should share a pool, nor with the ETH route.
     function setRoute(address token, RouteHop[] calldata hops) external onlyOwner {
         if (token == infer || token == imd) revert BadRoute();
         uint256 h = hops.length;
         if (h > MAX_ROUTE_HOPS) revert BadRoute();
         delete _routes[token];
         if (h != 0) {
-            if (hops[0].tokenIn != token || hops[h - 1].tokenOut != imd) revert BadRoute();
+            address end = hops[h - 1].tokenOut;
+            if (hops[0].tokenIn != token || (end != imd && (end != ETH || token == ETH))) revert BadRoute();
             for (uint256 i; i < h; ++i) {
                 RouteHop calldata hop = hops[i];
                 if (hop.tokenIn == hop.tokenOut) revert BadRoute();
@@ -98,6 +106,14 @@ contract UniAlignmentVaultFactory is Ownable, IVaultRoutes {
             }
         }
         emit RouteSet(token, hops);
+    }
+
+    /// @notice Least amount of `token` one contribution may carry (0 = none), so dust can't be spammed. ERC-20s only:
+    ///         ETH contributions have the vault's fixed MIN_CONTRIBUTION.
+    function setMinContribution(address token, uint256 amount) external onlyOwner {
+        if (token == ETH) revert InvalidAddress();
+        minContribution[token] = amount;
+        emit MinContributionSet(token, amount);
     }
 
     function getRoute(address token) external view returns (RouteHop[] memory) {

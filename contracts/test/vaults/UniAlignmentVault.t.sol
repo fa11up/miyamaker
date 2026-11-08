@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+import {Vm} from "forge-std/Vm.sol";
 import {Currency} from "v4-core/types/Currency.sol";
 import {PoolKey} from "v4-core/types/PoolKey.sol";
 import {IHooks} from "v4-core/interfaces/IHooks.sol";
@@ -8,6 +9,7 @@ import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
 import {LibClone} from "solady/utils/LibClone.sol";
 import {Ownable} from "solady/auth/Ownable.sol";
 import {UniAlignmentVault} from "../../src/vaults/uni/UniAlignmentVault.sol";
+import {UniAlignmentVaultFactory} from "../../src/vaults/uni/UniAlignmentVaultFactory.sol";
 import {IVaultRoutes, RouteHop, HOP_V3, HOP_V4} from "../../src/vaults/uni/IVaultRoutes.sol";
 import {IMiyaRegistry} from "../../src/registry/interfaces/IMiyaRegistry.sol";
 import {IAlignmentVault, ClaimMode} from "../../src/interfaces/IAlignmentVault.sol";
@@ -117,9 +119,35 @@ contract UniAlignmentVaultTest is VaultTestBase {
         vault.receiveContribution(Currency.wrap(IMD_ADDR), 1e18, bob);
     }
 
-    function test_erc20Contribution_tinyAmountsAccepted() public {
-        _contribute(alice, wbtc, 1); // 1 sat: ERC-20s have no minimum
+    function test_erc20Contribution_tinyAmountsAcceptedWithoutMinimum() public {
+        _contribute(alice, wbtc, 1); // 1 sat: no minimum set for WBTC in this table
         assertEq(vault.pendingOf(alice, WBTC_ADDR), 1);
+    }
+
+    function test_erc20Contribution_minimumFromRouteTable() public {
+        factory.setMinContribution(WBTC_ADDR, 3000);
+        factory.setMinContribution(IMD_ADDR, 1e18); // IMD has no route, but can still have a minimum
+        wbtc.mint(alice, 1e8);
+        imd.mint(alice, 1e18);
+        vm.startPrank(alice);
+        wbtc.approve(address(vault), type(uint256).max);
+        imd.approve(address(vault), type(uint256).max);
+        vm.expectRevert(UniAlignmentVault.ContributionBelowMinimum.selector);
+        vault.receiveContribution(Currency.wrap(WBTC_ADDR), 2999, alice);
+        vm.expectRevert(UniAlignmentVault.ContributionBelowMinimum.selector);
+        vault.receiveContribution(Currency.wrap(IMD_ADDR), 1e18 - 1, alice);
+        vault.receiveContribution(Currency.wrap(WBTC_ADDR), 3000, alice);
+        vault.receiveContribution(Currency.wrap(IMD_ADDR), 1e18, alice);
+        vm.stopPrank();
+        assertEq(vault.pendingOf(alice, WBTC_ADDR), 3000);
+        // 0 = no minimum again; ETH keeps the vault's own MIN_CONTRIBUTION and is not in the table.
+        factory.setMinContribution(WBTC_ADDR, 0);
+        _contribute(bob, wbtc, 1);
+        vm.expectRevert(UniAlignmentVaultFactory.InvalidAddress.selector);
+        factory.setMinContribution(ETH, 1);
+        vm.prank(alice);
+        vm.expectRevert(Ownable.Unauthorized.selector);
+        factory.setMinContribution(WBTC_ADDR, 1);
     }
 
     function test_feeOnTransferToken_refused() public {
@@ -194,17 +222,26 @@ contract UniAlignmentVaultTest is VaultTestBase {
         _contribute(bob, usdc, 3000e6);
         UniAlignmentVault.ConvertParams memory p = _params(vault);
 
-        UniAlignmentVault.ConvertParams memory q = _params(vault);
-        (q.tokens[0], q.tokens[1]) = (q.tokens[1], q.tokens[0]);
-        vm.prank(keeper);
-        vm.expectRevert(UniAlignmentVault.BadParams.selector);
-        vault.convertAndAddLiquidity(q);
-
+        // A duplicate token, an amount above what is pending, a zero amount, a token with nothing pending, arrays of
+        // the wrong length, a floor list that doesn't match the route: all BadParams.
+        UniAlignmentVault.ConvertParams memory q = _paramsFor(_two(USDC_ADDR, USDC_ADDR), _amts(1e6, 1e6));
+        _expectBadParams(q);
+        q = _paramsFor(_one(USDC_ADDR), _amts(3000e6 + 1));
+        _expectBadParams(q);
+        q = _paramsFor(_one(USDC_ADDR), _amts(0));
+        _expectBadParams(q);
+        q = _paramsFor(_one(WBTC_ADDR), _amts(1));
+        _expectBadParams(q);
+        q = _paramsFor(_one(USDC_ADDR), _amts(1e6, 1e6));
+        _expectBadParams(q);
+        q = _paramsFor(new address[](0), new uint256[](0));
+        _expectBadParams(q);
         q = _params(vault);
-        q.minOuts[1] = new uint256[](1); // USDC route has 2 hops
-        vm.prank(keeper);
-        vm.expectRevert(UniAlignmentVault.BadParams.selector);
-        vault.convertAndAddLiquidity(q);
+        q.minOuts[1] = new uint256[](2); // USDC's route has 1 hop
+        _expectBadParams(q);
+        q = _params(vault);
+        q.ethLegMinOuts = new uint256[](0); // the ETH route has 1 hop
+        _expectBadParams(q);
 
         q = _params(vault);
         q.deadline = block.timestamp - 1;
@@ -216,12 +253,26 @@ contract UniAlignmentVaultTest is VaultTestBase {
         vault.convertAndAddLiquidity(p);
     }
 
+    function _expectBadParams(UniAlignmentVault.ConvertParams memory q) internal {
+        vm.prank(keeper);
+        vm.expectRevert(UniAlignmentVault.BadParams.selector);
+        vault.convertAndAddLiquidity(q);
+    }
+
     function test_convert_hopFloorEnforced() public {
         _contribute(bob, usdc, 3000e6);
         UniAlignmentVault.ConvertParams memory p = _params(vault);
-        p.minOuts[0][1] = 10_001e18; // 3000 USDC -> 1 ETH -> 10,000 IMD
+        p.minOuts[0][0] = 1.0001 ether; // 3000 USDC -> 1 ETH
         vm.prank(keeper);
         vm.expectRevert(); // the router's own amountLimit check
+        vault.convertAndAddLiquidity(p);
+        p = _params(vault);
+        p.ethLegMinOuts[0] = 10_001e18; // 1 ETH -> 10,000 IMD (the merged ETH leg)
+        vm.prank(keeper);
+        vm.expectRevert();
+        vault.convertAndAddLiquidity(p);
+        p = _params(vault);
+        vm.prank(keeper);
         vault.convertAndAddLiquidity(p);
     }
 
@@ -254,7 +305,8 @@ contract UniAlignmentVaultTest is VaultTestBase {
         _contribute(alice, t, amount);
         uint256 shares = _convert();
         assertGt(shares, 0);
-        assertEq(vault.benefactorShares(alice), shares, "sole benefactor gets every share (one token, no rounding)");
+        // Sole benefactor: every share, less the ledger's rounding (its pending in raw units / 1e18 at most).
+        assertApproxEqAbs(vault.benefactorShares(alice), shares, shares / 1e15 + 1, "sole benefactor gets every share");
         assertEq(vault.pendingOf(alice, address(t)), 0);
         assertEq(vault.pendingByToken(address(t)), 0);
         assertEq(t.balanceOf(address(vault)), 0, "the route spent it all");
@@ -343,7 +395,7 @@ contract UniAlignmentVaultTest is VaultTestBase {
         uint256 sc = vault.benefactorShares(carol);
         uint256 sd = vault.benefactorShares(dan);
         assertLe(sa + sb + sc + sd, shares);
-        assertApproxEqAbs(sa + sb + sc + sd, shares, 10);
+        assertApproxEqAbs(sa + sb + sc + sd, shares, shares / 1e15);
 
         assertApproxEqRel(sb * 1e18 / sc, 1e18, 1e9, "USDC worth 10,000 IMD = 10,000 IMD");
         assertApproxEqRel(sa * 1e18 / sc, 0.9988e18, 1e9, "ETH net of the keeper reward");
@@ -400,6 +452,252 @@ contract UniAlignmentVaultTest is VaultTestBase {
         vault.convertAndAddLiquidity(p);
         assertLt(g - gasleft(), 1_000_000);
         assertGt(vault.benefactorShares(address(0x10000)), 0);
+    }
+
+    // ═══ subsets, exact amounts, the merged ETH leg ══════════════════════
+
+    function test_subset_unlistedTokensStayPending() public {
+        _contributeEth(alice, 1 ether);
+        _contribute(bob, usdc, 3000e6);
+        _contribute(carol, imd, 10_000e18);
+        _contribute(dan, infer, 5000e18);
+        uint256 shares = _convertSome(_one(USDC_ADDR), _amts(3000e6));
+        assertEq(vault.benefactorShares(bob), shares, "only bob converted");
+        assertApproxEqRel(shares, 5000e18, 0.02e18, "bob's 10,000 IMD only: pending IMD/INFER stay out of the add");
+        assertEq(vault.pendingOf(alice, ETH), 1 ether);
+        assertEq(vault.pendingOf(carol, IMD_ADDR), 10_000e18);
+        assertEq(vault.pendingOf(dan, INFER_ADDR), 5000e18);
+        assertEq(vault.pendingOf(bob, USDC_ADDR), 0);
+        assertEq(vault.benefactorShares(alice) + vault.benefactorShares(carol) + vault.benefactorShares(dan), 0);
+        assertEq(keeper.balance, 0, "no ETH converted, no reward");
+        assertEq(address(vault).balance, 1 ether);
+        assertGe(imd.balanceOf(address(vault)), 10_000e18);
+        assertGe(infer.balanceOf(address(vault)), 5000e18);
+        assertEq(vault.openBatchTokens().length, 3);
+        _assertSolvent(vault);
+        // The rest converts later, as usual.
+        _convert();
+        assertGt(vault.benefactorShares(alice), 0);
+        assertGt(vault.benefactorShares(carol), 0);
+        assertGt(vault.benefactorShares(dan), 0);
+        assertEq(vault.openBatchTokens().length, 0);
+        _assertSolvent(vault);
+    }
+
+    function test_partial_proRataAcrossBenefactors() public {
+        _contributeEth(alice, 3 ether);
+        _contributeEth(bob, 1 ether);
+        uint256 s1 = _convertSome(_one(ETH), _amts(2 ether));
+        assertEq(vault.pendingOf(alice, ETH), 1.5 ether);
+        assertEq(vault.pendingOf(bob, ETH), 0.5 ether);
+        assertEq(vault.pendingByToken(ETH), 2 ether);
+        assertApproxEqAbs(vault.benefactorShares(alice), s1 * 3 / 4, 2);
+        assertApproxEqAbs(vault.benefactorShares(bob), s1 / 4, 2);
+        assertEq(keeper.balance, 0.0012 ether, "reward from the ETH converted");
+        uint256 s2 = _convertSome(_one(ETH), _amts(2 ether));
+        assertEq(vault.pendingOf(alice, ETH) + vault.pendingOf(bob, ETH) + vault.pendingByToken(ETH), 0);
+        assertEq(vault.openBatchTokens().length, 0);
+        assertApproxEqAbs(vault.benefactorShares(alice), (s1 + s2) * 3 / 4, 3);
+        assertApproxEqAbs(vault.benefactorShares(bob), (s1 + s2) / 4, 3);
+        _assertSolvent(vault);
+    }
+
+    function test_partial_benefactorWithSeveralTokens() public {
+        // Alice: ETH, USDC and WBTC pending; bob: ETH. Convert all USDC and half the ETH; WBTC stays.
+        _contributeEth(alice, 1 ether);
+        _contribute(alice, usdc, 3000e6);
+        _contribute(alice, wbtc, 1e6);
+        _contributeEth(bob, 1 ether);
+        vm.recordLogs();
+        uint256 shares = _convertSome(_two(USDC_ADDR, ETH), _amts(3000e6, 1 ether));
+        (uint256 vUsdc, uint256 vEth) = _values(USDC_ADDR, ETH);
+        // 3000 USDC -> 1 ETH; 1 ETH less the 0.0012 reward: one leg of 1.9988 ETH -> 19,988 IMD, shared by ETH in.
+        assertApproxEqAbs(vUsdc, 10_000e18, 1e5); // 3000 USDC -> 1 ETH less a wei at the mock's rate
+        assertApproxEqAbs(vEth, 9_988e18, 1e5);
+        uint256 usdcShares = shares * vUsdc / (vUsdc + vEth);
+        uint256 ethShares = shares * vEth / (vUsdc + vEth);
+        assertApproxEqAbs(vault.benefactorShares(alice), usdcShares + ethShares / 2, 2);
+        assertApproxEqAbs(vault.benefactorShares(bob), ethShares / 2, 2);
+        assertEq(vault.pendingOf(alice, ETH), 0.5 ether);
+        assertEq(vault.pendingOf(alice, USDC_ADDR), 0);
+        assertEq(vault.pendingOf(alice, WBTC_ADDR), 1e6);
+        assertEq(vault.pendingOf(bob, ETH), 0.5 ether);
+        // Touching alice collects exactly that and keeps the rest pending.
+        _contributeEth(alice, 0.01 ether);
+        assertApproxEqAbs(vault.benefactorShares(alice), usdcShares + ethShares / 2, 2);
+        assertEq(vault.pendingOf(alice, ETH), 0.51 ether);
+        assertEq(vault.pendingOf(alice, WBTC_ADDR), 1e6);
+        _convert();
+        assertEq(vault.pendingOf(alice, WBTC_ADDR) + vault.pendingOf(alice, ETH) + vault.pendingOf(bob, ETH), 0);
+        _assertSolvent(vault);
+    }
+
+    /// @dev The IMD value each token realized in the last recorded conversion (TokenConverted).
+    function _values(address a, address b) internal returns (uint256 va, uint256 vb) {
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bytes32 tc = keccak256("TokenConverted(uint256,address,uint256,uint256)");
+        for (uint256 j; j < logs.length; ++j) {
+            if (logs[j].emitter != address(vault) || logs[j].topics[0] != tc) continue;
+            address t = address(uint160(uint256(logs[j].topics[2])));
+            (, uint256 v) = abi.decode(logs[j].data, (uint256, uint256));
+            if (t == a) va = v;
+            if (t == b) vb = v;
+        }
+    }
+
+    /// @dev Convert half of what is pending in ETH and in IMD; returns the shares the ETH part made.
+    function _halveEthAndImd() internal returns (uint256) {
+        vm.recordLogs();
+        uint256 shares = _convertSome(
+            _two(ETH, IMD_ADDR), _amts(vault.pendingByToken(ETH) / 2, vault.pendingByToken(IMD_ADDR) / 2)
+        );
+        (uint256 ve, uint256 vi) = _values(ETH, IMD_ADDR);
+        return shares * ve / (ve + vi);
+    }
+
+    function test_ethLeg_oneSwapSharedByEthIn() public {
+        _contributeEth(alice, 1 ether);
+        _contribute(bob, usdc, 6000e6); // 2 ETH
+        _contribute(carol, wbtc, 1e7); // 0.1 BTC = 3 ETH
+        _contribute(dan, cbBtc, uint256(1e8) / 30); // ~1 ETH via v3
+        uint256 calls = router.calls();
+        _convert();
+        assertEq(router.calls(), calls + 4, "three hops to ETH, one ETH -> IMD swap for all of it");
+        uint256 sa = vault.benefactorShares(alice);
+        assertApproxEqRel(vault.benefactorShares(bob) * 1e18 / sa, uint256(2e18) * 1e18 / 0.9988e18, 1e9);
+        assertApproxEqRel(vault.benefactorShares(carol) * 1e18 / sa, uint256(3e18) * 1e18 / 0.9988e18, 1e9);
+        assertApproxEqRel(vault.benefactorShares(dan) * 1e18 / sa, uint256(0.9999999e18) * 1e18 / 0.9988e18, 1e9);
+        _assertSolvent(vault);
+    }
+
+    function test_orderIndependent() public {
+        _contributeEth(alice, 1 ether);
+        _contribute(bob, usdc, 6000e6);
+        _contribute(carol, wbtc, 1e7);
+        _contribute(dan, imdUsd, 1000e18);
+        address[] memory toks = vault.openBatchTokens();
+        uint256[] memory amts = new uint256[](4);
+        for (uint256 i; i < 4; ++i) amts[i] = vault.pendingByToken(toks[i]);
+        address[4] memory who = [alice, bob, carol, dan];
+
+        uint256 snap = vm.snapshotState();
+        _convertSome(toks, amts);
+        uint256[4] memory fwd;
+        for (uint256 i; i < 4; ++i) fwd[i] = vault.benefactorShares(who[i]);
+        vm.revertToState(snap);
+
+        // Reversed order.
+        address[] memory rt = new address[](4);
+        uint256[] memory ra = new uint256[](4);
+        for (uint256 i; i < 4; ++i) (rt[i], ra[i]) = (toks[3 - i], amts[3 - i]);
+        _convertSome(rt, ra);
+        for (uint256 i; i < 4; ++i) assertEq(vault.benefactorShares(who[i]), fwd[i], "same shares in any order");
+    }
+
+    function test_griefing_contributionAfterQuoteDoesNotBreakTheCall() public {
+        _contributeEth(alice, 1 ether);
+        _contribute(bob, usdc, 3000e6);
+        UniAlignmentVault.ConvertParams memory p = _params(vault); // the keeper's quote
+        // Between the quote and landing: dust in a new token, a top-up of a token in the call, a new benefactor.
+        address mallory = makeAddr("mallory");
+        _contribute(mallory, wbtc, 1);
+        _contributeEth(mallory, 0.001 ether);
+        _contribute(carol, usdc, 1e6);
+        vm.prank(keeper);
+        vault.convertAndAddLiquidity(p);
+        assertGt(vault.benefactorShares(alice), 0);
+        assertGt(vault.benefactorShares(bob), 0);
+        // Exactly what arrived later stays pending in total, spread pro rata over the token's benefactors.
+        assertEq(vault.pendingOf(mallory, WBTC_ADDR), 1);
+        assertApproxEqAbs(vault.pendingOf(mallory, ETH), uint256(0.001 ether) * 0.001 ether / 1.001 ether, 1);
+        assertApproxEqAbs(vault.pendingOf(alice, ETH), uint256(1 ether) * 0.001 ether / 1.001 ether, 1);
+        assertApproxEqAbs(vault.pendingOf(carol, USDC_ADDR), uint256(1e6) * 1e6 / 3001e6, 1);
+        assertEq(vault.pendingByToken(ETH), 0.001 ether);
+        assertEq(vault.pendingByToken(USDC_ADDR), 1e6);
+        _assertSolvent(vault);
+    }
+
+    function test_partial_laterConversionTakesNoEarlierFees() public {
+        _contributeEth(alice, 1 ether);
+        _contributeEth(bob, 1 ether);
+        _convertSome(_one(ETH), _amts(1 ether)); // half of each
+        vault.accrueFees(100e18, 100e18);
+        vault.collectFees();
+        _contributeEth(carol, 1 ether); // joins after the fees
+        _convert(); // alice's and bob's other halves, and carol's ETH
+        (uint256 ia, uint256 ma,) = vault.claimable(alice);
+        (uint256 ib, uint256 mb,) = vault.claimable(bob);
+        (uint256 ic, uint256 mc,) = vault.claimable(carol);
+        assertApproxEqAbs(ia, 49.5e18, 1e6);
+        assertApproxEqAbs(ma, 49.5e18, 1e6);
+        assertApproxEqAbs(ib, 49.5e18, 1e6);
+        assertApproxEqAbs(mb, 49.5e18, 1e6);
+        assertEq(ic + mc, 0, "carol's shares came after the fees");
+        // New fees split by the share counts.
+        vault.accrueFees(30e18, 0);
+        vault.collectFees();
+        (uint256 ia2,,) = vault.claimable(alice);
+        (uint256 ic2,,) = vault.claimable(carol);
+        assertApproxEqRel((ia2 - ia) * 1e18 / ic2, vault.benefactorShares(alice) * 1e18 / vault.benefactorShares(carol), 1e9);
+        _assertSolvent(vault);
+        // Claims pay out exactly the claimable amounts.
+        vm.prank(alice);
+        (uint256 io,,) = vault.claimFees(ClaimMode.TOKENS, 0);
+        assertEq(io, ia2);
+    }
+
+    function test_partial_manyConversionsCollectedLazily() public {
+        _contributeEth(alice, 1 ether);
+        _contribute(bob, imd, 100_000e18); // a big IMD holder so each tiny ETH slice still makes liquidity
+        uint256 total;
+        for (uint256 i; i < 5; ++i) total += _halveEthAndImd();
+        assertEq(vault.pendingOf(alice, ETH), 1 ether / 32, "1/32 of it left");
+        assertApproxEqAbs(vault.benefactorShares(alice), total, 10, "five conversions, collected in one go");
+        // Converting all that is left starts a new epoch; alice's record still pays out, and a new one starts clean.
+        _convert();
+        assertEq(vault.pendingOf(alice, ETH), 0);
+        uint256 before = vault.benefactorShares(alice);
+        assertGt(before, total);
+        _contributeEth(alice, 1 ether);
+        assertEq(vault.pendingOf(alice, ETH), 1 ether);
+        assertEq(vault.benefactorShares(alice), before);
+        _convert();
+        assertGt(vault.benefactorShares(alice), before);
+        _assertSolvent(vault);
+    }
+
+    function test_partial_tinyRemainderRescales() public {
+        // Leave 1e-12 of a huge IMD balance: the pool's product rescales (scale + 1) and the balance carries over.
+        _contribute(alice, imd, 1e30);
+        _convertSome(_one(IMD_ADDR), _amts(1e30 - 1e18));
+        assertEq(vault.pendingOf(alice, IMD_ADDR), 1e18);
+        uint256 before = vault.benefactorShares(alice);
+        _contribute(bob, imd, 1e22); // bob books in the new scale; alice's balance spans both
+        uint256 shares = _convert();
+        assertApproxEqAbs(vault.benefactorShares(alice) - before, shares * 1e18 / (1e22 + 1e18), shares / 1e15);
+        assertApproxEqAbs(vault.benefactorShares(bob), shares * 1e22 / (1e22 + 1e18), shares / 1e15);
+        assertEq(vault.pendingOf(alice, IMD_ADDR) + vault.pendingOf(bob, IMD_ADDR), 0);
+        _assertSolvent(vault);
+    }
+
+    function test_partial_remainderTooSmallToRescaleIsDust() public {
+        // 1e-19 of what was pending is left (too small for one rescale): the epoch restarts, that dust stays pending,
+        // unowned.
+        _contribute(alice, imd, 1e30);
+        _convertSome(_one(IMD_ADDR), _amts(1e30 - 1e11));
+        assertEq(vault.pendingOf(alice, IMD_ADDR), 0);
+        assertEq(vault.pendingByToken(IMD_ADDR), 1e11);
+        _contribute(bob, imd, 1e22);
+        assertEq(vault.pendingOf(bob, IMD_ADDR), 1e22, "a new epoch: bob's balance is exact");
+        _assertSolvent(vault);
+    }
+
+    function test_partial_imdRemainderStaysOutOfTheAdd() public {
+        _contribute(carol, imd, 20_000e18);
+        uint256 shares = _convertSome(_one(IMD_ADDR), _amts(10_000e18));
+        assertApproxEqRel(shares, 5000e18, 0.02e18, "only the 10,000 converted went into the position");
+        assertEq(vault.pendingOf(carol, IMD_ADDR), 10_000e18);
+        _assertSolvent(vault);
     }
 
     // ═══ keeper reward ═══════════════════════════════════════════════════
@@ -464,8 +762,8 @@ contract UniAlignmentVaultTest is VaultTestBase {
         vault.collectFees();
         (uint256 ia, uint256 ma,) = vault.claimable(alice);
         (uint256 ib, uint256 mb,) = vault.claimable(bob);
-        assertApproxEqAbs(ia + ib, 99e18, 2);
-        assertApproxEqAbs(ma + mb, 198e18, 2);
+        assertApproxEqAbs(ia + ib, 99e18, 1e3);
+        assertApproxEqAbs(ma + mb, 198e18, 1e3);
         uint256 sa = vault.benefactorShares(alice);
         uint256 sb = vault.benefactorShares(bob);
         assertApproxEqRel(ia * 1e18 / ib, sa * 1e18 / sb, 1e9);

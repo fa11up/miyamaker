@@ -97,16 +97,17 @@ contract UniAlignmentVaultFactoryTest is VaultTestBase {
 
     function test_specRoutes() public view {
         RouteHop[] memory r = factory.getRoute(CBBTC_ADDR);
-        assertEq(r.length, 2);
+        assertEq(r.length, 1, "ends in ETH: the batch's ETH leg takes it on to IMD");
         assertEq(r[0].kind, HOP_V3);
         assertEq(r[0].tokenIn, CBBTC_ADDR);
         assertEq(r[0].tokenOut, ETH);
         assertEq(r[0].fee, 3000);
-        assertEq(r[1].kind, HOP_V4);
-        assertEq(r[1].tokenOut, IMD_ADDR);
-        assertEq(r[1].fee, 10000);
-        assertEq(r[1].tickSpacing, 200);
-        assertEq(factory.getRoute(ETH).length, 1);
+        r = factory.getRoute(ETH);
+        assertEq(r.length, 1);
+        assertEq(r[0].kind, HOP_V4);
+        assertEq(r[0].tokenOut, IMD_ADDR);
+        assertEq(r[0].fee, 10000);
+        assertEq(r[0].tickSpacing, 200);
         assertFalse(factory.hasRoute(IMD_ADDR));
         assertFalse(factory.hasRoute(INFER_ADDR));
         assertEq(factory.routedTokens().length, 5);
@@ -145,9 +146,13 @@ contract UniAlignmentVaultFactoryTest is VaultTestBase {
         vm.expectRevert(UniAlignmentVaultFactory.BadRoute.selector);
         factory.setRoute(USDC_ADDR, r); // first hop must start at the token
 
-        r[0] = _hop(HOP_V4, USDC_ADDR, ETH, 500, 10);
+        r[0] = _hop(HOP_V4, USDC_ADDR, WBTC_ADDR, 500, 10);
         vm.expectRevert(UniAlignmentVaultFactory.BadRoute.selector);
-        factory.setRoute(USDC_ADDR, r); // must end at IMD
+        factory.setRoute(USDC_ADDR, r); // must end at IMD or ETH
+
+        r[0] = _hop(HOP_V4, ETH, USDC_ADDR, 500, 10);
+        vm.expectRevert(UniAlignmentVaultFactory.BadRoute.selector);
+        factory.setRoute(ETH, r); // the ETH route must end at IMD
 
         r[0] = _hop(2, USDC_ADDR, IMD_ADDR, 500, 10);
         vm.expectRevert(UniAlignmentVaultFactory.BadRoute.selector);
@@ -191,6 +196,27 @@ contract UniAlignmentVaultFactoryTest is VaultTestBase {
         _convert();
         assertEq(router.calls(), calls + 1, "one hop");
         assertGt(vault.benefactorShares(alice), 0);
+    }
+
+    function test_routeThroughEthToImd_runsOnItsOwn() public {
+        // A route may still pass through ETH and end at IMD; it then swaps on its own (not in the merged ETH leg).
+        RouteHop[] memory r2 = new RouteHop[](2);
+        r2[0] = _hop(HOP_V4, USDC_ADDR, ETH, 500, 10);
+        r2[1] = _hop(HOP_V4, ETH, IMD_ADDR, 10000, 200);
+        factory.setRoute(USDC_ADDR, r2);
+        _contribute(alice, usdc, 3000e6);
+        uint256 calls = router.calls();
+        _convert();
+        assertEq(router.calls(), calls + 2);
+        assertApproxEqRel(vault.benefactorShares(alice), 5000e18, 0.02e18);
+    }
+
+    function test_minContribution_ownerSet() public {
+        assertEq(factory.minContribution(USDC_ADDR), 0);
+        vm.expectEmit(true, false, false, true, address(factory));
+        emit UniAlignmentVaultFactory.MinContributionSet(USDC_ADDR, 3e6);
+        factory.setMinContribution(USDC_ADDR, 3e6);
+        assertEq(factory.minContribution(USDC_ADDR), 3e6);
     }
 
     function test_constructor_zeroAddresses() public {
