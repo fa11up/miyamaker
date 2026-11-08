@@ -11,6 +11,7 @@ import {
   parseAlchemyOwnedNfts,
 } from '../src/desktop/files/indexer/parse.ts'
 import { cleanText, decodeDataJson, safeImageUrl, safeLinkUrl, sanitizeMetadata } from '../src/desktop/files/sanitize.ts'
+import type { PetState } from '../src/desktop/pet/machine.ts'
 import { initialPet, PET_PHYSICS, petEvent, stepPet } from '../src/desktop/pet/machine.ts'
 import { clampDelayMinutes, idleRemaining, isTextEntry, movedEnough, shouldStartScreensaver } from '../src/desktop/screensaver/idle.ts'
 import { anythingPlaying, setPlaying } from '../src/desktop/screensaver/playing.ts'
@@ -98,7 +99,7 @@ const seq = (...values: number[]) => {
 }
 
 test('pet walks, turns at the edge and stays inside the strip', () => {
-  let s = { ...initialPet(env, seq(0.5)), mode: 'walk' as const, x: 935, facing: 1 as const, until: 60_000 }
+  let s: PetState = { ...initialPet(env, seq(0.5)), mode: 'walk', x: 935, facing: 1, until: 60_000 }
   for (let i = 0; i < 200; i++) s = stepPet(s, 16, env, seq(0.9))
   assert.ok(s.x <= env.width - env.spriteW)
   assert.equal(s.facing, -1)
@@ -148,7 +149,7 @@ test('reduced motion: no walking, no hop physics, drops land instantly', () => {
 })
 
 test('a bored pet falls asleep and the cursor wakes it, facing the cursor', () => {
-  let s = { ...initialPet(env, seq(0.5)), mode: 'idle' as const, until: Infinity, x: 500 }
+  let s: PetState = { ...initialPet(env, seq(0.5)), mode: 'idle', until: Infinity, x: 500 }
   for (let t = 0; t <= PET_PHYSICS.sleepAfter + 100; t += 100) s = stepPet(s, 100, env, seq(0.5))
   assert.equal(s.mode, 'sleep')
   s = petEvent(s, { type: 'cursor', x: 10 }, env)

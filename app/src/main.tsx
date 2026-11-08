@@ -1,5 +1,3 @@
-import '@reach/dialog/styles.css'
-
 import { Buffer } from 'buffer'
 import ReactDOM from 'react-dom/client'
 import ReactGA from 'react-ga4'

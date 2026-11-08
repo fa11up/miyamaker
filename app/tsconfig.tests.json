@@ -1,0 +1,13 @@
+{
+  // Type-checks the node:test files (run with Node's type stripping, so they import .ts files by extension).
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "incremental": false,
+    "declaration": false,
+    "types": ["node"]
+  },
+  "include": ["tests", "src/vite-env.d.ts"],
+  "references": []
+}

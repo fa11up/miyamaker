@@ -8,6 +8,8 @@ import { edgeCache, handleMarketRequest, MARKET_PREFIX, openSeaReader } from './
 import { handleOpenSeaRequest, OPENSEA_PROXY_PATH, quoteBigInts } from './_lib/opensea'
 import { d1TapeStore, handlePublicAccessRequest, PUBLIC_ACCESS_PATH, youtubeLookup } from './_lib/publicaccess'
 import { serveRange } from './_lib/ranges'
+import type { SharedCache } from './_lib/sharedstate'
+import { d1SharedState, sharedCache } from './_lib/sharedstate'
 import type { D1Like } from './_lib/station'
 import { d1Store, gatewayContentType, handleStationRequest, STATION_PATH } from './_lib/station'
 import { kickOnAir, kickReader } from './_lib/tvkick'
@@ -47,6 +49,20 @@ const marketLimiter = createRateLimiter({ capacity: 120, perSecond: 2 })
 const contractCheckLimiter = createRateLimiter({ capacity: 30, perSecond: 0.5 })
 const stationLimiter = createRateLimiter({ capacity: 20, perSecond: 0.2 })
 const publicAccessLimiter = createRateLimiter({ capacity: 20, perSecond: 0.2 })
+// The listings' GETs: a page load or two a minute is plenty, and they are cached for 10 seconds anyway.
+const stationReadLimiter = createRateLimiter({ capacity: 60, perSecond: 1 })
+const publicAccessReadLimiter = createRateLimiter({ capacity: 60, perSecond: 1 })
+// These limiters are per isolate. The global limit is the Cloudflare WAF rate-limiting rule on /api/* described at
+// createRateLimiter (api/_lib/zeroex.ts); set it up in the dashboard.
+
+const edge = () => edgeCache((caches as unknown as { default?: Cache }).default)
+
+/**
+ * miyatv's lookups: one copy in D1 for every data centre (falling back to this data centre's cache until the
+ * shared_state table exists). Made once per isolate, so one refresh at a time here as well.
+ */
+let tvCache: SharedCache | undefined
+const tvState = (env: Env) => (tvCache ??= sharedCache(env.DB ? d1SharedState(env.DB) : undefined, edge(), Date.now, 'tv'))
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -86,7 +102,7 @@ async function api(request: Request, env: Env, url: URL): Promise<Response> {
       { method: request.method, url: request.url, headers: request.headers },
       {
         openSea: openSeaReader(env.OPENSEA_API_KEY, quoteBigInts),
-        cache: edgeCache((caches as unknown as { default?: Cache }).default),
+        cache: edge(),
         sameOrigin,
         clientKey,
         limiter: marketLimiter,
@@ -112,6 +128,8 @@ async function api(request: Request, env: Env, url: URL): Promise<Response> {
         sameOrigin,
         clientKey,
         limiter: stationLimiter,
+        readLimiter: stationReadLimiter,
+        listCache: edge(),
       }
     )
   }
@@ -120,7 +138,7 @@ async function api(request: Request, env: Env, url: URL): Promise<Response> {
     return handleContractCheck(request, {
       key: env.ETHERSCAN_API_KEY,
       etherscan: env.ETHERSCAN_API_KEY ? etherscanReader(env.ETHERSCAN_API_KEY) : undefined,
-      cache: edgeCache((caches as unknown as { default?: Cache }).default),
+      cache: edge(),
       sameOrigin,
       clientKey,
       limiter: contractCheckLimiter,
@@ -128,7 +146,7 @@ async function api(request: Request, env: Env, url: URL): Promise<Response> {
   }
 
   if (url.pathname === TV_LIVE_PATH) {
-    const cache = edgeCache((caches as unknown as { default?: Cache }).default)
+    const cache = tvState(env)
     return handleTvLiveRequest(request, {
       key: env.YOUTUBE_API_KEY,
       cache,
@@ -154,6 +172,8 @@ async function api(request: Request, env: Env, url: URL): Promise<Response> {
         sameOrigin,
         clientKey,
         limiter: publicAccessLimiter,
+        readLimiter: publicAccessReadLimiter,
+        listCache: edge(),
       }
     )
   }

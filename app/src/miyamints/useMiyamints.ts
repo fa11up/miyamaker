@@ -35,11 +35,20 @@ export function useRegistryRules(chainId: SupportedChainId, registry?: Address) 
     query: { enabled: !!registry },
   })
   const [min, fee] = q.data || []
+  // Only what the registry said: a guess shown as fact could promise a share or a fee the contract won't take.
+  const minAlignmentBps = min?.status === 'success' ? (min.result as number) : undefined
+  const protocolFeeBps = fee?.status === 'success' ? (fee.result as number) : undefined
   return {
-    minAlignmentBps: (min?.result as number | undefined) ?? 1000,
-    protocolFeeBps: (fee?.result as number | undefined) ?? 100,
-    loaded: !!q.data,
+    minAlignmentBps,
+    protocolFeeBps,
+    /** Both rules were read. */
+    loaded: minAlignmentBps !== undefined && protocolFeeBps !== undefined,
     loading: q.isLoading,
+    /** The registry could not be read: the share rules are unknown, so nothing can be created yet. */
+    failed:
+      !!registry &&
+      !q.isLoading &&
+      (q.isError || (!!q.data && (minAlignmentBps === undefined || protocolFeeBps === undefined))),
   }
 }
 

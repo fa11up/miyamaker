@@ -4,6 +4,8 @@ import type { Address } from 'viem'
 import { isAddress, zeroAddress } from 'viem'
 import { useReadContract, useReadContracts } from 'wagmi'
 
+import { isRevert } from '@/hooks/readFailure'
+
 import type { SupportedChainId } from '@/config/wagmi'
 import { miyamintsAddresses } from '@/constants/contracts'
 import { ALCHEMY_KEY } from '@/desktop/files/indexer'
@@ -14,7 +16,7 @@ import { resolveUri } from '@/utils/resolveUri'
 
 import { erc721Abi, erc1155Abi, poolAbi, poolFactoryAbi } from './abi'
 import type { CommitRow, PoolKind, PoolSummary } from './pool'
-import { asKind, asMode, KIND, modesOn, pendingFor, poolIndexes } from './pool'
+import { asKind, asMode, freeModesFrom, heldAmount, KIND, modesOn, pendingFor, poolIndexes } from './pool'
 
 /** The MiyaPoolFactory on a chain, from env or contracts/deployments (undefined = not deployed there yet). */
 export const poolFactoryFor = (chainId: number): Address | undefined => miyamintsAddresses(chainId).miyaPoolFactory
@@ -23,12 +25,15 @@ export const poolFactoryFor = (chainId: number): Address | undefined => miyamint
 const LIST_LIMIT = 60
 /** How many recent random-redeem commits are checked for the connected wallet. */
 const COMMIT_SCAN = 100
+/** Alchemy getNFTsForOwner page size, and how many pages are followed before saying the list is partial. */
+const OWNED_PAGE = 100
+const OWNED_MAX_PAGES = 10
 export const HELD_PAGE = 24
 
 const ok = <T>(r: { status: string; result?: unknown } | undefined) =>
   r && r.status === 'success' ? (r.result as T) : undefined
 
-export type Pool = PoolSummary & { address: Address; collection: Address; supply: bigint }
+export type Pool = PoolSummary & { address: Address; collection: Address; supply?: bigint }
 
 const fields = ['collection', 'kind', 'mode', 'name', 'symbol', 'heldUnits', 'totalSupply'] as const
 
@@ -68,8 +73,8 @@ function usePoolSummaries(chainId: SupportedChainId, addresses: Address[]) {
         mode,
         name: cleanText(ok<string>(r(3)), 80),
         symbol: cleanText(ok<string>(r(4)), 24) || 'mNFT',
-        held: ok<bigint>(r(5)) ?? 0n,
-        supply: ok<bigint>(r(6)) ?? 0n,
+        held: ok<bigint>(r(5)),
+        supply: ok<bigint>(r(6)),
         collectionName: cleanText(ok<string>(names.data?.[i]), 80) || undefined,
       })
     })
@@ -138,14 +143,19 @@ export function usePoolsForCollection(chainId: SupportedChainId, factory: Addres
     [reads.data]
   )
   const summaries = usePoolSummaries(chainId, addresses)
-  const taken = new Set(
-    (reads.data || []).map((r, mode) => (ok<Address>(r) && ok<Address>(r) !== zeroAddress ? mode : -1))
-  )
+  const modes = reads.data
+    ? freeModesFrom(
+        reads.data.map((r) => ok<Address>(r)),
+        modesOn(chainId)
+      )
+    : undefined
   return {
     collection,
     pools: summaries.pools,
-    /** Modes with no pool yet for this collection (empty until the lookup is done). */
-    freeModes: reads.data ? modesOn(chainId).filter((m) => !taken.has(m)) : [],
+    /** Modes the factory says have no pool yet (empty until the lookup is done; a failed read is never free). */
+    freeModes: modes?.free ?? [],
+    /** The lookup failed for at least one mode, so "no pool" can't be told apart from "couldn't check". */
+    checkFailed: !!collection && !!factory && (!!reads.error || (modes?.unknown.length ?? 0) > 0),
     loading: reads.isLoading || summaries.loading,
     refetch: () => {
       reads.refetch()
@@ -172,8 +182,10 @@ export function usePool(chainId: SupportedChainId, pool: Address | undefined, ow
   const [count, pending, nextCommit, nextReveal, balance] = extra.data || []
   return {
     pool: summary.pools[0],
-    heldIdsCount: Number(ok<bigint>(count) ?? 0n),
-    pendingUnits: ok<bigint>(pending) ?? 0n,
+    /** Undefined when the read failed: the held list can't be paged without it. */
+    heldIdsCount: ok<bigint>(count) === undefined ? undefined : Number(ok<bigint>(count)),
+    /** Undefined when the read failed: free NFTs for a random draw are then unknown. */
+    pendingUnits: ok<bigint>(pending),
     nextCommitId: ok<bigint>(nextCommit),
     nextRevealId: ok<bigint>(nextReveal),
     balance: owner ? ok<bigint>(balance) : undefined,
@@ -187,8 +199,13 @@ export function usePool(chainId: SupportedChainId, pool: Address | undefined, ow
 }
 
 /** Ids held by a pool, `pages` pages of HELD_PAGE; ERC1155 pools also return units per id. */
-export function useHeldIds(chainId: SupportedChainId, pool: Pool | undefined, count: number, pages: number) {
-  const want = Math.min(count, pages * HELD_PAGE)
+export function useHeldIds(
+  chainId: SupportedChainId,
+  pool: Pool | undefined,
+  count: number | undefined,
+  pages: number
+) {
+  const want = Math.min(count ?? 0, pages * HELD_PAGE)
   const ids = useReadContract({
     address: pool?.address,
     abi: poolAbi,
@@ -213,7 +230,9 @@ export function useHeldIds(chainId: SupportedChainId, pool: Pool | undefined, co
     ids: list,
     unitsOf: (i: number) => (pool?.kind === KIND.ERC1155 ? ok<bigint>(units.data?.[i]) : 1n),
     loading: ids.isLoading,
-    more: want < count,
+    /** The list couldn't be read (count or ids), so an empty list is not "the pool is empty". */
+    failed: count === undefined || ids.isError,
+    more: want < (count ?? 0),
     refetch: () => {
       ids.refetch()
       units.refetch()
@@ -239,18 +258,26 @@ export function useNftMeta(chainId: SupportedChainId, collection: Address | unde
   return { name: clean?.name, image: clean?.image, loading: uri.isLoading || meta.isLoading }
 }
 
-/** Open random-redeem draws that send NFTs to `owner` (checks the latest COMMIT_SCAN commits). */
+/**
+ * Open random-redeem draws that send NFTs to `owner`. Draws settle in order, so only ids from nextRevealId up can be
+ * open: those are scanned, newest first, up to COMMIT_SCAN (`partial` when more are open than that).
+ */
 export function useMyCommits(
   chainId: SupportedChainId,
   pool: Address | undefined,
   nextCommitId: bigint | undefined,
-  owner: Address | undefined
+  owner: Address | undefined,
+  nextRevealId?: bigint
 ) {
   const ids = useMemo(() => {
     if (nextCommitId === undefined) return []
-    const n = Number(nextCommitId)
-    return Array.from({ length: Math.min(n, COMMIT_SCAN) }, (_, i) => BigInt(n - 1 - i))
-  }, [nextCommitId])
+    const from = nextRevealId !== undefined && nextRevealId < nextCommitId ? nextRevealId : 0n
+    const open = Number(nextCommitId - from)
+    return Array.from({ length: Math.min(open, COMMIT_SCAN) }, (_, i) => nextCommitId - 1n - BigInt(i))
+  }, [nextCommitId, nextRevealId])
+  const partial =
+    nextCommitId !== undefined &&
+    Number(nextCommitId - (nextRevealId !== undefined && nextRevealId < nextCommitId ? nextRevealId : 0n)) > COMMIT_SCAN
   const reads = useReadContracts({
     allowFailure: true,
     contracts: ids.map((id) => ({
@@ -269,7 +296,8 @@ export function useMyCommits(
     })
     return pendingFor(rows, owner)
   }, [ids, reads.data, owner])
-  return { commits, refetch: reads.refetch }
+  const failed = !!reads.error || (reads.data?.some((r) => r.status !== 'success') ?? false)
+  return { commits, partial, failed, refetch: reads.refetch }
 }
 
 /**
@@ -287,22 +315,37 @@ export function useOwnedInCollection(chainId: number, collection: Address | unde
       url.searchParams.set('owner', owner as string)
       url.searchParams.append('contractAddresses[]', collection as string)
       url.searchParams.set('withMetadata', 'true')
-      url.searchParams.set('pageSize', '100')
-      const res = await fetch(url.toString(), { signal, headers: { accept: 'application/json' } })
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      return parseAlchemyOwnedNfts(await res.json(), chainId, {
-        sanitize: sanitizeMetadata,
-        cleanText,
-        resolve: resolveUri,
-      }).nfts
+      url.searchParams.set('pageSize', String(OWNED_PAGE))
+      const nfts: ReturnType<typeof parseAlchemyOwnedNfts>['nfts'] = []
+      let pageKey: string | undefined
+      for (let page = 0; page < OWNED_MAX_PAGES; page += 1) {
+        if (pageKey) url.searchParams.set('pageKey', pageKey)
+        // eslint-disable-next-line no-await-in-loop -- each page needs the previous page's key
+        const res = await fetch(url.toString(), { signal, headers: { accept: 'application/json' } })
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        // eslint-disable-next-line no-await-in-loop
+        const body = (await res.json()) as { pageKey?: unknown }
+        nfts.push(...parseAlchemyOwnedNfts(body, chainId, { sanitize: sanitizeMetadata, cleanText, resolve: resolveUri }).nfts)
+        pageKey = typeof body?.pageKey === 'string' && body.pageKey ? body.pageKey : undefined
+        if (!pageKey) return { nfts, partial: false }
+      }
+      return { nfts, partial: true }
     },
   })
-  return { supported, nfts: q.data, loading: q.isLoading && supported, error: q.error, refetch: q.refetch }
+  return {
+    supported,
+    nfts: q.data?.nfts,
+    /** More pages exist than were read: the list is not every NFT in the wallet. */
+    partial: !!q.data?.partial,
+    loading: q.isLoading && supported,
+    error: q.error,
+    refetch: q.refetch,
+  }
 }
 
 /**
  * Checks that `owner` holds each id. ERC721: ownerOf. ERC1155: the balance per id.
- * Returns the held amount per id (0n when not held, undefined while loading).
+ * Returns the held amount per id (0n when not held, undefined while loading or when the read failed).
  */
 export function useOwnership(
   chainId: SupportedChainId,
@@ -326,14 +369,17 @@ export function useOwnership(
     ),
     query: { enabled: !!collection && !!owner && ids.length > 0 },
   })
+  // A revert (e.g. ownerOf on a burned id) is a real "not held"; an RPC failure stays unknown.
   const held = ids.map((_, i) => {
     const r = reads.data?.[i]
-    if (!r) return undefined
-    if (r.status !== 'success') return 0n
-    if (kind === KIND.ERC721) return String(r.result).toLowerCase() === owner?.toLowerCase() ? 1n : 0n
-    return r.result as bigint
+    return heldAmount(
+      r && (r.status === 'success' ? { status: 'success', result: r.result } : { status: 'failure', reverted: isRevert(r.error) }),
+      kind === KIND.ERC721,
+      owner
+    )
   })
-  return { held, loading: reads.isLoading, refetch: reads.refetch }
+  const failed = !!reads.error || (!!reads.data && held.some((h) => h === undefined))
+  return { held, loading: reads.isLoading, failed, refetch: reads.refetch }
 }
 
 /** Whether `operator` (the pool) may move the owner's NFTs in this collection. */

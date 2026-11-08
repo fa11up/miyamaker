@@ -169,22 +169,63 @@ function errorText(error: unknown): string {
 
 export const BID_REVERTED = 'Your bid failed and you paid only gas. Someone may have outbid you.'
 export const BID_UNCONFIRMED = "We couldn't confirm your bid. Check your wallet before you bid again."
+/** A wait that ran out of time (useTx's limit): the bid was sent and may still land. */
+export const BID_SLOW = "Your bid isn't confirmed yet. Check your wallet's activity before you bid again."
+/** The wallet's own cancel replaced the bid: a self-send landed in its place, so only its gas was spent. */
+export const BID_CANCELLED = 'You cancelled in your wallet. No bid was placed. You only paid the network fee.'
+const BID_REJECTED = 'You cancelled in your wallet. No bid was placed.'
+/** For a failure that can't vouch nothing was sent: only the wallet's activity can say. */
+const BID_CHECK_WALLET = "The bid didn't go through. Check your wallet's activity before you bid again."
+/** For a failure in the dry run before the wallet opened: nothing was sent. */
+const BID_NOTHING_SENT = "The bid didn't go through. No ETH left your wallet. Try again."
 
-/** Plain words for a bid that failed before it was sent. The raw error is for the console. */
-export function bidErrorWords(error: unknown): string {
+/**
+ * Plain words for a bid that failed before it was sent. The raw error is for the console. "No ETH left your wallet" is
+ * said only when the error vouches for it: the wallet refused, or `checked` (the dry run before the wallet opened failed).
+ * Names from both contracts: MiyaAuction (InsufficientBid, EndedAuction, ...) and ERC721AuctionInstance (BidTooLow,
+ * AuctionExpired, ...).
+ */
+export function bidErrorWords(
+  error: unknown,
+  { checked = false, chainName = 'Ethereum' }: { checked?: boolean; chainName?: string } = {},
+): string {
   const text = errorText(error)
-  if (/user rejected|user denied|rejected the request|denied transaction/i.test(text)) {
-    return 'You cancelled in your wallet. No bid was placed.'
-  }
+  if (/user rejected|user denied|rejected the request|denied transaction/i.test(text)) return BID_REJECTED
   if (/ChainMismatch|does not match the target chain/i.test(text)) {
-    return 'Your wallet is on another network. Switch to Ethereum and try again.'
+    return `Your wallet is on another network. Switch to ${chainName} and try again.`
   }
-  if (/InsufficientBid/.test(text)) return 'Someone bid more. Your bid must beat the new price.'
-  if (/EndedAuction/.test(text)) return 'This auction has just ended.'
-  if (/InactiveAuction/.test(text)) return "Bidding on this lot hasn't opened yet."
-  if (/InvalidAuction/.test(text)) return 'This lot is no longer up for auction.'
+  if (/InsufficientBid|BidTooLow/.test(text)) return 'Someone bid more. Your bid must beat the new price.'
+  if (/BidBelowMinimum/.test(text)) return 'Your bid is under the starting price.'
+  if (/EndedAuction|AuctionExpired/.test(text)) return 'This auction has just ended.'
+  if (/InactiveAuction|AuctionNotStarted/.test(text)) return "Bidding on this lot hasn't opened yet."
+  if (/InvalidAuction|AuctionAlreadySettled|AuctionDoesNotExist/.test(text)) {
+    return 'This lot is no longer up for auction.'
+  }
   if (/insufficient funds|exceeds the balance/i.test(text)) {
     return "This wallet doesn't have enough ETH for this bid and gas."
   }
-  return "The bid didn't go through. No ETH left your wallet. Try again."
+  return checked ? BID_NOTHING_SENT : BID_CHECK_WALLET
+}
+
+export type BidEnding = {
+  /**
+   * placed: confirmed. unconfirmed: sent, ending unknown, so nothing is offered again until "Start over". cancelled /
+   * reverted: sent and over, nothing moved but gas. refused: never sent, or not known to be.
+   */
+  kind: 'placed' | 'unconfirmed' | 'cancelled' | 'reverted' | 'refused'
+  words: string
+}
+
+/** What a finished bid means, from useTx's state (TxEndError flags from txOutcome.ts). Undefined while it runs. */
+export function bidEnding(
+  tx: { phase: string; stage?: string; error?: unknown },
+  chainName = 'Ethereum',
+): BidEnding | undefined {
+  if (tx.phase === 'done') return { kind: 'placed', words: 'Your bid went through.' }
+  if (tx.phase !== 'error') return undefined
+  const flags = (tx.error || {}) as { unconfirmed?: boolean; timedOut?: boolean; cancelled?: boolean; reverted?: boolean }
+  if (flags.unconfirmed) return { kind: 'unconfirmed', words: flags.timedOut ? BID_SLOW : BID_UNCONFIRMED }
+  if (flags.cancelled) return { kind: 'cancelled', words: BID_CANCELLED }
+  if (flags.reverted) return { kind: 'reverted', words: BID_REVERTED }
+  return { kind: 'refused', words: bidErrorWords(tx.error, { checked: tx.stage === 'check', chainName }) }
 }

@@ -3,6 +3,7 @@ import type { Address, PublicClient } from 'viem'
 import { getAddress, isAddress } from 'viem'
 
 import { wagmiConfig } from '@/config/wagmi'
+import { isRevert } from '@/hooks/readFailure'
 import { resolveUri } from '@/utils/resolveUri'
 
 import { erc1155FactoryAbi, erc1155InstanceAbi, miyaRegistryAbi, tokenMetadataAbi } from './abi'
@@ -10,6 +11,8 @@ import type { ParsedMusic } from './audio'
 import { decodeDataJson, musicTrack, parseMusicMetadata, safeUri } from './audio'
 import { musicConfig } from './config'
 import { knownCollections } from './known'
+import type { ScanResult } from './scan'
+import { combineScan } from './scan'
 import type { Track } from './types'
 
 /** A playable token found on-chain, with enough context for the Music listing to mint it. */
@@ -22,8 +25,8 @@ export type MusicItem = {
   tokenId: bigint
   music: ParsedMusic
   track: Track
-  /** ERC1155Instance editions only. */
-  edition?: { price: bigint; supply: bigint; minted: bigint; openTime: bigint }
+  /** ERC1155Instance editions only. `price` is undefined when getCurrentPrice couldn't be read. */
+  edition?: { price?: bigint; supply: bigint; minted: bigint; openTime: bigint }
 }
 
 const MAX_COLLECTIONS = 40
@@ -63,10 +66,13 @@ export async function fetchMetadata(uri: string): Promise<unknown> {
   }
 }
 
-/** Latest ERC1155Factory instances from MiyaRegistry (no indexer needed: the registry keeps an array). */
-async function registryInstances(chainId: number): Promise<Address[]> {
+/**
+ * Latest ERC1155Factory instances from MiyaRegistry (no indexer needed: the registry keeps an array). Throws when the
+ * registry can't be read; `capped` when it holds more than REGISTRY_SCAN instances.
+ */
+async function registryInstances(chainId: number): Promise<{ instances: Address[]; capped: boolean }> {
   const { factory } = musicConfig(chainId)
-  if (!factory) return []
+  if (!factory) return { instances: [], capped: false }
   const c = client(chainId)
   const registry = await c.readContract({ address: factory, abi: erc1155FactoryAbi, functionName: 'registry' })
   const count = await c.readContract({ address: registry, abi: miyaRegistryAbi, functionName: 'instanceCount' })
@@ -81,7 +87,10 @@ async function registryInstances(chainId: number): Promise<Address[]> {
       c.readContract({ address: registry, abi: miyaRegistryAbi, functionName: 'factoryOf', args: [inst] })
     )
   )
-  return instances.filter((_, i) => factories[i]?.toLowerCase() === factory.toLowerCase())
+  return {
+    instances: instances.filter((_, i) => factories[i]?.toLowerCase() === factory.toLowerCase()),
+    capped: from > 0n,
+  }
 }
 
 function item(
@@ -97,77 +106,104 @@ function item(
   return { key: track.id, chainId, collection, collectionName, kind, tokenId, music, track, edition }
 }
 
-async function loadMiya1155(c: PublicClient, chainId: number, address: Address): Promise<MusicItem[] | null> {
+/** One collection's music: what was found, whether some was left out (`capped`) or couldn't be read (`someFailed`). */
+export type CollectionScan = { items: MusicItem[]; capped?: boolean; someFailed?: boolean }
+
+async function loadMiya1155(c: PublicClient, chainId: number, address: Address): Promise<CollectionScan | null> {
   let ids: readonly bigint[]
   try {
     ids = await c.readContract({ address, abi: erc1155InstanceAbi, functionName: 'getAllEditionIds' })
-  } catch {
-    return null // not an ERC1155Instance
+  } catch (e) {
+    if (isRevert(e)) return null // not an ERC1155Instance
+    throw e // no answer: this collection failed, it is not "not music"
   }
 
   const name = await c.readContract({ address, abi: erc1155InstanceAbi, functionName: 'name' }).catch(() => undefined)
   const recent = ids.slice(-MAX_EDITIONS).reverse()
+  let failed = 0
   const items = await Promise.all(
     recent.map(async (id): Promise<MusicItem | null> => {
+      let ed
       try {
-        const ed = await c.readContract({ address, abi: erc1155InstanceAbi, functionName: 'getEdition', args: [id] })
-        const music = parseMusicMetadata(await fetchMetadata(ed.metadataURI))
-        if (!music) return null
-        const price = await c
-          .readContract({ address, abi: erc1155InstanceAbi, functionName: 'getCurrentPrice', args: [id] })
-          .catch(() => ed.basePrice)
-        return item(chainId, address, name, 'miya1155', id, music, {
-          price,
-          supply: ed.supply,
-          minted: ed.minted,
-          openTime: ed.openTime,
-        })
+        ed = await c.readContract({ address, abi: erc1155InstanceAbi, functionName: 'getEdition', args: [id] })
       } catch {
+        failed += 1
         return null
       }
+      const music = parseMusicMetadata(await fetchMetadata(ed.metadataURI))
+      if (!music) return null
+      // An unread price stays unread: basePrice is not what a dynamic edition costs now.
+      const price = await c
+        .readContract({ address, abi: erc1155InstanceAbi, functionName: 'getCurrentPrice', args: [id] })
+        .catch(() => undefined)
+      return item(chainId, address, name, 'miya1155', id, music, {
+        price,
+        supply: ed.supply,
+        minted: ed.minted,
+        openTime: ed.openTime,
+      })
     })
   )
-  return items.filter((x): x is MusicItem => !!x)
+  if (recent.length > 0 && failed === recent.length) throw new Error('No edition could be read')
+  return {
+    items: items.filter((x): x is MusicItem => !!x),
+    capped: ids.length > recent.length,
+    someFailed: failed > 0,
+  }
 }
 
 /** Any other ERC-721 / ERC-1155: probe token 1 then 0 for audio metadata, one getter at a time. */
-async function loadGeneric(c: PublicClient, chainId: number, address: Address): Promise<MusicItem[]> {
+async function loadGeneric(c: PublicClient, chainId: number, address: Address): Promise<CollectionScan> {
   const name = await c.readContract({ address, abi: tokenMetadataAbi, functionName: 'name' }).catch(() => undefined)
   const probes = [1n, 0n].flatMap((id) => (['tokenURI', 'uri'] as const).map((fn) => ({ id, fn })))
-  const tryProbe = async (i: number): Promise<MusicItem[]> => {
-    const probe = probes[i]
-    if (!probe) return []
-    const { id, fn } = probe
+  let unanswered: unknown
+  for (const { id, fn } of probes) {
     try {
+      // eslint-disable-next-line no-await-in-loop -- one getter at a time, stopping at the first hit
       const raw = await c.readContract({ address, abi: tokenMetadataAbi, functionName: fn, args: [id] })
       const uri = fn === 'uri' ? raw.replace(/\{id\}/g, id.toString(16).padStart(64, '0')) : raw
+      // eslint-disable-next-line no-await-in-loop
       const music = parseMusicMetadata(await fetchMetadata(uri))
-      if (music) return [item(chainId, address, name, fn === 'uri' ? 'erc1155' : 'erc721', id, music)]
-    } catch {
-      // not this getter / id
+      if (music) return { items: [item(chainId, address, name, fn === 'uri' ? 'erc1155' : 'erc721', id, music)] }
+    } catch (e) {
+      // A revert is "not this getter / id"; no answer at all means we can't say this isn't music.
+      if (!isRevert(e)) unanswered = e
     }
-
-    return tryProbe(i + 1)
   }
 
-  return tryProbe(0)
+  if (unanswered) throw unanswered
+  return { items: [] }
 }
 
-export async function loadCollection(chainId: number, address: Address): Promise<MusicItem[]> {
+/** Throws when the collection couldn't be read at all (as opposed to "has no music"). */
+export async function loadCollection(chainId: number, address: Address): Promise<CollectionScan> {
   const c = client(chainId)
   return (await loadMiya1155(c, chainId, address)) ?? loadGeneric(c, chainId, address)
 }
 
+export type MusicScan = ScanResult<MusicItem>
+
 /**
  * Every music token we can find on a chain: the factory's registry instances, collections launched or
- * pasted in this browser, plus `extra`. Non-music collections are silently skipped.
+ * pasted in this browser, plus `extra`. Non-music collections are silently skipped. Throws when the registry or every
+ * collection couldn't be read; otherwise `failed` and `capped` say what is missing from `items`.
  */
-export async function discoverMusic(chainId: number, extra: string[] = []): Promise<MusicItem[]> {
-  const fromRegistry = await registryInstances(chainId).catch(() => [] as Address[])
-  const all = [...extra, ...knownCollections(chainId), ...fromRegistry]
+export async function discoverMusic(chainId: number, extra: string[] = []): Promise<MusicScan> {
+  let registry: { instances: Address[]; capped: boolean } = { instances: [], capped: false }
+  let registryFailed = false
+  try {
+    registry = await registryInstances(chainId)
+  } catch {
+    registryFailed = true
+  }
+  if (registryFailed) return combineScan<MusicItem>([], { registryFailed, capped: false })
+  const all = [...extra, ...knownCollections(chainId), ...registry.instances]
     .filter((a) => isAddress(a))
     .map((a) => getAddress(a))
-  const unique = Array.from(new Set(all)).slice(0, MAX_COLLECTIONS)
-  const results = await Promise.all(unique.map((a) => loadCollection(chainId, a).catch(() => [] as MusicItem[])))
-  return results.flat()
+  const distinct = Array.from(new Set(all))
+  const unique = distinct.slice(0, MAX_COLLECTIONS)
+  const results = await Promise.all(
+    unique.map((a) => loadCollection(chainId, a).catch((): CollectionScan | undefined => undefined))
+  )
+  return combineScan(results, { registryFailed: false, capped: registry.capped || distinct.length > unique.length })
 }

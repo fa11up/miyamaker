@@ -124,11 +124,10 @@ const TraitValue = styled.div`
   color: #fff;
   font-size: 0.75rem;
 
-  overflow-x: auto;
-
-  ::-webkit-scrollbar {
-    display: none;
-  }
+  /* Long values cut off on purpose; the full text sits in the title. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 `
 
 export default function NFTDetail({
@@ -155,7 +154,7 @@ export default function NFTDetail({
               <TraitWrapper key={index}>
                 <Trait>
                   <TraitTitle>{trait_type}</TraitTitle>
-                  <TraitValue>{value}</TraitValue>
+                  <TraitValue title={String(value)}>{value}</TraitValue>
                 </Trait>
               </TraitWrapper>
             ))}

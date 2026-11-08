@@ -77,6 +77,9 @@ export const Skeleton = styled.div<{ h?: string; w?: string }>`
   background-size: 8px 8px;
   background-position: 0 0, 4px 4px;
   animation: ${shimmer} 1.2s linear infinite;
+  @media (prefers-reduced-motion: reduce) {
+    animation: none;
+  }
 `
 
 /** Win9x-style segmented progress meter. */

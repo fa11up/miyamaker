@@ -35,6 +35,8 @@ const isAddress: Rule = (v) => ADDRESS.test(v)
 const isSlug: Rule = (v) => SLUG.test(v)
 const isTokenId: Rule = (v) => TOKEN_ID.test(v)
 const isLimit = (max: number): Rule => (v) => /^[1-9][0-9]{0,2}$/.test(v) && Number(v) <= max
+/** OpenSea's page cursor, as it hands them out: opaque, URL-safe base64-ish, bounded. Passed on as a query value only. */
+const isCursor: Rule = (v) => /^[A-Za-z0-9+/=_-]{1,512}$/.test(v)
 const isQuery: Rule = (v) => v.trim().length >= 2 && v.length <= 64 && !/[\u0000-\u001f]/.test(v)
 
 type GetOp = {
@@ -92,10 +94,12 @@ export const GET_OPS: Record<string, GetOp> = {
     path: () => `/api/v2/search`,
     query: (p) => ({ query: p.query!.trim(), chains: p.chain!, asset_types: 'collection', limit: '8' }),
   },
+  // A page of the wallet's NFTs; `next` (the cursor the last page gave) asks for the page after it.
   account_nfts: {
     params: { chain: isChain, address: isAddress },
+    optional: { next: isCursor },
     path: (p) => `/api/v2/chain/${p.chain}/account/${p.address}/nfts`,
-    query: () => ({ limit: '100' }),
+    query: (p) => ({ limit: '100', ...(p.next ? { next: p.next } : {}) }),
   },
 }
 
@@ -103,7 +107,7 @@ export const POST_OPS = ['fulfill_listing', 'fulfill_offer'] as const
 export type PostOp = (typeof POST_OPS)[number]
 
 type Built = { path: string; query?: URLSearchParams; body?: string; keyless: boolean; error?: undefined }
-type Refused = { error: string; path?: undefined }
+type Refused = { error: string; path?: undefined; query?: undefined }
 
 /** The upstream request for a GET: `{ path, query }` or `{ error }`. Pure, so the rules are unit-tested. */
 export function openSeaGet(params: URLSearchParams): Built | Refused {

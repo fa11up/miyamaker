@@ -498,7 +498,7 @@ export function SaleStep({ form, set, errors }: StepProps) {
                 </option>
               ))}
             </select>
-            <small>A bid in the last 5 minutes adds 5 more minutes.</small>
+            <small>A bid in the last 5 minutes moves the end to 5 minutes after that bid.</small>
             <Err>{errors.durationHours}</Err>
           </Field>
         </Row2>
@@ -710,29 +710,89 @@ const Slider = styled.input`
   height: 28px;
 `
 
+/** The vault share input, slider and split: only once the registry's rules are known. */
+function SharePicker({
+  form,
+  set,
+  errors,
+  minAlignmentBps,
+  protocolFeeBps,
+  vaultName,
+}: StepProps & { minAlignmentBps: number; protocolFeeBps: number; vaultName?: string }) {
+  const align = parseAlignmentPct(form.alignmentPct, minAlignmentBps, protocolFeeBps)
+  const maxPct = Math.floor((10_000 - protocolFeeBps) / 100)
+  return (
+    <Well style={{ padding: space[3], display: 'flex', flexDirection: 'column', gap: space[3] }}>
+      <Field as="div">
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: space[2] }}>
+          <span>Share for the vault</span>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <input
+              aria-label="Share for the vault, in percent"
+              value={form.alignmentPct}
+              inputMode="decimal"
+              aria-invalid={!!errors.alignmentPct}
+              style={{ width: 72, textAlign: 'right' }}
+              onChange={(e) => set('alignmentPct', e.target.value)}
+            />
+            %
+          </span>
+        </div>
+        <Slider
+          type="range"
+          min={minAlignmentBps / 100}
+          max={Math.min(50, maxPct)}
+          step={0.5}
+          value={align.ok ? align.bps / 100 : minAlignmentBps / 100}
+          aria-label="Share for the vault"
+          onChange={(e) => set('alignmentPct', e.target.value)}
+        />
+        <small>
+          At least {pctLabel(minAlignmentBps)}. miya always keeps {pctLabel(protocolFeeBps)}. You keep the rest.
+        </small>
+        <Err>{errors.alignmentPct}</Err>
+      </Field>
+      <Eyebrow>Where the money goes</Eyebrow>
+      <SplitMeter
+        protocolBps={protocolFeeBps}
+        alignmentBps={align.ok ? align.bps : minAlignmentBps}
+        vaultName={vaultName}
+      />
+    </Well>
+  )
+}
+
 export function AlignStep({
   form,
   set,
   errors,
   minAlignmentBps,
   protocolFeeBps,
+  rulesFailed,
   defaultVault,
   customVault,
 }: StepProps & {
-  minAlignmentBps: number
-  protocolFeeBps: number
+  /** Undefined until the registry has been read. */
+  minAlignmentBps?: number
+  protocolFeeBps?: number
+  rulesFailed?: boolean
   defaultVault: { label: string; symbol?: string; detail: ReactNode }
   customVault: { status: ReactNode }
 }) {
-  const align = parseAlignmentPct(form.alignmentPct, minAlignmentBps, protocolFeeBps)
-  const maxPct = Math.floor((10_000 - protocolFeeBps) / 100)
   const vaultName = form.vaultChoice === 'default' ? defaultVault.symbol : undefined
+  const rulesNote = rulesFailed
+    ? "The minimum share and miya's fee couldn't be read from the network just now. Try again in a minute."
+    : "Loading the minimum share and miya's fee…"
   return (
     <Stack>
       <Lead>
-        Every sale is split three ways: you, a community vault and miya. At least {minAlignmentBps / 100}% goes to the
-        vault. It buys a token and adds it to a shared pool. If that pool trades, you can claim a part of its fees in
-        Manager. miya keeps {protocolFeeBps / 100}%.
+        Every sale is split three ways: you, a community vault and miya.{' '}
+        {minAlignmentBps !== undefined && protocolFeeBps !== undefined
+          ? `At least ${minAlignmentBps / 100}% goes to the vault. `
+          : ''}
+        The vault buys a token and adds it to a shared pool. If that pool trades, you can claim a part of its fees in
+        Manager.
+        {protocolFeeBps !== undefined && minAlignmentBps !== undefined ? ` miya keeps ${protocolFeeBps / 100}%.` : ''}
       </Lead>
       <div role="radiogroup" aria-label="Community vault" style={{ display: 'grid', gap: space[2] }}>
         <VaultCard
@@ -769,43 +829,20 @@ export function AlignStep({
         </Field>
       )}
 
-      <Well style={{ padding: space[3], display: 'flex', flexDirection: 'column', gap: space[3] }}>
-        <Field as="div">
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: space[2] }}>
-            <span>Share for the vault</span>
-            <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-              <input
-                aria-label="Share for the vault, in percent"
-                value={form.alignmentPct}
-                inputMode="decimal"
-                aria-invalid={!!errors.alignmentPct}
-                style={{ width: 72, textAlign: 'right' }}
-                onChange={(e) => set('alignmentPct', e.target.value)}
-              />
-              %
-            </span>
-          </div>
-          <Slider
-            type="range"
-            min={minAlignmentBps / 100}
-            max={Math.min(50, maxPct)}
-            step={0.5}
-            value={align.ok ? align.bps / 100 : minAlignmentBps / 100}
-            aria-label="Share for the vault"
-            onChange={(e) => set('alignmentPct', e.target.value)}
-          />
-          <small>
-            At least {pctLabel(minAlignmentBps)}. miya always keeps {pctLabel(protocolFeeBps)}. You keep the rest.
-          </small>
-          <Err>{errors.alignmentPct}</Err>
-        </Field>
-        <Eyebrow>Where the money goes</Eyebrow>
-        <SplitMeter
-          protocolBps={protocolFeeBps}
-          alignmentBps={align.ok ? align.bps : minAlignmentBps}
+      {minAlignmentBps === undefined || protocolFeeBps === undefined ? (
+        <Well style={{ padding: space[3] }} role="status">
+          <small>{rulesNote}</small>
+        </Well>
+      ) : (
+        <SharePicker
+          form={form}
+          set={set}
+          errors={errors}
+          minAlignmentBps={minAlignmentBps}
+          protocolFeeBps={protocolFeeBps}
           vaultName={vaultName}
         />
-      </Well>
+      )}
     </Stack>
   )
 }

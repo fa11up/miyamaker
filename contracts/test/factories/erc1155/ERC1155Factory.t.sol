@@ -3,7 +3,7 @@ pragma solidity ^0.8.24;
 
 import {Test, console, console2} from "forge-std/Test.sol";
 import {ERC1155Factory} from "../../../src/factories/erc1155/ERC1155Factory.sol";
-import {ERC1155Instance, ExceedsSupply, EditionNotOpen, GatingCheckFailed, NoDynamicPricingModule} from "../../../src/factories/erc1155/ERC1155Instance.sol";
+import {ERC1155Instance, ExceedsSupply, EditionNotOpen, GatingCheckFailed, NoDynamicPricingModule, NoPendingVaultCut} from "../../../src/factories/erc1155/ERC1155Instance.sol";
 import {DynamicPricingModule} from "../../../src/factories/erc1155/DynamicPricingModule.sol";
 import {UniAlignmentVault} from "../../../src/vaults/uni/UniAlignmentVault.sol";
 import {MockEXECToken} from "../../mocks/MockEXECToken.sol";
@@ -1109,5 +1109,59 @@ contract ERC1155FactoryTest is Test {
         factory.setDynamicPricingModule(address(0));
         assertEq(factory.dynamicPricingModule(), address(0));
         vm.stopPrank();
+    }
+
+    // ── parked vault cuts ─────────────────────────────────────────────────────
+
+    /// @dev Sells 0.005 ETH and withdraws it: a 19% cut of 0.00095 ETH, under the vault's 0.001 minimum, so it parks.
+    ///      With nothing left to sell, no later withdraw would carry it.
+    function _instanceWithDustParked() internal returns (ERC1155Instance inst) {
+        vm.startPrank(creator);
+        inst = ERC1155Instance(payable(factory.createInstance(_nextSalt(), _params("Dust", creator, address(vault)))));
+        inst.addEdition("P", 0.005 ether, 1, "ipfs://p", ERC1155Instance.PricingModel.LIMITED_FIXED, 0, 0);
+        vm.stopPrank();
+        vm.deal(minter1, 1 ether);
+        vm.prank(minter1);
+        inst.mint{value: 0.005 ether}(1, 1, bytes32(0), "", 0);
+        inst.withdraw(0.005 ether);
+        assertEq(inst.pendingVaultCut(), 0.00095 ether);
+        assertEq(address(inst).balance, 0.00095 ether);
+    }
+
+    function test_RetryVaultContribution_DustCanBeToppedUpToReachTheVault() public {
+        ERC1155Instance inst = _instanceWithDustParked();
+
+        vm.expectRevert(UniAlignmentVault.ContributionBelowMinimum.selector);
+        inst.retryVaultContribution();
+
+        // not enough: reverts, so the helper keeps its ETH and the cut stays parked
+        vm.deal(minter2, 1 ether);
+        vm.prank(minter2);
+        vm.expectRevert(UniAlignmentVault.ContributionBelowMinimum.selector);
+        inst.retryVaultContribution{value: 0.00004 ether}();
+        assertEq(minter2.balance, 1 ether);
+        assertEq(inst.pendingVaultCut(), 0.00095 ether);
+
+        uint256 vaultBefore = address(vault).balance;
+        vm.expectEmit(address(inst));
+        emit ERC1155Instance.VaultContributionRetried(address(vault), 0.001 ether);
+        vm.prank(minter2);
+        inst.retryVaultContribution{value: 0.00005 ether}();
+        assertEq(inst.pendingVaultCut(), 0);
+        assertEq(address(inst).balance, 0);
+        assertEq(address(vault).balance - vaultBefore, 0.001 ether);
+        // credited to the collection, not to whoever topped it up
+        assertEq(vault.benefactorTotalETH(address(inst)), 0.001 ether);
+        assertEq(vault.benefactorTotalETH(minter2), 0);
+    }
+
+    function test_RetryVaultContribution_ToppingUpNothingParkedReverts() public {
+        vm.prank(creator);
+        ERC1155Instance inst =
+            ERC1155Instance(payable(factory.createInstance(_nextSalt(), _params("None", creator, address(vault)))));
+        vm.deal(minter1, 1 ether);
+        vm.prank(minter1);
+        vm.expectRevert(NoPendingVaultCut.selector);
+        inst.retryVaultContribution{value: 0.01 ether}();
     }
 }

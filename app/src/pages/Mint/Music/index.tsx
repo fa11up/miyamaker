@@ -18,6 +18,7 @@ import { LISTED_MUSIC_CHAINS, musicConfig } from '@/music/config'
 import type { MusicItem } from '@/music/discovery'
 import { discoverMusic } from '@/music/discovery'
 import { addKnownCollection, onKnownCollectionsChange } from '@/music/known'
+import { mintLabel, scanNote } from '@/music/scan'
 import { useAddToRadio } from '@/music/useAddToRadio'
 import { PAINTED } from '@/pages/Mint/handheld/Carousel'
 import Device, { Lcd } from '@/pages/Mint/handheld/Device'
@@ -213,6 +214,9 @@ function MintEdition({ item }: { item: MusicItem }) {
   if (!ed) return null
   const soldOut = ed.supply > 0n && ed.minted >= ed.supply
   const notOpen = opensAt > now
+  // getCurrentPrice couldn't be read: no mint is offered at a guessed price.
+  const { price } = ed
+  const noPrice = price === undefined
   const minted = outcome === 'success'
   // Sent, but its receipt couldn't be read: it may still land, so the same mint isn't offered again.
   const unconfirmed = outcome === 'unknown'
@@ -221,18 +225,19 @@ function MintEdition({ item }: { item: MusicItem }) {
     <>
       <ConnectedButton
         withChain={[item.chainId]}
-        disabled={busy || minted || (!unconfirmed && (soldOut || notOpen))}
+        disabled={busy || minted || (!unconfirmed && (soldOut || notOpen || noPrice))}
         style={{ width: '100%', minWidth: 0 }}
         onClick={() =>
           unconfirmed ? write.reset() :
+          price !== undefined &&
           write.writeContract({
             address: item.collection,
             abi: erc1155InstanceAbi,
             chainId: item.chainId as never,
             functionName: 'mint',
             // amount 1, open gating, no message, maxCost = the quoted price (reverts if the price moved up)
-            args: [item.tokenId, 1n, zeroHash, '', ed.price],
-            value: ed.price,
+            args: [item.tokenId, 1n, zeroHash, '', price],
+            value: price,
           })
         }
       >
@@ -246,7 +251,7 @@ function MintEdition({ item }: { item: MusicItem }) {
           ? 'Sold out'
           : notOpen
           ? 'Not open yet'
-          : `Mint · ${formatEther(ed.price)} ETH`}
+          : mintLabel(price, formatEther)}
       </ConnectedButton>
       {outcome === 'cancelled' && (
         <StatusBox tone="info" role="status" style={{ fontSize: text.xs }}>
@@ -284,7 +289,8 @@ export default function MusicDrops() {
     queryFn: () => discoverMusic(chainId),
     staleTime: 60_000,
   })
-  const items = query.data || []
+  const items = query.data?.items || []
+  const note = query.data ? scanNote(query.data) : undefined
 
   const add = () => {
     const a = address.trim()
@@ -301,7 +307,9 @@ export default function MusicDrops() {
   const first = items[0]
   const action = first
     ? { label: `Play ${first.music.title}`, onClick: () => radio.playNow(first.track) }
-    : { label: 'No songs yet', disabled: true, onClick: () => {} }
+    : query.isError
+    ? { label: 'Try again', disabled: query.isFetching, onClick: () => query.refetch() }
+    : { label: query.isLoading ? 'Loading…' : 'No songs yet', disabled: true, onClick: () => {} }
 
   return (
     <Device
@@ -324,6 +332,12 @@ export default function MusicDrops() {
                 </Card>
               ))}
             </Cards>
+          ) : query.isError && !query.data ? (
+            <StatusBox tone="error" role="alert">
+              <span>Couldn&apos;t load music drops. Try again.</span>
+            </StatusBox>
+          ) : items.length === 0 && note ? (
+            <p>{note}</p>
           ) : items.length === 0 ? (
             <p>
               {cfg.factory
@@ -374,6 +388,12 @@ export default function MusicDrops() {
                 </Card>
               ))}
             </Cards>
+          )}
+
+          {items.length > 0 && note && (
+            <StatusBox tone="info" role="status">
+              <span>{note}</span>
+            </StatusBox>
           )}
 
           <Toolbar aria-label="Find music">

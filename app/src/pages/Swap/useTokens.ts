@@ -4,6 +4,8 @@ import type { Address } from 'viem'
 import { erc20Abi, isAddress } from 'viem'
 import { useBalance, useReadContract, useReadContracts } from 'wagmi'
 
+import { readOutcome } from '@/hooks/readFailure'
+
 import type { SwapChainId, SwapToken } from './constants'
 import { isNative, PINNED_TOKENS, sameAddress, TOKEN_LIST_URL } from './constants'
 import { mergeTokenLists } from './tokenList'
@@ -40,7 +42,7 @@ export function useCustomToken(chainId: SwapChainId, query: string, known: SwapT
   const enabled = !!address && !listed && !isNative(address)
 
   const reads = useReadContracts({
-    allowFailure: false,
+    allowFailure: true,
     contracts: [
       { address, abi: erc20Abi, functionName: 'name', chainId },
       { address, abi: erc20Abi, functionName: 'symbol', chainId },
@@ -49,19 +51,26 @@ export function useCustomToken(chainId: SwapChainId, query: string, known: SwapT
     query: { enabled, retry: false },
   })
 
+  // A revert or no code is a real "not a token"; an RPC failure is "couldn't check", not a verdict.
+  const [name, symbol, decimals] = (reads.data || []).map((r) => readOutcome<unknown>(r))
+  const answers = [name, symbol, decimals]
+  const refused = !!reads.data && answers.some((a) => a === null)
+  const unknown = reads.isError || (!!reads.data && !refused && answers.some((a) => a === undefined))
   const token: SwapToken | undefined =
-    enabled && reads.data
-      ? {
-          chainId,
-          address: address!,
-          name: reads.data[0],
-          symbol: reads.data[1],
-          decimals: reads.data[2],
-          unverified: true,
-        }
+    enabled && typeof name === 'string' && typeof symbol === 'string' && typeof decimals === 'number'
+      ? { chainId, address: address!, name, symbol, decimals, unverified: true }
       : undefined
 
-  return { address, listed, token, isLoading: enabled && reads.isLoading, notAToken: enabled && reads.isError }
+  return {
+    address,
+    listed,
+    token,
+    isLoading: enabled && reads.isLoading,
+    notAToken: enabled && !token && refused,
+    /** The reads never got an answer: we can't say whether it is a token. */
+    checkFailed: enabled && !token && !refused && unknown,
+    refetch: reads.refetch,
+  }
 }
 
 /** Balance of a token (native or ERC20) for the connected wallet on the swap chain. */

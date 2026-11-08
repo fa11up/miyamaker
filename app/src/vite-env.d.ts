@@ -39,8 +39,6 @@ declare module '*&resize=true' {
   export default preset
 }
 
-declare module 'filereader-stream'
-
 interface ImportMetaEnv {
   readonly VITE_WC_PROJECT_ID?: string
   readonly VITE_GRAPHQL_URL?: string

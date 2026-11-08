@@ -70,10 +70,14 @@ export function parseManifest(manifest: unknown): FolderFile[] {
   })
 }
 
-/** Newest first. `node` is the Irys node, whose /graphql serves this from the browser. */
-export async function fetchUploads(node: string, wallet: string): Promise<Upload[]> {
+/**
+ * Newest first. `node` is the Irys node, whose /graphql serves this from the browser. Only the newest MAX_PAGES pages
+ * are read: `partial` says there were more, so the list must not read as everything the wallet stored.
+ */
+export async function fetchUploads(node: string, wallet: string): Promise<{ uploads: Upload[]; partial: boolean }> {
   const found: Upload[] = []
   let after: string | undefined
+  let partial = false
   for (let page = 0; page < MAX_PAGES; page += 1) {
     // eslint-disable-next-line no-await-in-loop
     const res = await fetch(`${node.replace(/\/$/, '')}/graphql`, {
@@ -91,7 +95,8 @@ export async function fetchUploads(node: string, wallet: string): Promise<Upload
       if (upload) found.push(upload)
     }
     if (!list.pageInfo?.hasNextPage) break
+    if (page === MAX_PAGES - 1) partial = true
     after = list.pageInfo.endCursor
   }
-  return found
+  return { uploads: found, partial }
 }

@@ -147,13 +147,19 @@ export function NowMinting({ id }: { id?: string }) {
                 <>
                   <dt>Minted</dt>
                   <dd>
-                    {(featured.minted ?? 0).toLocaleString('en-US')} / {featured.supply.toLocaleString('en-US')}
+                    {/* No minted count read is unknown, not 0. */}
+                    {isLoading && featured.minted === undefined
+                      ? '…'
+                      : featured.minted === undefined
+                        ? '–'
+                        : featured.minted.toLocaleString('en-US')}{' '}
+                    / {featured.supply.toLocaleString('en-US')}
                   </dd>
                 </>
               )}
             </dl>
-            {featured.supply !== undefined && (
-              <ProgressMeter value={featured.minted ?? 0} max={featured.supply} label={`${featured.name} minted`} />
+            {featured.supply !== undefined && featured.minted !== undefined && (
+              <ProgressMeter value={featured.minted} max={featured.supply} label={`${featured.name} minted`} />
             )}
           </div>
         </Feature>

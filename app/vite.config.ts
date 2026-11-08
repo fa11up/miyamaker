@@ -42,6 +42,27 @@ async function devBody(req: IncomingMessage, res: ServerResponse): Promise<strin
 }
 
 /**
+ * The request's headers for the dev stand-ins, with the client address taken from the socket: the limiters key on
+ * cf-connecting-ip, then x-real-ip / x-forwarded-for, and any page or script could set those itself.
+ */
+function devHeaders(req: IncomingMessage): Headers {
+  const headers = new Headers()
+  for (const [k, v] of Object.entries(req.headers)) if (typeof v === 'string') headers.set(k, v)
+  for (const k of ['cf-connecting-ip', 'x-real-ip', 'x-forwarded-for']) headers.delete(k)
+  headers.set('cf-connecting-ip', req.socket.remoteAddress || 'unknown')
+  return headers
+}
+
+/**
+ * The host the dev stand-ins build their own origin from (for the same-origin check): only a loopback or IP-literal
+ * host, so a page on another name pointed at this machine (DNS rebinding) is not taken for this one.
+ */
+function devHost(req: IncomingMessage): string {
+  const host = req.headers.host || ''
+  return /^(localhost|127\.0\.0\.1|\[::1\]|\d{1,3}(\.\d{1,3}){3})(:\d{1,5})?$/i.test(host) ? host : 'localhost'
+}
+
+/**
  * Dev-only stand-in for the Worker's 0x routes (api/worker.ts): same validation and key injection
  * (api/_lib/zeroex.ts). ZEROX_API_KEY is read from the shell or app/.env.local and
  * are never exposed to the client bundle (no VITE_ prefix).
@@ -51,9 +72,8 @@ function zeroExDevProxy(env: Record<string, string>): Plugin {
     name: 'miya-0x-dev-proxy',
     configureServer(server) {
       server.middlewares.use(PROXY_PREFIX, async (req, res) => {
-        const headers = new Headers()
-        for (const [k, v] of Object.entries(req.headers)) if (typeof v === 'string') headers.set(k, v)
-        const host = req.headers.host || 'localhost'
+        const headers = devHeaders(req)
+        const host = devHost(req)
         const response = await handleZeroExRequest(
           { method: req.method || 'GET', url: `http://${host}${PROXY_PREFIX}${req.url || ''}`, headers },
           { ZEROX_API_KEY: process.env.ZEROX_API_KEY || env.ZEROX_API_KEY }
@@ -78,12 +98,11 @@ function openSeaDevProxy(env: Record<string, string>): Plugin {
     name: 'miya-opensea-dev-proxy',
     configureServer(server) {
       server.middlewares.use(OPENSEA_PROXY_PATH, async (req, res) => {
-        const headers = new Headers()
-        for (const [k, v] of Object.entries(req.headers)) if (typeof v === 'string') headers.set(k, v)
+        const headers = devHeaders(req)
         const body = await devBody(req, res)
         if (body === undefined) return
 
-        const host = req.headers.host || 'localhost'
+        const host = devHost(req)
         const rest = req.url && req.url !== '/' ? req.url.replace(/^\/(?=\?)/, '') : ''
         const response = await handleOpenSeaRequest(
           { method: req.method || 'GET', url: `http://${host}${OPENSEA_PROXY_PATH}${rest}`, headers, body },
@@ -106,10 +125,9 @@ function marketDevProxy(env: Record<string, string>): Plugin {
     name: 'miya-market-dev-proxy',
     configureServer(server) {
       server.middlewares.use(MARKET_PREFIX, async (req, res) => {
-        const headers = new Headers()
-        for (const [k, v] of Object.entries(req.headers)) if (typeof v === 'string') headers.set(k, v)
+        const headers = devHeaders(req)
         const response = await handleMarketRequest(
-          { method: req.method || 'GET', url: `http://${req.headers.host || 'localhost'}${MARKET_PREFIX}${req.url || ''}`, headers },
+          { method: req.method || 'GET', url: `http://${devHost(req)}${MARKET_PREFIX}${req.url || ''}`, headers },
           {
             openSea: openSeaReader(process.env.OPENSEA_API_KEY || env.OPENSEA_API_KEY, quoteBigInts),
             cache,
@@ -134,11 +152,10 @@ function stationDevProxy(): Plugin {
     name: 'miya-station-dev-proxy',
     configureServer(server) {
       server.middlewares.use(STATION_PATH, async (req, res) => {
-        const headers = new Headers()
-        for (const [k, v] of Object.entries(req.headers)) if (typeof v === 'string') headers.set(k, v)
+        const headers = devHeaders(req)
         const body = await devBody(req, res)
         if (body === undefined) return
-        const host = req.headers.host || 'localhost'
+        const host = devHost(req)
         const rest = req.url && req.url !== '/' ? req.url : ''
         const response = await handleStationRequest(
           { method: req.method || 'GET', url: `http://${host}${STATION_PATH}${rest}`, headers, body },
@@ -192,11 +209,10 @@ function publicAccessDevProxy(): Plugin {
     name: 'miya-public-access-dev-proxy',
     configureServer(server) {
       server.middlewares.use(PUBLIC_ACCESS_PATH, async (req, res) => {
-        const headers = new Headers()
-        for (const [k, v] of Object.entries(req.headers)) if (typeof v === 'string') headers.set(k, v)
+        const headers = devHeaders(req)
         const body = await devBody(req, res)
         if (body === undefined) return
-        const host = req.headers.host || 'localhost'
+        const host = devHost(req)
         const rest = req.url && req.url !== '/' ? req.url : ''
         const response = await handlePublicAccessRequest(
           { method: req.method || 'GET', url: `http://${host}${PUBLIC_ACCESS_PATH}${rest}`, headers, body },

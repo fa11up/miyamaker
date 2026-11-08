@@ -166,7 +166,7 @@ test('the pet walks over, climbs up and sits on an icon; any sprite size works',
     [61, 104], // fumo
     [84, 66], // a wide pixel fren
     [51, 66],
-  ]) {
+  ] as const) {
     const env = world({ spriteW: w, spriteH: h })
     let s: PetState = { ...initialPet(env, seq(0.5)), x: 800 }
     s = go(s, env, 'high')

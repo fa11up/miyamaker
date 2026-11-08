@@ -226,7 +226,7 @@ function PoolRow({ chainId, pool, onOpen }: { chainId: number; pool: Pool; onOpe
           {poolTitle(pool)}
         </span>
         <span className="count">
-          {pool.held.toLocaleString('en-US')} NFT{pool.held === 1n ? '' : 's'}
+          {pool.held === undefined ? '– NFTs' : `${pool.held.toLocaleString('en-US')} NFT${pool.held === 1n ? '' : 's'}`}
         </span>
         <span className="meta">
           <Chip tone={pool.mode === MODE.TARGETED ? 'ok' : 'warn'}>{MODE_LABEL[pool.mode]}</Chip>
@@ -593,6 +593,13 @@ export default function NftTrade({
         </Section>
       )}
 
+      {!query && (owned.error || walletNfts.isError) && (
+        <Hint role="status">Couldn&apos;t load your NFTs on {chain.name}. Try again later.</Hint>
+      )}
+      {!query && yours.length > 0 && (owned.groups ? owned.partial : !!walletNfts.data?.partial) && (
+        <Hint>This wallet has more NFTs than we could list. Paste a collection address to find one.</Hint>
+      )}
+
       {!factory ? (
         <Soon role="status" data-pools-not-deployed>
           <Chip tone="warn">Opens soon</Chip>
@@ -643,6 +650,12 @@ export default function NftTrade({
               <Prose>Paste an NFT collection address above to find its pool or start one.</Prose>
             </Empty>
           ) : null}
+
+          {lookup.collection && lookup.checkFailed && (
+            <StatusBox tone="error" role="alert">
+              <span>Couldn&apos;t check which pools this collection has. Try again later.</span>
+            </StatusBox>
+          )}
 
           {lookup.collection && lookup.freeModes.length > 0 && (
             <Card aria-label="Start a pool">

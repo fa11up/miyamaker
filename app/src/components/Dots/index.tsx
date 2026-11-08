@@ -9,6 +9,12 @@ export const Dots = styled.span`
     width: 1em;
     text-align: left;
   }
+  @media (prefers-reduced-motion: reduce) {
+    &::after {
+      animation: none;
+      content: '...';
+    }
+  }
   @keyframes ellipsis {
     0% {
       content: '.';

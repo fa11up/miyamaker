@@ -38,6 +38,11 @@ test('pickCheapest never passes the cap', () => {
   assert.equal(sumPrices([l('1', 5n), l('2', 7n)]), 12n)
 })
 
+test('sumPrices counts the whole order when one sells several (ERC-1155), not one item of it', () => {
+  // Five at 1 ETH each is a 5 ETH order: the sweep total must say what filling it costs.
+  assert.equal(sumPrices([l('1', 1n, { total: { amount: 5n, symbol: 'ETH' } }), l('2', 2n)]), 7n)
+})
+
 test('sweepTotals adds the checked plans', () => {
   const t = sweepTotals([
     { total: 100n, lines: [{ label: 'To the seller', amount: 99n }, { label: 'OpenSea fee', amount: 1n }] },
@@ -92,17 +97,17 @@ function pretend(script: Record<string, Partial<{ sim: unknown; send: unknown; s
   let stopped = false
   const deps = {
     simulate: async (id: string) => {
-      if (script[id]?.sim) throw script[id].sim
+      if (script[id]?.sim) throw script[id]!.sim
       return id
     },
     send: async (id: string) => {
       prompts.push(id)
-      if (script[id]?.send) throw script[id].send
+      if (script[id]?.send) throw script[id]!.send
       return `0x${id}`
     },
     wait: async (hash: string) => {
       const id = hash.slice(2)
-      if (script[id]?.lookup) throw script[id].lookup
+      if (script[id]?.lookup) throw script[id]!.lookup
       return { status: script[id]?.status ?? 'success' }
     },
     isStopped: () => stopped,

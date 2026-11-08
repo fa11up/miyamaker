@@ -27,6 +27,14 @@ const Items = styled.div`
     background-color: rgba(122, 22, 32, 0.07);
   }
 
+  /* The only sale, sharing the window with the artist auctions: one row filling its panel. */
+  &.banner {
+    flex: 1 1 auto;
+    height: auto;
+    min-height: 0;
+    align-items: center;
+  }
+
   &.solo {
     flex: 1 1 auto;
     height: auto;
@@ -115,6 +123,11 @@ const ImageItem = styled.div`
     margin-left: 1rem;
   }
 
+  .banner & {
+    align-self: stretch;
+    min-height: 0;
+  }
+
   .solo & {
     width: 100%;
     flex: none;
@@ -181,12 +194,15 @@ export default function ItemsList({
   setPageSection,
   auctionContract,
   solo,
+  banner,
 }: {
   nft: string
   setPageSection: (section: string) => void
   auctionContract: Address
   /** The only sale there is: laid out as a catalogue cover, not one row of an empty table. */
   solo?: boolean
+  /** The only sale, sharing the window: one row that fills its panel. */
+  banner?: boolean
 }) {
   const dispatch = useAppDispatch()
 
@@ -213,7 +229,7 @@ export default function ItemsList({
   }
 
   return (
-    <Items onClick={handleClick} className={solo ? 'solo' : undefined}>
+    <Items onClick={handleClick} className={solo ? 'solo' : banner ? 'banner' : undefined}>
       <ImageItem>
         <ImageWrapper>
           <NftImage

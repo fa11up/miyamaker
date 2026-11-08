@@ -106,13 +106,24 @@ async function resubmit(
 }
 
 /**
- * Make sure Irys holds enough of this wallet's money for `size` bytes. On Ethereum a payment takes minutes to be
+ * On Ethereum a payment takes minutes to be
  * credited, so after paying this waits for it rather than uploading into a "not enough funds". A payment still on its way
  * is remembered, across retries and reloads, because the balance doesn't show it: only what it doesn't cover is paid,
  * and one Irys never heard of is told to it again rather than paid twice.
  */
-export async function ensureFunded(irys: FundingIrys, size: number, deps: FundingDeps): Promise<void> {
-  if (size <= FREE_BYTES) return
+/** The files that cost anything: each is stored on its own, so only those over the free size are paid for. */
+export function paidSizes(sizes: number | readonly number[]): number[] {
+  return (typeof sizes === 'number' ? [sizes] : [...sizes]).filter((size) => size > FREE_BYTES)
+}
+
+/**
+ * Make sure Irys holds enough of this wallet's money for `size` bytes, or for every file in a list. A list is priced
+ * file by file and paid as one total, so several files cost one Ethereum payment and one wait; each upload after it
+ * then finds its price already covered.
+ */
+export async function ensureFunded(irys: FundingIrys, size: number | readonly number[], deps: FundingDeps): Promise<void> {
+  const paid = paidSizes(size)
+  if (!paid.length) return
   const now = deps.now ?? Date.now
   const sleep =
     deps.sleep ??
@@ -120,7 +131,8 @@ export async function ensureFunded(irys: FundingIrys, size: number, deps: Fundin
       new Promise<void>((resolve) => {
         setTimeout(resolve, ms)
       }))
-  const price = atomic(await irys.getPrice(size))
+  const prices = await Promise.all(paid.map((bytes) => irys.getPrice(bytes)))
+  const price = prices.reduce((sum, p) => sum + atomic(p), 0n)
   let balance = atomic(await irys.getLoadedBalance())
   let payment = deps.store.read()
 

@@ -152,7 +152,7 @@ test('a column sorts down, then up, then back to the list order', () => {
 
 test('sorting keeps ties in order and leaves rows with no figure at the bottom', () => {
   const rows = [{ id: 'a', n: 2 }, { id: 'b' }, { id: 'c', n: 9 }, { id: 'd', n: 2 }, { id: 'e', n: 0 }]
-  const ids = (dir) =>
+  const ids = (dir: 'asc' | 'desc') =>
     sortRows(rows, { key: 'n', dir }, (r) => r.n)
       .map((r) => r.id)
       .join('')

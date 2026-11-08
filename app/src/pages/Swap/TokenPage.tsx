@@ -514,7 +514,13 @@ export default function TokenPage({
         </LinkButton>
 
         {!token ? (
-          <Quiet>{custom.isLoading ? 'Finding that token…' : 'That is not a token on this network.'}</Quiet>
+          <Quiet>
+            {custom.isLoading
+              ? 'Finding that token…'
+              : custom.checkFailed
+                ? "Couldn't check that token right now. Try again in a moment."
+                : 'That is not a token on this network.'}
+          </Quiet>
         ) : (
           <>
             <Head>

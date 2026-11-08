@@ -3,7 +3,7 @@ import styled from 'styled-components/macro'
 import { useElementSize } from 'usehooks-ts'
 import type { Address } from 'viem'
 import { parseEventLogs } from 'viem'
-import { useBlockNumber } from 'wagmi'
+import { useBlockNumber, useTransactionReceipt } from 'wagmi'
 
 import LoadingHourglass from '@/assets/loading_hourglass.gif'
 import NftImage from '@/components/NftImage'
@@ -26,6 +26,7 @@ import {
   modesOn,
   blocksToReveal,
   commitPhase,
+  freeUnits,
   depositPlan,
   KIND,
   KIND_LABEL,
@@ -204,7 +205,7 @@ export default function PoolView({
   const [pages, setPages] = useState(1)
   const held = useHeldIds(chainId, pool, info.heldIdsCount, pages)
   const random = pool?.mode === MODE.RANDOM
-  const myCommits = useMyCommits(chainId, random ? poolAddress : undefined, info.nextCommitId, me)
+  const myCommits = useMyCommits(chainId, random ? poolAddress : undefined, info.nextCommitId, me, info.nextRevealId)
   const block = useBlockNumber({ chainId, watch: random && myCommits.commits.length > 0 })
 
   // Buy (pick): ids chosen from the pool. Buy (random): how many.
@@ -217,6 +218,10 @@ export default function PoolView({
   const [typedError, setTypedError] = useState<string>()
   const [manualIds, setManualIds] = useState<string[]>([])
   const [revealed, setRevealed] = useState<{ ids: bigint[]; held?: bigint[]; rearmed?: boolean }>()
+  // A random-buy payment whose ending couldn't be read, kept after "Start over": until its receipt is read, paying
+  // again could spend the pool tokens twice, so the buy button waits on it instead.
+  const [unsureCommit, setUnsureCommit] = useState<`0x${string}`>()
+  const unsureReceipt = useTransactionReceipt({ hash: unsureCommit, chainId, query: { enabled: !!unsureCommit } })
   // The wallet whose Allow just landed: the read saying so can lag, and must not offer it again.
   const [allowedBy, setAllowedBy] = useState<string>()
   // Which pair "Buy / Sell <pool token>" uses on the Tokens tab, and prices the token in. ETH unless chosen.
@@ -282,8 +287,17 @@ export default function PoolView({
     setPages(1)
     setRevealed(undefined)
     setAllowedBy(undefined)
+    setUnsureCommit(undefined)
     tx.reset()
   }, [poolAddress, chainId])
+
+  // The receipt is in (landed or reverted): the draws list now says what happened, so the buy can be offered again.
+  useEffect(() => {
+    if (!unsureCommit || !unsureReceipt.data) return
+    setUnsureCommit(undefined)
+    info.refetch()
+    myCommits.refetch()
+  }, [unsureCommit, unsureReceipt.data])
 
   if (info.loading && !pool) {
     return (
@@ -313,8 +327,8 @@ export default function PoolView({
   const { symbol } = pool
   const { balance } = info
   const affordable = wholeUnits(balance)
-  const free = Number(pool.held - info.pendingUnits) // ERC721: NFTs not promised to an open draw
-  const maxDraw = Math.max(1, Math.min(free, MAX_DRAW_UNITS))
+  const free = freeUnits(pool.held, info.pendingUnits) // ERC721: NFTs not promised to an open draw
+  const maxDraw = Math.max(1, Math.min(free ?? 0, MAX_DRAW_UNITS))
   const is1155 = pool.kind === KIND.ERC1155
   const swapChain = isSwapChain(chainId) ? chainId : undefined
   const { busy } = tx
@@ -395,6 +409,7 @@ export default function PoolView({
     (_, i) => ownership.held[i] !== undefined && ownership.held[i]! < amountFor(selling[i]!),
   )
   const checking = selling.length > 0 && ownership.held.some((h) => h === undefined) && ownership.loading
+  const ownershipUnknown = selling.length > 0 && !checking && ownership.held.some((h) => h === undefined)
   const sellUnits = selling.reduce((sum, id) => sum + amountFor(id), 0n)
   const plan = depositPlan(
     pool.kind,
@@ -457,7 +472,16 @@ export default function PoolView({
     if (tx.tx.phase === 'wallet') return { label: 'Confirm in wallet…', disabled: true }
     if (tx.tx.phase === 'pending') return { label: 'Waiting for the network…', disabled: true }
     // It may still land, and a second commit would spend the pool tokens again.
-    if (tx.unconfirmed) return { label: 'Start over', onClick: tx.reset }
+    if (tx.unconfirmed)
+      return {
+        label: 'Start over',
+        onClick: () => {
+          // A random-buy payment may still land: keep watching it so the same payment isn't offered again.
+          if (tx.tx.id === 'commit' && tx.tx.hash) setUnsureCommit(tx.tx.hash)
+          tx.reset()
+          refresh()
+        },
+      }
     if (side === 'buy') {
       // An open draw is step 2 of a random buy: finish it before starting another.
       const draw = random ? myCommits.commits[0] : undefined
@@ -480,13 +504,25 @@ export default function PoolView({
 
         return {
           label: draw.amount === 1 ? 'Reveal your NFT' : `Reveal your ${draw.amount} NFTs`,
-          step: 'Step 2 of 2: see which NFT you got. It goes straight to your wallet.',
+          step: 'Step 2 of 2: see which NFT you got. It is sent to your wallet. If the collection refuses, the pool holds it for you to claim.',
           onClick: () => reveal(draw),
         }
       }
 
+      if (pool.held === undefined)
+        return { label: 'Check again', step: "We couldn't read how many NFTs the pool holds.", onClick: refresh }
       if (pool.held === 0n) return { label: 'The pool is empty', disabled: true }
       if (random) {
+        if (unsureCommit)
+          return unsureReceipt.isError
+            ? {
+                label: 'Check again',
+                step: "We couldn't confirm your last payment. Check your wallet before you pay again.",
+                onClick: () => unsureReceipt.refetch(),
+              }
+            : { label: 'Checking your last payment…', disabled: true }
+        if (free === undefined)
+          return { label: 'Check again', step: "We couldn't read which NFTs are in open draws.", onClick: refresh }
         if (free < 1) return { label: 'Every NFT is in an open draw', disabled: true }
         if (short) return { label: `Not enough ${symbol}`, disabled: true }
         return {
@@ -504,6 +540,8 @@ export default function PoolView({
     if (!selling.length) return { label: 'Choose NFTs to sell', disabled: true }
     if (checking) return { label: 'Checking your NFTs…', disabled: true }
     if (notOwned.length) return { label: `You do not hold #${notOwned[0]}`, disabled: true }
+    if (ownershipUnknown)
+      return { label: 'Check again', step: "We couldn't check that you hold these NFTs.", onClick: ownership.refetch }
     if (plan === 'transfer-721-each')
       return {
         label: batches ? `Sell ${nfts(sellUnits)} for ${sellUnits.toString()} ${symbol}` : `Sell #${selling[0]}`,
@@ -578,9 +616,9 @@ export default function PoolView({
         </Prose>
         <Stat>
           <span>In the pool</span>
-          <strong>{nfts(pool.held)}</strong>
+          <strong>{pool.held === undefined ? '–' : nfts(pool.held)}</strong>
         </Stat>
-        {random && info.pendingUnits > 0n && (
+        {random && info.pendingUnits !== undefined && info.pendingUnits > 0n && (
           <Stat>
             <span>In open draws</span>
             <strong>{nfts(info.pendingUnits)}</strong>
@@ -668,6 +706,7 @@ export default function PoolView({
               )
             })}
           </Draws>
+          {myCommits.partial && <Hint>Only the newest open draws were checked.</Hint>}
           <Hint>Reveal soon. If you wait too long, the draw moves to a new block and you reveal again.</Hint>
         </Card>
       )}
@@ -695,7 +734,7 @@ export default function PoolView({
                 ? `You cannot choose: a block picks for you. Each costs 1 ${symbol}.`
                 : `Tap the NFTs you want. Each costs 1 ${symbol}.`}
             </Hint>
-            {held.loading ? (
+            {held.loading || info.loading ? (
               <Grid>
                 {Array.from({ length: 6 }, (_, i) => (
                   <Skeleton key={i} h="120px" />
@@ -716,6 +755,8 @@ export default function PoolView({
                   />
                 ))}
               </Grid>
+            ) : held.failed ? (
+              <Prose>Couldn&apos;t load the NFTs in this pool. Try again later.</Prose>
             ) : (
               <Prose>The pool is empty. Sell one in to start it.</Prose>
             )}
@@ -811,8 +852,14 @@ export default function PoolView({
                       ))}
                   </Grid>
                 )}
-                {owned.supported && !ownedForPool.length && !manualIds.length && (
+                {owned.supported && owned.error && (
+                  <Prose>Couldn&apos;t load the NFTs in this wallet. Type their numbers below.</Prose>
+                )}
+                {owned.supported && !owned.error && !owned.loading && !ownedForPool.length && !manualIds.length && (
                   <Prose>We did not find any in this wallet. If you have some, type their numbers below.</Prose>
+                )}
+                {owned.partial && (
+                  <Hint>This wallet has more than we could list. Type the numbers of any you don&apos;t see.</Hint>
                 )}
                 <AddRow
                   onSubmit={(e) => {

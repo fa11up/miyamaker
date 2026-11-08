@@ -85,7 +85,8 @@ export function createOnchainIndexer(client: PublicClient, collections: KnownCol
         })),
       })
       const ids = res.filter((r) => r.status === 'success').map((r) => String(r.result))
-      return { ids, partial: balance > want }
+      // A failed index read drops that NFT from the list: say the list is partial.
+      return { ids, partial: balance > want || ids.length < want }
     }
 
     if (c.strategy === 'sweep') {
@@ -205,7 +206,12 @@ export function createOnchainIndexer(client: PublicClient, collections: KnownCol
         if (signal?.aborted) break
         const c = mine[i]!
         const r = balances[i]
-        const balance = r?.status === 'success' ? Number(r.result) : 0
+        // A failed balanceOf is not "holds none": skip it, but say the list is partial.
+        if (r?.status !== 'success') {
+          partial = true
+          continue
+        }
+        const balance = Number(r.result)
         if (!balance) continue
         try {
           const found = await tokenIds(c, who, balance)

@@ -7,6 +7,11 @@ import { parseEther } from 'viem'
 
 import {
   balanceWords,
+  BID_CANCELLED,
+  BID_REVERTED,
+  BID_SLOW,
+  BID_UNCONFIRMED,
+  bidEnding,
   bidErrorWords,
   bidStanding,
   checkBid,
@@ -148,10 +153,49 @@ test('bid errors become plain words, wherever in the cause chain the reason sits
 })
 
 test('an unknown error, or one with no message at all, still says something plain', () => {
-  const plain = "The bid didn't go through. No ETH left your wallet. Try again."
+  const plain = "The bid didn't go through. Check your wallet's activity before you bid again."
   assert.equal(bidErrorWords(new Error('0xdeadbeef ContractFunctionExecutionError')), plain)
   assert.equal(bidErrorWords({}), plain)
   assert.equal(bidErrorWords(undefined), plain)
+})
+
+test('"No ETH left your wallet" only when the error vouches nothing was sent', () => {
+  const unknown = new Error('0xdeadbeef ContractFunctionExecutionError')
+  assert.doesNotMatch(bidErrorWords(unknown), /No ETH left/)
+  assert.match(bidErrorWords(unknown, { checked: true }), /No ETH left your wallet/)
+  // A refusal in the wallet sends nothing.
+  assert.equal(bidErrorWords({ code: 4001 }), 'You cancelled in your wallet. No bid was placed.')
+})
+
+test("the miyamints auction's own errors get plain words too", () => {
+  const wrapped = (cause: unknown) => ({ name: 'ContractFunctionExecutionError', cause })
+  assert.equal(bidErrorWords(wrapped({ data: { errorName: 'BidTooLow' } })), 'Someone bid more. Your bid must beat the new price.')
+  assert.equal(bidErrorWords(wrapped({ data: { errorName: 'BidBelowMinimum' } })), 'Your bid is under the starting price.')
+  assert.equal(bidErrorWords(wrapped({ data: { errorName: 'AuctionExpired' } })), 'This auction has just ended.')
+  assert.equal(
+    bidErrorWords({ name: 'ConnectorChainMismatchError' }, { chainName: 'Sepolia' }),
+    'Your wallet is on another network. Switch to Sepolia and try again.',
+  )
+})
+
+test("a bid's ending: unconfirmed never re-arms, and each ending says what moved", () => {
+  assert.equal(bidEnding({ phase: 'pending' }), undefined)
+  assert.equal(bidEnding({ phase: 'done' })?.kind, 'placed')
+  assert.deepEqual(bidEnding({ phase: 'error', stage: 'wait', error: { unconfirmed: true } }), {
+    kind: 'unconfirmed',
+    words: BID_UNCONFIRMED,
+  })
+  assert.deepEqual(bidEnding({ phase: 'error', stage: 'wait', error: { unconfirmed: true, timedOut: true } }), {
+    kind: 'unconfirmed',
+    words: BID_SLOW,
+  })
+  assert.equal(bidEnding({ phase: 'error', error: { cancelled: true } })?.words, BID_CANCELLED)
+  assert.equal(bidEnding({ phase: 'error', error: { reverted: true } })?.words, BID_REVERTED)
+  const dryRun = bidEnding({ phase: 'error', stage: 'check', error: new Error('rpc') })
+  assert.equal(dryRun?.kind, 'refused')
+  assert.match(dryRun!.words, /No ETH left your wallet/)
+  const inWallet = bidEnding({ phase: 'error', stage: 'wallet', error: new Error('rpc') })
+  assert.match(inWallet!.words, /wallet's activity/)
 })
 
 test('a missing trait is empty, never the word undefined', () => {

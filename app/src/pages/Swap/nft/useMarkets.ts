@@ -5,6 +5,7 @@ import type { MarketListing, MarketSale } from '../../../../api/_lib/market'
 import { MARKET_PREFIX } from '../../../../api/_lib/market'
 import type { OsCollection, OsNft, OsOrder, OsSearchHit, OsStats, OwnedGroup, Price } from './markets'
 import {
+  accountNftsPage,
   groupAccountNfts,
   OPENSEA_CHAIN,
   parseCollection,
@@ -201,18 +202,23 @@ export function useCollectionsVerified(slugs: readonly string[]) {
   const verified: Record<string, boolean | undefined> = {}
   slugs.forEach((slug, i) => {
     const r = results[i]
-    verified[slug] = r?.data ? r.data.verified : r?.isError || r?.data === null ? false : undefined
+    // OpenSea said there is no such collection: not verified. A failed lookup is unknown, so no badge either way.
+    verified[slug] = r?.data ? r.data.verified : r?.data === null ? false : undefined
   })
   return verified
 }
+
+/** A row as the server sends it. Rows cached before ERC-1155 quantities were read have no `quantity` or `unitPrice`. */
+type MarketRow = Omit<MarketListing, 'quantity' | 'unitPrice'> & Partial<Pick<MarketListing, 'quantity' | 'unitPrice'>>
 
 type MarketListings = {
   at: number
   stale: boolean
   count: number
   sources: Record<string, number>
-  floor: { price: string; tokenId: string; source: string } | null
-  listings: MarketListing[]
+  /** `price` is the floor order's whole price; `unitPrice` (when it sells several) is the floor for one. */
+  floor: { price: string; unitPrice?: string; quantity?: number; tokenId: string; source: string } | null
+  listings: MarketRow[]
 }
 type MarketSales = {
   at: number
@@ -226,22 +232,44 @@ async function market<T>(path: string, signal?: AbortSignal): Promise<T> {
     if ((e as Error).name === 'AbortError') throw e
     throw new MarketError('Could not reach the market service.', 'NETWORK', 0)
   })
-  const body = (await res.json().catch(() => ({}))) as T & { name?: string; message?: string }
-  if (!res.ok)
-    throw new MarketError(body.message || 'The market request failed.', body.name || `HTTP_${res.status}`, res.status)
+  const text = await res.text().catch(() => '')
+  let parsed: unknown
+  try {
+    parsed = text ? JSON.parse(text) : undefined
+  } catch {
+    parsed = undefined
+  }
+  const body = (parsed && typeof parsed === 'object' ? parsed : undefined) as
+    | (T & { name?: unknown; message?: unknown })
+    | undefined
+  if (!res.ok) {
+    const message = typeof body?.message === 'string' ? body.message : 'The market request failed.'
+    const name = typeof body?.name === 'string' ? body.name : `HTTP_${res.status}`
+    throw new MarketError(message, name, res.status)
+  }
+  // A host with no /api/market route answers index.html; a cut-off reply is not JSON either.
+  if (!body) throw new MarketError('The market is unavailable right now.', 'BAD_RESPONSE', res.status)
   return body
 }
 
-/** A market row as the buy flow's order. Prices are wei; only ETH and WETH have 18 decimals we can be sure of here. */
-const toOrder = (l: MarketListing): OsOrder => ({
-  hash: l.hash ?? '',
-  chain: 'ethereum',
-  protocolAddress: l.protocol ?? '',
-  price: { amount: BigInt(l.price), decimals: 18, symbol: l.currency },
-  tokenId: l.tokenId,
-  maker: l.seller ?? undefined,
-  remaining: 1,
-})
+/**
+ * A market row as the buy flow's order. Prices are wei; only ETH and WETH have 18 decimals we can be sure of here.
+ * `price` is per item (an ERC-1155 order selling five at 5 ETH is 1 ETH each); `total` is what filling it costs.
+ */
+const toOrder = (l: MarketRow): OsOrder => {
+  const quantity = typeof l.quantity === 'number' && l.quantity > 1 ? l.quantity : 1
+  const whole = { amount: BigInt(l.price), decimals: 18, symbol: l.currency }
+  return {
+    hash: l.hash ?? '',
+    chain: 'ethereum',
+    protocolAddress: l.protocol ?? '',
+    price: { ...whole, amount: BigInt(l.unitPrice ?? l.price) },
+    ...(quantity > 1 ? { total: whole } : {}),
+    tokenId: l.tokenId,
+    maker: l.seller ?? undefined,
+    remaining: quantity,
+  }
+}
 
 /**
  * One collection's merged market from our server (api/_lib/market.ts): each NFT once at its cheapest, cheapest first,
@@ -255,12 +283,13 @@ export function useMarketListings(slug: string | undefined) {
     queryFn: ({ signal }) => market<MarketListings>(`listings?slug=${encodeURIComponent(slug!)}`, signal),
   })
   const gone = goneHashes(sessionStore())
-  const listings = q.data?.listings
-    .filter((l) => l.hash && !gone.has(l.hash) && ['ETH', 'WETH'].includes(l.currency))
+  const rows = q.data ? (Array.isArray(q.data.listings) ? q.data.listings : []) : undefined
+  const listings = rows
+    ?.filter((l) => l.hash && !gone.has(l.hash) && ['ETH', 'WETH'].includes(l.currency))
     .map(toOrder)
   return {
     listings,
-    /** The cheapest in ETH across every source. */
+    /** The cheapest one in ETH across every source, per item (the server sorts by `unitPrice ?? price`). */
     floor: listings?.find((l) => l.price.symbol === 'ETH')?.price,
     stale: !!q.data?.stale,
     loading: !!slug && q.isLoading,
@@ -278,7 +307,8 @@ export function useMarketSales(slug: string | undefined) {
     ...common,
     queryFn: ({ signal }) => market<MarketSales>(`sales?slug=${encodeURIComponent(slug!)}`, signal),
   })
-  return { sales: q.data?.sales, day: q.data?.day, loading: !!slug && q.isLoading, error: q.error }
+  const sales = q.data ? (Array.isArray(q.data.sales) ? q.data.sales : []) : undefined
+  return { sales, day: q.data?.day, loading: !!slug && q.isLoading, error: q.error }
 }
 
 /** One NFT on OpenSea: details, its best listing and best offer. */
@@ -371,7 +401,13 @@ export function useOpenSeaSearch(chainId: number, query: string) {
   }
 }
 
-/** The wallet's NFTs on this chain from OpenSea, grouped per collection (needs the key). */
+/** Pages of 100 read from OpenSea before the list is called partial. */
+const OWNED_MAX_PAGES = 5
+
+/**
+ * The wallet's NFTs on this chain from OpenSea, grouped per collection (needs the key). Follows OpenSea's `next`
+ * cursor; a server that refuses `next` (older deploy) or a cut-off read gives the pages so far with `partial`.
+ */
 export function useOpenSeaOwned(chainId: number, owner: string | undefined) {
   const chain = OPENSEA_CHAIN[chainId]
   const { configured, known } = useOpenSeaConfigured()
@@ -379,13 +415,37 @@ export function useOpenSeaOwned(chainId: number, owner: string | undefined) {
     queryKey: ['os-owned', chain, owner?.toLowerCase()],
     enabled: !!chain && !!owner && configured,
     ...common,
-    queryFn: async ({ signal }): Promise<OwnedGroup[]> =>
-      groupAccountNfts(await orNone(get({ op: 'account_nfts', chain: chain!, address: owner! }, signal))),
+    queryFn: async ({ signal }): Promise<{ groups: OwnedGroup[]; partial: boolean }> => {
+      const nfts: unknown[] = []
+      let next: string | undefined
+      for (let page = 0; page < OWNED_MAX_PAGES; page += 1) {
+        const query: Record<string, string> = { op: 'account_nfts', chain: chain!, address: owner! }
+        if (next) query.next = next
+        let body: unknown
+        try {
+          // eslint-disable-next-line no-await-in-loop -- each page needs the previous page's cursor
+          body = await orNone(get(query, signal))
+        } catch (e) {
+          // The first page failing is an error; a later page failing leaves what was read, marked partial.
+          if (page === 0 || (e as Error).name === 'AbortError') throw e
+          return { groups: groupAccountNfts({ nfts }), partial: true }
+        }
+        const p = accountNftsPage(body)
+        nfts.push(...p.nfts)
+        next = p.next
+        if (!next) return { groups: groupAccountNfts({ nfts }), partial: false }
+      }
+      return { groups: groupAccountNfts({ nfts }), partial: true }
+    },
   })
   return {
-    groups: r.data,
+    groups: r.data?.groups,
+    /** OpenSea has more of this wallet's NFTs than were read. */
+    partial: !!r.data?.partial,
     loading: r.isLoading && !!chain && !!owner && configured,
     needsKey: (known && !configured) || needsKey(r.error),
+    /** OpenSea could not be asked: an empty list would be a guess. */
+    error: (r.error && !needsKey(r.error) ? r.error : undefined) as Error | undefined,
   }
 }
 

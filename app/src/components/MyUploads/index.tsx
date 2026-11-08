@@ -234,7 +234,7 @@ export default function MyUploads({
       </Box>
     )
 
-  const rows = (uploads.data || []).filter((u) => u.kind === kind || u.kind === 'folder')
+  const rows = (uploads.data?.uploads || []).filter((u) => u.kind === kind || u.kind === 'folder')
   return (
     <Box aria-label="Your uploads">
       {uploads.isLoading && <Note>Looking up your uploads…</Note>}
@@ -251,6 +251,7 @@ export default function MyUploads({
           Nothing here from this wallet yet.
         </Note>
       )}
+      {uploads.data?.partial && <Note>Showing your newest uploads only. Older ones are not listed here.</Note>}
       {rows.map((u) => {
         if (u.kind !== 'folder')
           return (

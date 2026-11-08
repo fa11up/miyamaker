@@ -11,8 +11,13 @@
  * cached answer, the ids are re-checked at most every 10 minutes, and a search only runs for a stream that has really
  * stopped, waiting longer each time it finds nothing. When YouTube refuses us outright nothing is asked for a while.
  * Without a key, or if YouTube is down, the last known ids stand. The key stays on the server.
+ *
+ * "Everyone" means every data centre when the Worker passes the D1-backed cache (./sharedstate.ts): one copy, and a lock
+ * so one request anywhere refreshes while the rest read the known ids. Until the shared_state table exists
+ * (migrations/0003_hardening.sql), or if D1 fails, that cache falls back to the per-data-centre one. Either way only one
+ * refresh runs at a time in an isolate.
  */
-import type { MarketCache } from './market'
+import type { SharedCache } from './sharedstate'
 import type { KickAnswer } from './tvkick'
 
 export const TV_LIVE_PATH = '/api/tv/live'
@@ -24,6 +29,8 @@ export const SEARCH_BACKOFF_MAX_MS = 6 * 3_600_000
 export const REFUSED_PAUSE_MS = 3_600_000
 /** Last known ids must outlive a quiet spell, or the next visitor starts again from the fallbacks and pays for searches. */
 const KEEP_S = 30 * 86_400
+/** How long one refresh holds the lock: well past a check and three searches, each with a 10 second timeout. */
+const LOCK_MS = 60_000
 const API = 'https://www.googleapis.com/youtube/v3'
 
 export const LIVE_TARGETS: { id: string; channelId: string; query: string; fallback: string }[] = [
@@ -34,7 +41,8 @@ export const LIVE_TARGETS: { id: string; channelId: string; query: string; fallb
 
 export type TvLiveDeps = {
   key?: string
-  cache: MarketCache
+  /** The D1-backed cache shared by every data centre (./sharedstate.ts), or a plain per-data-centre one. */
+  cache: SharedCache
   /** A YouTube Data API GET returning parsed JSON; throws when it fails, with `refused` set for a 403 or 429. */
   youtube?: (path: string, query: Record<string, string>) => Promise<unknown>
   now?: () => number
@@ -140,6 +148,24 @@ export async function handleTvLiveRequest(request: { method: string }, deps: TvL
   if (cached && now - cached.at < RECHECK_MS) return answer(known.ids)
   if (known.pausedUntil && now < known.pausedUntil) return answer(known.ids)
 
+  // One refresh at a time: requests in this isolate share the one running, and other data centres see the lock and
+  // answer the known ids, at most one check old.
+  let running = refreshing.get(deps.cache)
+  if (!running) {
+    running = refreshOnce(known, deps, now).finally(() => refreshing.delete(deps.cache))
+    refreshing.set(deps.cache, running)
+  }
+  return answer(((await running) ?? known).ids)
+}
+
+const refreshing = new WeakMap<object, Promise<LiveState | undefined>>()
+
+/** The refreshed state, saved; undefined when another request holds the lock. */
+async function refreshOnce(known: LiveState, deps: TvLiveDeps, now: number): Promise<LiveState | undefined> {
+  const mine = deps.cache.claim
+    ? await deps.cache.claim(CACHE_KEY, now, LOCK_MS, now - RECHECK_MS + 1).catch(() => true)
+    : true
+  if (!mine) return undefined
   let next: LiveState = { ...known, pausedUntil: undefined }
   try {
     next = await refresh(next, deps, now)
@@ -152,5 +178,5 @@ export async function handleTvLiveRequest(request: { method: string }, deps: TvL
   await deps.cache.put(CACHE_KEY, { at: now, body: next }, KEEP_S).catch((e: Error) => {
     console.warn(`tv live: could not save: ${e.message}`)
   })
-  return answer(next.ids)
+  return next
 }

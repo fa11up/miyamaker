@@ -14,6 +14,10 @@ import Pages from '@/constants/pages'
 import CollectionsList from '@/pages/Auction/CollectionsList'
 import { AUCTION_PAGE_SECTION } from '@/pages/Auction/constants'
 import ExplorerWrapper from '@/pages/Auction/ExplorerWrapper'
+import MmLotDetail from '@/pages/Auction/miyamints/MmLotDetail'
+import MmLotsList from '@/pages/Auction/miyamints/MmLotsList'
+import type { MmLotRef } from '@/pages/Auction/miyamints/useMmAuctions'
+import { useMmAuctions } from '@/pages/Auction/miyamints/useMmAuctions'
 import ProductDetail from '@/pages/Auction/ProductDetail'
 import ProductsList from '@/pages/Auction/ProductsList'
 import damaskSkin from '@/pages/Auction/skin/damask.webp'
@@ -103,6 +107,9 @@ const Popup = styled(ErrorWrapper)`
 const page = Pages.auction
 const pageId = page?.id as PageKey
 
+/** An artist's lot from the miyamints auction houses: its own page, beside the legacy collections and lots. */
+const ARTIST_LOT_SECTION = 'Artist auction'
+
 export default function AuctionPage() {
   const [opening, setOpening] = useState(true)
   const [fullscreen, toggleFullscreen] = useFullscreen('auction')
@@ -134,20 +141,63 @@ export default function AuctionPage() {
     address: auctionContract as Address,
   })
 
+  // Artists' 1/1 auctions from Launch, on every chain the miyamints contracts are deployed on (none: nothing shows).
+  const mm = useMmAuctions()
+  const [mmChosen, setMmChosen] = useState<MmLotRef>()
+  const mmLot = (mmChosen && mm.lots.find((item) => item.key === mmChosen.key)) || mmChosen
+  const openMmLot = (item: MmLotRef) => {
+    if (bidBusy) return
+    setMmChosen(item)
+    setSection(ARTIST_LOT_SECTION)
+  }
+
   const handleCloseErrorPopup = () => setErrorMessage('')
 
   const renderSection = () => {
     switch (pageSection) {
       case AUCTION_PAGE_SECTION.COLLECTIONS_SECTION:
         return (
-          <ExplorerWrapper style={{ height: '100%' }} title={'Collections'}>
-            <CollectionsList
-              nfts={nftsList}
-              isLoading={isLoading}
-              isError={isError}
-              onRetry={() => refetch()}
-              setPageSection={setPageSection}
-              auctionContract={auctionContract as Address}
+          <>
+            <ExplorerWrapper style={mm.deployed ? { flex: '2 1 0' } : { height: '100%' }} title={'Collections'}>
+              <CollectionsList
+                nfts={nftsList}
+                isLoading={isLoading}
+                isError={isError}
+                onRetry={() => refetch()}
+                setPageSection={setPageSection}
+                auctionContract={auctionContract as Address}
+                compact={mm.deployed}
+              />
+            </ExplorerWrapper>
+            {mm.deployed && (
+              <ExplorerWrapper style={{ flex: '3 1 0' }} title={'Artist auctions'}>
+                <MmLotsList
+                  lots={mm.lots}
+                  loading={mm.loading}
+                  error={mm.error}
+                  failed={mm.failed}
+                  onRetry={() => mm.refetch()}
+                  onOpen={openMmLot}
+                />
+              </ExplorerWrapper>
+            )}
+          </>
+        )
+      case ARTIST_LOT_SECTION:
+        if (!mmLot) return <></>
+        return (
+          <ExplorerWrapper
+            style={{ height: '100%' }}
+            title={`Collections > ${ARTIST_LOT_SECTION}`}
+            setPageSection={setPageSection}
+          >
+            <MmLotDetail
+              key={mmLot.key}
+              item={mmLot}
+              onBack={() => setPageSection(AUCTION_PAGE_SECTION.COLLECTIONS_SECTION)}
+              onBusy={setBidBusy}
+              onChanged={() => mm.refetch()}
+              setErrorMessage={setErrorMessage}
             />
           </ExplorerWrapper>
         )

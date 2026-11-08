@@ -49,15 +49,17 @@ const setup = (extra: Partial<PublicAccessDeps> = {}) => {
     return { status: res.status, json: (await res.json()) as any }
   }
 
-  const submit = (wallet = ME, videoId = ID) =>
-    call('/submit', { videoId, wallet, at: NOW, signature: submitMessage({ videoId, wallet, at: NOW }) })
-  const review = (decision: string, wallet = ADMIN, videoId = ID) =>
+  // Every signature is used once, so each one is made at its own millisecond, just before now.
+  let signed = 0
+  const submit = (wallet = ME, videoId = ID, at = NOW - (signed += 1)) =>
+    call('/submit', { videoId, wallet, at, signature: submitMessage({ videoId, wallet, at }) })
+  const review = (decision: string, wallet = ADMIN, videoId = ID, at = NOW - (signed += 1)) =>
     call('/review', {
       videoId,
       decision,
       wallet,
-      at: NOW,
-      signature: reviewMessage({ videoId, decision, wallet, at: NOW }),
+      at,
+      signature: reviewMessage({ videoId, decision, wallet, at }),
     })
   return { call, submit, review, store: deps.store! }
 }

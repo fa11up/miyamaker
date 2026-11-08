@@ -50,7 +50,7 @@ function paymentStore(irys: WebIrys): PaymentStore {
   }
 }
 
-function ensureFunded(irys: WebIrys, size: number, setStage: (stage: UploadStage) => void, status?: UploadStatus) {
+function ensureFunded(irys: WebIrys, size: number | readonly number[], setStage: (stage: UploadStage) => void, status?: UploadStatus) {
   return ensureFundedWith(irys as unknown as FundingIrys, size, {
     store: paymentStore(irys),
     txState: (txId) => paymentTxState(irys, txId),
@@ -143,7 +143,22 @@ async function fundAndUploadSingleFile(
   }
 }
 
+/**
+ * Pays once for every file about to be stored, before the first upload: one Ethereum payment and one wait, not one per
+ * file. Each upload after it finds its price covered and pays nothing more. Keeps the same memory of a payment on its
+ * way, so a retry never pays twice. Throws an Error with plain words when it cannot finish.
+ */
+async function fundStorage(sizes: readonly number[], url?: string, token?: string, chain?: Chain, status?: UploadStatus) {
+  let stage: UploadStage = 'free'
+  try {
+    const irys = await getIrys(url, token, chain)
+    await ensureFunded(irys, sizes, (next) => (stage = next), status)
+  } catch (e) {
+    throw uploadError(e, stage)
+  }
+}
+
 /** Pays Irys if needed, then uploads. Throws an Error with plain words when it cannot finish. */
 const fundAndUpload = fundAndUploadSingleFile
 
-export { fundAndUpload, fundAndUploadFolder }
+export { fundAndUpload, fundAndUploadFolder, fundStorage }

@@ -1,0 +1,93 @@
+# Type checks and tests for the app, the miyatv chat worker and the contracts, on every push and pull request.
+# Node comes from .nvmrc (the tests run .mts files through Node's own type stripping: Node >= 22.18).
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  app:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: yarn
+          cache-dependency-path: app/yarn.lock
+      - run: yarn install --frozen-lockfile
+      - name: Type check
+        run: npx tsc --noEmit -p .
+      - name: Type check the tests
+        run: yarn typecheck:tests
+      - name: Tests
+        run: yarn test
+
+  chat:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: chat
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: chat/package-lock.json
+      - run: npm ci
+      - name: Type check
+        run: npm run typecheck
+      - name: Tests
+        run: npm test
+
+  contracts:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: contracts
+    env:
+      # Fork tests need a mainnet RPC; CI runs the local suite only.
+      SKIP_FORK_TESTS: 'true'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.9.0
+          cache: true
+      - name: Cache build
+        uses: actions/cache@v4
+        with:
+          path: |
+            contracts/out
+            contracts/cache
+            contracts/out-v4real
+            contracts/cache-v4real
+          key: forge-${{ runner.os }}-${{ hashFiles('contracts/foundry.toml', 'contracts/src/**', 'contracts/test/**', 'contracts/script/**') }}
+          restore-keys: forge-${{ runner.os }}-
+      - name: Build
+        run: forge build
+      - name: Tests
+        run: forge test
+      # The two tests that need v4-core's real PoolManager (pragma =0.8.26) build and run under their own profile.
+      - name: Tests (real v4 PoolManager)
+        run: forge test
+        env:
+          FOUNDRY_PROFILE: v4real
+      # contracts/abi/*.json must match the build: app/tests/abi-drift.test.mts checks the app's ABIs against them.
+      # Offline, no secrets; needs jq (preinstalled on ubuntu-latest).
+      - name: ABI snapshots up to date
+        run: bash script/export-abis.sh --check

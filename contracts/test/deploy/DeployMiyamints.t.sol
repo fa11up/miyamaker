@@ -66,11 +66,12 @@ contract InferPoolSeeder is IUnlockCallback {
 }
 
 /// @notice Runs script/DeployMiyamints.s.sol against an Ethereum mainnet fork (real CreateX, Uniswap v4
-///         PoolManager, zRouter, a seeded ETH/INFER pool, imdUSD Treasury), then proves the deployed system end to end: an ERC721
+///         PoolManager, zRouter, the ETH/INFER pool, imdUSD Treasury), then proves the deployed system end to end: an ERC721
 ///         drop + mint + split, an auction, a music ERC1155 collection + addEdition + mint (the app's exact calls),
 ///         a MiyaPool deposit, and the default vault converting real ETH into ETH/INFER v4 liquidity (keeper only).
 ///         RPC: MAINNET_RPC_URL (default https://ethereum-rpc.publicnode.com); FORK_BLOCK pins a block.
-///         Skipped (not failed) when the RPC is unreachable or SKIP_FORK_TESTS=true.
+///         Skipped (not failed) when the RPC is unreachable or SKIP_FORK_TESTS=true. Fails while the real ETH/INFER
+///         pool is uninitialized, unless SEED_POOL=1 seeds a test pool on the fork.
 contract DeployMiyamintsForkTest is Test {
     using StateLibrary for IPoolManager;
     using PoolIdLibrary for PoolKey;
@@ -103,10 +104,17 @@ contract DeployMiyamintsForkTest is Test {
             return;
         }
 
-        // Once the real pool is seeded these tests run against it.
+        // The deploy needs the real ETH/INFER pool (fee 10000, tickSpacing 200) on mainnet. Seeding a test pool on the
+        // fork would hide that it is missing, so that only happens when asked for with SEED_POOL=1.
         PoolKey memory poolKey = PoolKey(Currency.wrap(address(0)), Currency.wrap(INFER), 10000, 200, IHooks(address(0)));
         (uint160 existing,,,) = StateLibrary.getSlot0(MANAGER, poolKey.toId());
         if (existing == 0) {
+            string memory seedPool = vm.envOr("SEED_POOL", string(""));
+            bool seed = keccak256(bytes(seedPool)) == keccak256("1") || keccak256(bytes(seedPool)) == keccak256("true");
+            require(
+                seed,
+                "INFER/ETH v4 pool (fee 10000, tickSpacing 200) is not initialized on mainnet: the real deploy would stop. Seed it (DEPLOY.md), or SEED_POOL=1 to seed a test pool on this fork"
+            );
             InferPoolSeeder seeder = new InferPoolSeeder(INFER);
             deal(INFER, address(seeder), 100_000_000e18);
             vm.deal(address(this), 100 ether);

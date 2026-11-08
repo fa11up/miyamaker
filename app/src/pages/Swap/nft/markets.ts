@@ -239,6 +239,8 @@ export type OsOrder = {
   protocolAddress: string
   /** Per item. */
   price: Price
+  /** The whole order, when it sells more than one (ERC-1155): what filling it costs. */
+  total?: Price
   tokenId?: string
   contract?: string
   /** Who listed it, when the order says. */
@@ -352,6 +354,13 @@ export type OwnedGroup = {
 }
 
 /** The wallet's NFTs (OpenSea account_nfts) grouped per contract, biggest holding first. */
+/** One page of OpenSea's account NFTs: the raw rows and the cursor for the next page (if any). */
+export function accountNftsPage(j: unknown): { nfts: unknown[]; next?: string } {
+  const o = obj(j)
+  const next = str(o?.next)
+  return { nfts: arr(o?.nfts), next: next && next.length <= 512 ? next : undefined }
+}
+
 export function groupAccountNfts(j: unknown): OwnedGroup[] {
   const map = new Map<string, OwnedGroup>()
   for (const raw of arr(obj(j)?.nfts)) {
@@ -497,13 +506,28 @@ export type FillContext = {
   seaports: readonly string[]
   abi: readonly { name: string; inputs: readonly AbiParam[] }[]
   aliases?: Record<string, string>
+  /** The collection's creator fee recipients from OpenSea. A payee not on it is labelled "Other fee". */
+  creatorFees?: readonly string[]
 }
 
-const who = (recipient: string | undefined, offerer: string) =>
-  recipient === offerer ? 'seller' : recipient === '0x0000a26b00c1f0df003000390027140000faa719' ? 'opensea' : 'creator'
+type Payee = 'seller' | 'opensea' | 'creator' | 'other'
+const OPENSEA_FEE = '0x0000a26b00c1f0df003000390027140000faa719'
+
+/** Who a consideration line pays. Only a recipient the collection lists as its creator fee is called "creator". */
+export function payee(recipient: string | undefined, offerer: string, creatorFees: readonly string[] = []): Payee {
+  if (recipient === offerer) return 'seller'
+  if (recipient === OPENSEA_FEE) return 'opensea'
+  if (recipient && creatorFees.some((c) => c.toLowerCase() === recipient)) return 'creator'
+  return 'other'
+}
 
 /** Every line is part of the signed order, so each one is required: no optional creator fees are ever added. */
-const LABEL = { seller: 'To the seller', opensea: 'OpenSea fee', creator: 'Creator fee (required)' } as const
+const LABEL = {
+  seller: 'To the seller',
+  opensea: 'OpenSea fee',
+  creator: 'Creator fee (required)',
+  other: 'Other fee (required)',
+} as const
 
 /**
  * Checks OpenSea's fulfillment_data before anything is signed, and works out what the person pays or gets.
@@ -582,9 +606,9 @@ export function planFill(
       if (pay.some((i) => i.token !== token || i.itemType !== pay[0]!.itemType))
         return { ok: false, error: 'The order is priced in more than one token.', openSea: true }
       const native = pay[0]!.itemType === 0
-      const sums = { seller: 0n, opensea: 0n, creator: 0n }
-      for (const i of pay) sums[who(i.recipient, offerer)] += part(i.start)
-      const total = sums.seller + sums.opensea + sums.creator
+      const sums = { seller: 0n, opensea: 0n, creator: 0n, other: 0n }
+      for (const i of pay) sums[payee(i.recipient, offerer, ctx.creatorFees)] += part(i.start)
+      const total = sums.seller + sums.opensea + sums.creator + sums.other
       const lines: FillLine[] = (Object.keys(sums) as (keyof typeof sums)[])
         .filter((k) => sums[k] > 0n)
         .map((k) => ({ label: LABEL[k], amount: sums[k] }))
@@ -630,15 +654,16 @@ export function planFill(
     const { token } = gives[0]!
     const gross = gives.reduce((s, i) => s + part(i.start), 0n)
     const lines: FillLine[] = [{ label: 'Offer', amount: gross }]
-    const cuts = { opensea: 0n, creator: 0n, seller: 0n }
+    const cuts = { opensea: 0n, creator: 0n, other: 0n, seller: 0n }
     for (const i of money(consideration)) {
       if (i.token !== token) return { ok: false, error: 'The offer fees are in another token.', openSea: true }
-      cuts[who(i.recipient, offerer)] += part(i.start)
+      cuts[payee(i.recipient, offerer, ctx.creatorFees)] += part(i.start)
     }
 
-    const fees = cuts.opensea + cuts.creator + cuts.seller
+    const fees = cuts.opensea + cuts.creator + cuts.other + cuts.seller
     if (cuts.opensea) lines.push({ label: 'OpenSea fee', amount: -cuts.opensea })
     if (cuts.creator) lines.push({ label: LABEL.creator, amount: -cuts.creator })
+    if (cuts.other) lines.push({ label: LABEL.other, amount: -cuts.other })
     if (cuts.seller) lines.push({ label: 'Back to the bidder', amount: -cuts.seller })
     if (fees >= gross) return { ok: false, error: 'After fees this offer pays nothing.' }
     return {

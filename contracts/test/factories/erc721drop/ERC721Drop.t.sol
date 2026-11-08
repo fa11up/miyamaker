@@ -359,6 +359,30 @@ contract ERC721DropTest is Test {
         assertEq(address(d).balance, 0);
     }
 
+    function test_flushPendingVaultCut_topUpGoesToTheVaultForTheDrop() public {
+        ERC721DropInstance d = _drop(100, 1000);
+        vm.warp(block.timestamp + 1 days);
+        vm.prank(carol);
+        d.mint{ value: PRICE }(1, 1, _noProof());
+        vault.setRejecting(true);
+        d.withdraw();
+        uint256 parked = d.pendingVaultCut();
+        assertGt(parked, 0);
+
+        vault.setRejecting(false);
+        vm.prank(bob);
+        d.flushPendingVaultCut{ value: 0.001 ether }();
+        assertEq(d.pendingVaultCut(), 0);
+        assertEq(address(d).balance, 0);
+        assertEq(vault.received(), parked + 0.001 ether);
+        assertEq(vault.credited(address(d)), parked + 0.001 ether);
+        assertEq(vault.credited(bob), 0);
+
+        vm.prank(bob);
+        vm.expectRevert(ERC721DropInstance.NothingToWithdraw.selector);
+        d.flushPendingVaultCut{ value: 0.001 ether }();
+    }
+
     function test_claimVaultFeesGoesToOwner() public {
         ERC721DropInstance d = _drop(100, 1000);
         vm.deal(address(vault), 1 ether);
@@ -651,6 +675,40 @@ contract ERC721DropTest is Test {
         (address to, uint256 amount) = d.royaltyInfo(1, 10_000);
         assertEq(to, bob);
         assertEq(amount, 100);
+    }
+
+    event RoyaltySet(address indexed receiver, uint96 bps);
+
+    /// The app promises royalties of at most 10%; the contract enforces it on every path.
+    function test_royaltyCappedAtTenPercent() public {
+        ERC721DropInstance d = _drop(100, 1000);
+        assertEq(d.MAX_ROYALTY_BPS(), 1000);
+
+        vm.prank(artist);
+        vm.expectRevert(ERC721DropInstance.RoyaltyTooHigh.selector);
+        d.setRoyalty(bob, 1001);
+
+        vm.expectEmit(address(d));
+        emit RoyaltySet(bob, 1000);
+        vm.prank(artist);
+        d.setRoyalty(bob, 1000);
+        (address to, uint256 amount) = d.royaltyInfo(1, 10_000);
+        assertEq(to, bob);
+        assertEq(amount, 1000);
+
+        // Creation is capped too.
+        ERC721DropInstance.Phase[] memory phases = new ERC721DropInstance.Phase[](1);
+        phases[0] = ERC721DropInstance.Phase(uint64(block.timestamp), 0, PRICE, 0, bytes32(0), 0);
+        ERC721DropInstance.InitParams memory p = _params(phases, 10);
+        p.royaltyBps = 1001;
+        vm.prank(artist);
+        vm.expectRevert();
+        factory.createDrop(p, address(vault), 1000);
+        p.royaltyBps = 1000;
+        vm.prank(artist);
+        ERC721DropInstance ok = ERC721DropInstance(payable(factory.createDrop(p, address(vault), 1000)));
+        (, amount) = ok.royaltyInfo(1, 10_000);
+        assertEq(amount, 1000);
     }
 
     function testFuzz_splitConservesValue(uint96 paid, uint16 alignmentBps) public {

@@ -79,6 +79,8 @@ contract DeployMiyamints is Script {
         bool deployGatingModule;
         bool allowMissingPool;
         string saltNamespace;
+        string gitCommit; // DEPLOY_GIT_COMMIT, set by script/deploy.sh after it checks the checkout
+        string gitRef; // DEPLOY_GIT_REF: "main" or the tag deployed
     }
 
     struct Deployment {
@@ -106,6 +108,7 @@ contract DeployMiyamints is Script {
     /// @notice Broadcast with --account / --ledger / --private-key (or DEPLOYER_PRIVATE_KEY if set).
     function run() external returns (Deployment memory d) {
         Config memory cfg = loadConfig();
+        _requireReleaseCheckout(cfg);
         if (vm.envExists("DEPLOYER_PRIVATE_KEY")) {
             vm.startBroadcast(vm.envUint("DEPLOYER_PRIVATE_KEY"));
         } else {
@@ -126,6 +129,7 @@ contract DeployMiyamints is Script {
     function runAs(address deployer, address owner) public returns (Deployment memory d) {
         Config memory cfg = loadConfig();
         if (owner != address(0)) cfg.owner = owner;
+        _requireReleaseCheckout(cfg);
         vm.startBroadcast(deployer);
         d = _deployAll(cfg, deployer);
         vm.stopBroadcast();
@@ -166,6 +170,8 @@ contract DeployMiyamints is Script {
         c.deployGatingModule = vm.envOr("DEPLOY_GATING_MODULE", vm.parseJsonBool(json, ".deployGatingModule"));
         c.allowMissingPool = vm.envOr("ALLOW_MISSING_POOL", c.deployMockAlignmentToken);
         c.saltNamespace = vm.envOr("SALT_NAMESPACE", string("miyamints.v1"));
+        c.gitCommit = vm.envOr("DEPLOY_GIT_COMMIT", string(""));
+        c.gitRef = vm.envOr("DEPLOY_GIT_REF", string(""));
 
         if (c.createX != CREATEX) revert ConfigError("createX must be the canonical CreateX the factories hardcode");
         if (c.protocolFeeBps > 500) revert ConfigError("protocolFeeBps > MAX_PROTOCOL_FEE_BPS (500)");
@@ -182,6 +188,19 @@ contract DeployMiyamints is Script {
         }
         if (c.treasury == address(0) && !c.deployMockAlignmentToken) {
             revert ConfigError("treasury unset for this chain: set TREASURY (a Safe/treasury you control here)");
+        }
+    }
+
+    /// @dev A broadcast must come from script/deploy.sh, which refuses unless the checkout is a clean main (or an
+    ///      explicit tag) and passes the commit it checked, so deployments/<chainId>.json records exactly what was
+    ///      deployed. Dry runs and tests are not gated.
+    function _requireReleaseCheckout(Config memory c) internal view {
+        bool live = vm.isContext(VmSafe.ForgeContext.ScriptBroadcast) || vm.isContext(VmSafe.ForgeContext.ScriptResume);
+        if (!live) return;
+        if (bytes(c.gitCommit).length != 40 || bytes(c.gitRef).length == 0) {
+            revert ConfigError(
+                "broadcast only through script/deploy.sh (clean checkout of main or a release tag; sets DEPLOY_GIT_COMMIT)"
+            );
         }
     }
 
@@ -203,7 +222,17 @@ contract DeployMiyamints is Script {
             d.alignmentToken = address(new TestAlignmentToken(deployer, 1_000_000_000e18));
             c.alignmentToken = d.alignmentToken;
         }
-        if (!c.allowMissingPool) _requirePool(c);
+        if (c.allowMissingPool) {
+            if (block.chainid == 1 || block.chainid == 4663) {
+                console2.log("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+                console2.log("!! WARNING: ALLOW_MISSING_POOL=true. The alignment pool was NOT checked. If the hookless");
+                console2.log("!! native-ETH v4 pool for the alignment token at zRouterFee/zRouterTickSpacing does not");
+                console2.log("!! exist, the default vault can never convert, and anyone can initialize it at any price.");
+                console2.log("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+            }
+        } else {
+            _requirePool(c);
+        }
 
         // 1. Registry, owned by the deployer until wiring is done.
         d.registry = _create3(
@@ -435,6 +464,9 @@ contract DeployMiyamints is Script {
         vm.serializeAddress(k, "zRouter", c.zRouter);
         vm.serializeUint(k, "zRouterFee", c.zRouterFee);
         vm.serializeString(k, "saltNamespace", c.saltNamespace);
+        // What was deployed: the commit script/deploy.sh checked ("" on a dry run outside it).
+        vm.serializeString(k, "gitCommit", c.gitCommit);
+        vm.serializeString(k, "gitRef", c.gitRef);
         out = vm.serializeUint(k, "protocolFeeBps", c.protocolFeeBps);
     }
 
@@ -467,7 +499,19 @@ contract DeployMiyamints is Script {
         });
         PoolId id = key.toId();
         (uint160 sqrtPriceX96,,,) = IPoolManager(c.poolManager).getSlot0(id);
-        if (sqrtPriceX96 == 0) revert ConfigError("no hookless native-ETH v4 pool for alignmentToken at zRouterFee");
+        if (sqrtPriceX96 == 0) {
+            console2.log("alignment pool missing: token", c.alignmentToken);
+            console2.log("  fee", uint256(c.zRouterFee), "tickSpacing", uint256(int256(c.zRouterTickSpacing)));
+            revert ConfigError(
+                string.concat(
+                    "alignment pool not initialized: no hookless native-ETH v4 pool for alignmentToken at fee ",
+                    uint256(c.zRouterFee).toString(),
+                    " / tickSpacing ",
+                    uint256(int256(c.zRouterTickSpacing)).toString(),
+                    ". Seed it first (DEPLOY.md), or ALLOW_MISSING_POOL=true to deploy anyway"
+                )
+            );
+        }
         uint128 liquidity = IPoolManager(c.poolManager).getLiquidity(id);
         // Anyone can initialize an unseeded pool at any price. This is depth at the current price, which a narrow position
         // reaches cheaply, so it only stops an unseeded or dust pool. Print what a human has to compare against the market.

@@ -109,6 +109,10 @@ const Floor = styled.div<{ $run: boolean }>`
     css`
       animation: ${gridRun} 0.9s linear infinite;
     `}
+  /* The stage is also handed "reduced" from the window; the media query holds even before that is known. */
+  @media (prefers-reduced-motion: reduce) {
+    animation: none;
+  }
 `
 
 const Beam = styled.span<{ $x: string; $from: number; $to: number; $tint: string; $dur: number }>`
@@ -131,6 +135,9 @@ const Beam = styled.span<{ $x: string; $from: number; $to: number; $tint: string
   .still & {
     animation: none;
   }
+  @media (prefers-reduced-motion: reduce) {
+    animation: none;
+  }
   .onair & {
     opacity: calc(0.35 + var(--lvl) * 0.5);
   }
@@ -147,6 +154,10 @@ const Sparkle = styled.span<{ $x: string; $y: string; $d: number }>`
   clip-path: polygon(50% 0, 62% 38%, 100% 50%, 62% 62%, 50% 100%, 38% 62%, 0 50%, 38% 38%);
   animation: ${twinkle} 2.4s ease-in-out ${({ $d }) => $d}s infinite;
   .still & {
+    animation: none;
+    opacity: 0.6;
+  }
+  @media (prefers-reduced-motion: reduce) {
     animation: none;
     opacity: 0.6;
   }

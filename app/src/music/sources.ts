@@ -20,6 +20,7 @@ export function musicDropsSource(chainId: number, extra: string[] = []): Playlis
   return {
     id: `drops:${chainId}`,
     label: `Music drops · ${musicConfig(chainId).name}`,
-    load: async () => (await discoverMusic(chainId, extra)).map((item) => item.track),
+    // Throws when nothing could be read, so the radio says "Could not load" instead of "added 0 tracks".
+    load: async () => (await discoverMusic(chainId, extra)).items.map((item) => item.track),
   }
 }
