@@ -60,6 +60,9 @@ export function createFx(sampleRate) {
   let bandL = 0
   let lowR = 0
   let bandR = 0
+  // Reused by the sample loop. A new object per sample on the audio thread is what cuts the sound out.
+  let holdL = 0
+  let holdR = 0
 
   /** Fresh repeat buffer and phases, so a press never replays audio from an old one. */
   function reset() {
@@ -92,10 +95,8 @@ export function createFx(sampleRate) {
     repeatR[repeatWrite] = right
     repeatWrite = repeatWrite + 1 >= cap ? 0 : repeatWrite + 1
     repeatPhase = repeatPhase + 1 >= loop ? 0 : repeatPhase + 1
-    return {
-      l: left * (1 - mix) + wetL * mix,
-      r: right * (1 - mix) + wetR * mix,
-    }
+    holdL = left * (1 - mix) + wetL * mix
+    holdR = right * (1 - mix) + wetR * mix
   }
 
   function beatRepeatIndex(div, mixByte, bpm, left, right) {
@@ -108,19 +109,18 @@ export function createFx(sampleRate) {
     const hz = clamp(40 * Math.pow(200, t), 40, sr * 0.45)
     const q = 0.6 + (clamp(b, 0, 255) / 255) * 3.4
     const f = Math.min(1, 2 * Math.sin(Math.PI * hz / sr))
-    function one(input, low, band) {
-      const nextLow = low + f * band
-      const high = input - nextLow - q * band
-      const nextBand = band + f * high
-      return { low: nextLow, band: nextBand, out: nextLow }
-    }
-    const L = one(left, lowL, bandL)
-    const R = one(right, lowR, bandR)
-    lowL = clamp(L.low, -2, 2)
-    bandL = clamp(L.band, -2, 2)
-    lowR = clamp(R.low, -2, 2)
-    bandR = clamp(R.band, -2, 2)
-    return { l: L.out, r: R.out }
+    const nextLowL = lowL + f * bandL
+    const highL = left - nextLowL - q * bandL
+    const nextBandL = bandL + f * highL
+    const nextLowR = lowR + f * bandR
+    const highR = right - nextLowR - q * bandR
+    const nextBandR = bandR + f * highR
+    lowL = clamp(nextLowL, -2, 2)
+    bandL = clamp(nextBandL, -2, 2)
+    lowR = clamp(nextLowR, -2, 2)
+    bandR = clamp(nextBandR, -2, 2)
+    holdL = nextLowL
+    holdR = nextLowR
   }
 
   function modulate(a, b, flange, left, right) {
@@ -132,50 +132,53 @@ export function createFx(sampleRate) {
     const lfoR = Math.sin(2 * Math.PI * (phase + 0.27))
     const depth = flange ? 0.0004 + 0.004 * (clamp(a, 0, 255) / 255) : 0.002 + 0.012 * (clamp(a, 0, 255) / 255)
     const base = flange ? 0.002 : 0.018
-    function read(buf, delaySec) {
-      const samples = clamp(delaySec * sr, 1, n - 2)
-      let wrapped = write - samples
-      while (wrapped < 0) wrapped += n
-      const i0 = wrapped % n | 0
-      const i1 = (i0 + 1) % n
-      const frac = wrapped - Math.floor(wrapped)
-      return buf[i0] * (1 - frac) + buf[i1] * frac
-    }
-    const wetL = read(bufL, base + depth * (0.5 + 0.5 * lfo))
-    const wetR = read(bufR, base + depth * (0.5 + 0.5 * lfoR))
+    const delayL = base + depth * (0.5 + 0.5 * lfo)
+    const delayR = base + depth * (0.5 + 0.5 * lfoR)
+    const samplesL = clamp(delayL * sr, 1, n - 2)
+    const samplesR = clamp(delayR * sr, 1, n - 2)
+    let wrappedL = write - samplesL
+    let wrappedR = write - samplesR
+    while (wrappedL < 0) wrappedL += n
+    while (wrappedR < 0) wrappedR += n
+    const i0L = wrappedL % n | 0
+    const i0R = wrappedR % n | 0
+    const fracL = wrappedL - Math.floor(wrappedL)
+    const fracR = wrappedR - Math.floor(wrappedR)
+    const wetL = bufL[i0L] * (1 - fracL) + bufL[(i0L + 1) % n] * fracL
+    const wetR = bufR[i0R] * (1 - fracR) + bufR[(i0R + 1) % n] * fracR
     const fb = flange ? 0.45 : 0
     bufL[write] = clamp(left + wetL * fb, -1.5, 1.5)
     bufR[write] = clamp(right + wetR * fb, -1.5, 1.5)
     write = write + 1 >= n ? 0 : write + 1
     const mix = flange ? 0.55 : 0.45
-    return { l: left * (1 - mix) + wetL * mix, r: right * (1 - mix) + wetR * mix }
+    holdL = left * (1 - mix) + wetL * mix
+    holdR = right * (1 - mix) + wetR * mix
   }
 
   function process(inL, inR, outL, outR, slot, bpm) {
     const n = inL.length
+    const type = slot && slot.type && slot.type !== 'off' ? slot.type : ''
     for (let i = 0; i < n; i++) {
       let l = inL[i]
       let r = inR[i]
       if (!(l > -Infinity && l < Infinity)) l = 0
       if (!(r > -Infinity && r < Infinity)) r = 0
-      if (slot && slot.type && slot.type !== 'off') {
-        if (slot.type === 'repeat') {
-          const wet = beatRepeat(slot.a, slot.b, bpm, l, r)
-          l = wet.l
-          r = wet.r
-        } else {
-          const wet = beatRepeatIndex(slot.div ?? 2, slot.mix ?? 128, bpm, l, r)
-          l = wet.l
-          r = wet.r
-          if (slot.type === 'filter') {
-            const y = filter(slot.a, slot.b, l, r)
-            l = y.l
-            r = y.r
-          } else if (slot.type === 'chorus' || slot.type === 'flange') {
-            const y = modulate(slot.a, slot.b, slot.type === 'flange', l, r)
-            l = y.l
-            r = y.r
-          }
+      if (type === 'repeat') {
+        beatRepeat(slot.a, slot.b, bpm, l, r)
+        l = holdL
+        r = holdR
+      } else if (type) {
+        beatRepeatIndex(slot.div ?? 2, slot.mix ?? 128, bpm, l, r)
+        l = holdL
+        r = holdR
+        if (type === 'filter') {
+          filter(slot.a, slot.b, l, r)
+          l = holdL
+          r = holdR
+        } else if (type === 'chorus' || type === 'flange') {
+          modulate(slot.a, slot.b, type === 'flange', l, r)
+          l = holdL
+          r = holdR
         }
       }
       if (!(l > -Infinity && l < Infinity) || !(r > -Infinity && r < Infinity)) {

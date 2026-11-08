@@ -30,6 +30,10 @@ let routed = null
 let analyser = null
 let meterAnalysers = []
 const reverbBuffers = new Map()
+/** One convolver per bus and reverb kind. Notes send into it; the tank stays up. */
+const reverbTanks = new Map()
+/** Sounding notes. Past this, the oldest fades so the audio thread keeps the buffer full. */
+const VOICE_CAP = 28
 let voices = []
 let patternVoices = []
 let held = new Map()
@@ -449,6 +453,19 @@ function makeBus(context, dest) {
   return { input, fader, panner, meter, fx: [], sig: '' }
 }
 
+/** Slot indexes that actually make sound. A `none` slot is a straight wire, so it is left out. */
+function liveFx(list) {
+  const slots = []
+  const types = []
+  for (let i = 0; i < list.length; i++) {
+    const type = list[i]?.type
+    if (!type || type === 'none') continue
+    slots.push(i)
+    types.push(type)
+  }
+  return { slots, types, sig: types.join('.') }
+}
+
 function connectChain(bus, context) {
   bus.fx.forEach((fx) => {
     fx.stop()
@@ -464,9 +481,8 @@ function connectChain(bus, context) {
     /* first connect */
   }
   const index = busNodes.indexOf(bus)
-  const types = model.buses[index].fx.map((s) => s.type)
-  const spec = types.join('.')
-  const nodes = types.map((type) => makeFx(context, type))
+  const live = liveFx(model.buses[index]?.fx || [])
+  const nodes = live.types.map((type) => makeFx(context, type))
   let prev = bus.input
   nodes.forEach((node) => {
     prev.connect(node.input)
@@ -474,7 +490,8 @@ function connectChain(bus, context) {
   })
   prev.connect(bus.fader)
   bus.fx = nodes
-  bus.sig = spec
+  bus.slots = live.slots
+  bus.sig = live.sig
 }
 
 function ensureBuses() {
@@ -549,10 +566,11 @@ export function syncMixer(force = false) {
   const anySolo = model.buses.some((b) => b.solo)
   model.buses.forEach((b, i) => {
     const node = busNodes[i]
-    // Only the bus whose FX list changed is rebuilt. The others keep playing through.
-    const sig = b.fx.map((s) => s.type).join('.')
-    if (force || node.sig !== sig) connectChain(node, ctx)
-    node.fx.forEach((fx, slot) => {
+    // Only the bus whose real FX list changed is rebuilt. Empty slots are not nodes.
+    const live = liveFx(b.fx)
+    if (force || node.sig !== live.sig) connectChain(node, ctx)
+    node.fx.forEach((fx, iSlot) => {
+      const slot = node.slots ? node.slots[iSlot] : iSlot
       const amount = finiteOr(b.fx[slot]?.amount, 0)
       const key = `${amount}:${model.bpm}`
       if (fx.key === key) return
@@ -567,6 +585,7 @@ export function syncMixer(force = false) {
 
 function readMeters() {
   if (!ctx) return
+  pruneVoices()
   const buf = new Float32Array(128)
   busNodes.forEach((b, i) => {
     b.meter.getFloatTimeDomainData(buf)
@@ -818,19 +837,40 @@ function widen(input, amount, env, t, total) {
   })
 }
 
-function padReverb(input, amount, env, t, total) {
-  if (!wantsMix(amount, env)) return input
-  const conv = ctx.createConvolver()
-  if (env?.kind === 'room' || env?.kind === 'hall' || env?.kind === 'plate' || env?.kind === 'spring') {
-    conv.buffer = coloredImpulse(ctx, env.kind)
-  } else {
-    const seconds = amount > 0.66 ? 1.7 : amount > 0.33 ? 0.75 : 0.3
-    conv.buffer = impulse(ctx, seconds)
+function reverbSpec(amount, env) {
+  const kind = env?.kind
+  if (kind === 'room' || kind === 'hall' || kind === 'plate' || kind === 'spring') {
+    return { key: kind, buffer: () => coloredImpulse(ctx, kind) }
   }
-  return mixAround(input, amount, env, t, total, (wet) => {
-    input.connect(conv)
-    conv.connect(wet)
-  })
+  const seconds = amount > 0.66 ? 1.7 : amount > 0.33 ? 0.75 : 0.3
+  return { key: `sec:${seconds}`, buffer: () => impulse(ctx, seconds) }
+}
+
+/** Shared tank for this bus. Convolution is linear, so a send gain matches a constant wet mix. An envelope rings in the tank instead of gating the tail. */
+function sharedReverb(busIndex, spec) {
+  const key = `${busIndex}:${spec.key}`
+  const cached = reverbTanks.get(key)
+  if (cached) return cached
+  const input = ctx.createGain()
+  const conv = ctx.createConvolver()
+  conv.buffer = spec.buffer()
+  input.connect(conv)
+  conv.connect(busNodes[busIndex]?.input || master)
+  const tank = { input, conv }
+  reverbTanks.set(key, tank)
+  return tank
+}
+
+function padReverb(input, amount, env, t, total, busIndex, sends) {
+  if (!wantsMix(amount, env)) return input
+  const dry = ctx.createGain()
+  const send = ctx.createGain()
+  input.connect(dry)
+  input.connect(send)
+  send.connect(sharedReverb(busIndex, reverbSpec(amount, env)).input)
+  if (sends) sends.push(send)
+  scheduleMix(dry, send, env, clamp(amount || 0, 0, 1), t, total)
+  return dry
 }
 
 function stopExtras(v, when) {
@@ -845,6 +885,65 @@ function stopExtras(v, when) {
   const now = ctx ? ctx.currentTime : 0
   if (when == null || when <= now + 0.01) run()
   else window.setTimeout(run, Math.max(0, (when - now) * 1000))
+}
+
+/** Unhook a voice after it has gone quiet. Calling this at the start of a fade would cut the fade. */
+function dropVoice(v) {
+  if (!v || v.dropped) return
+  v.dropped = true
+  stopExtras(v)
+  const sources = []
+  if (v.src) sources.push(v.src)
+  if (v.srcs) {
+    for (const item of v.srcs) {
+      if (item?.node && item.node !== v.src) sources.push(item.node)
+    }
+  }
+  for (const src of sources) {
+    try { src.stop() } catch { /* already stopped */ }
+    try { src.disconnect() } catch { /* already free */ }
+  }
+  try { v.out?.disconnect() } catch { /* already free */ }
+  if (v.sends) {
+    for (const send of v.sends) {
+      try { send.disconnect() } catch { /* already free */ }
+    }
+  }
+}
+
+function pruneVoices(now) {
+  if (!ctx) return
+  const t = now == null ? ctx.currentTime : now
+  const next = liveVoices(voices, t)
+  if (next.length !== voices.length) {
+    const stay = new Set(next)
+    for (const v of voices) if (!stay.has(v)) dropVoice(v)
+    voices = next
+  }
+  const pat = liveVoices(patternVoices, t)
+  if (pat.length !== patternVoices.length) {
+    const stay = new Set(pat)
+    for (const v of patternVoices) if (!stay.has(v)) dropVoice(v)
+    patternVoices = pat
+  }
+}
+
+function makeRoom() {
+  const sounding = () => voices.reduce((n, v) => n + (!v.dead && !v.dropped && !v.ended ? 1 : 0), 0)
+  while (sounding() >= VOICE_CAP) {
+    let oldest = null
+    for (const v of voices) {
+      if (v.dead || v.dropped || v.ended) continue
+      if (!oldest || v.startAt < oldest.startAt) oldest = v
+    }
+    if (!oldest) break
+    silence(oldest, ctx.currentTime + 0.012, 0.02)
+    // A note that is already ending keeps its own tail. Mark it so the search moves on.
+    if (!oldest.dead) {
+      oldest.dead = true
+      if (oldest.quietAt == null) oldest.quietAt = ctx.currentTime
+    }
+  }
 }
 
 /** Pull a voice silent at `when`. A released one-shot is still audible until its tail, so this must run even after `dead` is set. */
@@ -1019,9 +1118,10 @@ export function playPad(index, velocity = TRACK_VEL, when = 0, opts = {}) {
   filter.connect(amp)
   amp.connect(gate)
   gate.connect(pan)
+  const sends = []
   let out = chorus(pan, fx.chorus || 0, fxEnv(pad, 'chorus'), t, envTotal, stops)
   out = widen(out, fx.width || 0, fxEnv(pad, 'width'), t, envTotal)
-  out = padReverb(out, fx.reverb || 0, fxEnv(pad, 'reverb'), t, envTotal)
+  out = padReverb(out, fx.reverb || 0, fxEnv(pad, 'reverb'), t, envTotal, pad.bus | 0, sends)
   out.connect(busNodes[pad.bus]?.input || master)
 
   scheduleFilter(filter, pad, t)
@@ -1064,6 +1164,8 @@ export function playPad(index, velocity = TRACK_VEL, when = 0, opts = {}) {
     introUntil: t + regionDur,
     peak: Math.max(0.0001, vel * clamp(pad.amp.s ?? 1, 0, 1)),
     stops,
+    out,
+    sends,
     grain: grainLoop,
     pcm: grainLoop ? buffer.getChannelData(0) : null,
     spec: grainLoop ? spec : null,
@@ -1080,12 +1182,10 @@ export function playPad(index, velocity = TRACK_VEL, when = 0, opts = {}) {
       reverse: !!pad.reverse,
     },
   }
+  pruneVoices()
+  makeRoom()
   voices.push(voice)
-  if (voices.length > 64) voices = liveVoices(voices, ctx.currentTime)
-  if (opts.pattern) {
-    patternVoices.push(voice)
-    if (patternVoices.length > 32) patternVoices = liveVoices(patternVoices, ctx.currentTime)
-  }
+  if (opts.pattern) patternVoices.push(voice)
   if (opts.holdId) held.set(opts.holdId, voice)
   if (src) {
     src.onended = () => {
@@ -1237,6 +1337,10 @@ function click(time, accent) {
   g.connect(master)
   o.start(time)
   o.stop(time + 0.04)
+  o.onended = () => {
+    try { o.disconnect() } catch { /* free */ }
+    try { g.disconnect() } catch { /* free */ }
+  }
 }
 
 function silenceLane(lane, when) {
@@ -1287,7 +1391,11 @@ function pumpGrains() {
   const horizon = ctx.currentTime + 0.2
   for (const v of voices) {
     if (!v.grain || v.dead || !v.pcm) continue
-    v.srcs = v.srcs.filter((item) => item.until > ctx.currentTime - 0.05)
+    v.srcs = v.srcs.filter((item) => {
+      if (item.until > ctx.currentTime - 0.05) return true
+      try { item.node.disconnect() } catch { /* ended */ }
+      return false
+    })
     let guard = 0
     while (v.nextAt < horizon && guard < 8) {
       const minSamples = Math.max(v.spec.lenSamples, Math.round(0.03 * v.sr))
@@ -1317,6 +1425,7 @@ function scheduler() {
   if (!ctx || !model.playing) return
   pumpGrains()
   const now = ctx.currentTime
+  pruneVoices(now)
   patternVoices = liveVoices(patternVoices, now)
   const horizon = now + 0.12
   const base = stepSeconds(model.bpm)
@@ -1409,6 +1518,10 @@ export async function previewPcm(pcm, sr = 44100) {
   src.connect(g)
   g.connect(master)
   src.start()
+  src.onended = () => {
+    try { src.disconnect() } catch { /* free */ }
+    try { g.disconnect() } catch { /* free */ }
+  }
 }
 
 export function noteOn(index, velocity, holdId, pitch, extra) {
@@ -2008,6 +2121,7 @@ export function shutdown() {
     const now = ctx.currentTime
     for (const v of voices) {
       try { silence(v, now, 0.005) } catch { /* ended */ }
+      dropVoice(v)
     }
   }
   voices = []

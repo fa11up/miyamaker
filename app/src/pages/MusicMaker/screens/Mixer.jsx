@@ -50,7 +50,7 @@ export function Mixer() {
         ))}
       </div>
       <Compressor />
-      <p className="hint">Sixteen buses, eight on a page, five effect slots each. The brickwall limiter still sits after the master compressor and will not pass 0 dBFS. Attack 1 ms, release 1.2 s.</p>
+      <p className="hint">Sixteen buses, eight on a page, five effect slots each. Empty slots stay unwired, and notes on a bus share one reverb tank. The brickwall limiter still sits after the master compressor and will not pass 0 dBFS. Attack 1 ms, release 1.2 s.</p>
     </div>
   )
 }
