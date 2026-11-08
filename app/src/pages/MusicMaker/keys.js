@@ -86,7 +86,7 @@ export const SHORTCUTS = [
   ['MIDI', 'Click MIDI once so the browser can see a controller. Pad mode: a Launchpad plays all 64 instruments, and MPC, MPD, and MPK pads play instruments from note 36. Keys mode plays the selected pad chromatically. Notes outside the pad map play the selected pad, so a keyboard can carry a melody. The computer keys work in every browser.'],
   ['FILE', 'Open and save. Wallet reads tokens for media. A video link from YouTube, Odysee, LBRY, or X becomes a Cache sample until it is loaded onto a pad and the song is saved. Image… turns a picture into a Cache sample.'],
   ['NEW / SAVE', 'New song, folder, kit, or slice. Save writes the current song. Save as stores a new .m1ya. Save as template keeps a starting point. On miyamaker.com, Publish song, kit, or bounce to Arweave (public and permanent, every sample included), or mint the song or kit as an edition.'],
-  ['Shift+numpad 0–9', 'Hold a master FX slot. It retriggers the output, then runs that slot’s filter, chorus, flanger, or repeat. Edit the ten slots on the FX page.'],
+  ['Shift+numpad 0–9', 'Hold a master FX slot. Repeat locks one note value to the project tempo and retriggers it. Slice rearranges a run of those notes. Grain sprays short pieces and is not a retrigger. Filter, chorus, and flanger leave the beat alone. Edit the ten slots on the FX page.'],
 ]
 
 /**

@@ -1423,6 +1423,7 @@ function pumpGrains() {
 
 function scheduler() {
   if (!ctx || !model.playing) return
+  postNumpadClock()
   pumpGrains()
   const now = ctx.currentTime
   pruneVoices(now)
@@ -2141,12 +2142,33 @@ export function shutdown() {
   if (ctx && ctx.state !== 'closed') ctx.suspend().catch(() => {})
 }
 
+function numpadTempo() {
+  const tempo = model.bpm
+  return tempo >= 20 && tempo <= 300 ? tempo : 96
+}
+
+/** Audio time of step 0, so a held repeat lands on the song grid. Null while the transport is stopped. */
+function numpadOrigin() {
+  if (!ctx || !model.playing || !anchor || !Number.isFinite(anchor.time)) return null
+  const origin = anchor.time - (anchor.step | 0) * stepSeconds(model.bpm)
+  return Number.isFinite(origin) ? origin : null
+}
+
+function postNumpadClock() {
+  if (!numpadFx || !(model.fxHeld >= 0)) return
+  numpadFx.port.postMessage({
+    bpm: numpadTempo(),
+    origin: numpadOrigin(),
+  })
+}
+
 export function pushNumpadFx(held = model.fxHeld) {
   if (!numpadFx) return
   numpadFx.port.postMessage({
     slots: model.numpadFx,
-    bpm: model.bpm,
+    bpm: numpadTempo(),
     held: Number.isFinite(held) ? held : -1,
+    origin: numpadOrigin(),
   })
 }
 

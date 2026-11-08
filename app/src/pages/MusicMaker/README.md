@@ -35,7 +35,7 @@ That is enough to make a beat and a bass line. Pick a drum pad, play it in Pad. 
 
 Banks A, B, C, and D hold sixteen pads each. The pad you are on is the selected instrument. The Sample page trims it, tunes it, and sets how it plays: one shot, while you hold it, or looping. Pads in the same choke group cut each other off, which is how a closed hat silences an open hat.
 
-The Synth page draws a sound and stores it on a pad. The Mixer page is four buses and the master. The FX page is ten performance slots. Hold Shift and a numpad digit while the song plays and that slot grabs the output.
+The Synth page draws a sound and stores it on a pad. The Mixer page is four buses and the master. The FX page is ten performance slots. Hold Shift and a numpad digit while the song plays. Repeat locks one note value, from a half note to a 128th, to the project tempo and retriggers it. Slice rearranges a run of those notes. Grain sprays short pieces and is not a retrigger.
 
 You can ignore every one of those pages until you want them.
 

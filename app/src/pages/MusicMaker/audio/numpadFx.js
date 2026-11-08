@@ -1,7 +1,15 @@
-/** Master performance FX, matching thrashtracker MasterPrint: repeat, filter, chorus, flanger. */
+/** Master performance FX. Repeat and Slice lock to the project tempo. Grain is a separate spray. */
 
 export const NUMPAD_FX_COUNT = 10
 export const REPEAT_NAMES = ['1/2', '1/4', '1/8', '1/16', '1/32', '1/64', '1/128']
+export const SLICE_PATTERNS = ['Forward', 'Reverse', 'Doubles', 'Swap', 'Stutter', 'Outsides', 'Shuffle', 'Glitch']
+export const SLICE_FILLS = ['Repeat', 'Up', 'Down', 'Hard', 'Pong', 'Soft']
+export const GRAIN_DIRS = ['Forward', 'Back', 'Ping pong']
+/** Byte that the old division dropdown reads back as this note value. */
+export function repeatAmount(div) {
+  return [18, 55, 91, 128, 164, 201, 237][clamp(div | 0, 0, 6)]
+}
+const TYPES = ['repeat', 'slice', 'grain', 'filter', 'chorus', 'flange']
 
 function clamp(v, a, b) {
   return Math.max(a, Math.min(b, v))
@@ -23,12 +31,17 @@ export function defaultNumpadFx() {
 
 export function normalizeSlot(raw, index) {
   const base = defaultNumpadFx()[index] || defaultNumpadFx()[0]
-  const type = ['repeat', 'filter', 'chorus', 'flange'].includes(raw?.type) ? raw.type : base.type
+  const type = TYPES.includes(raw?.type) ? raw.type : base.type
+  const a = clamp(raw?.a ?? base.a, 0, 255) | 0
+  // Older repeat slots stored the note value in `a` only. The dropdown writes both now.
+  const div = type === 'repeat'
+    ? clamp((a * 7 / 256) | 0, 0, 6)
+    : clamp(raw?.div ?? base.div, 0, 6) | 0
   return {
     type,
-    a: clamp(raw?.a ?? base.a, 0, 255) | 0,
+    a,
     b: clamp(raw?.b ?? base.b, 0, 255) | 0,
-    div: clamp(raw?.div ?? base.div, 0, 6) | 0,
+    div,
     mix: clamp(raw?.mix ?? base.mix, 0, 255) | 0,
   }
 }
@@ -49,8 +62,17 @@ export function createFx(sampleRate) {
   const cap = Math.max(8, Math.ceil(sr * 2))
   const repeatL = new Float32Array(cap)
   const repeatR = new Float32Array(cap)
-  let repeatWrite = 0
-  let repeatPhase = 0
+  // Eight steps. Same order as SLICE_PATTERNS.
+  const PAT = new Uint8Array([
+    0, 1, 2, 3, 4, 5, 6, 7,
+    7, 6, 5, 4, 3, 2, 1, 0,
+    0, 0, 1, 1, 2, 2, 3, 3,
+    0, 2, 1, 3, 4, 6, 5, 7,
+    0, 0, 0, 0, 4, 4, 6, 7,
+    0, 7, 1, 6, 2, 5, 3, 4,
+    0, 4, 2, 6, 1, 5, 3, 7,
+    3, 3, 0, 0, 7, 7, 4, 4,
+  ])
   const chorusN = 2048
   const bufL = new Float32Array(chorusN)
   const bufR = new Float32Array(chorusN)
@@ -63,13 +85,32 @@ export function createFx(sampleRate) {
   // Reused by the sample loop. A new object per sample on the audio thread is what cuts the sound out.
   let holdL = 0
   let holdR = 0
+  // 0 wait for the grid, 1 record one note (or eight slices), 2 play that recording.
+  let loopMode = 0
+  let loopPos = 0
+  let prevPhase = -1
+  let latchedDiv = -1
+  let latchedBpm = 0
+  let latchedType = ''
+  let histWrite = 0
+  let histFill = 0
+  let armed = 0
+  let gPos = 0
+  let gStart = 0
+  let gLen = 1
+  let gLeft = 0
+  let gDir = 0
+  let hOn = 0
+  let hPos = 0
+  let hStart = 0
+  let hLen = 1
+  let hDir = 0
+  let flip = 0
 
-  /** Fresh repeat buffer and phases, so a press never replays audio from an old one. */
+  /** Fresh buffers, so a press never replays audio from an old one. */
   function reset() {
     repeatL.fill(0)
     repeatR.fill(0)
-    repeatWrite = 0
-    repeatPhase = 0
     bufL.fill(0)
     bufR.fill(0)
     write = 0
@@ -78,30 +119,71 @@ export function createFx(sampleRate) {
     bandL = 0
     lowR = 0
     bandR = 0
+    loopMode = 0
+    loopPos = 0
+    prevPhase = -1
+    latchedDiv = -1
+    latchedBpm = 0
+    latchedType = ''
+    histWrite = 0
+    histFill = 0
+    armed = 0
+    gPos = 0
+    gLen = 0
+    gLeft = 0
+    hOn = 0
+    flip = 0
   }
 
-  function beatRepeat(amount, mixByte, bpm, left, right) {
-    const beat = sr * 60 / Math.max(20, bpm || 96)
-    const divisor = 2 << clamp((amount * 7 / 256) | 0, 0, 6)
-    const loop = clamp(Math.round(beat / divisor), 1, cap - 1)
-    const mix = clamp(mixByte, 0, 255) / 255
-    const age = loop - repeatPhase
-    let read = repeatWrite - age
-    while (read < 0) read += cap
-    read %= cap
-    const wetL = repeatL[read]
-    const wetR = repeatR[read]
-    repeatL[repeatWrite] = left
-    repeatR[repeatWrite] = right
-    repeatWrite = repeatWrite + 1 >= cap ? 0 : repeatWrite + 1
-    repeatPhase = repeatPhase + 1 >= loop ? 0 : repeatPhase + 1
-    holdL = left * (1 - mix) + wetL * mix
-    holdR = right * (1 - mix) + wetR * mix
+  function noteLen(div, tempo) {
+    const quarter = sr * 60 / tempo
+    let n = Math.round(quarter * 2 / (1 << div))
+    if (!(n > 0)) n = 1
+    if (n > cap) n = cap
+    return n
   }
 
-  function beatRepeatIndex(div, mixByte, bpm, left, right) {
-    const amount = clamp(div, 0, 6) * 256 / 7
-    return beatRepeat(amount, mixByte, bpm, left, right)
+  function slotDiv(slot, type) {
+    const raw = slot.div
+    if (raw === 0 || ((raw | 0) === raw && raw >= 0 && raw <= 6)) return raw | 0
+    if (type === 'repeat') return clamp(((slot.a | 0) * 7 / 256) | 0, 0, 6)
+    return 0
+  }
+
+  function fillAt(kind, pos, len) {
+    if (len <= 1) return 0
+    if (kind === 1) return (pos * 2) % len
+    if (kind === 2) return pos >> 1
+    if (kind === 3) return pos % Math.max(1, len >> 3)
+    if (kind === 4) {
+      const h = len >> 1
+      if (h < 1) return 0
+      if (pos < h) return Math.min(len - 1, pos << 1)
+      return Math.max(0, (len - 1) - ((pos - h) << 1))
+    }
+    if (kind === 0) {
+      const mid = len >> 1
+      const q = Math.max(1, len >> 2)
+      if (pos < mid) return pos
+      const looped = mid + ((pos - mid) % q)
+      return looped < len ? looped : len - 1
+    }
+    return pos < len ? pos : len - 1
+  }
+
+  function wrapRead(start, offset) {
+    let read = start + offset
+    if (read >= cap) read -= cap
+    if (read < 0) read += cap
+    return read
+  }
+
+  function readGrain(start, len, pos, dir) {
+    const offset = dir === 1 ? len - 1 - pos : pos
+    const read = wrapRead(start, offset)
+    const env = len > 1 ? 1 - Math.abs((2 * pos) / len - 1) : 1
+    holdL = repeatL[read] * env
+    holdR = repeatR[read] * env
   }
 
   function filter(a, b, left, right) {
@@ -155,31 +237,169 @@ export function createFx(sampleRate) {
     holdR = right * (1 - mix) + wetR * mix
   }
 
-  function process(inL, inR, outL, outR, slot, bpm) {
+  function process(inL, inR, outL, outR, slot, bpm, time, origin) {
     const n = inL.length
     const type = slot && slot.type && slot.type !== 'off' ? slot.type : ''
+    const tempo = bpm >= 20 && bpm <= 300 ? bpm : 96
+    const div = type ? slotDiv(slot, type) : 0
+    const synced = Number.isFinite(time) && Number.isFinite(origin)
+    if (type && type !== latchedType) {
+      latchedType = type
+      loopMode = 0
+      loopPos = 0
+      prevPhase = -1
+      armed = 0
+      gLeft = 0
+      gLen = 0
+      hOn = 0
+      histFill = 0
+      histWrite = 0
+    }
+    if ((type === 'repeat' || type === 'slice') && (div !== latchedDiv || tempo !== latchedBpm)) {
+      latchedDiv = div
+      latchedBpm = tempo
+      loopMode = 0
+      loopPos = 0
+      prevPhase = -1
+    }
+    const slice = noteLen(div, tempo)
+    let slices = type === 'slice' ? 8 : 1
+    while (slices > 1 && slice * slices > cap) slices >>= 1
+    const record = slice * slices
+    const mixByte = type === 'repeat' ? (slot.b | 0) : (slot.mix | 0)
+    const mix = clamp(mixByte, 0, 255) / 255
+    const pattern = (slot && (slot.a | 0) <= 7) ? (slot.a | 0) : clamp(Math.round(((slot && slot.a) | 0) * 7 / 255), 0, 7)
+    const fill = (slot && (slot.b | 0) <= 5) ? (slot.b | 0) : clamp(((slot && slot.b) | 0) * 6 / 256, 0, 5)
+    const grainDir = div % 3
+    const grainSize = clamp(Math.round(sr * (0.006 + (clamp(slot ? slot.a | 0 : 0, 0, 255) / 255) * 0.09)), 8, 4000)
+    const grainHop = clamp(Math.round(grainSize * (0.25 + (clamp(slot ? slot.b | 0 : 0, 0, 255) / 255) * 0.75)), 1, grainSize)
+    const startSample = synced ? Math.round((time - origin) * sr) : 0
     for (let i = 0; i < n; i++) {
       let l = inL[i]
       let r = inR[i]
       if (!(l > -Infinity && l < Infinity)) l = 0
       if (!(r > -Infinity && r < Infinity)) r = 0
-      if (type === 'repeat') {
-        beatRepeat(slot.a, slot.b, bpm, l, r)
+      if (type === 'repeat' || type === 'slice') {
+        let phase = 0
+        if (synced) {
+          const elapsed = startSample + i
+          phase = elapsed % slice
+          if (phase < 0) phase += slice
+        }
+        const boundary = phase === 0 || (prevPhase >= 0 && phase < prevPhase)
+        if (loopMode === 0 && synced && !boundary) {
+          prevPhase = phase
+          holdL = l
+          holdR = r
+        } else if (loopMode === 0 || loopMode === 1) {
+          if (loopMode === 0) {
+            loopMode = 1
+            loopPos = 0
+          }
+          if (synced) prevPhase = phase
+          if (loopPos < cap) {
+            repeatL[loopPos] = l
+            repeatR[loopPos] = r
+          }
+          loopPos += 1
+          if (loopPos >= record) {
+            loopMode = 2
+            loopPos = 0
+          }
+          holdL = l
+          holdR = r
+        } else {
+          let wetL = 0
+          let wetR = 0
+          if (type === 'repeat') {
+            wetL = repeatL[loopPos]
+            wetR = repeatR[loopPos]
+          } else {
+            const step = (loopPos / slice) | 0
+            const within = loopPos - step * slice
+            const which = PAT[(pattern * 8 + (step % 8)) | 0] % slices
+            const off = fillAt(fill, within, slice)
+            const at = which * slice + off
+            if (at >= 0 && at < cap) {
+              wetL = repeatL[at]
+              wetR = repeatR[at]
+            }
+            if (fill === 5) {
+              const edge = Math.max(1, (slice * 0.1) | 0)
+              let env = 1
+              if (within < edge) env = within / edge
+              else if (within > slice - edge) env = (slice - within) / edge
+              wetL *= env
+              wetR *= env
+            }
+          }
+          loopPos = loopPos + 1 >= record ? 0 : loopPos + 1
+          holdL = l * (1 - mix) + wetL * mix
+          holdR = r * (1 - mix) + wetR * mix
+        }
         l = holdL
         r = holdR
-      } else if (type) {
-        beatRepeatIndex(slot.div ?? 2, slot.mix ?? 128, bpm, l, r)
-        l = holdL
-        r = holdR
-        if (type === 'filter') {
-          filter(slot.a, slot.b, l, r)
-          l = holdL
-          r = holdR
-        } else if (type === 'chorus' || type === 'flange') {
-          modulate(slot.a, slot.b, type === 'flange', l, r)
+      } else if (type === 'grain') {
+        const at = histWrite
+        if (at < cap) {
+          repeatL[at] = l
+          repeatR[at] = r
+        }
+        histWrite = at + 1 >= cap ? 0 : at + 1
+        if (histFill < cap) histFill += 1
+        if (!armed) {
+          if (histFill >= grainSize) armed = 1
+          else {
+            holdL = l
+            holdR = r
+            l = holdL
+            r = holdR
+          }
+        }
+        if (armed) {
+          if (gLeft <= 0) {
+            if (gLen > 0 && gPos < gLen) {
+              hOn = 1
+              hPos = gPos
+              hStart = gStart
+              hLen = gLen
+              hDir = gDir
+            }
+            gLen = grainSize
+            gStart = at - (gLen - 1)
+            if (gStart < 0) gStart += cap
+            gPos = 0
+            gLeft = grainHop
+            flip ^= 1
+            gDir = grainDir === 2 ? flip : grainDir
+          }
+          const gAt = gPos < gLen ? gPos : gLen - 1
+          readGrain(gStart, gLen, gAt, gDir)
+          let wetL = holdL
+          let wetR = holdR
+          gPos += 1
+          gLeft -= 1
+          if (hOn) {
+            const hAt = hPos < hLen ? hPos : hLen - 1
+            readGrain(hStart, hLen, hAt, hDir)
+            wetL += holdL
+            wetR += holdR
+            hPos += 1
+            if (hPos >= hLen) hOn = 0
+          }
+          holdL = l * (1 - mix) + wetL * mix
+          holdR = r * (1 - mix) + wetR * mix
           l = holdL
           r = holdR
         }
+      } else if (type === 'filter') {
+        filter(slot.a | 0, slot.b | 0, l, r)
+        l = holdL
+        r = holdR
+      } else if (type === 'chorus' || type === 'flange') {
+        modulate(slot.a | 0, slot.b | 0, type === 'flange', l, r)
+        l = holdL
+        r = holdR
       }
       if (!(l > -Infinity && l < Infinity) || !(r > -Infinity && r < Infinity)) {
         reset()
@@ -204,10 +424,12 @@ export function workletSource() {
         this.held = -1
         this.slots = []
         this.bpm = 96
+        this.origin = null
         this.port.onmessage = (event) => {
           const data = event.data || {}
           if (data.slots) this.slots = data.slots
-          if (typeof data.bpm === 'number' && data.bpm > 0 && data.bpm < 1000) this.bpm = data.bpm
+          if (typeof data.bpm === 'number' && data.bpm >= 20 && data.bpm <= 300) this.bpm = data.bpm
+          if ('origin' in data) this.origin = typeof data.origin === 'number' && isFinite(data.origin) ? data.origin : null
           if (typeof data.held === 'number') {
             if (data.held >= 0 && data.held !== this.held) this.fx.reset()
             this.held = data.held
@@ -219,7 +441,7 @@ export function workletSource() {
         const output = outputs[0]
         if (!input || !input[0] || !output || !output[0]) return true
         const slot = this.held >= 0 ? this.slots[this.held] : null
-        this.fx.process(input[0], input[1] || input[0], output[0], output[1] || output[0], slot, this.bpm)
+        this.fx.process(input[0], input[1] || input[0], output[0], output[1] || output[0], slot, this.bpm, currentTime, this.origin)
         return true
       }
     }

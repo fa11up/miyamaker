@@ -31,7 +31,7 @@ import {
   stepsBehind,
 } from '../src/pages/MusicMaker/audio/voices.js'
 import { createKnee } from '../src/pages/MusicMaker/audio/knee.js'
-import { createFx } from '../src/pages/MusicMaker/audio/numpadFx.js'
+import { createFx, normalizeSlot, repeatAmount } from '../src/pages/MusicMaker/audio/numpadFx.js'
 import { parseXm } from '../src/pages/MusicMaker/audio/module.js'
 import { bounceOrder } from '../src/pages/MusicMaker/audio/engine.js'
 
@@ -310,6 +310,76 @@ test('numpad FX survive NaN input and reset clears the beat-repeat buffer', () =
   const quiet = new Float32Array(n)
   fx.process(quiet, quiet, outL, outR, slot, 120)
   assert.ok(outL.every((v) => v === 0), 'nothing from before the press is replayed')
+})
+
+function renderFx(fx: ReturnType<typeof createFx>, slot: object, bpm: number, total: number, fill: (at: number) => number, time?: number, origin?: number) {
+  const sr = 44100
+  const got = new Float32Array(total)
+  const block = 256
+  for (let at = 0; at < total; at += block) {
+    const n = Math.min(block, total - at)
+    const input = new Float32Array(n)
+    const outL = new Float32Array(n)
+    const outR = new Float32Array(n)
+    for (let i = 0; i < n; i++) input[i] = fill(at + i)
+    fx.process(input, input, outL, outR, slot, bpm, time == null ? undefined : time + at / sr, origin)
+    got.set(outL, at)
+  }
+  return got
+}
+
+test('repeat locks to a bpm note and plays that slice again', () => {
+  for (let div = 0; div <= 6; div++) assert.equal((repeatAmount(div) * 7 / 256) | 0, div)
+  const saved = normalizeSlot({ type: 'repeat', a: 0xa0, b: 255 }, 0)
+  assert.equal(saved.div, 4)
+  assert.equal(normalizeSlot({ type: 'grain', div: 2, a: 3, b: 4, mix: 5 }, 1).type, 'grain')
+  assert.equal(normalizeSlot({ type: 'slice', div: 9, a: 8, b: 9, mix: 300 }, 2).div, 6)
+
+  const sr = 44100
+  const quarter = sr * 60 / 120
+  const fx = createFx(sr)
+  const quarterHit = renderFx(fx, { type: 'repeat', div: 1, a: 0, b: 255, mix: 255 }, 120, quarter * 2 + 1, (t) => (t === 0 ? 1 : 0))
+  assert.equal(quarterHit[0], 1)
+  assert.equal(quarterHit[quarter], 1, 'a quarter note at 120 bpm comes back one beat later')
+  assert.equal(quarterHit[quarter / 2], 0)
+  fx.reset()
+  const half = quarter * 2
+  const halfHit = renderFx(fx, { type: 'repeat', div: 0, a: 0, b: 255, mix: 255 }, 120, half + 1, (t) => (t === 0 ? 1 : 0))
+  assert.equal(halfHit[quarter], 0, 'a half note is not a quarter-note stutter')
+  assert.equal(halfHit[half], 1)
+  fx.reset()
+  const ramp = renderFx(fx, { type: 'repeat', div: 1, a: 0, b: 255, mix: 255 }, 120, quarter * 2, (t) => (t < quarter ? (t % 50) / 50 : 0))
+  for (let i = 0; i < quarter; i += 50) assert.equal(ramp[quarter + i], ramp[i])
+  fx.reset()
+  const dry = renderFx(fx, { type: 'repeat', div: 1, a: 0, b: 0, mix: 255 }, 120, quarter + 2, (t) => (t === 0 ? 1 : 0))
+  assert.equal(dry[quarter], 0, 'mix 00 leaves the live output alone')
+})
+
+test('slice rearranges notes and grain does not retrigger the beat', () => {
+  const sr = 44100
+  const slice = Math.round((sr * 60 / 120) * 2 / 64)
+  const window = slice * 8
+  const fx = createFx(sr)
+  const forward = renderFx(fx, { type: 'slice', div: 6, a: 0, b: 0, mix: 255 }, 120, window + slice + 1, (t) => (t === 0 ? 1 : 0))
+  assert.equal(forward[window], 1)
+  assert.equal(forward[window + slice], 0)
+  fx.reset()
+  const reverse = renderFx(fx, { type: 'slice', div: 6, a: 1, b: 0, mix: 255 }, 120, window + slice * 7 + 1, (t) => (t === 0 ? 1 : 0))
+  assert.equal(reverse[window], 0)
+  assert.equal(reverse[window + slice * 7], 1)
+
+  fx.reset()
+  const n = 3000
+  const grain = renderFx(fx, { type: 'grain', div: 0, a: 0, b: 0, mix: 255 }, 120, n, (t) => Math.sin(t / 9) * 0.5)
+  assert.ok(grain.every(Number.isFinite))
+  fx.reset()
+  const repeat = renderFx(fx, { type: 'repeat', div: 1, a: 0, b: 255, mix: 255 }, 120, n, (t) => Math.sin(t / 9) * 0.5)
+  assert.ok(grain.some((v, i) => v !== repeat[i]), 'a grain spray is not a beat repeat')
+  fx.reset()
+  const waited = renderFx(fx, { type: 'repeat', div: 1, a: 0, b: 255, mix: 255 }, 120, 22050 + 3000, (t) => (t === 0 ? 1 : 0), 0.05, 0)
+  const peaks = []
+  for (let i = 0; i < waited.length; i++) if (waited[i] > 0.5) peaks.push(i)
+  assert.deepEqual(peaks, [0], 'a press between beats waits for the next note instead of chopping a grain')
 })
 
 test('undo re-renders only synth pads whose patch changed', async () => {
