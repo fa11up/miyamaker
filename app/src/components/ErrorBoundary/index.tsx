@@ -73,7 +73,11 @@ export function RootErrorFallback({ error, reset }: FallbackProps) {
         <div style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
           <b>Something went wrong.</b>
           <span>Your windows are safe. Try again to go back to them.</span>
-          <code style={{ wordBreak: 'break-word', fontSize: '12px', opacity: 0.75 }}>{error.message}</code>
+          {/* The raw text is for whoever reports the bug, so it waits behind a toggle. */}
+          <details style={{ fontSize: '12px' }}>
+            <summary style={{ cursor: 'pointer' }}>Details</summary>
+            <code style={{ wordBreak: 'break-word', opacity: 0.75 }}>{error.message}</code>
+          </details>
           <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
             <button type="button" onClick={reloadPage} style={{ minHeight: '36px', padding: '0 16px' }}>
               Reload

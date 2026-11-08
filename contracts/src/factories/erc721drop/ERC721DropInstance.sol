@@ -68,6 +68,9 @@ contract ERC721DropInstance is ERC721, ERC2981, Ownable, ReentrancyGuard, IInsta
     bool public metadataLocked;
     bool public royaltyLocked;
 
+    /// @notice Highest ERC-2981 royalty a drop can set (10%), at creation and in setRoyalty. The app promises this cap.
+    uint96 public constant MAX_ROYALTY_BPS = 1000;
+
     Phase[] internal _phases;
     /// @dev Bumped by every setPhases so per-wallet counters never carry over to a different phase list.
     uint256 public phasesEpoch;
@@ -89,6 +92,7 @@ contract ERC721DropInstance is ERC721, ERC2981, Ownable, ReentrancyGuard, IInsta
     /// @dev EIP-4906: tells marketplaces to refresh every token's metadata.
     event BatchMetadataUpdate(uint256 _fromTokenId, uint256 _toTokenId);
     event RoyaltyLocked();
+    event RoyaltySet(address indexed receiver, uint96 bps);
     event Withdrawn(uint256 toOwner, uint256 toVault, uint256 toProtocol);
     event VaultContributionFailed(uint256 amount);
 
@@ -103,6 +107,7 @@ contract ERC721DropInstance is ERC721, ERC2981, Ownable, ReentrancyGuard, IInsta
     error Locked();
     error NothingToWithdraw();
     error RenounceDisabled();
+    error RoyaltyTooHigh();
 
     constructor(
         InitParams memory p,
@@ -130,7 +135,7 @@ contract ERC721DropInstance is ERC721, ERC2981, Ownable, ReentrancyGuard, IInsta
         baseURI = p.baseURI;
         unrevealedURI = p.unrevealedURI;
         contractURI = p.contractURI;
-        if (p.royaltyReceiver != address(0)) _setDefaultRoyalty(p.royaltyReceiver, p.royaltyBps);
+        if (p.royaltyReceiver != address(0)) _setRoyalty(p.royaltyReceiver, p.royaltyBps);
         _setPhases(p.phases);
         emit StateChanged(STATE_MINTING);
     }
@@ -281,12 +286,16 @@ contract ERC721DropInstance is ERC721, ERC2981, Ownable, ReentrancyGuard, IInsta
         SafeTransferLib.safeTransferETH(treasury, pending);
     }
 
-    /// @notice Retry delivering vault cuts the vault previously rejected.
-    function flushPendingVaultCut() external nonReentrant {
+    /// @notice Retry delivering vault cuts the vault previously rejected. Anyone can call this.
+    /// @dev A parked cut under the vault's minimum can be topped up with msg.value: all of it goes to the vault,
+    ///      credited to this collection like the cut, and a total still under the minimum reverts, which returns the
+    ///      ETH. Same as ERC721AuctionInstance.flushPendingVaultCut.
+    function flushPendingVaultCut() external payable nonReentrant {
         uint256 pending = pendingVaultCut;
         if (pending == 0) revert NothingToWithdraw();
         pendingVaultCut = 0;
-        vault.receiveContribution{ value: pending }(Currency.wrap(address(0)), pending, address(this));
+        uint256 amount = pending + msg.value;
+        vault.receiveContribution{ value: amount }(Currency.wrap(address(0)), amount, address(this));
     }
 
     /// @notice Claim this collection's share of vault LP fees and send it to the owner.
@@ -326,7 +335,13 @@ contract ERC721DropInstance is ERC721, ERC2981, Ownable, ReentrancyGuard, IInsta
 
     function setRoyalty(address receiver, uint96 bps) external onlyOwner {
         if (royaltyLocked) revert Locked();
+        _setRoyalty(receiver, bps);
+    }
+
+    function _setRoyalty(address receiver, uint96 bps) internal {
+        if (bps > MAX_ROYALTY_BPS) revert RoyaltyTooHigh();
         _setDefaultRoyalty(receiver, bps);
+        emit RoyaltySet(receiver, bps);
     }
 
     function lockRoyalty() external onlyOwner {

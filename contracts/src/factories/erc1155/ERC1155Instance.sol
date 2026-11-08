@@ -532,14 +532,18 @@ contract ERC1155Instance is Ownable, ReentrancyGuard, IInstanceLifecycle {
 
     /**
      * @notice Retry sending any accumulated failed vault contributions.
-     * @dev Permissionless — anyone can call once the vault is restored.
+     * @dev Permissionless — anyone can call once the vault is restored. A parked cut under the vault's minimum
+     *      (e.g. the last withdraw of a sold-out collection) can be topped up with msg.value: all of it goes to the
+     *      vault, credited to this collection like the cut, and a total still under the minimum reverts, which
+     *      returns the ETH. Same as ERC721AuctionInstance.flushPendingVaultCut.
      */
-    function retryVaultContribution() external nonReentrant {
+    function retryVaultContribution() external payable nonReentrant {
         uint256 pending = pendingVaultCut;
         if (pending == 0) revert NoPendingVaultCut();
         pendingVaultCut = 0;
-        vault.receiveContribution{value: pending}(Currency.wrap(address(0)), pending, address(this));
-        emit VaultContributionRetried(address(vault), pending);
+        uint256 amount = pending + msg.value;
+        vault.receiveContribution{value: amount}(Currency.wrap(address(0)), amount, address(this));
+        emit VaultContributionRetried(address(vault), amount);
     }
 
     /**

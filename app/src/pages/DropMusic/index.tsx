@@ -63,6 +63,8 @@ import type { StageStatus } from './Stage'
 import Stage from './Stage'
 import StationAdd from './StationAdd'
 import type { ChainId } from './useDropMusic'
+import { discardChoice, resumeWords } from '@/pages/Launch/resume'
+
 import { STEPS, useDropMusic, useMusicChain } from './useDropMusic'
 import { useStudioPlayer, useWaveformPeaks } from './useStudioPlayer'
 import { brushedSilver, gel, y2k } from './y2k'
@@ -492,9 +494,8 @@ export default function DropMusicWindow() {
   }
 
   useEffect(() => {
-    if (!form.alignment && music.minAlignmentBps) {
-      setForm((f) => ({ ...f, alignment: String(music.minAlignmentBps / 100) }))
-    }
+    const min = music.minAlignmentBps
+    if (!form.alignment && min) setForm((f) => ({ ...f, alignment: String(min / 100) }))
   }, [music.minAlignmentBps])
 
   useEffect(() => () => cover && URL.revokeObjectURL(cover.url), [cover])
@@ -528,7 +529,17 @@ export default function DropMusicWindow() {
       const duration = await readAudioDuration(file)
       setAudio((a) => (a?.file === file ? { ...a, duration, reading: false } : a))
     } catch (e) {
-      setAudio((a) => (a?.file === file ? { ...a, reading: false, error: (e as Error).message } : a))
+      // The raw reason is for the console only: the screen gets plain words and what to do next.
+      console.warn('DropMusic: could not read the audio file', e)
+      setAudio((a) =>
+        a?.file === file
+          ? {
+              ...a,
+              reading: false,
+              error: "Couldn't read that audio file. Try another file (MP3, WAV, FLAC, OGG or M4A).",
+            }
+          : a
+      )
     }
   }
 
@@ -633,7 +644,18 @@ export default function DropMusicWindow() {
 
   const price = parsePriceEth(form.price)
   const supply = parseSupply(form.supply)
-  const align = parseAlignmentPct(form.alignment, music.minAlignmentBps, music.protocolFeeBps)
+  // The share rules come from the registry. Until they are read, nothing about them is said as fact or sent.
+  const minBps = music.minAlignmentBps
+  const feeBps = music.protocolFeeBps
+  const rulesKnown = minBps !== undefined && feeBps !== undefined
+  const align: ReturnType<typeof parseAlignmentPct> = rulesKnown
+    ? parseAlignmentPct(form.alignment, minBps, feeBps)
+    : {
+        ok: false,
+        error: music.rulesFailed
+          ? "Couldn't read the vault share rules from the network. Try again in a minute."
+          : 'Loading the vault share rules…',
+      }
   const metaErrors = preview.ok ? {} : preview.errors
   const audioError =
     mode === 'upload'
@@ -750,7 +772,7 @@ export default function DropMusicWindow() {
     player.pause()
     radio.playNow({
       id: `onchain:${chain.id}:${instance.toLowerCase()}:${editionId}`,
-      title: form.title.trim(),
+      title: form.title.trim() || drop.title || 'Your track',
       artist: form.artist.trim() || undefined,
       src: drop.uploaded.audio,
       artwork: drop.uploaded.cover,
@@ -774,8 +796,9 @@ export default function DropMusicWindow() {
     }
   }, [done])
 
-  // The vault is refused or the dry run failed: nothing is uploaded or paid for.
-  const blocked = music.vaultRegistered === false || drop.check.state === 'error'
+  // The vault is refused, the share rules aren't read yet, or the dry run failed: nothing is uploaded or paid for.
+  const blocked = music.vaultRegistered === false || !rulesKnown || drop.check.state === 'error'
+  const savedChoice = drop.saved ? discardChoice(drop.saved.progress, Date.now()) : 'no'
 
   const dryRun = () => {
     if (align.ok) drop.simulate(collectionName, align.bps)
@@ -820,7 +843,15 @@ export default function DropMusicWindow() {
       return { label: 'Connect wallet', disabled: !openConnectModal, onClick: () => openConnectModal?.() }
     if (drop.running) return { label: 'Working… check your wallet', disabled: true, onClick: () => {} }
     if (done) return { label: 'Released', disabled: true, onClick: () => {} }
-    if (drop.launched.instance) return { label: 'Finish: add the track', disabled: !valid, onClick: submit }
+    // Something sent may still land: this only looks, and carries on as saved, whatever the form says now.
+    if (drop.unsettled)
+      return {
+        label: drop.mayResend ? 'Check, then send again only if needed' : 'Check how it went',
+        disabled: false,
+        onClick: () => drop.run(),
+      }
+    if (drop.launched.instance) return { label: 'Finish: add the track', disabled: false, onClick: () => drop.run() }
+    if (drop.committed) return { label: 'Check how it went', disabled: false, onClick: () => drop.run() }
     // A failed try keeps its uploads, so going again costs nothing more for storage.
     return { label: drop.error ? 'Retry release' : 'Release music', disabled: !valid || blocked, onClick: submit }
   })()
@@ -971,6 +1002,29 @@ export default function DropMusicWindow() {
             {!music.deployed && !music.wrongChain && (
               <StatusBox tone="info" role="status" style={{ flexBasis: '100%' }}>
                 <span>Releasing opens soon. You can put your track on the community station now.</span>
+              </StatusBox>
+            )}
+            {drop.saved && !drop.committed && !drop.running && (
+              <StatusBox tone="info" role="status" style={{ flexBasis: '100%' }}>
+                <span style={{ flex: 1 }}>
+                  <b>{drop.saved.label || 'Your release'}</b> was under way when this window closed.{' '}
+                  {resumeWords(drop.saved.progress, true, 'the track')}
+                  {savedChoice === 'anyway'
+                    ? " It has had no answer for a long time: discard it only if your wallet's activity shows it never went through."
+                    : ''}
+                </span>
+                <SmallButton type="button" onClick={() => {
+                    if (!drop.saved) return
+                    go('release')
+                    drop.resume(drop.saved)
+                  }}>
+                  Continue
+                </SmallButton>
+                {savedChoice !== 'no' && (
+                  <SmallButton type="button" onClick={() => drop.saved && drop.discardSaved(drop.saved)}>
+                    Discard
+                  </SmallButton>
+                )}
               </StatusBox>
             )}
           </Head>
@@ -1290,15 +1344,18 @@ export default function DropMusicWindow() {
                     />
                     <Err>{!align.ok ? align.error : undefined}</Err>
                     <small>
-                      Part of each sale goes to the community vault (at least {music.minAlignmentBps / 100}%). miya
-                      keeps {music.protocolFeeBps / 100}%. You keep the rest.
+                      {rulesKnown
+                        ? `Part of each sale goes to the community vault (at least ${minBps / 100}%). miya keeps ${
+                            feeBps / 100
+                          }%. You keep the rest.`
+                        : music.rulesFailed
+                        ? "Part of each sale goes to the community vault. The minimum share and miya's fee couldn't be read just now."
+                        : "Part of each sale goes to the community vault. Loading the minimum share and miya's fee…"}
                     </small>
                   </Field>
-                  <SplitMeter
-                    protocolBps={music.protocolFeeBps}
-                    alignmentBps={align.ok ? align.bps : music.minAlignmentBps}
-                    compact
-                  />
+                  {rulesKnown && (
+                    <SplitMeter protocolBps={feeBps} alignmentBps={align.ok ? align.bps : minBps} compact />
+                  )}
                   {footer}
                 </>
               )}
@@ -1320,7 +1377,7 @@ export default function DropMusicWindow() {
                       {
                         label: 'You keep',
                         value: align.ok
-                          ? `${pctLabel(10_000 - align.bps - music.protocolFeeBps)} of each mint`
+                          ? `${pctLabel(10_000 - align.bps - (feeBps ?? 0))} of each mint`
                           : '—',
                       },
                       { label: 'Network', value: music.cfg.name },
@@ -1427,6 +1484,24 @@ export default function DropMusicWindow() {
                   {drop.error && !drop.running && (
                     <StatusBox tone="error" role="alert">
                       <span>{drop.error}</span>
+                    </StatusBox>
+                  )}
+                  {drop.committed && !done && !drop.running && drop.discard !== 'no' && (
+                    <StatusBox tone="info" role="status">
+                      <span style={{ flex: 1 }}>
+                        {drop.discard === 'anyway'
+                          ? "What was sent has had no answer for a long time, or your wallet replaced it. Start over only if your wallet's activity shows it never went through: it may still land."
+                          : 'You can leave this one as it is and start a new release. The collection stays on the network.'}
+                      </span>
+                      <SmallButton
+                        type="button"
+                        onClick={() => {
+                          drop.reset()
+                          setTouched(false)
+                        }}
+                      >
+                        Start over
+                      </SmallButton>
                     </StatusBox>
                   )}
                   {(drop.uploaded.audio || drop.uploaded.metadata) && !done && (

@@ -34,7 +34,7 @@ import {
 } from './sweep'
 import { Action, Card, ConfirmCheck, Head, Hint, LinkButton, Mono, Prose, Stat, SwitchNote } from './ui'
 import { useFillFee } from './useFillFee'
-import { fetchFulfillment } from './useMarkets'
+import { fetchFulfillment, useOpenSeaCollection } from './useMarkets'
 
 const Rows = styled.table`
   width: 100%;
@@ -189,10 +189,15 @@ export default function SweepReview({
     setAgreed(false)
   }, [me, running])
 
+  // The collection's own creator fee payees (cached): any other payee in an order is shown as "Other fee".
+  // Plans are made once, so they wait for this lookup to finish (or fail).
+  const coll = useOpenSeaCollection(chainId, contract)
+  const creatorFees = coll.info?.fees.map((f) => f.recipient)
+
   // One at a time: the fulfillment route has its own small rate limit.
   const data = useQuery({
     queryKey: ['os-sweep', listings.map((l) => l.hash).join(), me?.toLowerCase()],
-    enabled: !!me && !!osChain,
+    enabled: !!me && !!osChain && !coll.loading,
     staleTime: 60_000,
     gcTime: 0,
     retry: false,
@@ -217,6 +222,7 @@ export default function SweepReview({
             seaports: SEAPORT_ADDRESSES,
             abi: seaportAbi,
             aliases: INPUT_ALIASES,
+            creatorFees,
           })
           if (!plan.ok) out.push({ listing, error: (plan as { error: string }).error })
           else if (!plan.currency.native) out.push({ listing, error: 'Priced in a token, so it cannot be swept.' })
@@ -430,8 +436,11 @@ export default function SweepReview({
                 const run = runs[listing.hash]
                 return (
                   <tr key={listing.hash}>
-                    <td>#{listing.tokenId}</td>
-                    <td className="num">{plan ? eth(plan.total) : formatPrice(listing.price)}</td>
+                    <td>
+                      #{listing.tokenId}
+                      {listing.total ? ` × ${listing.remaining}` : ''}
+                    </td>
+                    <td className="num">{plan ? eth(plan.total) : formatPrice(listing.total ?? listing.price)}</td>
                     <td className={run?.state}>
                       {error ? (
                         <span className="failed">Left out: {error}</span>

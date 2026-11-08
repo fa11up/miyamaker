@@ -153,6 +153,16 @@ test('validateStep gates each wizard step', () => {
   assert.ok(validateStep('align', form({ vaultChoice: 'custom', customVault: '0x123' }), ctx).customVault)
 })
 
+test('the vault share is never passed on a guess: unread registry rules block the align step', () => {
+  const unread = { ...ctx, minAlignmentBps: undefined, protocolFeeBps: undefined }
+  assert.match(validateStep('align', form({ alignmentPct: '20' }), unread).alignmentPct ?? '', /Loading/)
+  assert.match(
+    validateStep('align', form({ alignmentPct: '20' }), { ...unread, rulesFailed: true }).alignmentPct ?? '',
+    /Couldn't read/
+  )
+  assert.equal(validateStep('align', form({ alignmentPct: '20' }), ctx).alignmentPct, undefined)
+})
+
 // ── contract argument builders ───────────────────────────────────────────────
 
 const resolved = { creator: CREATOR, vault: VAULT, alignmentBps: 1500, image: 'ar://img' } as const

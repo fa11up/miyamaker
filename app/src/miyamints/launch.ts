@@ -318,8 +318,11 @@ export type Media = { hasFile: boolean; fileError?: string }
 
 export type ValidationContext = {
   now: bigint
-  minAlignmentBps: number
-  protocolFeeBps: number
+  /** Undefined until the registry has been read: the share can't be checked against a guess. */
+  minAlignmentBps?: number
+  protocolFeeBps?: number
+  /** The registry read failed, so the share rules are unknown. */
+  rulesFailed?: boolean
   image: Media
   audio: Media
 }
@@ -403,8 +406,14 @@ export function validateStep(step: StepKey, f: LaunchForm, ctx: ValidationContex
   }
 
   if (step === 'align') {
-    const a = parseAlignmentPct(f.alignmentPct, ctx.minAlignmentBps, ctx.protocolFeeBps)
-    if (!a.ok) e.alignmentPct = a.error
+    if (ctx.minAlignmentBps === undefined || ctx.protocolFeeBps === undefined) {
+      e.alignmentPct = ctx.rulesFailed
+        ? "Couldn't read the vault share rules from the network. Try again in a minute."
+        : 'Loading the vault share rules…'
+    } else {
+      const a = parseAlignmentPct(f.alignmentPct, ctx.minAlignmentBps, ctx.protocolFeeBps)
+      if (!a.ok) e.alignmentPct = a.error
+    }
     if (f.vaultChoice === 'custom') {
       const v = parseVault(f.customVault)
       if (!v.ok) e.customVault = v.error

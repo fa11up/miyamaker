@@ -166,3 +166,53 @@ export const ConnectedButton = ({
     </HighlightButton>
   )
 }
+
+/**
+ * A ConnectedButton for a view that has already asked for the wallet once (one Connect wallet per view): it offers the
+ * chain switch when needed, but never its own "Connect wallet". Without a wallet it stays off.
+ */
+export const ChainButton = ({
+  style,
+  children,
+  withChain,
+  disabled,
+  onClick,
+}: {
+  style?: any
+  children: ReactNode
+  withChain?: number[]
+  disabled?: boolean
+  onClick: () => void
+}) => {
+  const { isConnected, chain } = useAccount()
+  const { chains, switchChain } = useSwitchChain()
+  const correctChain = !withChain || (!!chain?.id && withChain.includes(chain.id))
+  const target = withChain?.[0]
+
+  const handleClick = () => {
+    if (!correctChain && target !== undefined) {
+      switchChain({ chainId: target as (typeof chains)[number]['id'] })
+      return
+    }
+
+    onClick()
+  }
+
+  const label = correctChain
+    ? children
+    : withChain?.length === 1
+    ? `Switch to ${chains.find((el) => el.id === target)?.name}`
+    : 'Switch to a supported chain'
+  const names = withChain?.map((id) => chains.find((el) => el.id === id)?.name || id) || []
+
+  return (
+    <HighlightButton
+      style={style}
+      onClick={() => handleClick()}
+      disabled={disabled || !isConnected}
+      title={withChain?.length ? `This service supports the following chains: ${names.join(', ')} ` : undefined}
+    >
+      {label}
+    </HighlightButton>
+  )
+}

@@ -14,9 +14,13 @@ export function storedBytes(sizes: readonly number[], freeBytes: number): number
   return sizes.filter((s) => s > freeBytes).reduce((sum, s) => sum + s, 0) || 1
 }
 
-/** The line next to Launch's and Drop Music's main button. Empty when nothing is being stored. */
+/**
+ * The line next to Launch's and Drop Music's main button. Empty when nothing is being stored. Both pay for every file
+ * as one total before the first upload (fundStorage), so "once" holds however many files cost money.
+ */
 export function storageWords(quote: StorageQuote): string {
-  if (quote.state === 'priced') return `Storing your files: ${quote.words}, paid once on Ethereum, plus network fees.`
+  if (quote.state === 'priced')
+    return `Storing your files: ${quote.words}, paid once on Ethereum for all of them, plus network fees.`
   if (quote.state === 'free') return 'Storing your files is free at this size. Network fees still apply.'
   if (quote.state === 'loading') return 'Checking the storage price…'
   if (quote.state === 'failed') return 'Your wallet shows the storage price before you pay.'
@@ -36,7 +40,7 @@ export function stationStorageWords(quote: StorageQuote): string {
 /** "What happens next: …" A wallet that batches signs the transactions as one, so more than one reads "up to". */
 export function nextStepsWords(p: { uploads: number; paying: boolean; txs: number }): string {
   const before = [
-    ...(p.paying ? ['pay for storage'] : []),
+    ...(p.paying ? ['pay for storage once'] : []),
     ...(p.uploads > 1 ? ['sign each upload'] : p.uploads === 1 ? ['sign the upload'] : []),
   ]
   const txs = p.txs > 1 ? `up to ${p.txs} transactions` : '1 transaction'

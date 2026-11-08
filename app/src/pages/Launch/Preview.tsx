@@ -114,7 +114,8 @@ export default function Preview({
 }: {
   form: LaunchForm
   imageUrl?: string
-  protocolBps: number
+  /** Undefined until the registry has been read: then no split is shown. */
+  protocolBps?: number
   alignmentBps?: number
   vaultName?: string
   compact?: boolean
@@ -164,7 +165,7 @@ export default function Preview({
         <dt>Supply</dt>
         <dd>{supplyLine(form)}</dd>
       </Facts>
-      {alignmentBps !== undefined && (
+      {alignmentBps !== undefined && protocolBps !== undefined && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: space[1] }}>
           <Eyebrow>Where the money goes</Eyebrow>
           <SplitMeter protocolBps={protocolBps} alignmentBps={alignmentBps} vaultName={vaultName} compact />

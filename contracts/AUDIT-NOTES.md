@@ -24,8 +24,8 @@ demonstrated each fixed bug on 88641a8; here they assert the fixed behaviour.
 
 **H1** — `receive()` returns early while a transient flag (`_COLLECTING_SLOT`, TSTORE/TLOAD) is set; the flag
 wraps only the internal collection (`_claimVaultFees`) and the keeper's two swaps. One TLOAD keeps 2300-gas
-`transfer` senders working. Test: `test/vaults/UniAlignmentVaultRealV4.t.sol` (real v4 `PoolManager`; this file
-compiles as a separate solc 0.8.26 unit, see `foundry.toml`).
+`transfer` senders working. Test: `test/v4real/UniAlignmentVaultRealV4.t.sol` (real v4 `PoolManager`, pinned to solc 0.8.26, so it
+runs under its own profile: `FOUNDRY_PROFILE=v4real forge test`; see `foundry.toml`).
 
 **H2** — MasterChef-style accounting: `accFeePerShare` (1e36 scale) + per-benefactor `feeCheckpoint` and
 `settledFees`. Pending fees are settled before every share change (`_distributeSharesAndCleanup`).
@@ -86,8 +86,22 @@ These were added after the findings above, so the internal audit did not cover t
 - **`mintTo`**: mints to another wallet. The allowlist and per-wallet limit apply to the payer, not the recipient. It
   uses `_mint`, so the recipient gets no callback.
 - **`lockRoyalty`**: permanently stops `setRoyalty`. Drops only: Auction and 1155 instances have no ERC-2981 support.
+- **Royalty cap** (2026-11-07): `MAX_ROYALTY_BPS = 1000`. The constructor and `setRoyalty` revert `RoyaltyTooHigh`
+  above 10%, the cap the app promises; both emit `RoyaltySet(receiver, bps)`. Before, only solady's
+  10000 bps ceiling applied, so an owner could set 100% after launch. Test: `test_royaltyCappedAtTenPercent`.
 - **Metadata events**: `setMetadata` emits EIP-4906 `BatchMetadataUpdate(1, maxSupply)` and `supportsInterface` reports
   `0x49064906`. `ERC1155Instance.updateEditionMetadata` emits the standard `URI` event.
+
+## Parked vault cuts can be topped up (2026-11-07)
+
+`UniAlignmentVault.receiveContribution` rejects anything under `MIN_CONTRIBUTION` (0.001 ETH). A collection's last
+split can park a cut under that, and with nothing left to sell no later split carries it, so it stranded.
+`ERC1155Instance.retryVaultContribution` and `ERC721DropInstance.flushPendingVaultCut` are now `payable`, like
+`ERC721AuctionInstance.flushPendingVaultCut` (dd1a98c): the parked cut plus `msg.value` goes to the vault, credited to the
+collection, and a total still under the minimum reverts, which returns the ETH. Both still revert when nothing is
+parked. `VaultContributionRetried` reports the full amount sent. Tests:
+`test_RetryVaultContribution_DustCanBeToppedUpToReachTheVault`, `test_RetryVaultContribution_ToppingUpNothingParkedReverts`,
+`test_flushPendingVaultCut_topUpGoesToTheVaultForTheDrop`.
 
 ## External audit round 1 (pools, vaults, registry and factories at a991e8c)
 

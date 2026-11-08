@@ -47,7 +47,10 @@ import malachiteSkin from './skin/malachite.webp'
 import Preview, { PreviewCard, priceLine, supplyLine, TYPE_LABEL } from './Preview'
 import type { Pick } from './Steps'
 import { AlignStep, ArtStep, PhaseBox, SaleStep, TypeCard, TypeStep, VaultCard } from './Steps'
+import { discardChoice, resumeWords } from './resume'
 import { useLaunch } from './useLaunch'
+
+const discardChoiceFor = (p: Parameters<typeof discardChoice>[0]) => discardChoice(p, Date.now())
 
 const LAUNCH_TYPES: LaunchType[] = ['drop', 'auction', 'editions']
 
@@ -350,6 +353,10 @@ export default function LaunchPage() {
 
   const net = useLaunchChain()
   const rules = useRegistryRules(net.chainId, net.addresses.registry)
+  // The share rules come from the registry. Until both are read, nothing about them is said as fact or sent.
+  const minBps = rules.minAlignmentBps
+  const feeBps = rules.protocolFeeBps
+  const rulesKnown = minBps !== undefined && feeBps !== undefined
   const launch = useLaunch()
 
   // /launch?type=drop|auction|editions (miyanet's "Launch your own") opens with that kind picked.
@@ -383,13 +390,13 @@ export default function LaunchPage() {
 
   // Default the alignment share to the registry minimum once it is known.
   useEffect(() => {
-    if (rules.loaded) {
+    if (minBps !== undefined && feeBps !== undefined) {
       setForm((f) => {
-        const a = parseAlignmentPct(f.alignmentPct, rules.minAlignmentBps, rules.protocolFeeBps)
-        return a.ok ? f : { ...f, alignmentPct: String(rules.minAlignmentBps / 100) }
+        const a = parseAlignmentPct(f.alignmentPct, minBps, feeBps)
+        return a.ok ? f : { ...f, alignmentPct: String(minBps / 100) }
       })
     }
-  }, [rules.loaded, rules.minAlignmentBps, rules.protocolFeeBps])
+  }, [minBps, feeBps])
 
   useEffect(() => () => image && URL.revokeObjectURL(image.url), [image])
   useEffect(() => () => audio && URL.revokeObjectURL(audio.url), [audio])
@@ -427,14 +434,16 @@ export default function LaunchPage() {
   const now = BigInt(Math.floor(Date.now() / 1000))
   const ctx = {
     now,
-    minAlignmentBps: rules.minAlignmentBps,
-    protocolFeeBps: rules.protocolFeeBps,
+    minAlignmentBps: minBps,
+    protocolFeeBps: feeBps,
+    rulesFailed: rules.failed,
+    // A launch carried on after a reload has its files stored already, so it needs no file picked again.
     image: {
-      hasFile: !!image,
+      hasFile: !!image || !!launch.uploaded.image,
       fileError: image && !image.check.ok ? image.check.error : undefined,
     },
     audio: {
-      hasFile: !!audio,
+      hasFile: !!audio || !!launch.uploaded.audio,
       fileError: audio && !audio.check.ok ? audio.check.error : undefined,
     },
   }
@@ -453,12 +462,22 @@ export default function LaunchPage() {
   const firstBlocked = STEP_ORDER.findIndex((s) => s !== 'review' && Object.keys(errorsFor(s)).length > 0)
   const shownErrors = shown[step] ? stepErrors : {}
 
-  const align = parseAlignmentPct(form.alignmentPct, rules.minAlignmentBps, rules.protocolFeeBps)
-  const alignmentBps = align.ok ? align.bps : rules.minAlignmentBps
-  const imageUrl = form.imageMode === 'upload' ? (image?.check.ok ? image.url : undefined) : resolveUri(form.imageUri)
+  const align = rulesKnown ? parseAlignmentPct(form.alignmentPct, minBps, feeBps) : undefined
+  const alignmentBps = align?.ok ? align.bps : minBps
+  const imageUrl =
+    form.imageMode === 'upload'
+      ? image?.check.ok
+        ? image.url
+        : launch.uploaded.image
+        ? resolveUri(launch.uploaded.image)
+        : undefined
+      : resolveUri(form.imageUri)
 
   const ready = net.deployed && isConnected && !net.wrongChain && walletChainId === net.chainId
-  const resolvedBase = address && vaultAddr ? { creator: address, vault: vaultAddr, alignmentBps } : undefined
+  const resolvedBase =
+    address && vaultAddr && rulesKnown && alignmentBps !== undefined
+      ? { creator: address, vault: vaultAddr, alignmentBps }
+      : undefined
 
   // Dry-run the create call when arriving at Review (and when inputs change there).
   const reviewKey = JSON.stringify({ form, vaultAddr, alignmentBps, address, chain: net.chainId })
@@ -501,7 +520,8 @@ export default function LaunchPage() {
   }
 
   const create = () => {
-    if (!resolvedBase || !form.type) return
+    // The share rules aren't read yet: nothing is uploaded or paid for.
+    if (!rulesKnown || !resolvedBase || !form.type) return
     launch.run({
       form,
       resolved: resolvedBase,
@@ -519,6 +539,8 @@ export default function LaunchPage() {
   }
 
   const startOver = () => {
+    // Never while something sent may still land: the launch stays until it is known.
+    if (!launch.result && launch.discard === 'no') return
     launch.reset()
     setForm({ ...EMPTY_FORM, alignmentPct: form.alignmentPct })
     setImage(undefined)
@@ -528,6 +550,19 @@ export default function LaunchPage() {
   }
 
   const explorer = explorerUrl(net.chainId)
+  const explorerName = net.chain.blockExplorers?.default.name || 'the explorer'
+
+  /** A launch from an earlier visit: put its form back and carry on from the review. */
+  const continueSaved = () => {
+    if (!launch.saved) return
+    const input = launch.resume(launch.saved)
+    setForm(input.form)
+    setImage(undefined)
+    setAudio(undefined)
+    setShown({})
+    setStepIdx(STEP_ORDER.indexOf('review'))
+  }
+  const savedChoice = launch.saved ? discardChoiceFor(launch.saved.progress) : 'no'
   const [layoutRef, { width }] = useElementSize()
   const narrow = width > 0 && width <= 640
   const setLayout = (el: HTMLDivElement | null) => {
@@ -564,12 +599,35 @@ export default function LaunchPage() {
       return { label: `Switch to ${net.chain.name}`, onClick: () => switchChain({ chainId: net.chainId }) }
     }
 
+    if (launch.running) return { label: 'Working… check your wallet', disabled: true }
+    // Something sent may still land: this only looks, so it never offers to pay again.
+    if (launch.unsettled) {
+      if (!launch.mayResend) return { label: 'Check how it went', onClick: create }
+      // It looks first, and sends again only if nothing of it is on the chain: then the price is said here.
+      return {
+        label:
+          form.type === 'auction' && deposit
+            ? `Check, then pay ${deposit} only if needed`
+            : 'Check, then send again only if needed',
+        onClick: create,
+      }
+    }
+    if (launch.instance && !launch.result) {
+      return {
+        label: deposit ? `Finish: pay ${deposit} and start` : form.type === 'editions' ? 'Finish: add the edition' : 'Check how it went',
+        onClick: create,
+      }
+    }
+    if (launch.committed) return { label: 'Check how it went', onClick: create }
+
+    if (!rulesKnown) {
+      return rules.failed
+        ? { label: "Couldn't read the share rules", disabled: true }
+        : { label: 'Loading the share rules…', disabled: true }
+    }
+
     if (firstBlocked !== -1)
       return { label: `Fix: ${STEP_LABEL[STEP_ORDER[firstBlocked] as StepKey]}`, onClick: () => goTo(firstBlocked) }
-    if (launch.running) return { label: 'Working… check your wallet', disabled: true }
-    if (launch.instance && !launch.result) {
-      return { label: deposit ? `Finish: pay ${deposit} and start` : 'Retry the last step', onClick: create }
-    }
 
     if (form.type === 'auction')
       return { label: `Create auction and pay ${deposit}`, onClick: create, disabled: launch.check.state === 'error' }
@@ -659,6 +717,26 @@ export default function LaunchPage() {
             </StatusBox>
           )}
 
+          {launch.saved && !launch.committed && !launch.running && !success && (
+            <StatusBox tone="info" role="status">
+              <span style={{ flex: 1 }}>
+                <b>{launch.saved.label || 'Your launch'}</b> was under way when this window closed.{' '}
+                {resumeWords(launch.saved.progress, launch.saved.input.form.type !== 'drop', 'its first piece')}
+                {savedChoice === 'anyway'
+                  ? " It has had no answer for a long time: discard it only if your wallet's activity shows it never went through."
+                  : ''}
+              </span>
+              <SmallButton type="button" onClick={continueSaved}>
+                Continue
+              </SmallButton>
+              {savedChoice !== 'no' && (
+                <SmallButton type="button" onClick={() => launch.saved && launch.discardSaved(launch.saved)}>
+                  Discard
+                </SmallButton>
+              )}
+            </StatusBox>
+          )}
+
           {success ? (
             <Body>
               <Panel aria-label="Launched">
@@ -685,7 +763,7 @@ export default function LaunchPage() {
                     rel="noreferrer"
                     style={{ display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }}
                   >
-                    View on Etherscan ↗
+                    View on {explorerName} ↗
                   </SmallButton>
                   <SmallButton type="button" onClick={startOver}>
                     Launch another
@@ -698,7 +776,7 @@ export default function LaunchPage() {
               <Preview
                 form={form}
                 imageUrl={imageUrl}
-                protocolBps={rules.protocolFeeBps}
+                protocolBps={feeBps}
                 alignmentBps={alignmentBps}
                 vaultName={vaultName}
                 compact={narrow}
@@ -730,7 +808,7 @@ export default function LaunchPage() {
                   <Preview
                     form={form}
                     imageUrl={imageUrl}
-                    protocolBps={rules.protocolFeeBps}
+                    protocolBps={feeBps}
                     alignmentBps={alignmentBps}
                     vaultName={vaultName}
                     compact
@@ -765,8 +843,9 @@ export default function LaunchPage() {
                       form={form}
                       set={set}
                       errors={shownErrors}
-                      minAlignmentBps={rules.minAlignmentBps}
-                      protocolFeeBps={rules.protocolFeeBps}
+                      minAlignmentBps={minBps}
+                      protocolFeeBps={feeBps}
+                      rulesFailed={rules.failed}
                       defaultVault={{
                         label: vaultLabel,
                         symbol: defaultVault.symbol,
@@ -826,7 +905,8 @@ export default function LaunchPage() {
                             <dd>{form.bidStep.trim()} ETH</dd>
                             <dt>Length</dt>
                             <dd>
-                              {form.durationHours} hours, late bids add {AUCTION_TIME_BUFFER_SECONDS / 60} minutes
+                              {form.durationHours} hours. A bid in the last {AUCTION_TIME_BUFFER_SECONDS / 60} minutes
+                              moves the end to {AUCTION_TIME_BUFFER_SECONDS / 60} minutes after that bid.
                             </dd>
                             <dt>You pay now</dt>
                             <dd>
@@ -850,11 +930,15 @@ export default function LaunchPage() {
                         </dd>
                       </Summary>
                       <Well style={{ padding: space[3] }}>
-                        <SplitMeter
-                          protocolBps={rules.protocolFeeBps}
-                          alignmentBps={alignmentBps}
-                          vaultName={vaultName}
-                        />
+                        {feeBps !== undefined && alignmentBps !== undefined ? (
+                          <SplitMeter protocolBps={feeBps} alignmentBps={alignmentBps} vaultName={vaultName} />
+                        ) : (
+                          <small>
+                            {rules.failed
+                              ? "Where the money goes couldn't be read from the network just now. Try again in a minute."
+                              : 'Loading where the money goes…'}
+                          </small>
+                        )}
                       </Well>
                       <div>
                         <Eyebrow style={{ marginBottom: space[2] }}>
@@ -904,8 +988,24 @@ export default function LaunchPage() {
                         <StatusBox tone="error" role="alert">
                           <span>
                             {launch.error}
-                            {launch.instance ? ' Your collection exists; press Retry to finish the last step.' : ''}
+                            {launch.instance && !launch.unsettled
+                              ? ' Your collection exists. Press Finish to add the last step.'
+                              : ''}
                           </span>
+                        </StatusBox>
+                      )}
+                      {launch.committed && !launch.running && !launch.result && launch.discard !== 'no' && (
+                        <StatusBox tone="info" role="status">
+                          <span style={{ flex: 1 }}>
+                            {launch.discard === 'anyway'
+                              ? "What was sent has had no answer for a long time, or your wallet replaced it. Start over only if your wallet's activity shows it never went through: it may still land."
+                              : launch.instance
+                              ? 'You can leave this one as it is and start a new launch. The collection stays in My launches.'
+                              : 'Nothing is out on the network for this launch. You can start over.'}
+                          </span>
+                          <SmallButton type="button" onClick={startOver}>
+                            Start over
+                          </SmallButton>
                         </StatusBox>
                       )}
                     </>
@@ -915,7 +1015,7 @@ export default function LaunchPage() {
                   <Preview
                     form={form}
                     imageUrl={imageUrl}
-                    protocolBps={rules.protocolFeeBps}
+                    protocolBps={feeBps}
                     alignmentBps={undefined}
                     vaultName={vaultName}
                   />

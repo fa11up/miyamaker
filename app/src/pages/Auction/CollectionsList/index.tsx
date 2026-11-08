@@ -76,6 +76,7 @@ export default function CollectionsList({
   onRetry,
   setPageSection,
   auctionContract,
+  compact = false,
 }: {
   nfts: string[]
   isLoading: boolean
@@ -83,6 +84,8 @@ export default function CollectionsList({
   onRetry: () => void
   setPageSection: (section: string) => void
   auctionContract: Address
+  /** Shares the window with the artist auctions: a lone collection takes a row, not the whole window. */
+  compact?: boolean
 }) {
   const totalPages = Math.ceil(nfts.length / ITEM_PER_PAGE)
   const [currentCounter, setCurrentCounter] = useState<number>(1)
@@ -117,7 +120,14 @@ export default function CollectionsList({
       )}
       <ItemsListWrapper>
         {nfts.slice(ITEM_PER_PAGE * (currentCounter - 1), ITEM_PER_PAGE * currentCounter).map((nft, index: number) => (
-          <ItemsList key={index} nft={nft} setPageSection={setPageSection} auctionContract={auctionContract} solo={nfts.length === 1} />
+          <ItemsList
+            key={index}
+            nft={nft}
+            setPageSection={setPageSection}
+            auctionContract={auctionContract}
+            solo={nfts.length === 1 && !compact}
+            banner={nfts.length === 1 && compact}
+          />
         ))}
       </ItemsListWrapper>
       {totalPages > 1 && (

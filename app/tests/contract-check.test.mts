@@ -22,6 +22,7 @@ const deps = (over = {}) => ({
   clientKey: () => 'me',
   limiter: () => true,
   wait: async () => undefined,
+  budget: () => 0,
   ...over,
 })
 const ask = (query: string) => new Request(`https://www.miyamaker.com/api/contracts/verified?a=${query}`)
@@ -206,6 +207,7 @@ test('each answer is kept for its own time, not the cache default', async () => 
     clientKey: () => 'k',
     limiter: () => true,
     wait: async () => undefined,
+    budget: () => 0,
   })
   assert.equal(res.status, 200)
   assert.equal(kept[addresses[0]!], 30 * 86_400)

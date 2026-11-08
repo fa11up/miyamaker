@@ -31,6 +31,8 @@ const os = (id: string, value: string, extra: Record<string, unknown> = {}) => (
 const row = (tokenId: string, price: string, extra = {}) => ({
   tokenId,
   price,
+  quantity: 1,
+  unitPrice: price,
   currency: 'ETH',
   source: 'opensea' as const,
   hash: `h${tokenId}`,

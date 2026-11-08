@@ -14,9 +14,36 @@ export const MAX_ADDRESSES = 20
 const VERIFIED_KEEP_MS = 30 * 86_400_000
 const UNVERIFIED_KEEP_MS = 6 * 3_600_000
 const ADDRESS = /^0x[0-9a-f]{40}$/
-/** This key's plan allows 3 calls a second. One at a time and spaced, as other visitors may be asking too. */
-const SPACING_MS = 400
+/** Uncached addresses one request may ask Etherscan about. */
+export const MAX_LOOKUPS = 5
+/** This key's plan allows 3 calls a second; a little under that, as other isolates may be asking too. */
+export const ETHERSCAN_PER_SECOND = 2.5
+/** The longest a request waits in line for Etherscan before leaving the rest unknown. */
+export const MAX_QUEUE_MS = 4_000
 const RETRY_MS = 1100
+
+/**
+ * When the next call may go: ms to wait for a turn, or undefined when the line is longer than `maxWaitMs`. Turns are
+ * `1000 / perSecond` apart and taken in order, across every request this isolate serves.
+ */
+export type CallBudget = () => number | undefined
+export function createCallBudget({
+  perSecond = ETHERSCAN_PER_SECOND,
+  maxWaitMs = MAX_QUEUE_MS,
+  clock = Date.now,
+}: { perSecond?: number; maxWaitMs?: number; clock?: () => number } = {}): CallBudget {
+  let next = 0
+  return () => {
+    const now = clock()
+    const slot = Math.max(now, next)
+    if (slot - now > maxWaitMs) return undefined
+    next = slot + 1000 / perSecond
+    return slot - now
+  }
+}
+
+/** One line for every request in this isolate. */
+const etherscanBudget = createCallBudget()
 
 export type ContractCheckDeps = {
   key?: string
@@ -28,6 +55,8 @@ export type ContractCheckDeps = {
   limiter: (key: string) => boolean
   now?: () => number
   wait?: (ms: number) => Promise<void>
+  /** Turns for Etherscan calls; the isolate's shared one when left out. */
+  budget?: CallBudget
 }
 
 export const etherscanReader = (key: string) => async (address: string) => {
@@ -81,14 +110,22 @@ export async function handleContractCheck(request: Request, deps: ContractCheckD
     const wait = deps.wait ?? ((ms: number) => new Promise<void>((done) => setTimeout(done, ms)))
     const call = (address: string) => ask(address).catch((e: Error) => ({ result: e.message }))
     const words = (answer: unknown) => String((answer as { result?: unknown })?.result)
-    for (const [i, address] of toAsk.entries()) {
+    const budget = deps.budget ?? etherscanBudget
+    /** Waits for a turn; false when the line is too long, so the address stays unknown. */
+    const turn = async (atLeast = 0) => {
+      const delay = budget()
+      if (delay === undefined) return false
+      if (delay || atLeast) await wait(Math.max(delay, atLeast))
+      return true
+    }
+    for (const address of toAsk.slice(0, MAX_LOOKUPS)) {
       /* eslint-disable no-await-in-loop */
-      if (i) await wait(SPACING_MS)
-      let answer = await call(address)
-      if (/rate limit/i.test(words(answer))) {
-        await wait(RETRY_MS)
-        answer = await call(address)
+      if (!(await turn())) {
+        console.warn('contract check: Etherscan budget spent, left unknown')
+        break
       }
+      let answer = await call(address)
+      if (/rate limit/i.test(words(answer)) && (await turn(RETRY_MS))) answer = await call(address)
       const verdict = readVerdict(answer)
       if (verdict === undefined) {
         // Unknown is safe but silent, so the logs say why. Etherscan's words and the status, never the URL or key.

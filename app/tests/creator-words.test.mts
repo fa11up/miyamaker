@@ -30,7 +30,7 @@ test('only files over the free size are priced, and all-free still counts as cho
 
 test('storage lines say a price only when there is one', () => {
   const priced = { state: 'priced', wei: 1n, words: 'about 0.0012 ETH' } as const
-  assert.equal(storageWords(priced), 'Storing your files: about 0.0012 ETH, paid once on Ethereum, plus network fees.')
+  assert.equal(storageWords(priced), 'Storing your files: about 0.0012 ETH, paid once on Ethereum for all of them, plus network fees.')
   assert.equal(
     stationStorageWords(priced),
     'Storage: about 0.0012 ETH, paid once on Ethereum. Listing is free. The file stays on Arweave for good.',
@@ -48,7 +48,7 @@ test('storage lines say a price only when there is one', () => {
 test('what happens next counts the uploads and transactions that are really coming', () => {
   assert.equal(
     nextStepsWords({ uploads: 2, paying: true, txs: 2 }),
-    'What happens next: pay for storage, sign each upload, then up to 2 transactions',
+    'What happens next: pay for storage once, sign each upload, then up to 2 transactions',
   )
   assert.equal(
     nextStepsWords({ uploads: 1, paying: false, txs: 1 }),

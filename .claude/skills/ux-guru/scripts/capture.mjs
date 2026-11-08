@@ -1,12 +1,23 @@
 // Walks miyaOS's apps at desktop and phone size: screenshots plus automatic QA checks. See ../SKILL.md.
-// node .claude/skills/ux-guru/scripts/capture.mjs <outdir> [app,app]   (SITE=http://localhost:5199 by default)
+// node .claude/skills/ux-guru/scripts/capture.mjs <outdir> [app,app]   (SITE=http://localhost:5198 by default)
+// Exits 1 when any state had a page error or a step it could not perform, so a broken walk is never mistaken for a clean one.
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
-import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-const require = createRequire(join(homedir(), 'a11/infer-buy-tokens/web/package.json'))
-const { chromium } = require('playwright')
+// Playwright is an app devDependency: load it from this repo's app/, never from somewhere else on the machine.
+const APP = resolve(dirname(fileURLToPath(import.meta.url)), '../../../../app')
+let chromium
+try {
+  ;({ chromium } = createRequire(join(APP, 'package.json'))('playwright'))
+} catch {
+  console.error(
+    `capture.mjs: Playwright is not installed in ${APP}.\n` +
+      '  Run `yarn install` in app/ (playwright is a devDependency), then `npx playwright install chromium`.'
+  )
+  process.exit(2)
+}
 
 const OUT = process.argv[2] || 'ux-captures'
 const ONLY = process.argv[3]?.split(',')
@@ -200,6 +211,19 @@ const inspect = (phone) => {
   }
 }
 
+/** Server routes (app/api/worker.ts) a vite preview doesn't serve: their GETs are read from the live site. */
+const PROXIED = [
+  '**/api/market/**',
+  '**/api/opensea**',
+  '**/api/tv/live',
+  '**/api/public-access*',
+  '**/api/station*',
+  '**/api/contracts/verified*',
+  '**/api/0x/**',
+  // In the build too, but the Worker serves them with its own range handling (serveRange): read the live copy.
+  '**/commercials/**',
+]
+
 const proxied = async (route) => {
   const req = route.request()
   if (req.method() !== 'GET') return route.fallback()
@@ -230,7 +254,7 @@ const run = async ({ app, state, sizeName }) => {
   p.on('response', (x) => { if (x.status() >= 400 && x.url().startsWith(SITE)) r.failed.push(`${x.status()} ${x.url().replace(SITE, '').slice(0, 90)}`) })
   if (state.wallet) await p.addInitScript(wallet)
   if (state.storage) await p.addInitScript((s) => Object.entries(s).forEach(([k, v]) => localStorage.setItem(k, v)), state.storage)
-  for (const glob of ['**/api/market/**', '**/api/opensea**', '**/api/tv/live', '**/api/public-access*', '**/api/station*']) await p.route(glob, proxied)
+  for (const glob of PROXIED) await p.route(glob, proxied)
   try {
     await p.goto(SITE + state.path, { waitUntil: 'domcontentloaded', timeout: 120000 })
     await p.waitForTimeout(state.wait ?? 4000)
@@ -249,3 +273,12 @@ await browser.close()
 writeFileSync(join(OUT, 'report.json'), JSON.stringify(report, null, 1))
 const rows = Object.entries(report).flatMap(([a, s]) => Object.entries(s).map(([k, r]) => `${a}/${k}: err ${r.errors.length} cons ${r.console.length} fail ${r.failed.length} sideways ${r.sideways?.length ?? '?'} clip ${r.clipped?.length ?? '?'} past ${r.pastScreen?.length ?? '?'} small ${r.smallTargets?.length ?? 0} broken ${r.brokenImages?.length ?? '?'} connect ${r.connectButtons ?? '?'}${r.stepFailed ? ` STEP: ${r.stepFailed}` : ''}`))
 console.log(rows.join('\n'))
+const broken = Object.entries(report).flatMap(([a, s]) =>
+  Object.entries(s)
+    .filter(([, r]) => r.stepFailed || r.errors.length || r.inspectFailed)
+    .map(([k]) => `${a}/${k}`)
+)
+if (broken.length) {
+  console.error(`\n${broken.length} state(s) had a page error or a failed step: ${broken.join(', ')}`)
+  process.exit(1)
+}

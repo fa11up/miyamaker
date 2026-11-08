@@ -13,6 +13,7 @@ import {
 import { MIYAMINI_CHAIN_ID, MIYAMINI_CONTRACT, MIYAMINI_METADATA_BASE } from '@/constants/contracts'
 
 import { erc721mAbi } from './abi'
+import { plainTxError } from '@/miyamints/errors'
 import { useTxOutcome } from '@/miyamints/useTxOutcome'
 
 const contract = { address: MIYAMINI_CONTRACT, abi: erc721mAbi, chainId: MIYAMINI_CHAIN_ID } as const
@@ -141,7 +142,7 @@ const MINT_ERRORS: Record<string, string> = {
 export function describeError(error: unknown): { message: string; cancelled: boolean } {
   if (!error) return { message: '', cancelled: false }
   const base = error instanceof BaseError ? error : undefined
-  const text = base?.shortMessage || (error as Error).message || 'Something went wrong.'
+  const text = `${base?.shortMessage ?? ''} ${error instanceof Error ? error.message : ''}`
   const cancelled = /reject|denied|cancel/i.test(base?.details || text)
   if (cancelled) return { message: 'Transaction cancelled in wallet.', cancelled: true }
   if (/insufficient funds/i.test(base?.details || text)) {
@@ -154,5 +155,7 @@ export function describeError(error: unknown): { message: string; cancelled: boo
     | undefined
   const friendly = MINT_ERRORS[revert?.data?.errorName ?? '']
   if (friendly) return { message: friendly, cancelled: false }
-  return { message: text, cancelled: false }
+  // Anything else is a library's words for developers: keep it in the console, show the plain line.
+  console.warn('[miyamini] mint failed:', error)
+  return { message: plainTxError(error), cancelled: false }
 }

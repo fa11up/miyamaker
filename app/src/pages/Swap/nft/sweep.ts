@@ -39,8 +39,9 @@ export function sweepable<T extends Listing>(listings: readonly T[], me?: string
 export const pickCheapest = <T>(list: readonly T[], count: number): T[] =>
   list.slice(0, Math.max(0, Math.min(count, MAX_SWEEP)))
 
-export const sumPrices = (list: readonly { price: { amount: bigint } }[]) =>
-  list.reduce((sum, l) => sum + l.price.amount, 0n)
+/** What filling each costs: the whole order when one sells several (`total`), else its price. */
+export const sumPrices = (list: readonly { price: { amount: bigint }; total?: { amount: bigint } }[]) =>
+  list.reduce((sum, l) => sum + (l.total ?? l.price).amount, 0n)
 
 export type SweepLine = { label: string; amount: bigint }
 

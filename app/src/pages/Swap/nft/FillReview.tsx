@@ -31,7 +31,7 @@ import {
 import { markGone, noteBuyOutcome, sessionStore, UNCONFIRMED_BUY_WORDS, unconfirmedHashes } from './sweep'
 import { Action, Card, ConfirmCheck, Head, Hint, LinkButton, Mono, Prose, Stat, SwitchNote } from './ui'
 import { useFillFee } from './useFillFee'
-import { fetchFulfillment } from './useMarkets'
+import { fetchFulfillment, useOpenSeaCollection } from './useMarkets'
 
 const Lines = styled.dl`
   margin: 0;
@@ -118,6 +118,8 @@ export default function FillReview({
   const chain = chains.find((c) => c.id === chainId) || mainnet
   const wrongChain = isConnected && walletChain !== chainId
   const osChain = OPENSEA_CHAIN[chainId]
+  // The collection's own creator fee payees (cached): any other payee in the order is shown as "Other fee".
+  const creatorFees = useOpenSeaCollection(chainId, contract).info?.fees.map((f) => f.recipient)
 
   // A buy of this listing sent earlier this session that we couldn't see land: offering it again could pay twice.
   const [heldBack] = useState(() => side === 'buy' && unconfirmedHashes(sessionStore()).has(order.hash))
@@ -166,6 +168,7 @@ export default function FillReview({
         seaports: SEAPORT_ADDRESSES,
         abi: seaportAbi,
         aliases: INPUT_ALIASES,
+        creatorFees,
       })
     : undefined
   const ok = plan?.ok ? (plan as FillPlan) : undefined
