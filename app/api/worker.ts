@@ -1,4 +1,4 @@
-// Cloudflare Worker: the 0x and OpenSea proxies (keys injected server-side, see api/_lib), the apex -> www redirect,
+// Cloudflare Worker: the keyed RPC and NFT index (api/_lib/rpc.ts), the 0x and OpenSea proxies (keys injected server-side, see api/_lib), the apex -> www redirect,
 // and everything else from the static build in dist/ (wrangler.jsonc).
 import { createPublicClient, http } from 'viem'
 import { mainnet } from 'viem/chains'
@@ -8,6 +8,7 @@ import { edgeCache, handleMarketRequest, MARKET_PREFIX, openSeaReader } from './
 import { handleOpenSeaRequest, OPENSEA_PROXY_PATH, quoteBigInts } from './_lib/opensea'
 import { d1TapeStore, handlePublicAccessRequest, PUBLIC_ACCESS_PATH, youtubeLookup } from './_lib/publicaccess'
 import { serveRange } from './_lib/ranges'
+import { handleNftRequest, handleRpcRequest, NFT_PREFIX, RPC_BODY_LIMIT, RPC_PREFIX } from './_lib/rpc'
 import type { SharedCache } from './_lib/sharedstate'
 import { d1SharedState, sharedCache } from './_lib/sharedstate'
 import type { D1Like } from './_lib/station'
@@ -31,6 +32,12 @@ type Env = {
   YOUTUBE_API_KEY?: string
   /** Whether contracts are verified, for My Files' Scam folder (api/_lib/contractcheck.ts). */
   ETHERSCAN_API_KEY?: string
+  /** Keyed JSON-RPC URLs per chain (api/_lib/rpc.ts), e.g. https://eth-mainnet.g.alchemy.com/v2/<key>. Unset = public RPCs. */
+  RPC_URL_1?: string
+  RPC_URL_11155111?: string
+  RPC_URL_4663?: string
+  /** Alchemy NFT API key for My Files and Trade → NFTs (/api/nft). Unset = known collections read from the chain. */
+  ALCHEMY_API_KEY?: string
   /** The radio's community station (migrations/). */
   DB?: D1Like
   /** Wallets that can remove any station track, comma-separated. */
@@ -45,6 +52,9 @@ const guards = {
   readLimiter: createRateLimiter({ capacity: 120, perSecond: 2 }),
   fillLimiter: createRateLimiter({ capacity: 10, perSecond: 0.2 }),
 }
+// A dapp's reads: a page load is a few dozen batched calls, then polling every 12 seconds per open window.
+const rpcLimiter = createRateLimiter({ capacity: 300, perSecond: 6 })
+const nftLimiter = createRateLimiter({ capacity: 60, perSecond: 1 })
 const marketLimiter = createRateLimiter({ capacity: 120, perSecond: 2 })
 const contractCheckLimiter = createRateLimiter({ capacity: 30, perSecond: 0.5 })
 const stationLimiter = createRateLimiter({ capacity: 20, perSecond: 0.2 })
@@ -83,6 +93,19 @@ export default {
 }
 
 async function api(request: Request, env: Env, url: URL): Promise<Response> {
+  if (url.pathname.startsWith(`${RPC_PREFIX}/`)) {
+    const body = request.method === 'POST' ? await readCappedText(request, RPC_BODY_LIMIT) : undefined
+    return handleRpcRequest(
+      { method: request.method, url: request.url, headers: request.headers, body },
+      { RPC_URL_1: env.RPC_URL_1, RPC_URL_11155111: env.RPC_URL_11155111, RPC_URL_4663: env.RPC_URL_4663 },
+      { sameOrigin, clientKey, limiter: rpcLimiter }
+    )
+  }
+
+  if (url.pathname.startsWith(`${NFT_PREFIX}/`)) {
+    return handleNftRequest(request, { ALCHEMY_API_KEY: env.ALCHEMY_API_KEY }, { sameOrigin, clientKey, limiter: nftLimiter })
+  }
+
   if (url.pathname.startsWith(`${PROXY_PREFIX}/`)) {
     return handleZeroExRequest(request, { ZEROX_API_KEY: env.ZEROX_API_KEY })
   }

@@ -8,7 +8,7 @@ import {MiyaRegistry} from "../../../src/registry/MiyaRegistry.sol";
 import {IMiyaRegistry} from "../../../src/registry/interfaces/IMiyaRegistry.sol";
 import {FreeMintParams} from "../../../src/interfaces/IFactoryTypes.sol";
 import {GatingScope} from "../../../src/gating/IGatingModule.sol";
-import {FreeMintDisabled, FreeMintAlreadyClaimed, FreeMintExhausted, EditionNotOpen, EditionNotFound, LengthMismatch, RenounceDisabled} from "../../../src/factories/erc1155/ERC1155Instance.sol";
+import {FreeMintDisabled, FreeMintAlreadyClaimed, FreeMintExhausted, EditionNotOpen, EditionNotFound, LengthMismatch, RenounceDisabled, OnlyFactory, AlreadyInitialized, Unauthorized} from "../../../src/factories/erc1155/ERC1155Instance.sol";
 import {MiyaPool} from "../../../src/pools/MiyaPool.sol";
 import {MiyaPoolFactory} from "../../../src/pools/MiyaPoolFactory.sol";
 import {ICreateX, CREATEX} from "../../../src/shared/CreateXConstants.sol";
@@ -210,5 +210,66 @@ contract ERC1155FreeMintTest is Test {
         vm.prank(creator);
         vm.expectRevert(RenounceDisabled.selector);
         inst.renounceOwnership();
+    }
+
+    // ── initializeFreeMint (direct calls) ─────────────────────────────────────
+
+    function test_erc1155_initializeFreeMint_directFromFactory_setsParams() public {
+        address fakeFactory = makeAddr("fakeFactory");
+        ERC1155Instance inst = new ERC1155Instance(
+            "Direct", creator, fakeFactory, address(mockVault), "",
+            ERC1155Instance.InstanceInit({
+                protocolTreasury: makeAddr("treasury"),
+                protocolFeeBps: 100,
+                alignmentBps: 1900,
+                gatingModule: address(0),
+                dynamicPricingModule: address(0),
+                weth: address(0xBEEF)
+            })
+        );
+        assertEq(inst.freeMintAllocation(), 0);
+
+        vm.prank(fakeFactory);
+        inst.initializeFreeMint(7, GatingScope.PAID_ONLY);
+        assertEq(inst.freeMintAllocation(), 7);
+        assertEq(uint8(inst.gatingScope()), uint8(GatingScope.PAID_ONLY));
+
+        // Second call, even from the factory, reverts.
+        vm.prank(fakeFactory);
+        vm.expectRevert(AlreadyInitialized.selector);
+        inst.initializeFreeMint(9, GatingScope.BOTH);
+    }
+
+    function test_erc1155_initializeFreeMint_revertsForNonFactory() public {
+        ERC1155Instance inst = _deploy(FREE_ALLOC, GatingScope.BOTH);
+        vm.prank(creator);
+        vm.expectRevert(OnlyFactory.selector);
+        inst.initializeFreeMint(100, GatingScope.FREE_MINT_ONLY);
+        assertEq(inst.freeMintAllocation(), FREE_ALLOC);
+    }
+
+    function test_erc1155_initializeFreeMint_revertsAfterFactoryCreation() public {
+        ERC1155Instance inst = _deploy(FREE_ALLOC, GatingScope.BOTH);
+        // The factory already called initializeFreeMint inside createInstance.
+        vm.prank(address(factory));
+        vm.expectRevert(AlreadyInitialized.selector);
+        inst.initializeFreeMint(100, GatingScope.FREE_MINT_ONLY);
+    }
+
+    // ── setStyle ──────────────────────────────────────────────────────────────
+
+    function test_erc1155_setStyle_ownerSetsStyleUri() public {
+        ERC1155Instance inst = _deploy(FREE_ALLOC, GatingScope.BOTH);
+        vm.prank(creator);
+        inst.setStyle("ipfs://style");
+        assertEq(inst.styleUri(), "ipfs://style");
+    }
+
+    function test_erc1155_setStyle_revertsForNonOwner() public {
+        ERC1155Instance inst = _deploy(FREE_ALLOC, GatingScope.BOTH);
+        vm.prank(user1);
+        vm.expectRevert(Unauthorized.selector);
+        inst.setStyle("ipfs://evil");
+        assertEq(inst.styleUri(), "");
     }
 }

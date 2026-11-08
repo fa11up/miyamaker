@@ -8,12 +8,12 @@ import TitleBar from '@/components/TitleBar'
 import WindowWrapper from '@/components/WindowWrapper'
 import Pages from '@/constants/pages'
 import { useRadio } from '@/context/RadioProvider'
+import { onSoundTaken, ownerPlaying } from '@/desktop/screensaver/playing'
 import { useAppDispatch } from '@/store/hooks'
 import { closeWindow, minimizeWindow } from '@/store/windows/actions'
 import { useFullscreen, useWindows } from '@/store/windows/hooks'
 import { font, space, text } from '@/theme/tokens'
 
-import type { KickStream } from '../../../api/_lib/tvkick'
 import { airList, nextTapeId } from '../../../api/_lib/publicaccess'
 import { TV_LIVE_PATH } from '../../../api/_lib/tvlive'
 import {
@@ -29,6 +29,7 @@ import {
 } from './channels'
 import type { Source } from './channels'
 import ChatPanel from './chat/ChatPanel'
+import { readTvLive } from './feeds'
 import { focusLabel, newFocusTimer, resetFocus, tickFocus, toggleFocus } from './focusTimer'
 import Guide from './Guide'
 import { FocusPanel, IssPanel, PublicPanel, RadioPanel, SpottingPanel, SqueekPanel } from './panels'
@@ -557,6 +558,15 @@ export default function TV() {
   const [osdNote, setOsdNote] = useState<string>()
   const [tvVolume, setTvVolume] = useState(initialVolume)
   const [tvMuted, setTvMuted] = useState(false)
+  // Another app (the radio, the Drop Music studio) started sound, so the set paused itself. Only a press brings it back.
+  const [hushed, setHushed] = useState(false)
+  useEffect(
+    () =>
+      onSoundTaken('tv', () => {
+        if (ownerPlaying('tv')) setHushed(true)
+      }),
+    [],
+  )
   // Muted by the browser's autoplay rule rather than by choice: the next channel tries for sound again.
   const autoMuted = useRef(false)
   const radio = useRadio()
@@ -567,12 +577,8 @@ export default function TV() {
   const channel = CHANNELS[index] ?? CHANNELS[0]!
   const liveQuery = useQuery({
     queryKey: ['tv-live'],
-    queryFn: async () =>
-      (await (await fetch(TV_LIVE_PATH)).json()) as {
-        ids: Record<string, string>
-        kick?: KickStream[]
-        kickChecked?: boolean
-      },
+    // Checked for shape: Kick's list and the ids are only used once they are what they say they are.
+    queryFn: async () => readTvLive(await (await fetch(TV_LIVE_PATH)).json()),
     refetchInterval: 3 * 60_000,
     retry: 1,
   })
@@ -584,7 +590,7 @@ export default function TV() {
     channel.kind !== 'iframe'
       ? []
       : onKick
-        ? (live?.kick ?? []).map((k) => ({ provider: 'kick', slug: k.slug, label: k.label }))
+        ? (live?.kick ?? []).map((k): Source => ({ provider: 'kick', slug: k.slug, label: k.label }))
         : channel.sources
   // By name, not place: the list reorders as viewers come and go.
   const picked = sources.find((s) => s.label === sourceLabel) ?? sources[0]
@@ -651,6 +657,8 @@ export default function TV() {
       if (leavingRadio) pauseRadio()
       setIndex(next)
       setTapePaused(false)
+      // Changing channel is a choice to watch: the set takes the sound back.
+      setHushed(false)
       flash()
       try {
         window.localStorage.setItem(CHANNEL_KEY, CHANNELS[next]!.id)
@@ -665,6 +673,11 @@ export default function TV() {
     setTapeId(videoId)
     setTapePaused(false)
   }, [])
+
+  const resume = () => {
+    setHushed(false)
+    setTapePaused(false)
+  }
 
   const step = (d: number) => tune(stepChannel(CHANNELS.length, index, d))
 
@@ -867,6 +880,7 @@ export default function TV() {
                       }}
                       tapeId={tapeId}
                       tapePaused={tapePaused}
+                      hushed={hushed}
                       onTape={pickTape}
                       onBreak={setTapeBreak}
                       reducedMotion={reducedMotion}
@@ -931,15 +945,20 @@ export default function TV() {
                   }}
                 />
               )}
+              {hushed && !isRadio && !isPublic && (
+                <button type="button" className="toggle" title="Paused while another app plays" onClick={resume}>
+                  ▶ Play
+                </button>
+              )}
               {isPublic && (
                 <>
                   <button
                     type="button"
                     className="toggle"
                     disabled={tapeBreak}
-                    onClick={() => setTapePaused((p) => !p)}
+                    onClick={() => (hushed ? resume() : setTapePaused((p) => !p))}
                   >
-                    {tapePaused ? '▶ Play' : '❚❚ Pause'}
+                    {tapePaused || hushed ? '▶ Play' : '❚❚ Pause'}
                   </button>
                   <button
                     type="button"

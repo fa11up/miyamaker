@@ -921,6 +921,37 @@ contract ERC721AuctionFactoryTest is Test {
         assertEq(inst.escrowedWinner(1), address(0));
     }
 
+    /// Happy path of safeMintWinner: settleAuction self-calls it and the winner gets the token.
+    function test_SafeMintWinner_CalledBySettle() public {
+        ERC721AuctionInstance inst = _createDefaultInstance();
+        vm.prank(artist);
+        inst.queuePiece{value: 0.1 ether}("ipfs://piece1");
+        address eoa = makeAddr("eoaBidder");
+        vm.deal(eoa, 1 ether);
+        vm.prank(eoa);
+        inst.createBid{value: 0.2 ether}(1, "");
+        vm.warp(inst.getAuction(1).endTime);
+        vm.expectCall(address(inst), abi.encodeCall(ERC721AuctionInstance.safeMintWinner, (eoa, uint24(1))));
+        inst.settleAuction(1);
+        assertEq(inst.ownerOf(1), eoa);
+    }
+
+    function test_SafeMintWinner_DirectCallReverts() public {
+        ERC721AuctionInstance inst = _createDefaultInstance();
+        vm.prank(artist);
+        inst.queuePiece{value: 0.1 ether}("ipfs://piece1");
+
+        address attacker = makeAddr("attacker");
+        vm.prank(attacker);
+        vm.expectRevert(Unauthorized.selector);
+        inst.safeMintWinner(attacker, 1);
+
+        // Not even the owner can call it directly.
+        vm.prank(artist);
+        vm.expectRevert(Unauthorized.selector);
+        inst.safeMintWinner(artist, 1);
+    }
+
     function test_RenounceOwnership_Disabled() public {
         ERC721AuctionInstance inst = _createDefaultInstance();
         vm.prank(artist);

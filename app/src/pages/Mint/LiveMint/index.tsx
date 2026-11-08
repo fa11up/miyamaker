@@ -29,6 +29,8 @@ import type { ReadResult } from '@/pages/Mint/useLiveMints'
 import { dropAbi, dropCalls, erc721mCalls, readsFromResults, useContractImage } from '@/pages/Mint/useLiveMints'
 import { space, text } from '@/theme/tokens'
 
+import { mintedWhere } from './where'
+
 /**
  * Generic mint view for any live mint that has no dedicated page: legacy ERC721M clones (mint(amount)) and miyamints
  * drops (public phase: mint(phaseId, qty, [])). Same layout as MIYAMINI so every collection feels the same.
@@ -91,6 +93,9 @@ function useMint(card: LiveMintCard, phaseId: number | undefined) {
     balance: balance.data?.value,
     mint,
     hash: write.data,
+    /** The wallet the signed call mints to, when it was mintTo (another wallet); undefined for a plain mint. */
+    sentTo:
+      write.variables?.functionName === 'mintTo' ? String((write.variables.args as readonly unknown[])[0]) : undefined,
     isAwaitingWallet: write.isPending,
     isConfirming: outcome === 'waiting',
     isConfirmed: outcome === 'success',
@@ -288,7 +293,7 @@ export default function LiveMintView({ card }: { card: LiveMintCard }) {
           <>
             <strong>Minted!</strong>
             <span>
-              It is in your wallet.{' '}
+              {mintedWhere(tx.sentTo, account)}{' '}
               <a href={txUrl} target="_blank" rel="noreferrer">
                 View transaction
               </a>

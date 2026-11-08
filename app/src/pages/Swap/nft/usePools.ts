@@ -8,7 +8,7 @@ import { isRevert } from '@/hooks/readFailure'
 
 import type { SupportedChainId } from '@/config/wagmi'
 import { miyamintsAddresses } from '@/constants/contracts'
-import { ALCHEMY_KEY } from '@/desktop/files/indexer'
+import { fetchOwnedNftsPage, NFT_INDEX_CHAINS, NftIndexOff } from '@/desktop/files/indexer'
 import { parseAlchemyOwnedNfts } from '@/desktop/files/indexer/parse'
 import { cleanText, sanitizeMetadata } from '@/desktop/files/sanitize'
 import { useMetadata } from '@/utils/nftMetadata'
@@ -301,30 +301,25 @@ export function useMyCommits(
 }
 
 /**
- * The wallet's NFTs in one collection, when an indexer can list them (Alchemy, Ethereum only).
+ * The wallet's NFTs in one collection, when an indexer can list them (Alchemy through the Worker, Ethereum only).
  * `supported: false` means "type the token numbers instead".
  */
 export function useOwnedInCollection(chainId: number, collection: Address | undefined, owner: Address | undefined) {
-  const supported = !!ALCHEMY_KEY && chainId === 1
   const q = useQuery({
     queryKey: ['trade-owned', chainId, collection, owner],
-    enabled: supported && !!collection && !!owner,
+    enabled: NFT_INDEX_CHAINS.has(chainId) && !!collection && !!owner,
     staleTime: 30_000,
+    // The Worker has no index key: nothing to retry.
+    retry: (count, error) => !(error instanceof NftIndexOff) && count < 2,
     queryFn: async ({ signal }) => {
-      const url = new URL(`https://eth-mainnet.g.alchemy.com/nft/v3/${encodeURIComponent(ALCHEMY_KEY)}/getNFTsForOwner`)
-      url.searchParams.set('owner', owner as string)
-      url.searchParams.append('contractAddresses[]', collection as string)
-      url.searchParams.set('withMetadata', 'true')
-      url.searchParams.set('pageSize', String(OWNED_PAGE))
+      const params = new URLSearchParams({ owner: owner as string, withMetadata: 'true', pageSize: String(OWNED_PAGE) })
+      params.append('contractAddresses[]', collection as string)
       const nfts: ReturnType<typeof parseAlchemyOwnedNfts>['nfts'] = []
       let pageKey: string | undefined
       for (let page = 0; page < OWNED_MAX_PAGES; page += 1) {
-        if (pageKey) url.searchParams.set('pageKey', pageKey)
+        if (pageKey) params.set('pageKey', pageKey)
         // eslint-disable-next-line no-await-in-loop -- each page needs the previous page's key
-        const res = await fetch(url.toString(), { signal, headers: { accept: 'application/json' } })
-        if (!res.ok) throw new Error(`HTTP ${res.status}`)
-        // eslint-disable-next-line no-await-in-loop
-        const body = (await res.json()) as { pageKey?: unknown }
+        const body = (await fetchOwnedNftsPage(chainId, params, signal)) as { pageKey?: unknown }
         nfts.push(...parseAlchemyOwnedNfts(body, chainId, { sanitize: sanitizeMetadata, cleanText, resolve: resolveUri }).nfts)
         pageKey = typeof body?.pageKey === 'string' && body.pageKey ? body.pageKey : undefined
         if (!pageKey) return { nfts, partial: false }
@@ -332,6 +327,8 @@ export function useOwnedInCollection(chainId: number, collection: Address | unde
       return { nfts, partial: true }
     },
   })
+  // Served on this chain, and the Worker has its index key (until it says otherwise).
+  const supported = NFT_INDEX_CHAINS.has(chainId) && !(q.error instanceof NftIndexOff)
   return {
     supported,
     nfts: q.data?.nfts,

@@ -101,6 +101,7 @@ export default function Screen({
   onAutoMuted,
   tapeId,
   tapePaused,
+  hushed = false,
   onTape,
   onBreak,
   reducedMotion,
@@ -116,12 +117,14 @@ export default function Screen({
   onAutoMuted: () => void
   tapeId?: string
   tapePaused: boolean
+  /** Another app has the sound: players pause, and embeds that can't be paused come down until Play is pressed. */
+  hushed?: boolean
   onTape: (videoId: string) => void
   onBreak: (on: boolean) => void
   reducedMotion: boolean
 }) {
   // Kick and X don't say whether they're playing, so a player on screen counts. YouTube reports for itself.
-  const embedOn = channel.kind === 'iframe' && !!source && source.provider !== 'youtube'
+  const embedOn = channel.kind === 'iframe' && !!source && source.provider !== 'youtube' && !hushed
   useEffect(() => {
     if (!embedOn) return undefined
     setPlaying('tv-embed', true)
@@ -134,11 +137,12 @@ export default function Screen({
     return (
       <PublicShow
         tapeId={tapeId}
-        paused={tapePaused}
+        paused={tapePaused || hushed}
         onNext={onTape}
         onBreak={onBreak}
         volume={volume}
-        muted={muted}
+        // A commercial can't be paused: it goes quiet instead.
+        muted={muted || hushed}
         onAutoMuted={onAutoMuted}
       />
     )
@@ -151,8 +155,20 @@ export default function Screen({
         videoId={source.videoId}
         volume={volume}
         muted={muted}
+        paused={hushed}
         onAutoMuted={onAutoMuted}
       />
+    )
+  }
+
+  // Kick and X can't be paused from here, so the player comes down instead of playing over the other sound.
+  if (channel.kind === 'iframe' && source && hushed) {
+    return (
+      <Card role="status">
+        <span className="tag">paused</span>
+        <h2>{channel.name}</h2>
+        <p>Paused while another app plays sound. Press Play to watch again.</p>
+      </Card>
     )
   }
 

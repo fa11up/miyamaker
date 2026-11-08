@@ -5,7 +5,6 @@ import { useElementSize } from 'usehooks-ts'
 import { useAccount } from 'wagmi'
 
 import { explorerUrl } from '@/config/wagmi'
-import { ALCHEMY_KEY } from '@/desktop/files/indexer'
 
 import type { DexMarket } from './board'
 import {
@@ -31,6 +30,7 @@ import type { SwapPreset } from './TokenSwap'
 import TokenSwap from './TokenSwap'
 import { searchTokens } from './tokenList'
 import { useCustomToken, useTokenList } from './useTokens'
+import type { WalletMove } from './history'
 import { formatAmount, historyNetwork, mergeMoves, transferQuery } from './history'
 
 const Layout = styled.div`
@@ -317,26 +317,30 @@ const History = styled.section`
 function TokenHistory({ chainId, token }: { chainId: SwapChainId; token: SwapToken }) {
   const { address } = useAccount()
   const network = historyNetwork(chainId)
-  const q = useQuery({
+  const q = useQuery<WalletMove[] | null>({
     queryKey: ['token-history', chainId, token.address.toLowerCase(), address?.toLowerCase()],
-    enabled: !!address && !!network && !!ALCHEMY_KEY,
+    enabled: !!address && !!network,
     staleTime: 30_000,
-    refetchInterval: 60_000,
+    refetchInterval: (query) => (query.state.data === null ? false : 60_000),
     retry: 1,
-    queryFn: async ({ signal }) => {
+    queryFn: async ({ signal }): Promise<WalletMove[] | null> => {
       const native = isNative(token.address)
       const answers = await Promise.all(
         (['fromAddress', 'toAddress'] as const).map(async (side) => {
-          const res = await fetch(`https://${network}.g.alchemy.com/v2/${ALCHEMY_KEY}`, {
+          // The Worker's keyed RPC (api/_lib/rpc.ts): Alchemy's transfer index, with the key kept server-side.
+          const res = await fetch(`/api/rpc/${chainId}`, {
             method: 'POST',
             signal,
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify(transferQuery(token.address, native, side, address as string)),
           })
+          // No keyed RPC for this chain: there is no transfer index to ask.
+          if (res.status === 503 && res.headers.get('x-rpc-proxy') === 'off') return null
           if (!res.ok) throw new Error(`History ${res.status}`)
           return res.json()
         }),
       )
+      if (answers.some((a) => a === null)) return null
       return mergeMoves(answers, address as string)
     },
   })
@@ -346,7 +350,7 @@ function TokenHistory({ chainId, token }: { chainId: SwapChainId; token: SwapTok
       <h3>Your {token.symbol} history</h3>
       {!address ? (
         <p>Connect a wallet to see it.</p>
-      ) : !network || !ALCHEMY_KEY ? (
+      ) : !network || q.data === null ? (
         <p>Not available on this network yet.</p>
       ) : q.isLoading ? (
         <p>Looking it up…</p>

@@ -16,7 +16,7 @@ import {
 
 import { isRevert, readOutcome } from '../src/hooks/readFailure.ts'
 import { MusicScanError, combineScan, mintLabel, scanNote } from '../src/music/scan.ts'
-import { cappedNote, dropWaiting, editionsWaiting } from '../src/pages/Manage/payout.ts'
+import { cappedNote, dropWaiting, editionTotals, editionsWaiting } from '../src/pages/Manage/payout.ts'
 import { freeModesFrom, freeUnits, heldAmount, MODE } from '../src/pages/Swap/nft/pool.ts'
 
 const abi = [{ type: 'function', name: 'f', inputs: [], outputs: [], stateMutability: 'view' }] as const
@@ -99,4 +99,19 @@ test('pools: free units and held amounts stay unknown when their reads failed', 
   assert.equal(heldAmount({ status: 'failure', reverted: false }, true, me), undefined, 'RPC down: unknown')
   assert.equal(heldAmount({ status: 'success', result: 3n }, false, me), 3n)
   assert.equal(heldAmount(undefined, false, me), undefined)
+})
+
+test("Manage's editions Sold counts every edition, not the table's page", () => {
+  const ed = (minted: bigint, supply: bigint) => ({ minted, supply })
+  const many = Array.from({ length: 120 }, () => ed(2n, 10n))
+  // 120 editions while the table shows 50: all 120 are counted.
+  assert.deepEqual(editionTotals(many, 120), { minted: 240n, supply: 1200n, scope: undefined })
+  // An open edition means no overall cap.
+  assert.equal(editionTotals([ed(1n, 0n), ed(1n, 5n)], 2).supply, undefined)
+  // A failed or missing read is not a smaller total.
+  assert.deepEqual(editionTotals([ed(1n, 5n), undefined], 2), {})
+  assert.deepEqual(editionTotals([ed(1n, 5n)], 2), {})
+  assert.deepEqual(editionTotals(undefined, 2), {})
+  // Past the cap, it says what it counted.
+  assert.equal(editionTotals([ed(1n, 1n), ed(1n, 1n)], 5, 2).scope, 'of the first 2 of 5 editions')
 })

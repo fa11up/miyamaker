@@ -11,6 +11,8 @@ import { font, text } from '@/theme/tokens'
 import { airList, nextTapeId } from '../../../api/_lib/publicaccess'
 import type { BreakLog, Commercial } from './commercials'
 import { COMMERCIALS, DRAWN_SECONDS, isBreakDue, nextSpotIndex, SKIP_AFTER_SECONDS } from './commercials'
+import type { DeadRun } from './feeds'
+import { tapeDied, tapePlayed } from './feeds'
 import { fetchTapes } from './publicAccess'
 import { parseVitals, SQUEEK_API, wheelSeconds } from './squeek'
 import { firstMode, runVisuals, seedOf, VIZ_H, VIZ_MODES, VIZ_W } from './visuals'
@@ -749,6 +751,29 @@ export function PublicShow({
     if (next) onNext(next)
   }
 
+  // Dead tapes in a row: each wait is longer, and once the whole list has failed it stops and says so, rather than
+  // loading a new YouTube player every few seconds for good.
+  const deadRun = useRef<DeadRun>(tapePlayed())
+  const [gaveUp, setGaveUp] = useState(false)
+  const [retries, setRetries] = useState(0)
+  const deadWait = useRef<ReturnType<typeof setTimeout>>()
+  useEffect(() => () => clearTimeout(deadWait.current), [current.videoId])
+  const tapeDead = () => {
+    const { run, step } = tapeDied(deadRun.current, tapes.length)
+    deadRun.current = run
+    clearTimeout(deadWait.current)
+    if (step.give === 'up') setGaveUp(true)
+    else deadWait.current = setTimeout(nextTape, step.afterMs)
+  }
+  const tapePlaying = useCallback(() => {
+    deadRun.current = tapePlayed()
+  }, [])
+  const retry = () => {
+    deadRun.current = tapePlayed()
+    setGaveUp(false)
+    setRetries((r) => r + 1)
+  }
+
   // Only the natural end of a tape can lead to a break, so nothing ever cuts into one.
   const tapeEnded = () => {
     const last = readBreak()
@@ -777,16 +802,31 @@ export function PublicShow({
       <VideoSpot key={spot.id} spot={spot} volume={volume} muted={muted} onAutoMuted={onAutoMuted} onDone={spotDone} />
     )
 
+  if (gaveUp) {
+    return (
+      <Stage>
+        <Centre role="status">
+          <h2>Nothing playable right now</h2>
+          <p>None of the tapes would play. YouTube may be down or blocked here.</p>
+          <button type="button" onClick={retry}>
+            Try again
+          </button>
+        </Centre>
+      </Stage>
+    )
+  }
+
   return (
     <YouTubePlayer
-      key={current.videoId}
+      key={`${current.videoId}:${retries}`}
       videoId={current.videoId}
       volume={volume}
       muted={muted}
       paused={paused}
       onAutoMuted={onAutoMuted}
       onEnded={tapeEnded}
-      onDead={nextTape}
+      onDead={tapeDead}
+      onPlaying={tapePlaying}
     />
   )
 }

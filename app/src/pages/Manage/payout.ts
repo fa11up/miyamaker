@@ -25,3 +25,25 @@ export function cappedNote(shown: number, total: number | undefined, noun: strin
   if (total === undefined || total <= shown) return undefined
   return `Showing the first ${shown} of ${total} ${noun}.`
 }
+
+/** How many editions' getEdition reads go into the overview's totals (one multicall), whatever the table shows. */
+export const TOTALS_CAP = 500
+
+/**
+ * The overview's "Sold" for an editions collection, from every edition (up to TOTALS_CAP), not the table's page.
+ * Any failed or missing read gives `minted: undefined` (not a smaller total). `supply` is undefined when any edition
+ * is open (no cap). `scope` says when only the first TOTALS_CAP were counted.
+ */
+export function editionTotals(
+  reads: readonly ({ minted: bigint; supply: bigint } | undefined)[] | undefined,
+  totalIds: number | undefined,
+  cap = TOTALS_CAP
+): { minted?: bigint; supply?: bigint; scope?: string } {
+  if (!reads || totalIds === undefined) return {}
+  const counted = Math.min(totalIds, cap)
+  if (reads.length !== counted || reads.some((e) => !e)) return {}
+  const eds = reads as { minted: bigint; supply: bigint }[]
+  const minted = eds.reduce((s, e) => s + e.minted, 0n)
+  const supply = eds.length && !eds.some((e) => e.supply === 0n) ? eds.reduce((s, e) => s + e.supply, 0n) : undefined
+  return { minted, supply, scope: totalIds > cap ? `of the first ${cap} of ${totalIds} editions` : undefined }
+}

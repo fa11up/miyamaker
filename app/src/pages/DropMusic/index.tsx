@@ -500,6 +500,28 @@ export default function DropMusicWindow() {
 
   useEffect(() => () => cover && URL.revokeObjectURL(cover.url), [cover])
 
+  // The picked file's blob URL goes when it is replaced or the window closes, unless the radio was handed it ("Play in
+  // miya radio") and still has it queued: then the radio owns it, and it goes once the radio has let it go.
+  const radioTracks = radio.queue.tracks
+  const radioTracksRef = useRef(radioTracks)
+  radioTracksRef.current = radioTracks
+  const heldByRadio = useRef(new Set<string>())
+  const audioUrl = audio?.url
+  useEffect(() => {
+    if (!audioUrl) return undefined
+    return () => {
+      if (radioTracksRef.current.some((t) => t.src === audioUrl)) heldByRadio.current.add(audioUrl)
+      else URL.revokeObjectURL(audioUrl)
+    }
+  }, [audioUrl])
+  useEffect(() => {
+    heldByRadio.current.forEach((url) => {
+      if (radioTracks.some((t) => t.src === url)) return
+      URL.revokeObjectURL(url)
+      heldByRadio.current.delete(url)
+    })
+  }, [radioTracks])
+
   // Track details changed after the metadata JSON was uploaded: rebuild it on the next attempt.
   useEffect(() => {
     if (drop.uploaded.metadata) drop.invalidate('metadata')
@@ -736,7 +758,10 @@ export default function DropMusicWindow() {
   const linkSrc = mode === 'links' && linkOk ? resolveUri(safeUri(form.audioUri) as string) : undefined
   const playerSrc = mode === 'upload' ? (audio?.check.ok && !audio.error ? audio.url : undefined) : linkSrc
   const player = useStudioPlayer(playerSrc, { analyse: mode === 'upload' })
-  const peaks = useWaveformPeaks(mode === 'upload' && audio?.check.ok ? audio.file : undefined)
+  const peaks = useWaveformPeaks(
+    mode === 'upload' && audio?.check.ok && !audio.error ? audio.file : undefined,
+    audio?.reading ? undefined : audio?.duration ?? NaN,
+  )
   const coverUrl =
     mode === 'upload'
       ? cover?.check.ok
@@ -746,11 +771,8 @@ export default function DropMusicWindow() {
       ? resolveUri(safeUri(form.coverUri) as string)
       : undefined
 
-  // One thing plays at a time: the studio hushes the radio, and handing over to the radio stops the studio.
-  useEffect(() => {
-    if (player.playing && radio.playing) radio.pause()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [player.playing])
+  // One thing plays at a time: the sound bus (desktop/screensaver/playing) pauses the radio when the studio starts, and
+  // the studio when the radio or miyaTV starts. Handing over to the radio stops the studio as well.
 
   const previewInRadio = () => {
     if (!audio?.check.ok) return

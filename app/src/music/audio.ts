@@ -15,6 +15,20 @@ import type { Track } from './types'
 export const MAX_AUDIO_BYTES = 50 * 1024 * 1024
 export const MAX_IMAGE_BYTES = 10 * 1024 * 1024
 
+/**
+ * The studio's waveform decodes the whole file to 32-bit samples: about 10 MB a minute of stereo, far more than the file.
+ * Past these it draws no waveform rather than take a gigabyte for a long mix.
+ */
+export const WAVEFORM_MAX_BYTES = 15 * 1024 * 1024
+export const WAVEFORM_MAX_SECONDS = 10 * 60
+
+/** 'skip' for a file too big or too long to decode for peaks, 'wait' until its length is known, else 'decode'. */
+export function waveformPlan(bytes: number, seconds: number | undefined): 'decode' | 'wait' | 'skip' {
+  if (!Number.isFinite(bytes) || bytes > WAVEFORM_MAX_BYTES) return 'skip'
+  if (seconds === undefined) return 'wait'
+  return Number.isFinite(seconds) && seconds > 0 && seconds <= WAVEFORM_MAX_SECONDS ? 'decode' : 'skip'
+}
+
 /** Accepted audio extensions → MIME types a browser may report for them (first is canonical). */
 export const AUDIO_TYPES: Record<string, readonly string[]> = {
   mp3: ['audio/mpeg', 'audio/mp3', 'audio/x-mp3', 'audio/mpeg3'],

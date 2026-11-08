@@ -47,8 +47,5 @@ interface ImportMetaEnv {
   readonly VITE_ANALYTICS_ID?: string
   /** Dev only: a local INFER BOX (wrangler dev), e.g. http://localhost:8813/ */
   readonly VITE_BOX_URL?: string
-  readonly VITE_RPC_URL_1?: string
-  readonly VITE_RPC_URL_11155111?: string
-  readonly VITE_RPC_URL_4663?: string
   readonly VITE_CHAT_URL?: string
 }

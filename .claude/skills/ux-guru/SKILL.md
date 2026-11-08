@@ -20,7 +20,11 @@ set: those are decided, not up for debate, and breaking one is a finding.
    `VITE_CHAT_URL=https://chat.miyamaker.com npx vite build --outDir <tmp> --emptyOutDir`, then
    `npx vite preview --outDir <tmp> --port 5198 --strictPort`), then from the repo root: `node .claude/skills/ux-guru/scripts/capture.mjs <outdir> [app,app]`. It walks
    every state at 1440x900 and 390x844 and writes `<outdir>/<app>/<state>.<desktop|phone>.png` and `<outdir>/report.json`.
-   Market, OpenSea and stream data is read from the live site. The test wallet records writes and never sends them.
+   Apps walked: trade, tv, radio, auction, launch, dropmusic, upload, files, mint, miyanet (Home, `/about`) and
+   manager, each with and without the test wallet. Market, OpenSea, NFT index and stream data is read from the live
+   site; `/api/rpc/*` answers "off" (as with no RPC secret set), so chain reads go to public RPCs. The test wallet
+   switches chains when asked (`wallet_switchEthereumChain` / `wallet_addEthereumChain`, for Ethereum, Sepolia and
+   Robinhood, reading from that chain's public node), records writes and never sends them.
    Playwright loads from `app/node_modules` (an app devDependency: `yarn install` in `app/`, then
    `npx playwright install chromium`). The script exits 1 when any state had a page error or a failed step.
    **miyatv chat on a preview:** production chat (`chat.miyamaker.com`) only allows the miyamaker.com origins, so

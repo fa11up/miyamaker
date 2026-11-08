@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
+import { onSoundTaken, setPlaying as tellOthers } from '@/desktop/screensaver/playing'
+import { waveformPlan } from '@/music/audio'
+
 type AudioCtor = typeof AudioContext
 
 const audioCtor = (): AudioCtor | undefined =>
@@ -104,6 +107,11 @@ export function useStudioPlayer(src: string | undefined, { analyse }: { analyse:
   }, [analyse])
 
   const pause = useCallback(() => elRef.current?.pause(), [])
+
+  // One owner of sound: the studio starting pauses the radio and miyaTV, and either of them starting pauses the studio.
+  useEffect(() => tellOthers('studio', playing), [playing])
+  useEffect(() => () => tellOthers('studio', false), [])
+  useEffect(() => onSoundTaken('studio', pause), [pause])
   const toggle = useCallback(() => (elRef.current?.paused === false ? pause() : play()), [play, pause])
   const seek = useCallback((seconds: number) => {
     const el = elRef.current
@@ -120,15 +128,28 @@ export function useStudioPlayer(src: string | undefined, { analyse }: { analyse:
 
 export type StudioPlayer = ReturnType<typeof useStudioPlayer>
 
+/** Peaks for the waveform, or 'too-long' when the file is past what is worth decoding in the browser. */
+export type Peaks = number[] | 'too-long'
+
+// One decode at a time across the app: quick re-picks queue up behind it, and superseded ones never start.
+let decoding: Promise<unknown> = Promise.resolve()
+
 /**
  * Peak envelope of an audio file for the waveform strip, decoded once in the browser. Returns undefined while
- * decoding or when the browser cannot decode the file (the strip then draws a placeholder).
+ * decoding or when the browser cannot decode the file (the strip then draws a placeholder), and 'too-long' for a file
+ * too big or too long to decode (see waveformPlan). `seconds` is the file's length once read.
  */
-export function useWaveformPeaks(file: File | undefined, buckets = 180): number[] | undefined {
-  const [peaks, setPeaks] = useState<number[]>()
+export function useWaveformPeaks(file: File | undefined, seconds: number | undefined, buckets = 180): Peaks | undefined {
+  const [peaks, setPeaks] = useState<Peaks>()
+  const plan = file ? waveformPlan(file.size, seconds) : undefined
   useEffect(() => {
     setPeaks(undefined)
-    if (!file) return undefined
+    if (!file || !plan || plan === 'wait') return undefined
+    if (plan === 'skip') {
+      setPeaks('too-long')
+      return undefined
+    }
+
     let cancelled = false
     const Offline =
       typeof window !== 'undefined'
@@ -136,33 +157,34 @@ export function useWaveformPeaks(file: File | undefined, buckets = 180): number[
           (window as unknown as { webkitOfflineAudioContext?: typeof OfflineAudioContext }).webkitOfflineAudioContext
         : undefined
     if (!Offline) return undefined
-    file
-      .arrayBuffer()
-      .then((buf) => new Offline(1, 1, 44100).decodeAudioData(buf))
-      .then((audio) => {
-        if (cancelled) return
-        const data = audio.getChannelData(0)
-        const size = Math.max(1, Math.floor(data.length / buckets))
-        const out: number[] = []
-        let max = 0
-        for (let b = 0; b < buckets; b += 1) {
-          let peak = 0
-          // Sample every few frames: plenty for a strip this size and fast on long tracks.
-          for (let i = b * size; i < (b + 1) * size && i < data.length; i += 16) {
-            const v = Math.abs(data[i] as number)
-            if (v > peak) peak = v
-          }
-
-          out.push(peak)
-          if (peak > max) max = peak
+    const run = decoding.then(async () => {
+      if (cancelled) return
+      const buf = await file.arrayBuffer()
+      if (cancelled) return
+      const audio = await new Offline(1, 1, 44100).decodeAudioData(buf)
+      if (cancelled) return
+      const data = audio.getChannelData(0)
+      const size = Math.max(1, Math.floor(data.length / buckets))
+      const out: number[] = []
+      let max = 0
+      for (let b = 0; b < buckets; b += 1) {
+        let peak = 0
+        // Sample every few frames: plenty for a strip this size and fast on long tracks.
+        for (let i = b * size; i < (b + 1) * size && i < data.length; i += 16) {
+          const v = Math.abs(data[i] as number)
+          if (v > peak) peak = v
         }
 
-        setPeaks(out.map((p) => (max ? p / max : 0)))
-      })
-      .catch(() => undefined)
+        out.push(peak)
+        if (peak > max) max = peak
+      }
+
+      setPeaks(out.map((p) => (max ? p / max : 0)))
+    })
+    decoding = run.catch(() => undefined)
     return () => {
       cancelled = true
     }
-  }, [file, buckets])
+  }, [file, plan, buckets])
   return peaks
 }

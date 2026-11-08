@@ -11,7 +11,15 @@ import { useCanBatch } from '@/utils/batch'
 import { fetchPrice, fetchQuote, SwapApiError } from './api'
 import type { SwapChainId } from './constants'
 import { isNative, QUOTE_MAX_AGE_MS } from './constants'
-import { ALLOWANCE_HOLDER, quoteProblem } from './quoteGuard'
+import {
+  ALLOWANCE_HOLDER,
+  decodeSwapCall,
+  quoteProblem,
+  SETTLER_DEPLOYER,
+  SETTLER_FEATURE,
+  settlerDeployerAbi,
+  settlerIsCurrent,
+} from './quoteGuard'
 import { latestOnly } from './swapLogic'
 import type { SwapRequest, ZeroExQuote } from './types'
 
@@ -61,6 +69,31 @@ export function priceImpact(
   const ref = Number(reference.buyAmount) / Number(reference.sellAmount)
   if (!Number.isFinite(r) || !Number.isFinite(ref) || ref <= 0) return undefined
   return Math.max(0, 1 - r / ref)
+}
+
+/** 0x's current and previous taker-submitted Settler on a chain, read on chain and kept for a minute. */
+const registryCache = new Map<number, { at: number; addresses: (string | undefined)[] }>()
+async function settlerRegistry(
+  client: ReturnType<typeof usePublicClient>,
+  chainId: number
+): Promise<(string | undefined)[] | undefined> {
+  const hit = registryCache.get(chainId)
+  if (hit && Date.now() - hit.at < 60_000) return hit.addresses
+  if (!client) return undefined
+  const [now, before] = await Promise.allSettled([
+    client.readContract({
+      address: SETTLER_DEPLOYER,
+      abi: settlerDeployerAbi,
+      functionName: 'ownerOf',
+      args: [SETTLER_FEATURE],
+    }),
+    client.readContract({ address: SETTLER_DEPLOYER, abi: settlerDeployerAbi, functionName: 'prev', args: [SETTLER_FEATURE] }),
+  ])
+  // The current one is required; the previous one only widens the window while 0x swaps Settlers.
+  if (now.status !== 'fulfilled') return undefined
+  const addresses = [now.value, before.status === 'fulfilled' ? before.value : undefined]
+  registryCache.set(chainId, { at: Date.now(), addresses })
+  return addresses
 }
 
 export type FirmQuote = Extract<ZeroExQuote, { liquidityAvailable: true }>
@@ -122,6 +155,7 @@ export function useSwapExecution({ chainId, taker }: { chainId: SwapChainId; tak
   const approveReceipt = useTxOutcome(chainId, approve.data)
 
   const send = useSendTransaction()
+  const client = usePublicClient({ chainId })
   const canBatchSwap = useCanBatch(chainId)
   const [readingBack, setReadingBack] = useState(false)
   const batch = useTx((id) => {
@@ -146,7 +180,24 @@ export function useSwapExecution({ chainId, taker }: { chainId: SwapChainId; tak
     try {
       const quote = await fetchQuote(req)
       if (!quotes.isCurrent(ticket)) return undefined
-      const problem = quote.liquidityAvailable ? quoteProblem(quote, req) : undefined
+      let problem = quote.liquidityAvailable ? quoteProblem(quote, req) : undefined
+      if (!problem && quote.liquidityAvailable) {
+        // Settler rotates, so the address the quote calls is checked against 0x's registry on this chain.
+        const settler = decodeSwapCall(quote.transaction.data)?.settler
+        const registry = settler ? await settlerRegistry(client, req.chainId) : undefined
+        if (!quotes.isCurrent(ticket)) return undefined
+        if (!registry) {
+          setState(undefined)
+          throw new SwapApiError(
+            'We could not check the swap contract. Nothing has moved. Try again.',
+            'SETTLER_UNCHECKED',
+            0
+          )
+        }
+
+        if (!settlerIsCurrent(settler!, registry)) problem = 'The quote calls a swap contract 0x does not list.'
+      }
+
       if (problem) {
         setState(undefined)
         throw new SwapApiError(`${problem} Swap refused for your safety. Nothing has moved.`, 'QUOTE_MISMATCH', 0)
@@ -160,7 +211,7 @@ export function useSwapExecution({ chainId, taker }: { chainId: SwapChainId; tak
     } finally {
       if (quotes.isCurrent(ticket)) setQuoting(false)
     }
-  }, [])
+  }, [client])
 
   /** A public RPC can answer from before the approval for a moment, so it is read until the new value shows. */
   const readAllowanceBack = async (expected: bigint | undefined) => {
@@ -212,6 +263,8 @@ export function useSwapExecution({ chainId, taker }: { chainId: SwapChainId; tak
 
     const current: ZeroExQuote = state.quote
     if (!current.liquidityAvailable || quoteProblem(current, state.request)) return
+    // The quote pays out to the wallet it was asked for: never send it from another one.
+    if (!taker || state.request.taker?.toLowerCase() !== taker.toLowerCase()) return
     setRequoted(false)
     const tx = current.transaction
     if (needsApproval && canBatchSwap && request && spender) {

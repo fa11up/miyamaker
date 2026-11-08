@@ -247,7 +247,8 @@ export default function Visualizer({
 
     const animate = mode === 'live' && playing
     const loop = () => {
-      if (document.visibilityState === 'visible') frame()
+      // Skip drawing while the tab is hidden or the window is minimised (display: none).
+      if (document.visibilityState === 'visible' && canvas.offsetWidth) frame()
       raf = requestAnimationFrame(loop)
     }
 

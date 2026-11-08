@@ -80,3 +80,44 @@ export function nightSide(sun: Point): string {
   const pole = tilt > 0 ? 90 : -90
   return [`-180,${pole}`, ...line, `180,${pole}`].join(' ')
 }
+
+/** One reading from the Space Station API, in the shape the panel draws. */
+export type IssPosition = {
+  latitude: number
+  longitude: number
+  altitude: number
+  velocity: number
+  visibility: string
+  footprint: number
+  timestamp: number
+  solar_lat: number
+  solar_lon: number
+}
+
+const NUMBERS = ['latitude', 'longitude', 'altitude', 'velocity', 'footprint', 'timestamp'] as const
+
+/**
+ * An outside answer checked before anything calls toFixed on it: the place numbers must be real numbers, or it is no
+ * reading at all. The sun's place is optional (0 when missing), and visibility is a string or ''.
+ */
+export function readIssPosition(v: unknown): IssPosition | undefined {
+  if (typeof v !== 'object' || v === null) return undefined
+  const o = v as Record<string, unknown>
+  for (const k of NUMBERS) if (typeof o[k] !== 'number' || !Number.isFinite(o[k])) return undefined
+  const num = (x: unknown) => (typeof x === 'number' && Number.isFinite(x) ? x : 0)
+  return {
+    latitude: o.latitude as number,
+    longitude: o.longitude as number,
+    altitude: o.altitude as number,
+    velocity: o.velocity as number,
+    footprint: o.footprint as number,
+    timestamp: o.timestamp as number,
+    visibility: typeof o.visibility === 'string' ? o.visibility : '',
+    solar_lat: num(o.solar_lat),
+    solar_lon: num(o.solar_lon),
+  }
+}
+
+/** A list of readings: anything not a list is none, and broken entries are left out. */
+export const readIssPositions = (v: unknown): IssPosition[] =>
+  Array.isArray(v) ? v.map(readIssPosition).filter((p): p is IssPosition => !!p) : []

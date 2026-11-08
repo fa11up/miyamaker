@@ -4,6 +4,8 @@ import styled from 'styled-components/macro'
 import { formatDuration } from '@/music/audio'
 import { color } from '@/theme/tokens'
 
+import type { Peaks } from './useStudioPlayer'
+
 const Track = styled.div`
   position: relative;
   flex: 1 1 auto;
@@ -24,9 +26,23 @@ const Track = styled.div`
   &[aria-disabled='true'] {
     cursor: default;
   }
+  .note {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    pointer-events: none;
+    font-size: 11px;
+    color: ${color.highlight};
+    text-shadow: 0 1px 0 #000;
+    white-space: nowrap;
+    overflow: hidden;
+  }
 `
 
 const PLACEHOLDER = Array.from({ length: 120 }, (_, i) => 0.18 + 0.1 * Math.abs(Math.sin(i * 0.37)))
+/** A plain line: for files too long to draw, so it doesn't pass for the track's real shape. */
+const FLAT = [0.08]
 
 /**
  * The track's waveform with a playhead: click or drag to seek, arrow keys skip 5 s.
@@ -40,7 +56,7 @@ export default function Waveform({
   getTime,
   onSeek,
 }: {
-  peaks?: number[]
+  peaks?: Peaks
   duration: number
   time: number
   playing: boolean
@@ -55,7 +71,9 @@ export default function Waveform({
     const canvas = ref.current
     const g = canvas?.getContext('2d')
     if (!canvas || !g) return undefined
-    const data = peaks?.length ? peaks : PLACEHOLDER
+    const tooLong = peaks === 'too-long'
+    const real = Array.isArray(peaks) && peaks.length > 0
+    const data = real ? peaks : tooLong ? FLAT : PLACEHOLDER
     const draw = () => {
       const dpr = Math.min(2, window.devicePixelRatio || 1)
       const w = Math.max(1, Math.round(canvas.clientWidth * dpr))
@@ -73,7 +91,7 @@ export default function Waveform({
         const p = data[Math.floor((i / n) * data.length)] as number
         const bh = Math.max(2 * dpr, Math.round(p * (h - 2)))
         const x = i * step
-        g.fillStyle = i / n <= progress ? '#2a6bff' : peaks?.length ? '#6c5f95' : '#3d3360'
+        g.fillStyle = i / n <= progress ? '#2a6bff' : real ? '#6c5f95' : '#3d3360'
         g.fillRect(x, Math.round((h - bh) / 2), step - dpr, bh)
       }
 
@@ -85,7 +103,8 @@ export default function Waveform({
 
     let raf = 0
     const loop = () => {
-      draw()
+      // Nor any drawing with the window minimised (display: none) or the tab hidden.
+      if (document.visibilityState === 'visible' && canvas.offsetWidth) draw()
       raf = requestAnimationFrame(loop)
     }
 
@@ -130,6 +149,7 @@ export default function Waveform({
       }}
     >
       <canvas ref={ref} aria-hidden="true" />
+      {peaks === 'too-long' && <span className="note">No waveform for files this long</span>}
     </Track>
   )
 }
