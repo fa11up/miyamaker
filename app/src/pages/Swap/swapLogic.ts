@@ -73,7 +73,8 @@ export const APPROVE_FAILED_WORDS =
 export const CANCELLED_WORDS =
   'You cancelled this in your wallet. Your tokens did not move. You only paid the network fee.'
 export const UNCONFIRMED_WORDS = 'We could not confirm this yet. It may still go through. Check it before trying again.'
-export const GENERIC_SWAP_WORDS = 'That did not go through. Nothing has moved. Try again.'
+/** For an error we can't read: it may have come after the swap was sent, so only the wallet can say what moved. */
+export const GENERIC_SWAP_WORDS = "That did not go through. Check your wallet's activity, then try again."
 export const OFFLINE_SWAP_WORDS = 'Swaps are offline right now. Nothing has moved. Try again later.'
 
 /** The error's own words and those of everything it wraps. Duck-typed so this file needs no imports. */

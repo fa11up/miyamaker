@@ -91,6 +91,34 @@ test('sold, cancelled and expired orders are gone', () => {
   assert.equal(fillFailureKind(new Error('The listing has expired')), 'gone')
 })
 
+test('a node that cannot answer is not a sold listing', () => {
+  for (const words of [
+    'header not found',
+    'block not found',
+    'the method eth_simulateV1 does not exist/is not available',
+    'Method not found',
+    'missing trie node 0xabc (path ) state 0xdef is not available',
+    'RPC Request failed. Details: transaction not found',
+  ]) {
+    const kind = fillFailureKind(new Error(words))
+    assert.notEqual(kind, 'gone', words)
+  }
+  assert.equal(fillFailureKind(Object.assign(new Error('x'), { shortMessage: 'HTTP request failed.', details: 'header not found' })), 'generic')
+})
+
+test('only plain words about the order mean it has gone', () => {
+  for (const words of [
+    'Order not found',
+    'This listing is no longer available',
+    'The order has already been filled',
+    'Listing was cancelled',
+    'The offer has expired',
+  ])
+    assert.equal(fillFailureKind(new Error(words)), 'gone', words)
+  for (const words of ['not found', 'Request cancelled', 'Resource not found', 'does not exist'])
+    assert.notEqual(fillFailureKind(new Error(words)), 'gone', words)
+})
+
 test('a failed NFT transfer means the listing is gone when buying, but not when selling your own', () => {
   assert.equal(fillFailureKind(reverted('TokenTransferGenericFailure'), 'buy'), 'gone')
   assert.equal(fillFailureKind(reverted('TokenTransferGenericFailure'), 'sell'), 'generic')
@@ -111,8 +139,9 @@ test('the other endings each have their own words', () => {
 test('anything unknown stays off the screen', () => {
   const kind = fillFailureKind(new Error('Execution reverted at 0xdeadbeef with raw calldata'))
   assert.equal(kind, 'generic')
-  assert.equal(fillFailureWords(kind, 'buy').words, 'That did not go through. Nothing was bought. Try again.')
-  assert.equal(fillFailureWords(kind, 'sell').words, 'That did not go through. Nothing was sold. Try again.')
+  // It may have reached the network, so it can't promise nothing moved.
+  assert.equal(fillFailureWords(kind, 'buy').words, "That did not go through. Check your wallet's activity, then try again.")
+  assert.equal(fillFailureWords(kind, 'sell').words, "That did not go through. Check your wallet's activity, then try again.")
 })
 
 test('the words the review promised', () => {

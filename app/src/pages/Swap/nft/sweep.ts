@@ -183,21 +183,65 @@ export const sessionStore = (): Store | undefined => {
   }
 }
 
-function readGone(store: Store | undefined, now: number): Record<string, number> {
+function readHashes(store: Store | undefined, key: string, ms: number, now: number): Record<string, number> {
   try {
-    const all = JSON.parse(store?.getItem(GONE_KEY) ?? '{}') as Record<string, number>
-    return Object.fromEntries(Object.entries(all).filter(([, at]) => now - at < GONE_MS))
+    const all = JSON.parse(store?.getItem(key) ?? '{}') as Record<string, number>
+    return Object.fromEntries(Object.entries(all).filter(([, at]) => now - at < ms))
   } catch {
     return {}
   }
 }
 
+function writeHashes(store: Store | undefined, key: string, all: Record<string, number>) {
+  try {
+    store?.setItem(key, JSON.stringify(all))
+  } catch {
+    // Private windows: nothing is remembered past this screen.
+  }
+}
+
+const readGone = (store: Store | undefined, now: number) => readHashes(store, GONE_KEY, GONE_MS, now)
+
 export const goneHashes = (store: Store | undefined, now = Date.now()) => new Set(Object.keys(readGone(store, now)))
 
 export function markGone(store: Store | undefined, hash: string, now = Date.now()) {
-  try {
-    store?.setItem(GONE_KEY, JSON.stringify({ ...readGone(store, now), [hash]: now }))
-  } catch {
-    // Private windows: it simply stays listed until the next refresh.
-  }
+  writeHashes(store, GONE_KEY, { ...readGone(store, now), [hash]: now })
 }
+
+/**
+ * The "unconfirmed" memory: a buy sent for a listing whose outcome we couldn't see. An ERC-1155 listing can still look
+ * open after it, so without this the same buy would be offered again and could be paid twice. Kept for the session,
+ * until the outcome is known; after an hour a buy that never showed up is let go.
+ */
+export const UNCONFIRMED_MS = 60 * 60_000
+const UNCONFIRMED_KEY = 'miya-market-unconfirmed'
+export const UNCONFIRMED_BUY_WORDS =
+  "A buy of this is still unconfirmed. Check your wallet's activity before buying it again."
+
+const readUnconfirmed = (store: Store | undefined, now: number) =>
+  readHashes(store, UNCONFIRMED_KEY, UNCONFIRMED_MS, now)
+
+export const unconfirmedHashes = (store: Store | undefined, now = Date.now()) =>
+  new Set(Object.keys(readUnconfirmed(store, now)))
+
+export function markUnconfirmed(store: Store | undefined, hash: string, now = Date.now()) {
+  if (!hash) return
+  writeHashes(store, UNCONFIRMED_KEY, { ...readUnconfirmed(store, now), [hash]: now })
+}
+
+/** The buy's outcome is known (bought, failed on chain, or never sent). */
+export function clearUnconfirmed(store: Store | undefined, hash: string, now = Date.now()) {
+  const all = readUnconfirmed(store, now)
+  if (!(hash in all)) return
+  delete all[hash]
+  writeHashes(store, UNCONFIRMED_KEY, all)
+}
+
+/** What a buy's state says about whether it may still land: kept while it might, let go once the outcome is known. */
+export function noteBuyOutcome(store: Store | undefined, orderHash: string, state: ItemState, now = Date.now()) {
+  if (state === 'pending' || state === 'unconfirmed') markUnconfirmed(store, orderHash, now)
+  else if (state !== 'ready' && state !== 'wallet') clearUnconfirmed(store, orderHash, now)
+}
+
+/** How long one NFT of a sweep waits for the network before it is left as "not confirmed yet" and the sweep moves on. */
+export const SWEEP_WAIT_MS = 5 * 60_000

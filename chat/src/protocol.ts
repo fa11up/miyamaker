@@ -33,5 +33,7 @@ export const MAX_MESSAGE_CHARS = 280
 export const MAX_FRAME_BYTES = 2048
 export const HISTORY_LIMIT = 100
 export const ROOM_RE = /^[a-z0-9][a-z0-9-]{0,47}$/
+/** The rooms the client opens (app/src/pages/TV/channels.ts CHAT_ROOM). Any other name would be a free new room. */
+export const ROOMS: readonly string[] = ['miyatv']
 export const ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/
 export const MSG_ID_RE = /^[A-Za-z0-9-]{1,64}$/

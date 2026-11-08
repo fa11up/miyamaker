@@ -9,7 +9,7 @@ import { shapeOf, tintOf, useLook } from './look'
 import type { Body3D } from './nav'
 import { Body3DContext } from './nav'
 import type { DeviceScene, Layout, Part } from './scene'
-import { deviceZoom } from './status'
+import { deviceZoom, pixelRatio } from './status'
 
 const PERSPECTIVE = 1100
 const MARGIN = 70
@@ -18,6 +18,18 @@ const LEAN = { x: 3, y: 4.5 }
 const DRIFT = { x: 0.6, y: 0.9 }
 /** How long a slow connection waits for the 3D body before getting the CSS device, which it then swaps out if the body comes. */
 const BODY_WAIT_MS = 8000
+
+/** Asked once a session, and the test context handed straight back, so opening Mint again never strands one. */
+let webgl2: boolean | undefined
+function hasWebGL2() {
+  if (webgl2 === undefined) {
+    const gl = document.createElement('canvas').getContext('webgl2')
+    webgl2 = !!gl
+    gl?.getExtension('WEBGL_lose_context')?.loseContext()
+  }
+
+  return webgl2
+}
 
 const Holder = styled.div`
   position: relative;
@@ -91,6 +103,7 @@ export default function Stage({ children }: { children: ReactNode }) {
   paused.current = minimized.includes('mint')
   const size = useRef(shape)
   size.current = shape
+  const ratio = useRef(1)
 
   useEffect(() => {
     let dead = false
@@ -101,7 +114,7 @@ export default function Stage({ children }: { children: ReactNode }) {
     const backstop = setTimeout(noBody, BODY_WAIT_MS)
     const start = async () => {
       const el = canvas.current
-      if (!el || !document.createElement('canvas').getContext('webgl2')) {
+      if (!el || !hasWebGL2()) {
         noBody()
         return
       }
@@ -116,8 +129,8 @@ export default function Stage({ children }: { children: ReactNode }) {
         return
       }
       scene.current = s
-      let ratio = Math.min(window.devicePixelRatio || 1, coarse ? 1.5 : 2)
-      s.resize(size.current.w, size.current.h, ratio)
+      ratio.current = pixelRatio(window.devicePixelRatio, coarse, false)
+      s.resize(size.current.w, size.current.h, ratio.current)
       s.setLook({ path: size.current.path, tintHex: tint.hex, inkHex: tint.ink })
       if (layout.current) s.setLayout(layout.current)
 
@@ -156,10 +169,10 @@ export default function Stage({ children }: { children: ReactNode }) {
         if (paused.current || document.hidden) return
         // A machine that cannot keep up loses sharpness of the plastic, never the movement.
         slow = gap > 34 ? slow + 1 : Math.max(0, slow - 1)
-        if (slow > 40 && ratio > 1) {
-          ratio = 1
+        if (slow > 40 && ratio.current > 1) {
+          ratio.current = pixelRatio(window.devicePixelRatio, coarse, true)
           slow = 0
-          s.resize(size.current.w, size.current.h, ratio)
+          s.resize(size.current.w, size.current.h, ratio.current)
         }
         const t = now / 1000
         const still = hold.current
@@ -200,7 +213,7 @@ export default function Stage({ children }: { children: ReactNode }) {
   useEffect(() => {
     const s = scene.current
     if (!s) return
-    s.resize(shape.w, shape.h, Math.min(window.devicePixelRatio || 1, 2))
+    s.resize(shape.w, shape.h, ratio.current)
     s.setLook({ path: shape.path, tintHex: tint.hex, inkHex: tint.ink })
   }, [shape.path, shape.w, shape.h, tint.hex, tint.ink])
 

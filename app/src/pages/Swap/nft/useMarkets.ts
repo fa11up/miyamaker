@@ -151,6 +151,10 @@ export function useOpenSeaCollection(chainId: number, address: string | undefine
     /** The server has no key: show link-outs and the quiet note. */
     needsKey: (known && !configured) || needsKey(slugQ.error, stats.error, offer.error),
     error: [slugQ.error, info.error, stats.error].find((e) => e && !needsKey(e)) as Error | undefined,
+    /** Ask again after a failure: only what failed is asked. */
+    refetch: () => {
+      ;[slugQ, info, stats, offer].filter((q) => q.isError).forEach((q) => q.refetch())
+    },
   }
 }
 
@@ -171,7 +175,13 @@ export function useCollectionRow(slug: string | undefined) {
     queryFn: async ({ signal }): Promise<OsStats> =>
       parseStats(await orNone(get({ op: 'stats', slug: slug! }, signal))),
   })
-  return { info: info.data ?? undefined, stats: stats.data, loading: info.isLoading || stats.isLoading }
+  return {
+    info: info.data ?? undefined,
+    stats: stats.data,
+    loading: info.isLoading || stats.isLoading,
+    /** The stats could not be read: its numbers are unknown, not zero. */
+    error: (stats.error && !needsKey(stats.error) ? stats.error : undefined) as Error | undefined,
+  }
 }
 
 /**
@@ -307,6 +317,8 @@ export function useOpenSeaItem(
     offer: offer.data ?? undefined,
     loading: !known || (configured && (listing.isLoading || offer.isLoading)),
     needsKey: (known && !configured) || needsKey(listing.error, offer.error),
+    /** OpenSea could not be asked: "not listed" or "no offers" would be a guess. */
+    error: [listing.error, offer.error].find((e) => e && !needsKey(e)) as Error | undefined,
     refetch: () => {
       listing.refetch()
       offer.refetch()

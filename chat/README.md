@@ -38,7 +38,8 @@ HTTP (CORS only for `ALLOWED_ORIGINS`):
 - `POST /auth/verify` `{ message, signature }` → `{ token, address, expiresAt, badges, mod }`, or `400/401 { error }`.
   The EIP-4361 message must have `domain` = the request Origin's host, `uri` in `ALLOWED_ORIGINS`, `chainId: 1`,
   our unexpired nonce and an `expirationTime` in the future.
-- `GET /rooms/:room` (WebSocket) — room matches `^[a-z0-9][a-z0-9-]{0,47}$`; `Origin` must be in `ALLOWED_ORIGINS` (else 403).
+- `GET /rooms/:room` (WebSocket) — room matches `^[a-z0-9][a-z0-9-]{0,47}$` and is one of `ROOMS` in `protocol.ts` (else
+  404); `Origin` must be in `ALLOWED_ORIGINS` (else 403); at most 4 sockets per IP and 2000 per room (else 429).
 
 WebSocket frames are JSON (`ping` → `pong` raw text is answered by the runtime):
 
@@ -59,7 +60,9 @@ Mod commands (sent as a normal `send`; non-mods get `forbidden`): `/del <id>`, `
 ## Limits and safety
 
 - Messages: control chars, bidi overrides and zero-width chars stripped, line breaks → spaces, max 280 code points.
-- Frames over 2 KB are refused.
+- Frames over 2 KB are refused. Five refused frames (bad, or sent signed out) within 10 s close the socket (1008).
+- `{t:'viewers'}` goes out at most every 5 s per room (a Durable Object alarm), and only when the count changed; `hello`
+  carries the exact count for the new socket.
 - Rate limits per room: 5 messages / 10 s per address and 10 / 10 s per IP (token buckets in DO memory; they reset if
   the room hibernates, which only makes them briefly more lenient). Slow mode applies per address; mods are exempt.
 - `/auth/*`: 20 requests / minute per IP, **best-effort**: in-memory per Worker isolate, not global. For a hard limit add a
@@ -83,15 +86,16 @@ npm run typecheck
 ```
 
 Then run the app with `VITE_CHAT_URL=http://127.0.0.1:8787` (see `app/.env.example`) on port 5331 or 5173
-(both are in the dev `ALLOWED_ORIGINS`).
+(both are in `ALLOWED_ORIGINS` in `.dev.vars.example`; copy it to `.dev.vars`, which overrides the production-only
+value in `wrangler.jsonc`).
 
 ## Deploy (not done yet — do these once)
 
 1. `cd chat && npx wrangler login`
 2. Secret: `npx wrangler secret put SESSION_SECRET` — paste 32+ random chars (`openssl rand -hex 32`).
 3. Vars in `wrangler.jsonc`:
-   - `ALLOWED_ORIGINS` — exact origins of the deployed app (remove the localhost entries for production, or keep them
-     only in a separate `env.dev`). Add any Vercel preview origin you want chat on.
+   - `ALLOWED_ORIGINS` — exact origins of the deployed app (production only; localhost lives in `.dev.vars`). Add any
+     preview origin you want chat on.
    - `MOD_ADDRESSES` — comma-separated mod wallet addresses.
    - `RPC_URL` — optional; set it as a secret (`npx wrangler secret put RPC_URL`), never in vars. Defaults to a public node.
 4. Route: uncomment `routes` (`{ "pattern": "chat.miyamaker.com", "custom_domain": true }`) once `miyamaker.com` is a

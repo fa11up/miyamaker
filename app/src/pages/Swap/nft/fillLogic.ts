@@ -64,6 +64,14 @@ const GONE_ERRORS = new Set([
   'NoSpecifiedOrdersAvailable',
 ])
 
+/** What OpenSea or Seaport says about an order that has left: it names the order, or says it plainly. */
+const GONE_WORDS =
+  /\b(order|listing|offer|item|nft)s? (was |is |has been )?(not found|no longer|does not exist)|no longer (available|listed|for sale|active|valid|fillable)|already (been )?(filled|fulfilled|sold|cancell?ed)|\b(order|listing|offer)s? (is |was |has |has been |have been )?(cancell?ed|expired|inactive|not (active|fillable|available))/i
+
+/** What a node says when it can't answer: never a sign the order has gone. */
+const RPC_TROUBLE =
+  /\b(header|block|method|transaction|receipt|trie node|state|account|resource|chain|filter|snapshot) not found|missing trie|not supported|-32\d{3}|\brpc\b/i
+
 /** Everything an error says about itself, however deep it is wrapped. Duck-typed so this file needs no imports. */
 export function failureFacts(error: unknown) {
   const texts: string[] = []
@@ -100,12 +108,8 @@ export function fillFailureKind(error: unknown, side: FillSide = 'buy'): FillFai
   if (code === 'RATE_LIMITED' || status === 429) return 'busy'
   if (code === 'NOT_FOUND') return 'gone'
   if (/can not perform trading|cannot perform trading/i.test(text)) return 'restricted'
-  if (
-    /not found|does not exist|no longer|already (been )?(filled|fulfilled|sold|cancel)|cancell?ed|expired|not (active|fillable|available)|inactive/i.test(
-      text,
-    )
-  )
-    return 'gone'
+  // A node that can't answer ("header not found", "method not found", ...) says nothing about the order.
+  if (!RPC_TROUBLE.test(text) && GONE_WORDS.test(text)) return 'gone'
   if (/timed? ?out/i.test(text)) return 'unconfirmed'
   return 'generic'
 }
@@ -149,7 +153,8 @@ export function fillFailureWords(
           : 'This sale failed on the network. Nothing was sold. You only paid the network fee.',
       }
     default:
-      return { words: `That did not go through. Nothing was ${buying ? 'bought' : 'sold'}. Try again.` }
+      // Unknown: it may have reached the network, so only the wallet can say whether anything moved.
+      return { words: "That did not go through. Check your wallet's activity, then try again." }
   }
 }
 

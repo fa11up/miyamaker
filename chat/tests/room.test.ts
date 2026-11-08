@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { BadgeResolver, INFER, MIYAMINI, readHoldings } from '../src/badges'
 import type { Badge, Msg, ServerFrame } from '../src/protocol'
 import type { Conn, ConnMeta, KV } from '../src/room-core'
-import { RoomCore } from '../src/room-core'
+import { CONNECTION_LIMITS, RoomCore, STRIKES, VIEWERS_EVERY_MS } from '../src/room-core'
 
 const A = '0x' + 'a'.repeat(40)
 const B = '0x' + 'b'.repeat(40)
@@ -25,6 +25,7 @@ class MemKV implements KV {
 class FakeConn implements Conn {
   frames: ServerFrame[] = []
   meta: ConnMeta
+  closed: { code: number; reason: string } | undefined
   constructor(ip = '1.1.1.1') {
     this.meta = { ip, address: null, badges: [], mod: false, exp: 0 }
   }
@@ -36,6 +37,9 @@ class FakeConn implements Conn {
   }
   setMeta(m: ConnMeta) {
     this.meta = m
+  }
+  close(code: number, reason: string) {
+    this.closed = { code, reason }
   }
   last() {
     return this.frames[this.frames.length - 1]
@@ -49,6 +53,8 @@ let now = 1_000_000
 let conns: FakeConn[]
 let storage: MemKV
 let ids = 0
+/** The pending Durable Object alarm, if any. */
+let alarm: number | undefined
 
 function makeRoom(kv = storage) {
   const badges = new BadgeResolver(async (a) => ({ miyamini: a === A, infer: false }), new Set([MOD]), () => now)
@@ -61,6 +67,9 @@ function makeRoom(kv = storage) {
     badgesFor: (a) => badges.badgesFor(a),
     isMod: (a) => badges.isMod(a),
     newId: () => `m${++ids}`,
+    scheduleViewers: (at) => {
+      alarm ??= at
+    },
   })
 }
 
@@ -78,19 +87,91 @@ beforeEach(() => {
   conns = []
   storage = new MemKV()
   ids = 0
+  alarm = undefined
 })
 
+/** Lets time pass to the pending alarm and runs it, as the runtime would. */
+function fireAlarm(room: RoomCore) {
+  if (alarm === undefined) return false
+  now = Math.max(now, alarm)
+  alarm = undefined
+  room.onViewersDue()
+  return true
+}
+
 describe('RoomCore', () => {
-  it('hello with history/viewers; viewers broadcast on join/leave', async () => {
+  it('hello with history/viewers; viewers sent on the next tick, not on every join/leave', async () => {
     const room = makeRoom()
     const a = await join(room)
     expect(a.frames[0]).toEqual({ t: 'hello', room: 'kick-markets', slowMode: 0, viewers: 1, history: [] })
     const b = await join(room, '2.2.2.2')
+    // The new socket's hello is exact at once; the others hear nothing until the tick.
+    expect(b.frames[0]).toMatchObject({ t: 'hello', viewers: 2 })
+    expect(a.of('viewers')).toEqual([])
+    expect(alarm).toBe(1_000_000 + VIEWERS_EVERY_MS)
+    expect(fireAlarm(room)).toBe(true)
     expect(a.last()).toEqual({ t: 'viewers', count: 2 })
+    expect(b.last()).toEqual({ t: 'viewers', count: 2 })
+
     conns = conns.filter((c) => c !== b)
-    conns.push(b) // runtime may still list the closing socket
-    room.onClose(b)
+    await room.onClose(b)
+    fireAlarm(room)
     expect(a.last()).toEqual({ t: 'viewers', count: 1 })
+  })
+
+  it('a burst of joins and leaves is one viewers frame per tick, and none when the count is back where it was', async () => {
+    const room = makeRoom()
+    const a = await join(room)
+    fireAlarm(room)
+    expect(a.of('viewers')).toEqual([{ t: 'viewers', count: 1 }])
+    for (let i = 0; i < 20; i++) await join(room, `9.9.9.${i}`)
+    // One alarm for the whole burst.
+    expect(alarm).toBe(now + VIEWERS_EVERY_MS)
+    fireAlarm(room)
+    expect(a.of('viewers')).toEqual([{ t: 'viewers', count: 1 }, { t: 'viewers', count: 21 }])
+    expect(alarm).toBeUndefined()
+
+    const c = await join(room, '8.8.8.8')
+    conns = conns.filter((x) => x !== c)
+    await room.onClose(c)
+    fireAlarm(room)
+    expect(a.of('viewers')).toHaveLength(2)
+  })
+
+  it('caps sockets per IP and per room', async () => {
+    const room = makeRoom()
+    for (let i = 0; i < CONNECTION_LIMITS.perIp; i++) {
+      expect(room.admit('1.1.1.1')).toEqual({ ok: true })
+      await join(room, '1.1.1.1')
+    }
+    expect(room.admit('1.1.1.1')).toMatchObject({ ok: false })
+    expect(room.admit('2.2.2.2')).toEqual({ ok: true })
+    // One leaving makes room for one more.
+    conns.pop()
+    expect(room.admit('1.1.1.1')).toEqual({ ok: true })
+
+    conns = Array.from({ length: CONNECTION_LIMITS.perRoom }, (_, i) => new FakeConn(`10.0.${i >> 8}.${i & 255}`))
+    expect(room.admit('3.3.3.3')).toEqual({ ok: false, message: 'room is full' })
+  })
+
+  it('closes a socket after too many bad or signed-out frames in a short while', async () => {
+    const room = makeRoom()
+    const a = await join(room)
+    for (let i = 0; i < STRIKES.limit - 1; i++) await room.onMessage(a, i % 2 ? '{junk' : JSON.stringify({ t: 'send', text: 'hi' }))
+    expect(a.closed).toBeUndefined()
+    // Spread out, they never add up.
+    now += STRIKES.windowMs
+    for (let i = 0; i < STRIKES.limit - 1; i++) await send(room, a, { t: 'nope' })
+    expect(a.closed).toBeUndefined()
+    await send(room, a, { t: 'send', text: 'signed out' })
+    expect(a.closed).toEqual({ code: 1008, reason: 'too many bad frames' })
+
+    // Rate and slow-mode refusals are not strikes.
+    const b = await join(room, '2.2.2.2')
+    await send(room, b, { t: 'auth', token: B })
+    for (let i = 0; i < 10; i++) await send(room, b, { t: 'send', text: `m${i}` })
+    expect(b.of('err').some((e) => e.code === 'rate')).toBe(true)
+    expect(b.closed).toBeUndefined()
   })
 
   it('read-only until auth; messages flow both ways with badges', async () => {
