@@ -1,9 +1,10 @@
 #!/usr/bin/env node
-// End to end on a LOCAL anvil fork of mainnet (never mainnet itself): deploy the registry, the vault factory and one
-// vault from contracts/out (run `forge build` in contracts/ first), set the spec's route table, contribute every
-// routed token plus IMD, then let the keeper plan and SEND convertAndAddLiquidity to the fork through its own send
-// path (lib/keeper.mjs sendConvert, "private RPC" = the anvil URL). Then the griefing case: a dust contribution in a
-// new token lands between the keeper's quote and its call.
+// End to end on a LOCAL anvil fork of mainnet (never mainnet itself): deploy the registry, the vault libraries, the
+// vault factory and one vault from contracts/out (run `forge build` in contracts/ first), set the spec's route table and
+// contribution minimums, contribute every routed token plus IMD, then let the keeper plan and SEND
+// convertAndAddLiquidity to the fork through its own send path (lib/keeper.mjs sendConvert, "private RPC" = the anvil
+// URL). imdUSD's pool is off market (2026-11-08), so the keeper leaves it pending and converts the rest. Then the
+// griefing case: a new token and a top-up land between the keeper's quote and its call; the call goes through.
 //
 //   npm run fork-e2e        FORK_URL (default https://ethereum-rpc.publicnode.com), needs anvil on PATH
 // Keys: anvil's well-known public test accounts, valid only on the local fork.
@@ -62,9 +63,21 @@ const wait = async (h) => {
   if (rc.status !== "success") throw new Error(`tx ${rc.transactionHash} reverted`);
   return rc;
 };
+const libs = {};
+/** Deploy `name`, deploying and linking the external libraries its bytecode references (forge leaves placeholders). */
 async function deploy(name, args = []) {
   const a = out(name);
-  const rc = await wait(W.owner.deployContract({ abi: a.abi, bytecode: a.bytecode.object, args }));
+  let code = a.bytecode.object;
+  for (const [, byName] of Object.entries(a.bytecode.linkReferences ?? {})) {
+    for (const [lib, refs] of Object.entries(byName)) {
+      libs[lib] ??= (await deploy(lib)).address;
+      for (const { start, length } of refs) {
+        const at = 2 + start * 2;
+        code = code.slice(0, at) + libs[lib].slice(2).toLowerCase() + code.slice(at + length * 2);
+      }
+    }
+  }
+  const rc = await wait(W.owner.deployContract({ abi: a.abi, bytecode: code, args }));
   return { address: rc.contractAddress, abi: a.abi };
 }
 const write = (w, c, functionName, args = [], value) => wait(w.writeContract({ address: c.address, abi: c.abi, functionName, args, value }));
@@ -78,11 +91,12 @@ const key = { currency0: INFER, currency1: IMD, fee: json.alignmentPool.fee, tic
 const factory = await deploy("UniAlignmentVaultFactory", [registry.address, json.poolManager, json.zRouter, INFER, IMD, key]);
 await write(W.owner, registry, "setVaultFactory", [factory.address, true]);
 for (const r of json.routes) await write(W.owner, factory, "setRoute", [r.token, r.hops]);
+for (const m of json.minContributions ?? []) await write(W.owner, factory, "setMinContribution", [m.token, BigInt(m.amount)]);
 const salt = encodePacked(["address", "bytes1", "bytes11"], [factory.address, "0x00", keccak256("0x666f726b").slice(0, 24)]);
 const vaultAddr = await pub.readContract({ address: factory.address, abi: factory.abi, functionName: "computeVaultAddress", args: [salt] });
 await write(W.owner, factory, "deployVault", [salt, 0n]);
 const vault = { address: vaultAddr, abi: out("UniAlignmentVault").abi };
-console.log(`registry ${registry.address}, factory ${factory.address}, vault ${vaultAddr}`);
+console.log(`registry ${registry.address}, factory ${factory.address}, vault ${vaultAddr}; libraries ${JSON.stringify(libs)}`);
 
 // Alice buys each token on the fork (through zRouter) and contributes it.
 const T = { address: json.zRouter, abi: zr };
@@ -144,25 +158,41 @@ async function convertOnce(label, hooks) {
     console.log(`  off-chain pass-1 split size vs realized: ${(d * 100).toFixed(4)}%`);
   }
   for (const tc of logs.converted) console.log(`  ${tc.token}: in ${tc.amountIn}, IMD value ${tc.imdValue}`);
+  if (logs.leg) console.log(`  ETH leg: ${formatEther(logs.leg.ethIn)} ETH -> ${logs.leg.imdOut} IMD (floor ${plan.params.ethLegMinOuts.at(-1)})`);
   return plan;
 }
 
-await convertOnce("mixed batch: ETH, USDC, cbBTC, imdUSD, IMD");
+const read = (functionName, args = []) => pub.readContract({ address: vaultAddr, abi: vault.abi, functionName, args });
+const p1 = await convertOnce("mixed batch: ETH, USDC, cbBTC, imdUSD, IMD");
+const skipped = p1.quoted.items.filter((x) => x.skip).map((x) => x.token);
+console.log(`  skipped (left pending): ${skipped.join(", ") || "none"}; imdUSD still pending: ${await read("pendingOf", [ALICE.address, IMDUSD])}`);
+if (!skipped.includes(IMDUSD)) console.log("  NOTE: imdUSD was converted (its pool is back near market?)");
 
-// Griefing: a new batch, and while the keeper is between quote and call, a dust contribution in a NEW token (1 unit
-// of WBTC) lands. Expect one BadParams, a re-read, and a conversion that includes the dust token.
+// Minimums: 1 sat of WBTC is refused now.
+try {
+  await give(WBTC, 1n);
+  throw new Error("a 1-sat WBTC contribution was accepted");
+} catch (e) {
+  if (/accepted/.test(e.message)) throw e;
+  console.log("\n1 sat of WBTC refused (below the 3,000-sat minimum)");
+}
+
+// Griefing, then and now: a new batch, and while the keeper is between quote and call, a contribution in a NEW token
+// (WBTC at its minimum) and an ETH top-up land. The call names its tokens and exact amounts: no BadParams, no
+// re-quote; what landed later stays pending.
 await give(ETH, parseEther("0.15"));
-let grieved = false;
-await convertOnce("griefed batch (dust WBTC lands mid-flight)", {
+const p2 = await convertOnce("griefed batch (WBTC and an ETH top-up land mid-flight)", {
   async afterQuote(attempt) {
-    if (attempt === 0 && !grieved) {
-      grieved = true;
-      await give(WBTC, 1n);
+    if (attempt === 0) {
+      await give(WBTC, 3000n);
+      await give(ETH, parseEther("0.001"));
     }
   },
 });
-const closed = await pub.readContract({ address: vaultAddr, abi: vault.abi, functionName: "closedBatches" });
-const shares = await pub.readContract({ address: vaultAddr, abi: vault.abi, functionName: "benefactorShares", args: [ALICE.address] });
+if (p2.attempts.length !== 0) throw new Error(`expected no re-quote, got ${p2.attempts.length}`);
+console.log(`  pending after: WBTC ${await read("pendingByToken", [WBTC])}, ETH ${formatEther(await read("pendingByToken", [ETH]))} (the top-up), imdUSD ${await read("pendingByToken", [IMDUSD])}`);
+const closed = await read("closedBatches");
+const shares = await read("benefactorShares", [ALICE.address]);
 console.log(`\nclosedBatches ${closed}, alice shares ${shares}, keeper ETH ${formatEther(await pub.getBalance({ address: KEEPER.address }))}`);
 anvil.kill();
 process.exit(0);

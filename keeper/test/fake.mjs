@@ -21,21 +21,26 @@ const hop = (kind, tokenIn, tokenOut, fee, tickSpacing) => ({ kind, tokenIn, tok
 export const ROUTE_TABLE = {
   [ETH]: [hop(4, ETH, IMD, 10000, 200)],
   [IMDUSD]: [hop(4, IMDUSD, IMD, 3000, 60)],
-  [USDC]: [hop(4, USDC, ETH, 500, 10), hop(4, ETH, IMD, 10000, 200)],
-  [CBBTC]: [hop(3, CBBTC, ETH, 3000, 0), hop(4, ETH, IMD, 10000, 200)],
+  // Routes ending in ETH: that ETH joins the batch's one ETH -> IMD swap.
+  [USDC]: [hop(4, USDC, ETH, 500, 10)],
+  [CBBTC]: [hop(3, CBBTC, ETH, 3000, 0)],
 };
 
 export const cfg = {
   CHAIN_ID: 1, V4_QUOTER: getAddress("0x52f0e24d1c21c8a0cb1e5a5dd6198556bd9e1203"), V3_QUOTER: getAddress("0x61fFE014bA17989E743c5F6cB21bF9697530B21e"),
   POOL_MANAGER: PM, V3_FACTORY: getAddress("0x1F98431c8aD98523631AE4a59f267346ea31F984"), WETH,
   MIN_BATCH_ETH: 0.1, MAX_GAS_SHARE_BPS: 100, MAX_GAS_GWEI: 30, HOP_MARGIN_BPS: 50, SPLIT_MARGIN_BPS: 100,
-  DEADLINE_SECONDS: 120, MAX_REQUOTES: 2, MIN_ETH: 0.02, MAX_ETH_PER_DAY: 0.05, TIP_GWEI: 0.3, GAS_MARGIN_BPS: 2500,
+  DEADLINE_SECONDS: 120, MAX_REQUOTES: 2, MAX_IMPACT_BPS: 300, MAX_REFERENCE_DEVIATION_BPS: 300,
+  USD_TOKENS: { [getAddress("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48")]: 6, [getAddress("0x61aAF8a992A3143e2B0C9cB0030b9fE702854a25")]: 18 },
+  REFERENCE_USD_POOL: { token: getAddress("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"), decimals: 6, fee: 500, tickSpacing: 10 }, MIN_ETH: 0.02, MAX_ETH_PER_DAY: 0.05, TIP_GWEI: 0.3, GAS_MARGIN_BPS: 2500,
   TX_WAIT_SECONDS: 0, VAULTS: [], READ_RPC_URLS: ["http://fake"], PRIVATE_RPC_URL: [],
 };
 
 /**
- * Rates are "out per 1e18 in" per (tokenIn, tokenOut): price only, no impact. e.g. 1 ETH = 850 IMD, 1 USDC (1e6) =
- * 0.00045 ETH. `state.tokens` / `state.amounts` is the open batch; hooks let a test change it mid-plan.
+ * Rates are out = in * num / den per (tokenIn, tokenOut): price only, no impact, unless `state.depth[pool]` is set
+ * (then out *= depth / (depth + in), like a constant-product pool of that depth), or `state.fail[pool]` (the quote
+ * reverts). e.g. 1 ETH = 850 IMD, 1 USDC (1e6) = 0.00045 ETH. `state.tokens` / `state.amounts` is what is pending;
+ * hooks let a test change it mid-plan. The fake vault takes any subset at amounts up to what is pending, like the vault.
  */
 export function fakeChain(over = {}) {
   const state = {
@@ -48,6 +53,7 @@ export function fakeChain(over = {}) {
       [`${ETH}>${IMD}`]: [850n, 1n],
       [`${IMD}>${ETH}`]: [1n, 860n],
       [`${USDC}>${ETH}`]: [45n * 10n ** 7n, 1n], // 1 USDC (1e6 units) -> 0.00045 ETH
+      [`${ETH}>${USDC}`]: [20_000n, 9n * 10n ** 12n], // 1 ETH -> 2,222.2 USDC
       [`${WETH}>${CBBTC}`]: [1n, 1n],
       [`${CBBTC}>${WETH}`]: [33n * 10n ** 9n, 1n], // 1e8 -> 33 ETH
       [`${IMDUSD}>${IMD}`]: [1n, 4n],
@@ -66,15 +72,38 @@ export function fakeChain(over = {}) {
     balance: 10n ** 18n,
     receipts: {},
     simulateV1: true,
+    depth: {},
+    fail: {},
     calls: [],
     ...over,
   };
   const rate = (a, b, amt) => {
-    const r = state.rates[`${a}>${b}`];
-    if (!r) throw new Error(`no fake pool ${a}>${b}`);
-    return (amt * r[0]) / r[1];
+    const k = `${a}>${b}`;
+    const r = state.rates[k];
+    if (!r) throw new Error(`no fake pool ${k}`);
+    if (state.fail[k]) {
+      const e = new Error("quote reverted");
+      e.cause = { raw: "0x7a5ed734" };
+      throw e;
+    }
+    const out = (amt * r[0]) / r[1];
+    return state.depth[k] ? (out * state.depth[k]) / (state.depth[k] + amt) : out;
   };
-  const ok = (p) => p.tokens.length === state.tokens.length && p.tokens.every((t, i) => getAddress(t) === state.tokens[i]);
+  const ok = (p) => {
+    if (state.rejectNext) {
+      state.rejectNext = false;
+      return false;
+    }
+    if (p.tokens.length === 0 || p.amounts.length !== p.tokens.length || p.minOuts.length !== p.tokens.length) return false;
+    const seen = new Set();
+    return p.tokens.every((t, i) => {
+      const a = getAddress(t);
+      if (seen.has(a)) return false;
+      seen.add(a);
+      const pend = state.amounts[a] ?? 0n;
+      return state.tokens.includes(a) && p.amounts[i] > 0n && p.amounts[i] <= pend;
+    });
+  };
   const SPLIT_OUT = 1_000_000n * 10n ** 18n;
   const client = {
     state,
@@ -113,7 +142,7 @@ export function fakeChain(over = {}) {
         case "alignmentPoolKey": return ALIGN_KEY;
         case "CONVERSION_REWARD": return 1_200_000_000_000_000n;
         case "MAX_CONVERSION_REWARD_BPS": return 100n;
-        case "getRoute": return ROUTE_TABLE[getAddress(args[0])] ?? [];
+        case "getRoute": return (state.routes ?? ROUTE_TABLE)[getAddress(args[0])] ?? [];
         case "balanceOf": return getAddress(address) === INFER ? state.vaultInfer : state.vaultImd;
         case "feeStats": return [0n, 0n, 0n, 0n];
         case "extsload": {

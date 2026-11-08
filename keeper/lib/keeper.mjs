@@ -10,9 +10,10 @@ import { fmt, symbolOf } from "./tokens.mjs";
 const bpsUp = (x, bps) => (x * (10_000n + BigInt(bps))) / 10_000n;
 
 /**
- * Plan one vault's conversion at the current block. Re-reads and re-quotes after a BadParams (openBatchTokens changed
- * between the read and the call: a contribution in a new token landed), at most MAX_REQUOTES times, then gives up
- * until the next tick, so a griefer adding dust tokens can delay a batch but never spin the keeper.
+ * Plan one vault's conversion at the current block: the tokens whose routes can absorb their pending amount, each at
+ * exactly the amount read (what lands later stays pending in the vault; a new token or a top-up cannot break the call).
+ * A BadParams revert should no longer happen; if one does (the vault and the keeper disagree), it re-reads and
+ * re-quotes at most MAX_REQUOTES times, then gives up until the next tick.
  * `hooks.afterQuote(attempt)` runs between quoting and simulating (tests use it to land a contribution there).
  */
 export async function planVault(client, cfg, ctx, { from, hooks = {} } = {}) {
@@ -24,6 +25,7 @@ export async function planVault(client, cfg, ctx, { from, hooks = {} } = {}) {
     if (batch.tokens.length === 0) return { action: "idle", why: "nothing pending", batch, attempts };
     const sender = from ?? batch.keeper;
     const quoted = await quoteBatch(client, cfg, ctx, batch);
+    if (quoted.included.length === 0) return { action: "wait", why: "every pending token was skipped (see each)", batch, quoted, attempts };
     const w = worthIt(quoted.batchEth, cfg);
     if (!w.go) return { action: "wait", why: w.why, batch, quoted, attempts };
 
@@ -36,8 +38,8 @@ export async function planVault(client, cfg, ctx, { from, hooks = {} } = {}) {
     }
     if (split.error) return { action: "refused", why: `simulation reverted: ${split.error}`, batch, quoted, attempts };
 
-    const items = split.simLogs ? capFloorsToSim(quoted.items, split.simLogs.converted, cfg.HOP_MARGIN_BPS) : quoted.items;
-    const params = buildParams(batch.tokens, items, split.minSplitOut, deadline);
+    const final = split.simLogs ? capFloorsToSim(quoted, split.simLogs, cfg.HOP_MARGIN_BPS) : quoted;
+    const params = buildParams(final, split.minSplitOut, deadline);
     // The exact call, at the latest state, from the keeper: the last check before anything is signed.
     try {
       await client.simulateContract({ address: ctx.vault, abi: vaultAbi, functionName: "convertAndAddLiquidity", args: [params], account: sender });
@@ -69,10 +71,18 @@ export function describePlan(ctx, p) {
       const hops = x.outs.map((o, k) => `${symbolOf(x.hops[k].tokenOut)} ${fmt(x.hops[k].tokenOut, o)} floor ${fmt(x.hops[k].tokenOut, x.floors[k])}`);
       if (p.params) {
         const i = p.params.tokens.indexOf(x.token);
-        const last = p.params.minOuts[i]?.at(-1);
+        const last = i >= 0 ? p.params.minOuts[i]?.at(-1) : undefined;
         if (last !== undefined && last !== x.floors.at(-1)) hops.push(`(last floor capped to the simulation: ${fmt(ctx.imd, last)})`);
       }
-      lines.push(`  ${fmt(x.token, x.amount)} ~ ${formatEther(x.ethValue)} ETH${hops.length ? `: ${hops.join(" -> ")}` : ` (${x.kind}, no route)`}`);
+      const impact = `${x.impactBps != null ? `, impact ${x.impactBps} bps` : ""}${x.refDeviationBps != null ? `, ${x.refDeviationBps} bps under reference` : ""}`;
+      const tail = hops.length ? `: ${hops.join(" -> ")}${x.kind === "toEth" ? " -> ETH leg" : ""}` : ` (${x.kind === "eth" ? "ETH leg" : `${x.kind}, no route`})`;
+      if (x.skip) lines.push(`  SKIPPED ${fmt(x.token, x.amount)} (stays pending): ${x.skip}`);
+      else lines.push(`  ${fmt(x.token, x.amount)} ~ ${formatEther(x.ethValue)} ETH${impact}${tail}`);
+    }
+    const leg = p.quoted.leg;
+    if (leg) {
+      const fl = p.params?.ethLegMinOuts?.at(-1) ?? leg.floors.at(-1);
+      lines.push(`  ETH leg: ${formatEther(leg.ethIn)} ETH -> ${fmt(ctx.imd, leg.outs.at(-1))} in one swap, floor ${fmt(ctx.imd, fl)}${leg.impactBps != null ? `, impact ${leg.impactBps} bps` : ""}`);
     }
     lines.push(`  batch ${formatEther(p.quoted.batchEth)} ETH, keeper reward ${formatEther(p.quoted.reward)} ETH, routed IMD ${fmt(ctx.imd, p.quoted.routedImd)}`);
   }

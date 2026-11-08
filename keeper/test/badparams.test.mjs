@@ -1,12 +1,12 @@
-// The griefing case: a contribution in a NEW token lands between the keeper's read and its call, so the token list no
-// longer matches and the vault reverts BadParams. The keeper re-reads openBatchTokens and re-quotes, a bounded number
-// of times.
+// The griefing case, before and after vault v2's subset conversion: a contribution landing between the keeper's read
+// and its call (a new token, or more of a token in the call) no longer breaks the call: the keeper names the tokens
+// and the exact amounts it read, and whatever lands later stays pending for the next batch.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { planVault } from "../lib/keeper.mjs";
 import { CBBTC, ETH, IMDUSD, USDC, cfg, fakeChain, fakeCtx } from "./fake.mjs";
 
-test("one new token mid-flight: re-read, re-quote, and the second plan includes it in order", async () => {
+test("a new token lands mid-flight: the call is unaffected, no re-quote", async () => {
   const c = fakeChain();
   const hooks = {
     afterQuote(attempt) {
@@ -18,43 +18,38 @@ test("one new token mid-flight: re-read, re-quote, and the second plan includes 
   };
   const plan = await planVault(c, cfg, fakeCtx(), { hooks });
   assert.equal(plan.action, "convert", plan.why);
-  assert.equal(plan.attempts.length, 1);
-  assert.equal(plan.attempts[0].error, "BadParams");
-  assert.deepEqual(plan.params.tokens, [ETH, USDC, CBBTC]);
-  assert.equal(plan.params.minOuts[2].length, 2, "the new token got its own floors");
+  assert.equal(plan.attempts.length, 0);
+  assert.deepEqual(plan.params.tokens, [ETH, USDC], "the new token waits for the next batch");
+  assert.deepEqual(plan.params.amounts, [10n ** 17n, 300_000_000n]);
 });
 
-test("caught at the final eth_call too (simulateV1 saw the old list, the latest block has the new one)", async () => {
+test("a top-up of a token in the call lands mid-flight: the amount read converts, the top-up stays pending", async () => {
   const c = fakeChain();
-  const realReq = c.request;
-  let n = 0;
-  c.request = async (a) => {
-    const r = await realReq(a);
-    if (n++ === 0) {
+  const hooks = {
+    afterQuote() {
+      c.state.amounts[USDC] += 5_000_000n;
       c.state.tokens.push(IMDUSD);
       c.state.amounts[IMDUSD] = 10n ** 18n;
-    }
-    return r;
+    },
   };
+  const plan = await planVault(c, cfg, fakeCtx(), { hooks });
+  assert.equal(plan.action, "convert", plan.why);
+  assert.equal(plan.attempts.length, 0);
+  assert.deepEqual(plan.params.amounts, [10n ** 17n, 300_000_000n]);
+});
+
+test("if the vault still says BadParams (keeper and vault disagree): re-read and re-quote, bounded", async () => {
+  const c = fakeChain();
+  c.state.rejectNext = true;
   const plan = await planVault(c, cfg, fakeCtx());
   assert.equal(plan.action, "convert", plan.why);
   assert.equal(plan.attempts.length, 1);
-  assert.deepEqual(plan.params.tokens, [ETH, USDC, IMDUSD]);
-});
+  assert.equal(plan.attempts[0].error, "BadParams");
 
-test("a griefer adding a token every time: gives up after MAX_REQUOTES + 1 tries, until the next tick", async () => {
-  const c = fakeChain();
-  const extra = [CBBTC, IMDUSD, "0x0000000000000000000000000000000000000001"];
-  let i = 0;
-  const hooks = {
-    afterQuote() {
-      const t = extra[i++];
-      c.state.tokens.push(t);
-      c.state.amounts[t] = 10n ** 6n;
-    },
-  };
-  const plan = await planVault(c, { ...cfg, MAX_REQUOTES: 1 }, fakeCtx(), { hooks });
-  assert.equal(plan.action, "gave-up");
-  assert.equal(plan.attempts.length, 2);
-  assert.match(plan.why, /BadParams on 2 attempts/);
+  const d = fakeChain();
+  const hooks = { afterQuote() { d.state.rejectNext = true; } };
+  const gave = await planVault(d, { ...cfg, MAX_REQUOTES: 1 }, fakeCtx(), { hooks });
+  assert.equal(gave.action, "gave-up");
+  assert.equal(gave.attempts.length, 2);
+  assert.match(gave.why, /BadParams on 2 attempts/);
 });

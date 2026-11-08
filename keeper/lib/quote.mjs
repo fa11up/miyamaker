@@ -62,14 +62,19 @@ export async function quoteRoute(client, cfg, hops, amountIn, blockNumber) {
 }
 
 /**
- * Floors per hop: floor_k = quote_k * (1 - m)^(k+1). Each hop may slip `m` on its own, so hop k's input may already
- * be up to (1 - m)^k under its quote when it runs; a flat margin on every hop would make a route whose first hop
- * slipped within its allowance revert on its second.
+ * Floors per hop: floor_k = quote_k * (1 - m)^(offset+k+1). Each hop may slip `m` on its own, so hop k's input may
+ * already be up to (1 - m)^k under its quote when it runs; a flat margin on every hop would make a route whose first
+ * hop slipped within its allowance revert on its second. `offset` = hops that ran before this route's first (the ETH
+ * leg runs after every route that ends in ETH, so its input carries their slippage too).
  */
-export function hopFloors(outs, marginBps) {
+export function hopFloors(outs, marginBps, offset = 0) {
   const keep = BPS - BigInt(marginBps);
   let num = 1n;
   let den = 1n;
+  for (let i = 0; i < offset; i++) {
+    num *= keep;
+    den *= BPS;
+  }
   return outs.map((o) => {
     num *= keep;
     den *= BPS;
@@ -78,6 +83,30 @@ export function hopFloors(outs, marginBps) {
 }
 
 export const applyMargin = (amount, marginBps) => (amount * (BPS - BigInt(marginBps))) / BPS;
+
+/**
+ * Spot-ish output of `amountIn` down `hops`: a quote of a small amount with each hop's pool fee added back, so the rate
+ * is the pools' mid price (no fee, no depth). For reference prices only.
+ */
+export async function spotOut(client, cfg, hops, amountIn, blockNumber) {
+  let out = (await quoteRoute(client, cfg, hops, amountIn, blockNumber)).at(-1);
+  for (const h of hops) out = (out * 1_000_000n) / (1_000_000n - BigInt(h.fee));
+  return out;
+}
+
+/**
+ * Price impact of sending `amountIn` down `hops` (which quoted `out`), in bps: how much worse its rate is than a
+ * 1/1000 probe's (same pools, same fees, so the difference is depth). null when the probe is too small to say.
+ */
+export async function routeImpactBps(client, cfg, hops, amountIn, out, blockNumber) {
+  const probeIn = amountIn / 1000n;
+  if (probeIn === 0n || out === 0n) return null;
+  const probeOut = (await quoteRoute(client, cfg, hops, probeIn, blockNumber)).at(-1);
+  if (probeOut === 0n) return null;
+  // 1 - (out / amountIn) / (probeOut / probeIn)
+  const ratio = (out * probeIn * BPS) / (probeOut * amountIn);
+  return ratio >= BPS ? 0 : Number(BPS - ratio);
+}
 
 /** Check the quoter addresses before trusting them: each must point at the expected PoolManager / v3 factory / WETH. */
 export async function verifyQuoters(client, cfg) {

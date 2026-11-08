@@ -31,17 +31,28 @@ test("applyMargin rounds down", () => {
   assert.equal(applyMargin(0n, 100), 0n);
 });
 
+test("an offset carries the slippage of hops that ran before (the ETH leg after the routes that feed it)", () => {
+  assert.deepEqual(hopFloors([10_000n], 50, 1), [(10_000n * 9950n * 9950n) / 10n ** 8n]);
+  assert.deepEqual(hopFloors([10_000n], 50, 0), hopFloors([10_000n], 50));
+});
+
 import { capFloorsToSim } from "../lib/plan.mjs";
-test("capFloorsToSim: a last floor above the simulated sequential output is lowered to it minus the margin", () => {
+test("capFloorsToSim: a last floor above the simulation is lowered to it minus the margin; leg too", () => {
+  const IMDUSD = "0x61aAF8a992A3143e2B0C9cB0030b9fE702854a25";
   const USDC = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48";
-  const ETH = "0x0000000000000000000000000000000000000000";
-  const items = [
-    { token: USDC, kind: "route", floors: [995n, 1_980_050n] },
-    { token: ETH, kind: "route", floors: [9_950n] },
-    { token: "0xD34a99Bc0f67aE1bbd63C660e6d0b0dd03E263B7", kind: "imd", floors: [] },
-  ];
-  const out = capFloorsToSim(items, [{ token: USDC, imdValue: 1_990_000n }, { token: ETH, imdValue: 20_000n }], 50);
-  assert.deepEqual(out[0].floors, [995n, (1_990_000n * 9950n * 9950n) / 10n ** 8n]);
-  assert.deepEqual(out[1].floors, [9_950n], "a simulation above the quote leaves the quoted floor");
-  assert.equal(out[2], items[2]);
+  const quoted = {
+    included: [
+      { token: IMDUSD, kind: "route", floors: [1_990_050n] },
+      { token: USDC, kind: "toEth", floors: [995n] },
+      { token: "0xD34a99Bc0f67aE1bbd63C660e6d0b0dd03E263B7", kind: "imd", floors: [] },
+    ],
+    leg: { floors: [19_900n], offset: 1 },
+  };
+  const out = capFloorsToSim(quoted, { converted: [{ token: IMDUSD, imdValue: 1_990_000n }], leg: { imdOut: 20_000n } }, 50);
+  assert.deepEqual(out.included[0].floors, [(1_990_000n * 9950n) / 10n ** 4n]);
+  assert.equal(out.included[1], quoted.included[1], "routes to ETH have no per-token simulated output to cap at");
+  assert.deepEqual(out.leg.floors, [(20_000n * 9950n * 9950n) / 10n ** 8n]);
+  const high = capFloorsToSim(quoted, { converted: [{ token: IMDUSD, imdValue: 9_000_000n }], leg: { imdOut: 90_000n } }, 50);
+  assert.equal(high.included[0], quoted.included[0], "a simulation above the quote leaves the quoted floor");
+  assert.equal(high.leg, quoted.leg);
 });

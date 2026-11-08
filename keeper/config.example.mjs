@@ -37,7 +37,22 @@ export default {
   HOP_MARGIN_BPS: 50, // floor per hop = quote * (1 - margin)^(hop index + 1): each hop may slip this much on its own
   SPLIT_MARGIN_BPS: 100, // minSplitOut = the balancing swap's simulated output * (1 - this)
   DEADLINE_SECONDS: 120, // ConvertParams.deadline = latest block time + this; an unmined tx is dead after it
-  MAX_REQUOTES: 2, // after a BadParams (a new token joined the batch mid-flight): re-read and re-quote at most this often
+  MAX_IMPACT_BPS: 300, // a token whose route (or the batch's ETH leg) would move its price more than this is left out of
+  //                      the batch (it stays pending); impact = how much worse than a 1/1000-size probe through the same pools
+  // Reference check: floors only protect against slippage from the LIVE quote, not against a pool that is far off market
+  // (2026-11-08: imdUSD/IMD sits at IMD = 4.17 imdUSD, market ~2.47, its only liquidity out of range). Tokens worth
+  // ~1 USD (USD_TOKENS: address -> decimals) are priced at 1 USD through the ETH/USDC pool (REFERENCE_USD_POOL) and the
+  // ETH route (IMD/ETH), both at spot (probe quotes with the pool fee added back); a token whose route yields worse
+  // than that by more than MAX_REFERENCE_DEVIATION_BPS is left pending. Other tokens (BTC, ETH, IMD, INFER) have no
+  // independent reference: their ETH hop is their market.
+  MAX_REFERENCE_DEVIATION_BPS: 300,
+  USD_TOKENS: {
+    "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48": 6, // USDC
+    "0x61aAF8a992A3143e2B0C9cB0030b9fE702854a25": 18, // imdUSD (treated as 1 USD)
+  },
+  REFERENCE_USD_POOL: { token: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", decimals: 6, fee: 500, tickSpacing: 10 }, // v4 ETH/USDC
+  MAX_REQUOTES: 2, // after a BadParams (should not happen any more: the vault takes any subset at exact amounts): re-read
+  //                  and re-quote at most this often
 
   // --- guard rails (lib/guards.mjs, lib/outcome.mjs) ---
   MIN_ETH: 0.02, // the keeper wallet must hold at least this after paying for the tx's gas limit

@@ -4,7 +4,8 @@ import { parseAbi } from "viem";
 
 export const ROUTE_HOP = "(uint8 kind, address tokenIn, address tokenOut, uint24 fee, int24 tickSpacing)";
 const POOL_KEY = "(address currency0, address currency1, uint24 fee, int24 tickSpacing, address hooks)";
-const CONVERT_PARAMS = "(address[] tokens, uint256[][] minOuts, uint256 minSplitOut, uint256 deadline)";
+const CONVERT_PARAMS =
+  "(address[] tokens, uint256[] amounts, uint256[][] minOuts, uint256[] ethLegMinOuts, uint256 minSplitOut, uint256 deadline)";
 
 export const vaultAbi = parseAbi([
   "function openBatchTokens() view returns (address[])",
@@ -21,6 +22,7 @@ export const vaultAbi = parseAbi([
   "function MAX_CONVERSION_REWARD_BPS() view returns (uint256)",
   `function convertAndAddLiquidity(${CONVERT_PARAMS} p) returns (uint256 sharesIssued)`,
   "event TokenConverted(uint256 indexed batchId, address indexed token, uint256 amountIn, uint256 imdValue)",
+  "event EthLegSwapped(uint256 indexed batchId, uint256 ethIn, uint256 imdOut)",
   "event SplitSwap(bool inferToImd, uint256 amountIn, uint256 amountOut)",
   "event BatchConverted(uint256 indexed batchId, uint256 sharesIssued, uint256 inferAdded, uint256 imdAdded, uint256 callerReward)",
   "error BadParams()",
@@ -40,6 +42,7 @@ export const vaultAbi = parseAbi([
 export const routesAbi = parseAbi([
   `function getRoute(address token) view returns (${ROUTE_HOP}[])`,
   "function hasRoute(address token) view returns (bool)",
+  "function minContribution(address token) view returns (uint256)",
   "function routedTokens() view returns (address[])",
   "function registry() view returns (address)",
   "event VaultDeployed(address indexed vault, uint256 indexed alignmentTargetId)",

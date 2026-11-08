@@ -25,7 +25,7 @@ export function sqrtFloor(n) {
   }
 }
 
-/** UniAlignmentVault._balancedSwap, bit for bit. */
+/** VaultSwaps._balancedSwap (the vault's balancing math, a linked library), bit for bit. */
 export function balancedSwap(amount, reserve, fee) {
   if (amount === 0n) return 0n;
   const f = BigInt(fee);
@@ -39,7 +39,7 @@ export function balancedSwap(amount, reserve, fee) {
   return balanced < bound ? balanced : bound;
 }
 
-/** UniAlignmentVault._splitAmount: { inferToImd, swapAmount, excess }. */
+/** VaultSwaps.splitAmount: { inferToImd, swapAmount, excess }. */
 export function splitAmount(amtInfer, amtImd, sqrtP, poolL, inferIsCurrency0, fee) {
   const [a0, a1] = inferIsCurrency0 ? [amtInfer, amtImd] : [amtImd, amtInfer];
   const a0In1 = mulDiv(mulDiv(a0, sqrtP, Q96), sqrtP, Q96);
@@ -81,7 +81,7 @@ export async function poolState(client, poolManager, key, blockNumber) {
   return { sqrtP, liquidity };
 }
 
-/** INFER and IMD the vault holds beyond fees owed (UniAlignmentVault._free): includes this batch's pending IMD/INFER. */
+/** INFER and IMD the vault holds beyond fees owed (UniAlignmentVault._free counts pending ones too, which are taken out first for the converted part). */
 export async function freeAlignmentBalances(client, vault, { infer, imd }, blockNumber) {
   const one = async (token) => {
     const [bal, stats] = await Promise.all([
