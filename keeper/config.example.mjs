@@ -37,7 +37,7 @@ export default {
   ZEROEX_MAX_WORSE_BPS: 0,
   // The zRouter fallback, one hop per token (kind 4 = v4 fee/tickSpacing, 3 = v3 fee). Its last token is also what the
   // token is swapped to (ETH joins the batch's one ETH -> IMD leg). null = the default table in lib/zrouter.mjs:
-  //   ETH -> IMD v4 10000/200; imdUSD -> IMD v4 3000/60; USDC, WBTC -> ETH v4 500/10; cbBTC -> ETH v3 3000.
+  //   ETH -> IMD v4 10000/200; imdUSD -> IMD v4 3000/10; USDC, WBTC -> ETH v4 500/10; cbBTC -> ETH v3 3000.
   FALLBACK_ROUTES: null,
 
   // --- contracts (mainnet, checked on chain 2026-11-08: lib/quote.mjs verifyQuoters re-checks at startup) ---

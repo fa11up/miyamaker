@@ -41,7 +41,7 @@ the loop** (no debt is collateralized by the vault): every swap is checked again
        (`ownerOf(2)` / `prev(2)`). `issues.allowance` / `issues.balance` are expected for taker = vault (it approves
        inside the call) and are not errors. `minOut` = the stricter of `minBuyAmount` and `buyAmount * (1 - HOP_MARGIN_BPS)`;
      - **zRouter** (`lib/zrouter.mjs`): one hop from the keeper's `FALLBACK_ROUTES` (default, the old vault table:
-       USDC and WBTC -> ETH v4 500/10, cbBTC -> ETH v3 0.3%, imdUSD -> IMD v4 3000/60, ETH -> IMD v4 10000/200), quoted
+       USDC and WBTC -> ETH v4 500/10, cbBTC -> ETH v3 0.3%, imdUSD -> IMD v4 3000/10, ETH -> IMD v4 10000/200), quoted
        with the V4Quoter `0x52f0…1203` / QuoterV2 `0x61fF…B21e` (checked on chain at startup), calldata
        `swapV4`/`swapV3(to = vault, exactOut false, …, amountLimit = minOut, deadline)`. Used only when its **price
        impact** (vs a 1/1000-size probe through the same pool) is known and at most `MAX_IMPACT_BPS` (300);

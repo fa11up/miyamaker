@@ -25,7 +25,7 @@ const IMD = "0xD34a99Bc0f67aE1bbd63C660e6d0b0dd03E263B7";
  */
 export const DEFAULT_FALLBACK_ROUTES = {
   [ETH]: { kind: 4, tokenOut: IMD, fee: 10000, tickSpacing: 200 },
-  "0x61aAF8a992A3143e2B0C9cB0030b9fE702854a25": { kind: 4, tokenOut: IMD, fee: 3000, tickSpacing: 60 }, // imdUSD
+  "0x61aAF8a992A3143e2B0C9cB0030b9fE702854a25": { kind: 4, tokenOut: IMD, fee: 3000, tickSpacing: 10 }, // imdUSD: the pool the Safe re-opened at market on 2026-11-09 (3000/60 is stranded)
   "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48": { kind: 4, tokenOut: ETH, fee: 500, tickSpacing: 10 }, // USDC
   "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599": { kind: 4, tokenOut: ETH, fee: 500, tickSpacing: 10 }, // WBTC
   "0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf": { kind: 3, tokenOut: ETH, fee: 3000, tickSpacing: 0 }, // cbBTC (v3: v4 is thin)
