@@ -377,12 +377,50 @@ export const auctionBanner: Scene = {
   },
 }
 
+/** MiyaMusicMaker: a 4x4 pad grid lighting up on the beat, a level meter bouncing beside it. */
+const music: Scene = {
+  ms: 2200,
+  pixel: true,
+  draw(g, t, w, h) {
+    ramp(g, w, h, ['#2a0f3a', '#45175e', '#6a2a8a', '#8d3fb0'])
+    const pad = 13
+    const gap = 3
+    const grid = pad * 4 + gap * 3
+    const gx = Math.round(w / 2 - grid / 2 - 10)
+    const gy = Math.round(h * 0.34)
+    // A kick-snare-hat pattern: which pads light on each sixteenth.
+    const steps = [[0, 15], [10], [5, 10], [10], [3, 15], [10], [5, 10, 12], [10]]
+    const step = Math.floor(t * 8) % steps.length
+    for (let i = 0; i < 16; i += 1) {
+      const x = gx + (i % 4) * (pad + gap)
+      const y = gy + Math.floor(i / 4) * (pad + gap)
+      const lit = t > 0.25 && steps[step]!.includes(i)
+      box(g, x, y, pad, pad, lit ? '#ff7ad9' : '#3a1850')
+      box(g, x, y, pad, 1, lit ? '#ffd1f3' : '#5a2a78')
+    }
+    // The meter: higher on the beat, falling between.
+    const mx = gx + grid + 10
+    const level = t > 0.25 ? 0.35 + 0.6 * Math.abs(Math.sin(t * Math.PI * 4)) : 0
+    const bars = 12
+    for (let i = 0; i < bars; i += 1) {
+      const on = i < Math.round(level * bars)
+      const c = i > 9 ? '#ff5a5a' : i > 6 ? '#ffd54a' : '#7dff9a'
+      box(g, mx, gy + grid - (i + 1) * 5 + 1, 8, 4, on ? c : '#2a1040')
+    }
+    typedTitle(g, 'MUSICMAKER', w, h * 0.15, 2, '#ffffff', '#2a0f3a', part(t, 0.05, 0.8))
+    const done = part(t, 0.3, 2)
+    centred(g, done < 1 ? 'LOADING KIT...' : 'READY', w, h * 0.8, 1, '#f3d9ff')
+    blocks(g, Math.round(w / 2) - 50, h * 0.86, 100, done, '#ff7ad9', '#c9a6e0')
+  },
+}
+
 /**
  * By page id. The rest boot inside themselves, or not at all: Mint on its own screen, Infinite Upload's disc, miyaTV's picture
- * tube, Drop Music's studio and Auction's banner. My Files, Display, the radio and Manager open straight away.
+ * tube, Drop Music's studio and Auction's banner. MiyaMusicMaker boots on its pads. My Files, Display, the radio and Manager open straight away.
  */
 export const SCENES: Record<string, Scene> = {
   home: miyanet,
   swap: trade,
   launch,
+  music,
 }

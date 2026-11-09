@@ -7,6 +7,7 @@ import { jsonReply, noSniff, readCappedText } from './_lib/body'
 import { edgeCache, handleMarketRequest, MARKET_PREFIX, openSeaReader } from './_lib/market'
 import { handleOpenSeaRequest, OPENSEA_PROXY_PATH, quoteBigInts } from './_lib/opensea'
 import { d1TapeStore, handlePublicAccessRequest, PUBLIC_ACCESS_PATH, youtubeLookup } from './_lib/publicaccess'
+import { handleSampleMediaRequest, SAMPLE_MEDIA_PATH, SAMPLE_MEDIA_RATE } from './_lib/samplemedia'
 import { serveRange } from './_lib/ranges'
 import { handleNftRequest, handleRpcRequest, NFT_PREFIX, RPC_BODY_LIMIT, RPC_PREFIX } from './_lib/rpc'
 import type { SharedCache } from './_lib/sharedstate'
@@ -15,6 +16,7 @@ import type { D1Like } from './_lib/station'
 import { d1Store, gatewayContentType, handleStationRequest, STATION_PATH } from './_lib/station'
 import { kickOnAir, kickReader } from './_lib/tvkick'
 import { handleTvLiveRequest, TV_LIVE_PATH } from './_lib/tvlive'
+import { handleVideoAudioRequest, VIDEO_AUDIO_COST, VIDEO_AUDIO_PATH, VIDEO_AUDIO_RATE } from './_lib/videoaudio'
 import { CONTRACT_CHECK_PATH, etherscanReader, handleContractCheck } from './_lib/contractcheck'
 import { clientKey, createRateLimiter, handleZeroExRequest, PROXY_PREFIX, sameOrigin } from './_lib/zeroex'
 
@@ -73,6 +75,9 @@ const edge = () => edgeCache((caches as unknown as { default?: Cache }).default)
  */
 let tvCache: SharedCache | undefined
 const tvState = (env: Env) => (tvCache ??= sharedCache(env.DB ? d1SharedState(env.DB) : undefined, edge(), Date.now, 'tv'))
+// A kit reads one sample per pad at once. A video link costs more: it makes three or more upstream fetches.
+const sampleMediaLimiter = createRateLimiter(SAMPLE_MEDIA_RATE)
+const videoAudioLimiter = createRateLimiter(VIDEO_AUDIO_RATE)
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -166,6 +171,20 @@ async function api(request: Request, env: Env, url: URL): Promise<Response> {
       clientKey,
       limiter: contractCheckLimiter,
     })
+  }
+
+  if (url.pathname === SAMPLE_MEDIA_PATH) {
+    return handleSampleMediaRequest(
+      { method: request.method, url: request.url, headers: request.headers },
+      { sameOrigin, clientKey, limiter: sampleMediaLimiter }
+    )
+  }
+
+  if (url.pathname === VIDEO_AUDIO_PATH) {
+    return handleVideoAudioRequest(
+      { method: request.method, url: request.url, headers: request.headers },
+      { sameOrigin, clientKey, limiter: videoAudioLimiter, cost: VIDEO_AUDIO_COST }
+    )
   }
 
   if (url.pathname === TV_LIVE_PATH) {

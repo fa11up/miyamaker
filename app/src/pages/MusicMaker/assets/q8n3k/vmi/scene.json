@@ -1,0 +1,2674 @@
+{
+  "vmi": 1,
+  "naming": "SSSXXX",
+  "scene": "q8n3k",
+  "canvas": {
+    "w": 960,
+    "h": 317
+  },
+  "source": {
+    "file": "m4c7w2.jpg",
+    "kind": "jpeg"
+  },
+  "playlist": "",
+  "objects": [
+    {
+      "id": "r0",
+      "folder": "objects/r0",
+      "type": "static",
+      "zIndex": 0,
+      "parent": "",
+      "warpLayer": "",
+      "sound": "",
+      "slots": {
+        "000000": {
+          "file": "000000.PNG",
+          "label": "rest",
+          "layers": [
+            "r0"
+          ],
+          "png": true
+        }
+      },
+      "animation": false,
+      "labels": {
+        "000": "rest"
+      }
+    },
+    {
+      "id": "c0",
+      "folder": "objects/c0",
+      "type": "sequence",
+      "zIndex": 1,
+      "parent": "",
+      "warpLayer": "",
+      "sound": "",
+      "slots": {
+        "000000": {
+          "file": "000000.PNG",
+          "label": "f00",
+          "layers": [
+            "c0"
+          ],
+          "png": true
+        },
+        "000001": {
+          "file": "000001.PNG",
+          "label": "f01",
+          "layers": [
+            "c0"
+          ],
+          "png": true
+        },
+        "000002": {
+          "file": "000002.PNG",
+          "label": "f02",
+          "layers": [
+            "c0"
+          ],
+          "png": true
+        },
+        "000003": {
+          "file": "000003.PNG",
+          "label": "f03",
+          "layers": [
+            "c0"
+          ],
+          "png": true
+        },
+        "000004": {
+          "file": "000004.PNG",
+          "label": "f04",
+          "layers": [
+            "c0"
+          ],
+          "png": true
+        },
+        "000005": {
+          "file": "000005.PNG",
+          "label": "f05",
+          "layers": [
+            "c0"
+          ],
+          "png": true
+        },
+        "000006": {
+          "file": "000006.PNG",
+          "label": "f06",
+          "layers": [
+            "c0"
+          ],
+          "png": true
+        },
+        "000007": {
+          "file": "000007.PNG",
+          "label": "f07",
+          "layers": [
+            "c0"
+          ],
+          "png": true
+        },
+        "000008": {
+          "file": "000008.PNG",
+          "label": "f08",
+          "layers": [
+            "c0"
+          ],
+          "png": true
+        },
+        "000009": {
+          "file": "000009.PNG",
+          "label": "f09",
+          "layers": [
+            "c0"
+          ],
+          "png": true
+        },
+        "00000A": {
+          "file": "00000A.PNG",
+          "label": "f10",
+          "layers": [
+            "c0"
+          ],
+          "png": true
+        },
+        "00000B": {
+          "file": "00000B.PNG",
+          "label": "f11",
+          "layers": [
+            "c0"
+          ],
+          "png": true
+        },
+        "00000C": {
+          "file": "00000C.PNG",
+          "label": "f12",
+          "layers": [
+            "c0"
+          ],
+          "png": true
+        },
+        "00000D": {
+          "file": "00000D.PNG",
+          "label": "f13",
+          "layers": [
+            "c0"
+          ],
+          "png": true
+        },
+        "00000E": {
+          "file": "00000E.PNG",
+          "label": "f14",
+          "layers": [
+            "c0"
+          ],
+          "png": true
+        },
+        "00000F": {
+          "file": "00000F.PNG",
+          "label": "f15",
+          "layers": [
+            "c0"
+          ],
+          "png": true
+        },
+        "000010": {
+          "file": "000010.PNG",
+          "label": "f16",
+          "layers": [
+            "c0"
+          ],
+          "png": true
+        },
+        "000011": {
+          "file": "000011.PNG",
+          "label": "f17",
+          "layers": [
+            "c0"
+          ],
+          "png": true
+        },
+        "000012": {
+          "file": "000012.PNG",
+          "label": "f18",
+          "layers": [
+            "c0"
+          ],
+          "png": true
+        },
+        "000013": {
+          "file": "000013.PNG",
+          "label": "f19",
+          "layers": [
+            "c0"
+          ],
+          "png": true
+        },
+        "000014": {
+          "file": "000014.PNG",
+          "label": "f20",
+          "layers": [
+            "c0"
+          ],
+          "png": true
+        },
+        "000015": {
+          "file": "000015.PNG",
+          "label": "f21",
+          "layers": [
+            "c0"
+          ],
+          "png": true
+        },
+        "000016": {
+          "file": "000016.PNG",
+          "label": "f22",
+          "layers": [
+            "c0"
+          ],
+          "png": true
+        },
+        "000017": {
+          "file": "000017.PNG",
+          "label": "f23",
+          "layers": [
+            "c0"
+          ],
+          "png": true
+        },
+        "000018": {
+          "file": "000018.PNG",
+          "label": "f24",
+          "layers": [
+            "c0"
+          ],
+          "png": true
+        },
+        "000019": {
+          "file": "000019.PNG",
+          "label": "f25",
+          "layers": [
+            "c0"
+          ],
+          "png": true
+        },
+        "00001A": {
+          "file": "00001A.PNG",
+          "label": "f26",
+          "layers": [
+            "c0"
+          ],
+          "png": true
+        },
+        "00001B": {
+          "file": "00001B.PNG",
+          "label": "f27",
+          "layers": [
+            "c0"
+          ],
+          "png": true
+        },
+        "00001C": {
+          "file": "00001C.PNG",
+          "label": "f28",
+          "layers": [
+            "c0"
+          ],
+          "png": true
+        },
+        "00001D": {
+          "file": "00001D.PNG",
+          "label": "f29",
+          "layers": [
+            "c0"
+          ],
+          "png": true
+        },
+        "00001E": {
+          "file": "00001E.PNG",
+          "label": "f30",
+          "layers": [
+            "c0"
+          ],
+          "png": true
+        },
+        "00001F": {
+          "file": "00001F.PNG",
+          "label": "f31",
+          "layers": [
+            "c0"
+          ],
+          "png": true
+        },
+        "000020": {
+          "file": "000020.PNG",
+          "label": "f32",
+          "layers": [
+            "c0"
+          ],
+          "png": true
+        },
+        "000021": {
+          "file": "000021.PNG",
+          "label": "f33",
+          "layers": [
+            "c0"
+          ],
+          "png": true
+        },
+        "000022": {
+          "file": "000022.PNG",
+          "label": "f34",
+          "layers": [
+            "c0"
+          ],
+          "png": true
+        },
+        "000023": {
+          "file": "000023.PNG",
+          "label": "f35",
+          "layers": [
+            "c0"
+          ],
+          "png": true
+        },
+        "000024": {
+          "file": "000024.PNG",
+          "label": "f36",
+          "layers": [
+            "c0"
+          ],
+          "png": true
+        },
+        "000025": {
+          "file": "000025.PNG",
+          "label": "f37",
+          "layers": [
+            "c0"
+          ],
+          "png": true
+        },
+        "000026": {
+          "file": "000026.PNG",
+          "label": "f38",
+          "layers": [
+            "c0"
+          ],
+          "png": true
+        },
+        "000027": {
+          "file": "000027.PNG",
+          "label": "f39",
+          "layers": [
+            "c0"
+          ],
+          "png": true
+        },
+        "000028": {
+          "file": "000028.PNG",
+          "label": "f40",
+          "layers": [
+            "c0"
+          ],
+          "png": true
+        },
+        "000029": {
+          "file": "000029.PNG",
+          "label": "f41",
+          "layers": [
+            "c0"
+          ],
+          "png": true
+        },
+        "00002A": {
+          "file": "00002A.PNG",
+          "label": "f42",
+          "layers": [
+            "c0"
+          ],
+          "png": true
+        },
+        "00002B": {
+          "file": "00002B.PNG",
+          "label": "f43",
+          "layers": [
+            "c0"
+          ],
+          "png": true
+        },
+        "00002C": {
+          "file": "00002C.PNG",
+          "label": "f44",
+          "layers": [
+            "c0"
+          ],
+          "png": true
+        },
+        "00002D": {
+          "file": "00002D.PNG",
+          "label": "f45",
+          "layers": [
+            "c0"
+          ],
+          "png": true
+        },
+        "00002E": {
+          "file": "00002E.PNG",
+          "label": "f46",
+          "layers": [
+            "c0"
+          ],
+          "png": true
+        },
+        "00002F": {
+          "file": "00002F.PNG",
+          "label": "f47",
+          "layers": [
+            "c0"
+          ],
+          "png": true
+        },
+        "000030": {
+          "file": "000030.PNG",
+          "label": "f48",
+          "layers": [
+            "c0"
+          ],
+          "png": true
+        },
+        "000031": {
+          "file": "000031.PNG",
+          "label": "f49",
+          "layers": [
+            "c0"
+          ],
+          "png": true
+        },
+        "000032": {
+          "file": "000032.PNG",
+          "label": "f50",
+          "layers": [
+            "c0"
+          ],
+          "png": true
+        },
+        "000033": {
+          "file": "000033.PNG",
+          "label": "f51",
+          "layers": [
+            "c0"
+          ],
+          "png": true
+        },
+        "000034": {
+          "file": "000034.PNG",
+          "label": "f52",
+          "layers": [
+            "c0"
+          ],
+          "png": true
+        },
+        "000035": {
+          "file": "000035.PNG",
+          "label": "f53",
+          "layers": [
+            "c0"
+          ],
+          "png": true
+        },
+        "000036": {
+          "file": "000036.PNG",
+          "label": "f54",
+          "layers": [
+            "c0"
+          ],
+          "png": true
+        },
+        "000037": {
+          "file": "000037.PNG",
+          "label": "f55",
+          "layers": [
+            "c0"
+          ],
+          "png": true
+        },
+        "000038": {
+          "file": "000038.PNG",
+          "label": "f56",
+          "layers": [
+            "c0"
+          ],
+          "png": true
+        },
+        "000039": {
+          "file": "000039.PNG",
+          "label": "f57",
+          "layers": [
+            "c0"
+          ],
+          "png": true
+        },
+        "00003A": {
+          "file": "00003A.PNG",
+          "label": "f58",
+          "layers": [
+            "c0"
+          ],
+          "png": true
+        },
+        "00003B": {
+          "file": "00003B.PNG",
+          "label": "f59",
+          "layers": [
+            "c0"
+          ],
+          "png": true
+        },
+        "00003C": {
+          "file": "00003C.PNG",
+          "label": "f60",
+          "layers": [
+            "c0"
+          ],
+          "png": true
+        },
+        "00003D": {
+          "file": "00003D.PNG",
+          "label": "f61",
+          "layers": [
+            "c0"
+          ],
+          "png": true
+        },
+        "00003E": {
+          "file": "00003E.PNG",
+          "label": "f62",
+          "layers": [
+            "c0"
+          ],
+          "png": true
+        },
+        "00003F": {
+          "file": "00003F.PNG",
+          "label": "f63",
+          "layers": [
+            "c0"
+          ],
+          "png": true
+        }
+      },
+      "animation": true,
+      "labels": {
+        "000": "rest"
+      }
+    },
+    {
+      "id": "d0",
+      "folder": "objects/d0",
+      "type": "sequence",
+      "zIndex": 2,
+      "parent": "",
+      "warpLayer": "",
+      "sound": "",
+      "slots": {
+        "000000": {
+          "file": "000000.PNG",
+          "label": "f00",
+          "layers": [
+            "d0"
+          ],
+          "png": true
+        },
+        "000001": {
+          "file": "000001.PNG",
+          "label": "f01",
+          "layers": [
+            "d0"
+          ],
+          "png": true
+        },
+        "000002": {
+          "file": "000002.PNG",
+          "label": "f02",
+          "layers": [
+            "d0"
+          ],
+          "png": true
+        },
+        "000003": {
+          "file": "000003.PNG",
+          "label": "f03",
+          "layers": [
+            "d0"
+          ],
+          "png": true
+        },
+        "000004": {
+          "file": "000004.PNG",
+          "label": "f04",
+          "layers": [
+            "d0"
+          ],
+          "png": true
+        },
+        "000005": {
+          "file": "000005.PNG",
+          "label": "f05",
+          "layers": [
+            "d0"
+          ],
+          "png": true
+        },
+        "000006": {
+          "file": "000006.PNG",
+          "label": "f06",
+          "layers": [
+            "d0"
+          ],
+          "png": true
+        },
+        "000007": {
+          "file": "000007.PNG",
+          "label": "f07",
+          "layers": [
+            "d0"
+          ],
+          "png": true
+        },
+        "000008": {
+          "file": "000008.PNG",
+          "label": "f08",
+          "layers": [
+            "d0"
+          ],
+          "png": true
+        },
+        "000009": {
+          "file": "000009.PNG",
+          "label": "f09",
+          "layers": [
+            "d0"
+          ],
+          "png": true
+        },
+        "00000A": {
+          "file": "00000A.PNG",
+          "label": "f10",
+          "layers": [
+            "d0"
+          ],
+          "png": true
+        },
+        "00000B": {
+          "file": "00000B.PNG",
+          "label": "f11",
+          "layers": [
+            "d0"
+          ],
+          "png": true
+        },
+        "00000C": {
+          "file": "00000C.PNG",
+          "label": "f12",
+          "layers": [
+            "d0"
+          ],
+          "png": true
+        },
+        "00000D": {
+          "file": "00000D.PNG",
+          "label": "f13",
+          "layers": [
+            "d0"
+          ],
+          "png": true
+        },
+        "00000E": {
+          "file": "00000E.PNG",
+          "label": "f14",
+          "layers": [
+            "d0"
+          ],
+          "png": true
+        },
+        "00000F": {
+          "file": "00000F.PNG",
+          "label": "f15",
+          "layers": [
+            "d0"
+          ],
+          "png": true
+        },
+        "000010": {
+          "file": "000010.PNG",
+          "label": "f16",
+          "layers": [
+            "d0"
+          ],
+          "png": true
+        },
+        "000011": {
+          "file": "000011.PNG",
+          "label": "f17",
+          "layers": [
+            "d0"
+          ],
+          "png": true
+        },
+        "000012": {
+          "file": "000012.PNG",
+          "label": "f18",
+          "layers": [
+            "d0"
+          ],
+          "png": true
+        },
+        "000013": {
+          "file": "000013.PNG",
+          "label": "f19",
+          "layers": [
+            "d0"
+          ],
+          "png": true
+        },
+        "000014": {
+          "file": "000014.PNG",
+          "label": "f20",
+          "layers": [
+            "d0"
+          ],
+          "png": true
+        },
+        "000015": {
+          "file": "000015.PNG",
+          "label": "f21",
+          "layers": [
+            "d0"
+          ],
+          "png": true
+        },
+        "000016": {
+          "file": "000016.PNG",
+          "label": "f22",
+          "layers": [
+            "d0"
+          ],
+          "png": true
+        },
+        "000017": {
+          "file": "000017.PNG",
+          "label": "f23",
+          "layers": [
+            "d0"
+          ],
+          "png": true
+        },
+        "000018": {
+          "file": "000018.PNG",
+          "label": "f24",
+          "layers": [
+            "d0"
+          ],
+          "png": true
+        },
+        "000019": {
+          "file": "000019.PNG",
+          "label": "f25",
+          "layers": [
+            "d0"
+          ],
+          "png": true
+        },
+        "00001A": {
+          "file": "00001A.PNG",
+          "label": "f26",
+          "layers": [
+            "d0"
+          ],
+          "png": true
+        },
+        "00001B": {
+          "file": "00001B.PNG",
+          "label": "f27",
+          "layers": [
+            "d0"
+          ],
+          "png": true
+        },
+        "00001C": {
+          "file": "00001C.PNG",
+          "label": "f28",
+          "layers": [
+            "d0"
+          ],
+          "png": true
+        },
+        "00001D": {
+          "file": "00001D.PNG",
+          "label": "f29",
+          "layers": [
+            "d0"
+          ],
+          "png": true
+        },
+        "00001E": {
+          "file": "00001E.PNG",
+          "label": "f30",
+          "layers": [
+            "d0"
+          ],
+          "png": true
+        },
+        "00001F": {
+          "file": "00001F.PNG",
+          "label": "f31",
+          "layers": [
+            "d0"
+          ],
+          "png": true
+        },
+        "000020": {
+          "file": "000020.PNG",
+          "label": "f32",
+          "layers": [
+            "d0"
+          ],
+          "png": true
+        },
+        "000021": {
+          "file": "000021.PNG",
+          "label": "f33",
+          "layers": [
+            "d0"
+          ],
+          "png": true
+        },
+        "000022": {
+          "file": "000022.PNG",
+          "label": "f34",
+          "layers": [
+            "d0"
+          ],
+          "png": true
+        },
+        "000023": {
+          "file": "000023.PNG",
+          "label": "f35",
+          "layers": [
+            "d0"
+          ],
+          "png": true
+        },
+        "000024": {
+          "file": "000024.PNG",
+          "label": "f36",
+          "layers": [
+            "d0"
+          ],
+          "png": true
+        },
+        "000025": {
+          "file": "000025.PNG",
+          "label": "f37",
+          "layers": [
+            "d0"
+          ],
+          "png": true
+        },
+        "000026": {
+          "file": "000026.PNG",
+          "label": "f38",
+          "layers": [
+            "d0"
+          ],
+          "png": true
+        },
+        "000027": {
+          "file": "000027.PNG",
+          "label": "f39",
+          "layers": [
+            "d0"
+          ],
+          "png": true
+        },
+        "000028": {
+          "file": "000028.PNG",
+          "label": "f40",
+          "layers": [
+            "d0"
+          ],
+          "png": true
+        },
+        "000029": {
+          "file": "000029.PNG",
+          "label": "f41",
+          "layers": [
+            "d0"
+          ],
+          "png": true
+        },
+        "00002A": {
+          "file": "00002A.PNG",
+          "label": "f42",
+          "layers": [
+            "d0"
+          ],
+          "png": true
+        },
+        "00002B": {
+          "file": "00002B.PNG",
+          "label": "f43",
+          "layers": [
+            "d0"
+          ],
+          "png": true
+        },
+        "00002C": {
+          "file": "00002C.PNG",
+          "label": "f44",
+          "layers": [
+            "d0"
+          ],
+          "png": true
+        },
+        "00002D": {
+          "file": "00002D.PNG",
+          "label": "f45",
+          "layers": [
+            "d0"
+          ],
+          "png": true
+        },
+        "00002E": {
+          "file": "00002E.PNG",
+          "label": "f46",
+          "layers": [
+            "d0"
+          ],
+          "png": true
+        },
+        "00002F": {
+          "file": "00002F.PNG",
+          "label": "f47",
+          "layers": [
+            "d0"
+          ],
+          "png": true
+        },
+        "000030": {
+          "file": "000030.PNG",
+          "label": "f48",
+          "layers": [
+            "d0"
+          ],
+          "png": true
+        },
+        "000031": {
+          "file": "000031.PNG",
+          "label": "f49",
+          "layers": [
+            "d0"
+          ],
+          "png": true
+        },
+        "000032": {
+          "file": "000032.PNG",
+          "label": "f50",
+          "layers": [
+            "d0"
+          ],
+          "png": true
+        },
+        "000033": {
+          "file": "000033.PNG",
+          "label": "f51",
+          "layers": [
+            "d0"
+          ],
+          "png": true
+        },
+        "000034": {
+          "file": "000034.PNG",
+          "label": "f52",
+          "layers": [
+            "d0"
+          ],
+          "png": true
+        },
+        "000035": {
+          "file": "000035.PNG",
+          "label": "f53",
+          "layers": [
+            "d0"
+          ],
+          "png": true
+        },
+        "000036": {
+          "file": "000036.PNG",
+          "label": "f54",
+          "layers": [
+            "d0"
+          ],
+          "png": true
+        },
+        "000037": {
+          "file": "000037.PNG",
+          "label": "f55",
+          "layers": [
+            "d0"
+          ],
+          "png": true
+        },
+        "000038": {
+          "file": "000038.PNG",
+          "label": "f56",
+          "layers": [
+            "d0"
+          ],
+          "png": true
+        },
+        "000039": {
+          "file": "000039.PNG",
+          "label": "f57",
+          "layers": [
+            "d0"
+          ],
+          "png": true
+        },
+        "00003A": {
+          "file": "00003A.PNG",
+          "label": "f58",
+          "layers": [
+            "d0"
+          ],
+          "png": true
+        },
+        "00003B": {
+          "file": "00003B.PNG",
+          "label": "f59",
+          "layers": [
+            "d0"
+          ],
+          "png": true
+        },
+        "00003C": {
+          "file": "00003C.PNG",
+          "label": "f60",
+          "layers": [
+            "d0"
+          ],
+          "png": true
+        },
+        "00003D": {
+          "file": "00003D.PNG",
+          "label": "f61",
+          "layers": [
+            "d0"
+          ],
+          "png": true
+        },
+        "00003E": {
+          "file": "00003E.PNG",
+          "label": "f62",
+          "layers": [
+            "d0"
+          ],
+          "png": true
+        },
+        "00003F": {
+          "file": "00003F.PNG",
+          "label": "f63",
+          "layers": [
+            "d0"
+          ],
+          "png": true
+        }
+      },
+      "animation": true,
+      "labels": {
+        "000": "rest"
+      }
+    },
+    {
+      "id": "d1",
+      "folder": "objects/d1",
+      "type": "sequence",
+      "zIndex": 3,
+      "parent": "",
+      "warpLayer": "",
+      "sound": "",
+      "slots": {
+        "000000": {
+          "file": "000000.PNG",
+          "label": "f00",
+          "layers": [
+            "d1"
+          ],
+          "png": true
+        },
+        "000001": {
+          "file": "000001.PNG",
+          "label": "f01",
+          "layers": [
+            "d1"
+          ],
+          "png": true
+        },
+        "000002": {
+          "file": "000002.PNG",
+          "label": "f02",
+          "layers": [
+            "d1"
+          ],
+          "png": true
+        },
+        "000003": {
+          "file": "000003.PNG",
+          "label": "f03",
+          "layers": [
+            "d1"
+          ],
+          "png": true
+        },
+        "000004": {
+          "file": "000004.PNG",
+          "label": "f04",
+          "layers": [
+            "d1"
+          ],
+          "png": true
+        },
+        "000005": {
+          "file": "000005.PNG",
+          "label": "f05",
+          "layers": [
+            "d1"
+          ],
+          "png": true
+        },
+        "000006": {
+          "file": "000006.PNG",
+          "label": "f06",
+          "layers": [
+            "d1"
+          ],
+          "png": true
+        },
+        "000007": {
+          "file": "000007.PNG",
+          "label": "f07",
+          "layers": [
+            "d1"
+          ],
+          "png": true
+        },
+        "000008": {
+          "file": "000008.PNG",
+          "label": "f08",
+          "layers": [
+            "d1"
+          ],
+          "png": true
+        },
+        "000009": {
+          "file": "000009.PNG",
+          "label": "f09",
+          "layers": [
+            "d1"
+          ],
+          "png": true
+        },
+        "00000A": {
+          "file": "00000A.PNG",
+          "label": "f10",
+          "layers": [
+            "d1"
+          ],
+          "png": true
+        },
+        "00000B": {
+          "file": "00000B.PNG",
+          "label": "f11",
+          "layers": [
+            "d1"
+          ],
+          "png": true
+        },
+        "00000C": {
+          "file": "00000C.PNG",
+          "label": "f12",
+          "layers": [
+            "d1"
+          ],
+          "png": true
+        },
+        "00000D": {
+          "file": "00000D.PNG",
+          "label": "f13",
+          "layers": [
+            "d1"
+          ],
+          "png": true
+        },
+        "00000E": {
+          "file": "00000E.PNG",
+          "label": "f14",
+          "layers": [
+            "d1"
+          ],
+          "png": true
+        },
+        "00000F": {
+          "file": "00000F.PNG",
+          "label": "f15",
+          "layers": [
+            "d1"
+          ],
+          "png": true
+        },
+        "000010": {
+          "file": "000010.PNG",
+          "label": "f16",
+          "layers": [
+            "d1"
+          ],
+          "png": true
+        },
+        "000011": {
+          "file": "000011.PNG",
+          "label": "f17",
+          "layers": [
+            "d1"
+          ],
+          "png": true
+        },
+        "000012": {
+          "file": "000012.PNG",
+          "label": "f18",
+          "layers": [
+            "d1"
+          ],
+          "png": true
+        },
+        "000013": {
+          "file": "000013.PNG",
+          "label": "f19",
+          "layers": [
+            "d1"
+          ],
+          "png": true
+        },
+        "000014": {
+          "file": "000014.PNG",
+          "label": "f20",
+          "layers": [
+            "d1"
+          ],
+          "png": true
+        },
+        "000015": {
+          "file": "000015.PNG",
+          "label": "f21",
+          "layers": [
+            "d1"
+          ],
+          "png": true
+        },
+        "000016": {
+          "file": "000016.PNG",
+          "label": "f22",
+          "layers": [
+            "d1"
+          ],
+          "png": true
+        },
+        "000017": {
+          "file": "000017.PNG",
+          "label": "f23",
+          "layers": [
+            "d1"
+          ],
+          "png": true
+        },
+        "000018": {
+          "file": "000018.PNG",
+          "label": "f24",
+          "layers": [
+            "d1"
+          ],
+          "png": true
+        },
+        "000019": {
+          "file": "000019.PNG",
+          "label": "f25",
+          "layers": [
+            "d1"
+          ],
+          "png": true
+        },
+        "00001A": {
+          "file": "00001A.PNG",
+          "label": "f26",
+          "layers": [
+            "d1"
+          ],
+          "png": true
+        },
+        "00001B": {
+          "file": "00001B.PNG",
+          "label": "f27",
+          "layers": [
+            "d1"
+          ],
+          "png": true
+        },
+        "00001C": {
+          "file": "00001C.PNG",
+          "label": "f28",
+          "layers": [
+            "d1"
+          ],
+          "png": true
+        },
+        "00001D": {
+          "file": "00001D.PNG",
+          "label": "f29",
+          "layers": [
+            "d1"
+          ],
+          "png": true
+        },
+        "00001E": {
+          "file": "00001E.PNG",
+          "label": "f30",
+          "layers": [
+            "d1"
+          ],
+          "png": true
+        },
+        "00001F": {
+          "file": "00001F.PNG",
+          "label": "f31",
+          "layers": [
+            "d1"
+          ],
+          "png": true
+        },
+        "000020": {
+          "file": "000020.PNG",
+          "label": "f32",
+          "layers": [
+            "d1"
+          ],
+          "png": true
+        },
+        "000021": {
+          "file": "000021.PNG",
+          "label": "f33",
+          "layers": [
+            "d1"
+          ],
+          "png": true
+        },
+        "000022": {
+          "file": "000022.PNG",
+          "label": "f34",
+          "layers": [
+            "d1"
+          ],
+          "png": true
+        },
+        "000023": {
+          "file": "000023.PNG",
+          "label": "f35",
+          "layers": [
+            "d1"
+          ],
+          "png": true
+        },
+        "000024": {
+          "file": "000024.PNG",
+          "label": "f36",
+          "layers": [
+            "d1"
+          ],
+          "png": true
+        },
+        "000025": {
+          "file": "000025.PNG",
+          "label": "f37",
+          "layers": [
+            "d1"
+          ],
+          "png": true
+        },
+        "000026": {
+          "file": "000026.PNG",
+          "label": "f38",
+          "layers": [
+            "d1"
+          ],
+          "png": true
+        },
+        "000027": {
+          "file": "000027.PNG",
+          "label": "f39",
+          "layers": [
+            "d1"
+          ],
+          "png": true
+        },
+        "000028": {
+          "file": "000028.PNG",
+          "label": "f40",
+          "layers": [
+            "d1"
+          ],
+          "png": true
+        },
+        "000029": {
+          "file": "000029.PNG",
+          "label": "f41",
+          "layers": [
+            "d1"
+          ],
+          "png": true
+        },
+        "00002A": {
+          "file": "00002A.PNG",
+          "label": "f42",
+          "layers": [
+            "d1"
+          ],
+          "png": true
+        },
+        "00002B": {
+          "file": "00002B.PNG",
+          "label": "f43",
+          "layers": [
+            "d1"
+          ],
+          "png": true
+        },
+        "00002C": {
+          "file": "00002C.PNG",
+          "label": "f44",
+          "layers": [
+            "d1"
+          ],
+          "png": true
+        },
+        "00002D": {
+          "file": "00002D.PNG",
+          "label": "f45",
+          "layers": [
+            "d1"
+          ],
+          "png": true
+        },
+        "00002E": {
+          "file": "00002E.PNG",
+          "label": "f46",
+          "layers": [
+            "d1"
+          ],
+          "png": true
+        },
+        "00002F": {
+          "file": "00002F.PNG",
+          "label": "f47",
+          "layers": [
+            "d1"
+          ],
+          "png": true
+        },
+        "000030": {
+          "file": "000030.PNG",
+          "label": "f48",
+          "layers": [
+            "d1"
+          ],
+          "png": true
+        },
+        "000031": {
+          "file": "000031.PNG",
+          "label": "f49",
+          "layers": [
+            "d1"
+          ],
+          "png": true
+        },
+        "000032": {
+          "file": "000032.PNG",
+          "label": "f50",
+          "layers": [
+            "d1"
+          ],
+          "png": true
+        },
+        "000033": {
+          "file": "000033.PNG",
+          "label": "f51",
+          "layers": [
+            "d1"
+          ],
+          "png": true
+        },
+        "000034": {
+          "file": "000034.PNG",
+          "label": "f52",
+          "layers": [
+            "d1"
+          ],
+          "png": true
+        },
+        "000035": {
+          "file": "000035.PNG",
+          "label": "f53",
+          "layers": [
+            "d1"
+          ],
+          "png": true
+        },
+        "000036": {
+          "file": "000036.PNG",
+          "label": "f54",
+          "layers": [
+            "d1"
+          ],
+          "png": true
+        },
+        "000037": {
+          "file": "000037.PNG",
+          "label": "f55",
+          "layers": [
+            "d1"
+          ],
+          "png": true
+        },
+        "000038": {
+          "file": "000038.PNG",
+          "label": "f56",
+          "layers": [
+            "d1"
+          ],
+          "png": true
+        },
+        "000039": {
+          "file": "000039.PNG",
+          "label": "f57",
+          "layers": [
+            "d1"
+          ],
+          "png": true
+        },
+        "00003A": {
+          "file": "00003A.PNG",
+          "label": "f58",
+          "layers": [
+            "d1"
+          ],
+          "png": true
+        },
+        "00003B": {
+          "file": "00003B.PNG",
+          "label": "f59",
+          "layers": [
+            "d1"
+          ],
+          "png": true
+        },
+        "00003C": {
+          "file": "00003C.PNG",
+          "label": "f60",
+          "layers": [
+            "d1"
+          ],
+          "png": true
+        },
+        "00003D": {
+          "file": "00003D.PNG",
+          "label": "f61",
+          "layers": [
+            "d1"
+          ],
+          "png": true
+        },
+        "00003E": {
+          "file": "00003E.PNG",
+          "label": "f62",
+          "layers": [
+            "d1"
+          ],
+          "png": true
+        },
+        "00003F": {
+          "file": "00003F.PNG",
+          "label": "f63",
+          "layers": [
+            "d1"
+          ],
+          "png": true
+        }
+      },
+      "animation": true,
+      "labels": {
+        "000": "rest"
+      }
+    },
+    {
+      "id": "d2",
+      "folder": "objects/d2",
+      "type": "sequence",
+      "zIndex": 4,
+      "parent": "",
+      "warpLayer": "",
+      "sound": "",
+      "slots": {
+        "000000": {
+          "file": "000000.PNG",
+          "label": "f00",
+          "layers": [
+            "d2"
+          ],
+          "png": true
+        },
+        "000001": {
+          "file": "000001.PNG",
+          "label": "f01",
+          "layers": [
+            "d2"
+          ],
+          "png": true
+        },
+        "000002": {
+          "file": "000002.PNG",
+          "label": "f02",
+          "layers": [
+            "d2"
+          ],
+          "png": true
+        },
+        "000003": {
+          "file": "000003.PNG",
+          "label": "f03",
+          "layers": [
+            "d2"
+          ],
+          "png": true
+        },
+        "000004": {
+          "file": "000004.PNG",
+          "label": "f04",
+          "layers": [
+            "d2"
+          ],
+          "png": true
+        },
+        "000005": {
+          "file": "000005.PNG",
+          "label": "f05",
+          "layers": [
+            "d2"
+          ],
+          "png": true
+        },
+        "000006": {
+          "file": "000006.PNG",
+          "label": "f06",
+          "layers": [
+            "d2"
+          ],
+          "png": true
+        },
+        "000007": {
+          "file": "000007.PNG",
+          "label": "f07",
+          "layers": [
+            "d2"
+          ],
+          "png": true
+        },
+        "000008": {
+          "file": "000008.PNG",
+          "label": "f08",
+          "layers": [
+            "d2"
+          ],
+          "png": true
+        },
+        "000009": {
+          "file": "000009.PNG",
+          "label": "f09",
+          "layers": [
+            "d2"
+          ],
+          "png": true
+        },
+        "00000A": {
+          "file": "00000A.PNG",
+          "label": "f10",
+          "layers": [
+            "d2"
+          ],
+          "png": true
+        },
+        "00000B": {
+          "file": "00000B.PNG",
+          "label": "f11",
+          "layers": [
+            "d2"
+          ],
+          "png": true
+        },
+        "00000C": {
+          "file": "00000C.PNG",
+          "label": "f12",
+          "layers": [
+            "d2"
+          ],
+          "png": true
+        },
+        "00000D": {
+          "file": "00000D.PNG",
+          "label": "f13",
+          "layers": [
+            "d2"
+          ],
+          "png": true
+        },
+        "00000E": {
+          "file": "00000E.PNG",
+          "label": "f14",
+          "layers": [
+            "d2"
+          ],
+          "png": true
+        },
+        "00000F": {
+          "file": "00000F.PNG",
+          "label": "f15",
+          "layers": [
+            "d2"
+          ],
+          "png": true
+        },
+        "000010": {
+          "file": "000010.PNG",
+          "label": "f16",
+          "layers": [
+            "d2"
+          ],
+          "png": true
+        },
+        "000011": {
+          "file": "000011.PNG",
+          "label": "f17",
+          "layers": [
+            "d2"
+          ],
+          "png": true
+        },
+        "000012": {
+          "file": "000012.PNG",
+          "label": "f18",
+          "layers": [
+            "d2"
+          ],
+          "png": true
+        },
+        "000013": {
+          "file": "000013.PNG",
+          "label": "f19",
+          "layers": [
+            "d2"
+          ],
+          "png": true
+        },
+        "000014": {
+          "file": "000014.PNG",
+          "label": "f20",
+          "layers": [
+            "d2"
+          ],
+          "png": true
+        },
+        "000015": {
+          "file": "000015.PNG",
+          "label": "f21",
+          "layers": [
+            "d2"
+          ],
+          "png": true
+        },
+        "000016": {
+          "file": "000016.PNG",
+          "label": "f22",
+          "layers": [
+            "d2"
+          ],
+          "png": true
+        },
+        "000017": {
+          "file": "000017.PNG",
+          "label": "f23",
+          "layers": [
+            "d2"
+          ],
+          "png": true
+        },
+        "000018": {
+          "file": "000018.PNG",
+          "label": "f24",
+          "layers": [
+            "d2"
+          ],
+          "png": true
+        },
+        "000019": {
+          "file": "000019.PNG",
+          "label": "f25",
+          "layers": [
+            "d2"
+          ],
+          "png": true
+        },
+        "00001A": {
+          "file": "00001A.PNG",
+          "label": "f26",
+          "layers": [
+            "d2"
+          ],
+          "png": true
+        },
+        "00001B": {
+          "file": "00001B.PNG",
+          "label": "f27",
+          "layers": [
+            "d2"
+          ],
+          "png": true
+        },
+        "00001C": {
+          "file": "00001C.PNG",
+          "label": "f28",
+          "layers": [
+            "d2"
+          ],
+          "png": true
+        },
+        "00001D": {
+          "file": "00001D.PNG",
+          "label": "f29",
+          "layers": [
+            "d2"
+          ],
+          "png": true
+        },
+        "00001E": {
+          "file": "00001E.PNG",
+          "label": "f30",
+          "layers": [
+            "d2"
+          ],
+          "png": true
+        },
+        "00001F": {
+          "file": "00001F.PNG",
+          "label": "f31",
+          "layers": [
+            "d2"
+          ],
+          "png": true
+        },
+        "000020": {
+          "file": "000020.PNG",
+          "label": "f32",
+          "layers": [
+            "d2"
+          ],
+          "png": true
+        },
+        "000021": {
+          "file": "000021.PNG",
+          "label": "f33",
+          "layers": [
+            "d2"
+          ],
+          "png": true
+        },
+        "000022": {
+          "file": "000022.PNG",
+          "label": "f34",
+          "layers": [
+            "d2"
+          ],
+          "png": true
+        },
+        "000023": {
+          "file": "000023.PNG",
+          "label": "f35",
+          "layers": [
+            "d2"
+          ],
+          "png": true
+        },
+        "000024": {
+          "file": "000024.PNG",
+          "label": "f36",
+          "layers": [
+            "d2"
+          ],
+          "png": true
+        },
+        "000025": {
+          "file": "000025.PNG",
+          "label": "f37",
+          "layers": [
+            "d2"
+          ],
+          "png": true
+        },
+        "000026": {
+          "file": "000026.PNG",
+          "label": "f38",
+          "layers": [
+            "d2"
+          ],
+          "png": true
+        },
+        "000027": {
+          "file": "000027.PNG",
+          "label": "f39",
+          "layers": [
+            "d2"
+          ],
+          "png": true
+        },
+        "000028": {
+          "file": "000028.PNG",
+          "label": "f40",
+          "layers": [
+            "d2"
+          ],
+          "png": true
+        },
+        "000029": {
+          "file": "000029.PNG",
+          "label": "f41",
+          "layers": [
+            "d2"
+          ],
+          "png": true
+        },
+        "00002A": {
+          "file": "00002A.PNG",
+          "label": "f42",
+          "layers": [
+            "d2"
+          ],
+          "png": true
+        },
+        "00002B": {
+          "file": "00002B.PNG",
+          "label": "f43",
+          "layers": [
+            "d2"
+          ],
+          "png": true
+        },
+        "00002C": {
+          "file": "00002C.PNG",
+          "label": "f44",
+          "layers": [
+            "d2"
+          ],
+          "png": true
+        },
+        "00002D": {
+          "file": "00002D.PNG",
+          "label": "f45",
+          "layers": [
+            "d2"
+          ],
+          "png": true
+        },
+        "00002E": {
+          "file": "00002E.PNG",
+          "label": "f46",
+          "layers": [
+            "d2"
+          ],
+          "png": true
+        },
+        "00002F": {
+          "file": "00002F.PNG",
+          "label": "f47",
+          "layers": [
+            "d2"
+          ],
+          "png": true
+        },
+        "000030": {
+          "file": "000030.PNG",
+          "label": "f48",
+          "layers": [
+            "d2"
+          ],
+          "png": true
+        },
+        "000031": {
+          "file": "000031.PNG",
+          "label": "f49",
+          "layers": [
+            "d2"
+          ],
+          "png": true
+        },
+        "000032": {
+          "file": "000032.PNG",
+          "label": "f50",
+          "layers": [
+            "d2"
+          ],
+          "png": true
+        },
+        "000033": {
+          "file": "000033.PNG",
+          "label": "f51",
+          "layers": [
+            "d2"
+          ],
+          "png": true
+        },
+        "000034": {
+          "file": "000034.PNG",
+          "label": "f52",
+          "layers": [
+            "d2"
+          ],
+          "png": true
+        },
+        "000035": {
+          "file": "000035.PNG",
+          "label": "f53",
+          "layers": [
+            "d2"
+          ],
+          "png": true
+        },
+        "000036": {
+          "file": "000036.PNG",
+          "label": "f54",
+          "layers": [
+            "d2"
+          ],
+          "png": true
+        },
+        "000037": {
+          "file": "000037.PNG",
+          "label": "f55",
+          "layers": [
+            "d2"
+          ],
+          "png": true
+        },
+        "000038": {
+          "file": "000038.PNG",
+          "label": "f56",
+          "layers": [
+            "d2"
+          ],
+          "png": true
+        },
+        "000039": {
+          "file": "000039.PNG",
+          "label": "f57",
+          "layers": [
+            "d2"
+          ],
+          "png": true
+        },
+        "00003A": {
+          "file": "00003A.PNG",
+          "label": "f58",
+          "layers": [
+            "d2"
+          ],
+          "png": true
+        },
+        "00003B": {
+          "file": "00003B.PNG",
+          "label": "f59",
+          "layers": [
+            "d2"
+          ],
+          "png": true
+        },
+        "00003C": {
+          "file": "00003C.PNG",
+          "label": "f60",
+          "layers": [
+            "d2"
+          ],
+          "png": true
+        },
+        "00003D": {
+          "file": "00003D.PNG",
+          "label": "f61",
+          "layers": [
+            "d2"
+          ],
+          "png": true
+        },
+        "00003E": {
+          "file": "00003E.PNG",
+          "label": "f62",
+          "layers": [
+            "d2"
+          ],
+          "png": true
+        },
+        "00003F": {
+          "file": "00003F.PNG",
+          "label": "f63",
+          "layers": [
+            "d2"
+          ],
+          "png": true
+        }
+      },
+      "animation": true,
+      "labels": {
+        "000": "rest"
+      }
+    },
+    {
+      "id": "d3",
+      "folder": "objects/d3",
+      "type": "sequence",
+      "zIndex": 5,
+      "parent": "",
+      "warpLayer": "",
+      "sound": "",
+      "slots": {
+        "000000": {
+          "file": "000000.PNG",
+          "label": "f00",
+          "layers": [
+            "d3"
+          ],
+          "png": true
+        },
+        "000001": {
+          "file": "000001.PNG",
+          "label": "f01",
+          "layers": [
+            "d3"
+          ],
+          "png": true
+        },
+        "000002": {
+          "file": "000002.PNG",
+          "label": "f02",
+          "layers": [
+            "d3"
+          ],
+          "png": true
+        },
+        "000003": {
+          "file": "000003.PNG",
+          "label": "f03",
+          "layers": [
+            "d3"
+          ],
+          "png": true
+        },
+        "000004": {
+          "file": "000004.PNG",
+          "label": "f04",
+          "layers": [
+            "d3"
+          ],
+          "png": true
+        },
+        "000005": {
+          "file": "000005.PNG",
+          "label": "f05",
+          "layers": [
+            "d3"
+          ],
+          "png": true
+        },
+        "000006": {
+          "file": "000006.PNG",
+          "label": "f06",
+          "layers": [
+            "d3"
+          ],
+          "png": true
+        },
+        "000007": {
+          "file": "000007.PNG",
+          "label": "f07",
+          "layers": [
+            "d3"
+          ],
+          "png": true
+        },
+        "000008": {
+          "file": "000008.PNG",
+          "label": "f08",
+          "layers": [
+            "d3"
+          ],
+          "png": true
+        },
+        "000009": {
+          "file": "000009.PNG",
+          "label": "f09",
+          "layers": [
+            "d3"
+          ],
+          "png": true
+        },
+        "00000A": {
+          "file": "00000A.PNG",
+          "label": "f10",
+          "layers": [
+            "d3"
+          ],
+          "png": true
+        },
+        "00000B": {
+          "file": "00000B.PNG",
+          "label": "f11",
+          "layers": [
+            "d3"
+          ],
+          "png": true
+        },
+        "00000C": {
+          "file": "00000C.PNG",
+          "label": "f12",
+          "layers": [
+            "d3"
+          ],
+          "png": true
+        },
+        "00000D": {
+          "file": "00000D.PNG",
+          "label": "f13",
+          "layers": [
+            "d3"
+          ],
+          "png": true
+        },
+        "00000E": {
+          "file": "00000E.PNG",
+          "label": "f14",
+          "layers": [
+            "d3"
+          ],
+          "png": true
+        },
+        "00000F": {
+          "file": "00000F.PNG",
+          "label": "f15",
+          "layers": [
+            "d3"
+          ],
+          "png": true
+        },
+        "000010": {
+          "file": "000010.PNG",
+          "label": "f16",
+          "layers": [
+            "d3"
+          ],
+          "png": true
+        },
+        "000011": {
+          "file": "000011.PNG",
+          "label": "f17",
+          "layers": [
+            "d3"
+          ],
+          "png": true
+        },
+        "000012": {
+          "file": "000012.PNG",
+          "label": "f18",
+          "layers": [
+            "d3"
+          ],
+          "png": true
+        },
+        "000013": {
+          "file": "000013.PNG",
+          "label": "f19",
+          "layers": [
+            "d3"
+          ],
+          "png": true
+        },
+        "000014": {
+          "file": "000014.PNG",
+          "label": "f20",
+          "layers": [
+            "d3"
+          ],
+          "png": true
+        },
+        "000015": {
+          "file": "000015.PNG",
+          "label": "f21",
+          "layers": [
+            "d3"
+          ],
+          "png": true
+        },
+        "000016": {
+          "file": "000016.PNG",
+          "label": "f22",
+          "layers": [
+            "d3"
+          ],
+          "png": true
+        },
+        "000017": {
+          "file": "000017.PNG",
+          "label": "f23",
+          "layers": [
+            "d3"
+          ],
+          "png": true
+        },
+        "000018": {
+          "file": "000018.PNG",
+          "label": "f24",
+          "layers": [
+            "d3"
+          ],
+          "png": true
+        },
+        "000019": {
+          "file": "000019.PNG",
+          "label": "f25",
+          "layers": [
+            "d3"
+          ],
+          "png": true
+        },
+        "00001A": {
+          "file": "00001A.PNG",
+          "label": "f26",
+          "layers": [
+            "d3"
+          ],
+          "png": true
+        },
+        "00001B": {
+          "file": "00001B.PNG",
+          "label": "f27",
+          "layers": [
+            "d3"
+          ],
+          "png": true
+        },
+        "00001C": {
+          "file": "00001C.PNG",
+          "label": "f28",
+          "layers": [
+            "d3"
+          ],
+          "png": true
+        },
+        "00001D": {
+          "file": "00001D.PNG",
+          "label": "f29",
+          "layers": [
+            "d3"
+          ],
+          "png": true
+        },
+        "00001E": {
+          "file": "00001E.PNG",
+          "label": "f30",
+          "layers": [
+            "d3"
+          ],
+          "png": true
+        },
+        "00001F": {
+          "file": "00001F.PNG",
+          "label": "f31",
+          "layers": [
+            "d3"
+          ],
+          "png": true
+        },
+        "000020": {
+          "file": "000020.PNG",
+          "label": "f32",
+          "layers": [
+            "d3"
+          ],
+          "png": true
+        },
+        "000021": {
+          "file": "000021.PNG",
+          "label": "f33",
+          "layers": [
+            "d3"
+          ],
+          "png": true
+        },
+        "000022": {
+          "file": "000022.PNG",
+          "label": "f34",
+          "layers": [
+            "d3"
+          ],
+          "png": true
+        },
+        "000023": {
+          "file": "000023.PNG",
+          "label": "f35",
+          "layers": [
+            "d3"
+          ],
+          "png": true
+        },
+        "000024": {
+          "file": "000024.PNG",
+          "label": "f36",
+          "layers": [
+            "d3"
+          ],
+          "png": true
+        },
+        "000025": {
+          "file": "000025.PNG",
+          "label": "f37",
+          "layers": [
+            "d3"
+          ],
+          "png": true
+        },
+        "000026": {
+          "file": "000026.PNG",
+          "label": "f38",
+          "layers": [
+            "d3"
+          ],
+          "png": true
+        },
+        "000027": {
+          "file": "000027.PNG",
+          "label": "f39",
+          "layers": [
+            "d3"
+          ],
+          "png": true
+        },
+        "000028": {
+          "file": "000028.PNG",
+          "label": "f40",
+          "layers": [
+            "d3"
+          ],
+          "png": true
+        },
+        "000029": {
+          "file": "000029.PNG",
+          "label": "f41",
+          "layers": [
+            "d3"
+          ],
+          "png": true
+        },
+        "00002A": {
+          "file": "00002A.PNG",
+          "label": "f42",
+          "layers": [
+            "d3"
+          ],
+          "png": true
+        },
+        "00002B": {
+          "file": "00002B.PNG",
+          "label": "f43",
+          "layers": [
+            "d3"
+          ],
+          "png": true
+        },
+        "00002C": {
+          "file": "00002C.PNG",
+          "label": "f44",
+          "layers": [
+            "d3"
+          ],
+          "png": true
+        },
+        "00002D": {
+          "file": "00002D.PNG",
+          "label": "f45",
+          "layers": [
+            "d3"
+          ],
+          "png": true
+        },
+        "00002E": {
+          "file": "00002E.PNG",
+          "label": "f46",
+          "layers": [
+            "d3"
+          ],
+          "png": true
+        },
+        "00002F": {
+          "file": "00002F.PNG",
+          "label": "f47",
+          "layers": [
+            "d3"
+          ],
+          "png": true
+        },
+        "000030": {
+          "file": "000030.PNG",
+          "label": "f48",
+          "layers": [
+            "d3"
+          ],
+          "png": true
+        },
+        "000031": {
+          "file": "000031.PNG",
+          "label": "f49",
+          "layers": [
+            "d3"
+          ],
+          "png": true
+        },
+        "000032": {
+          "file": "000032.PNG",
+          "label": "f50",
+          "layers": [
+            "d3"
+          ],
+          "png": true
+        },
+        "000033": {
+          "file": "000033.PNG",
+          "label": "f51",
+          "layers": [
+            "d3"
+          ],
+          "png": true
+        },
+        "000034": {
+          "file": "000034.PNG",
+          "label": "f52",
+          "layers": [
+            "d3"
+          ],
+          "png": true
+        },
+        "000035": {
+          "file": "000035.PNG",
+          "label": "f53",
+          "layers": [
+            "d3"
+          ],
+          "png": true
+        },
+        "000036": {
+          "file": "000036.PNG",
+          "label": "f54",
+          "layers": [
+            "d3"
+          ],
+          "png": true
+        },
+        "000037": {
+          "file": "000037.PNG",
+          "label": "f55",
+          "layers": [
+            "d3"
+          ],
+          "png": true
+        },
+        "000038": {
+          "file": "000038.PNG",
+          "label": "f56",
+          "layers": [
+            "d3"
+          ],
+          "png": true
+        },
+        "000039": {
+          "file": "000039.PNG",
+          "label": "f57",
+          "layers": [
+            "d3"
+          ],
+          "png": true
+        },
+        "00003A": {
+          "file": "00003A.PNG",
+          "label": "f58",
+          "layers": [
+            "d3"
+          ],
+          "png": true
+        },
+        "00003B": {
+          "file": "00003B.PNG",
+          "label": "f59",
+          "layers": [
+            "d3"
+          ],
+          "png": true
+        },
+        "00003C": {
+          "file": "00003C.PNG",
+          "label": "f60",
+          "layers": [
+            "d3"
+          ],
+          "png": true
+        },
+        "00003D": {
+          "file": "00003D.PNG",
+          "label": "f61",
+          "layers": [
+            "d3"
+          ],
+          "png": true
+        },
+        "00003E": {
+          "file": "00003E.PNG",
+          "label": "f62",
+          "layers": [
+            "d3"
+          ],
+          "png": true
+        },
+        "00003F": {
+          "file": "00003F.PNG",
+          "label": "f63",
+          "layers": [
+            "d3"
+          ],
+          "png": true
+        }
+      },
+      "animation": true,
+      "labels": {
+        "000": "rest"
+      }
+    }
+  ]
+}

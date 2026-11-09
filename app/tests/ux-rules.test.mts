@@ -120,6 +120,8 @@ test('page-wide shortcuts on printable keys never fire while typing', () => {
     // Modals that own the keyboard while open (nothing to type into behind them):
     // the handheld's zoom viewer (+, -, arrows, Escape).
     'src/pages/Mint/handheld/Holo.tsx',
+    // The sampler's keyboard: its handler returns first when typing(e) (keys.js) says a field has focus.
+    'src/pages/MusicMaker/MiyaMusicMaker.jsx',
   ]
   const printable = /\.key\s*===\s*['"][^'"\\]['"]|\.test\(\s*\w+\.key\s*\)|\.key\.length\s*===\s*1/
   const found = SRC.filter((p) => {

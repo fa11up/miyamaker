@@ -57,6 +57,7 @@ function CrashedWindow({ identifier, error, reset }: { identifier: string; error
 const TV = lazy(APP_LOADERS.tv!)
 const Radio = lazy(APP_LOADERS.radio!)
 const DropMusic = lazy(APP_LOADERS.dropmusic!)
+const MusicMaker = lazy(APP_LOADERS.music!)
 
 export default function DynamicWrapper({ identifier }: { identifier: string }) {
   const component = useMemo(() => {
@@ -85,6 +86,8 @@ export default function DynamicWrapper({ identifier }: { identifier: string }) {
         return <Radio />
       case 'dropmusic':
         return <DropMusic />
+      case 'music':
+        return <MusicMaker />
       default:
         return <></>
     }

@@ -9,6 +9,7 @@ Private until the audit and launch.
 | Path | What |
 | --- | --- |
 | `app/` | miyaOS frontend (Vite + React), imported from [miyamaker/miyaOS](https://github.com/miyamaker/miyaOS) `main` @ `527d825` |
+| `app/src/pages/MusicMaker/` | The sampler. Open it from the desktop at `/music`. The guide is [its README](app/src/pages/MusicMaker/README.md). |
 | `contracts/` | Foundry project: the miyamints launchpad (`MiyaRegistry`, ERC721 drop / auction and ERC1155 factories, Uniswap v4 alignment vaults, NFT pools) and prediction markets. The factories and vaults started from [Zodomo/ms2fun-contracts](https://github.com/Zodomo/ms2fun-contracts) @ `ebb1190` |
 
 ## Contracts
@@ -41,6 +42,8 @@ cd app
 yarn
 yarn dev
 ```
+
+MiyaMusicMaker is the music window. Click it once, then press Play. The playing guide is [app/src/pages/MusicMaker/README.md](app/src/pages/MusicMaker/README.md).
 
 ## Credits
 

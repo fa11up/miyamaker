@@ -49,6 +49,31 @@ export function parseAlignmentPct(input: string, minBps: number, protocolFeeBps 
   return { ok: true, bps }
 }
 
+/**
+ * Blank rise keeps parseSupply (open edition or fixed price). A percent such as 1 or 2.5 is the
+ * LIMITED_DYNAMIC curve: each mint costs base * (1 + percent) ^ already minted. Supply must be above 0.
+ * The rate is basis points, which is what ERC1155Instance stores (100 = 1%).
+ */
+export function parseEdition(
+  supplyInput: string,
+  riseInput: string
+): Ok<{ supply: bigint; model: number; rate: bigint }> | Err {
+  const rise = (riseInput || '').trim()
+  if (!rise || /^0+(?:\.0+)?$/.test(rise)) {
+    const parsed = parseSupply(supplyInput)
+    if (!parsed.ok) return parsed
+    return { ok: true, supply: parsed.supply, model: parsed.model, rate: 0n }
+  }
+  if (!/^\d{1,3}(\.\d{1,2})?$/.test(rise)) return { ok: false, error: 'Rise must be a percent like 1 or 2.5.' }
+  const [whole, frac = ''] = rise.split('.')
+  const bps = Number(whole) * 100 + Number(frac.padEnd(2, '0'))
+  if (bps <= 0 || bps > 10_000) return { ok: false, error: 'Rise must be above 0 and at most 100%.' }
+  const supply = parseSupply(supplyInput)
+  if (!supply.ok) return supply
+  if (supply.supply <= 0n) return { ok: false, error: 'A rising price needs a supply above 0.' }
+  return { ok: true, supply: supply.supply, model: PRICING_MODEL.LIMITED_DYNAMIC, rate: BigInt(bps) }
+}
+
 /** ERC1155Instance.addEdition(pieceTitle, basePrice, supply, metadataURI, pricingModel, priceIncreaseRate, openTime) */
 export function editionArgs(p: {
   title: string
@@ -56,8 +81,9 @@ export function editionArgs(p: {
   supply: bigint
   model: number
   metadataURI: string
+  priceIncreaseRate?: bigint
 }) {
-  return [p.title, p.priceWei, p.supply, p.metadataURI, p.model, 0n, 0n] as const
+  return [p.title, p.priceWei, p.supply, p.metadataURI, p.model, p.priceIncreaseRate ?? 0n, 0n] as const
 }
 
 /**

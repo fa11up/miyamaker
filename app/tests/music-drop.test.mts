@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { editionArgs, makeSalt, parseAlignmentPct, parsePriceEth, parseSupply, PRICING_MODEL } from '../src/music/drop.ts'
+import { editionArgs, makeSalt, parseAlignmentPct, parseEdition, parsePriceEth, parseSupply, PRICING_MODEL } from '../src/music/drop.ts'
 
 test('prices are parsed exactly with parseEther (no float rounding) and must be > 0', () => {
   assert.deepEqual(parsePriceEth('0.1'), { ok: true, wei: 100000000000000000n })
@@ -35,6 +35,34 @@ test('alignment percent → bps respects the registry minimum and the 100% cap',
 test('editionArgs matches ERC1155Instance.addEdition and opens immediately', () => {
   const args = editionArgs({ title: 'Song', priceWei: 10n, supply: 0n, model: 0, metadataURI: 'ar://m' })
   assert.deepEqual(args, ['Song', 10n, 0n, 'ar://m', 0, 0n, 0n])
+  const curved = editionArgs({
+    title: 'Song',
+    priceWei: 10n,
+    supply: 100n,
+    model: PRICING_MODEL.LIMITED_DYNAMIC,
+    metadataURI: 'ar://m',
+    priceIncreaseRate: 100n,
+  })
+  assert.deepEqual(curved, ['Song', 10n, 100n, 'ar://m', PRICING_MODEL.LIMITED_DYNAMIC, 100n, 0n])
+})
+
+test('a rise percent turns a limited edition into the on-chain curve', () => {
+  assert.deepEqual(parseEdition('', ''), { ok: true, supply: 0n, model: PRICING_MODEL.UNLIMITED, rate: 0n })
+  assert.deepEqual(parseEdition('50', ''), { ok: true, supply: 50n, model: PRICING_MODEL.LIMITED_FIXED, rate: 0n })
+  assert.deepEqual(parseEdition('50', '1'), {
+    ok: true,
+    supply: 50n,
+    model: PRICING_MODEL.LIMITED_DYNAMIC,
+    rate: 100n,
+  })
+  assert.deepEqual(parseEdition('50', '2.5'), {
+    ok: true,
+    supply: 50n,
+    model: PRICING_MODEL.LIMITED_DYNAMIC,
+    rate: 250n,
+  })
+  assert.equal(parseEdition('', '1').ok, false)
+  assert.equal(parseEdition('50', '101').ok, false)
 })
 
 test('makeSalt is a CreateX permissioned salt: factory ‖ 0x00 ‖ 11 random bytes', () => {

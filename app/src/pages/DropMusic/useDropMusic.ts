@@ -94,6 +94,8 @@ export function useMusicChain() {
       !registry.isLoading &&
       !rules.isLoading &&
       (registry.isError || rules.isError || (!!rules.data && (minBps?.result === undefined || feeBps?.result === undefined))),
+    /** The minimum vault share and the fee were read from the registry (both known). */
+    rulesKnown: minBps?.status === 'success' && feeBps?.status === 'success',
   }
 }
 

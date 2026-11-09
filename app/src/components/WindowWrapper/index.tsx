@@ -14,6 +14,7 @@ const SELECTION: Partial<Record<TitleSkin, [string, string]>> = {
   aqua: ['#1e6fd9', '#ffffff'],
   tv: ['#c49a3a', '#2a1a04'],
   mint: ['#9a5fe0', '#ffffff'],
+  music: ['#ff7a1f', '#17191d'],
   launch: ['#c9b27a', '#12261e'],
   auction: ['#7a1620', '#f4dd9c'],
   manager: ['#4b5563', '#ffffff'],
@@ -79,6 +80,12 @@ const WindowFrame = styled.div`
   &[data-skin='mint'] {
     background: linear-gradient(180deg, #ff9fd6, #9a5fe0);
     box-shadow: inset 0 0 0 1px #5a1466, 4px 6px 0 rgba(20, 16, 31, 0.3);
+  }
+  /* Brushed aluminium, edged in graphite, the same metal as the title bar and the app inside. */
+  &[data-skin='music'] {
+    background: repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.14) 0 1px, transparent 1px 3px),
+      linear-gradient(180deg, #d6d9de, #9ea3ab);
+    box-shadow: inset 0 0 0 1px #2b2e34, 4px 6px 0 rgba(20, 16, 31, 0.3);
   }
   /* A slab of the stone, with a gold inlay line where it meets the page. */
   &[data-skin='launch'] {

@@ -16,7 +16,9 @@ import { handleMarketRequest, MARKET_PREFIX, memoryCache, openSeaReader } from '
 import { handleOpenSeaRequest, OPENSEA_PROXY_PATH, quoteBigInts } from './api/_lib/opensea'
 import { handlePublicAccessRequest, memoryTapeStore, PUBLIC_ACCESS_PATH, youtubeLookup } from './api/_lib/publicaccess'
 import { handleNftRequest, handleRpcRequest, NFT_PREFIX, RPC_BODY_LIMIT, RPC_PREFIX } from './api/_lib/rpc'
+import { handleSampleMediaRequest, SAMPLE_MEDIA_PATH, SAMPLE_MEDIA_RATE } from './api/_lib/samplemedia'
 import { kickOnAir, kickReader } from './api/_lib/tvkick'
+import { handleVideoAudioRequest, VIDEO_AUDIO_COST, VIDEO_AUDIO_PATH, VIDEO_AUDIO_RATE } from './api/_lib/videoaudio'
 import { handleTvLiveRequest, TV_LIVE_PATH } from './api/_lib/tvlive'
 import { gatewayContentType, handleStationRequest, memoryStore, STATION_PATH } from './api/_lib/station'
 import { clientKey, createRateLimiter, handleZeroExRequest, PROXY_PREFIX, sameOrigin } from './api/_lib/zeroex'
@@ -244,6 +246,64 @@ function tvLiveDevProxy(env: Record<string, string>): Plugin {
   }
 }
 
+/** Dev-only stand-in for the Worker's sample-media route. Hosts are allowlisted in api/_lib/samplemedia.ts. */
+function sampleMediaDevProxy(): Plugin {
+  const limiter = createRateLimiter(SAMPLE_MEDIA_RATE)
+  return {
+    name: 'miya-sample-media-dev-proxy',
+    configureServer(server) {
+      server.middlewares.use(SAMPLE_MEDIA_PATH, async (req, res) => {
+        const headers = new Headers()
+        for (const [k, v] of Object.entries(req.headers)) if (typeof v === 'string') headers.set(k, v)
+        const host = req.headers.host || 'localhost'
+        // Connect leaves a "/" where the mount path was; the handler, like the Worker, answers the exact path only.
+        const rest = (req.url || '').replace(/^\/(?=\?|$)/, '')
+        const response = await handleSampleMediaRequest(
+          { method: req.method || 'GET', url: `http://${host}${SAMPLE_MEDIA_PATH}${rest}`, headers },
+          { sameOrigin, clientKey, limiter }
+        )
+        res.statusCode = response.status
+        // Every header, so dev serves the same nosniff / sandbox / attachment answer as the Worker.
+        response.headers.forEach((value, key) => res.setHeader(key, value))
+        try {
+          res.end(Buffer.from(await response.arrayBuffer()))
+        } catch {
+          res.destroy()
+        }
+      })
+    },
+  }
+}
+
+/** Dev-only stand-in for the Worker's video-audio route. Page hosts are checked in api/_lib/videoaudio.ts. */
+function videoAudioDevProxy(): Plugin {
+  const limiter = createRateLimiter(VIDEO_AUDIO_RATE)
+  return {
+    name: 'miya-video-audio-dev-proxy',
+    configureServer(server) {
+      server.middlewares.use(VIDEO_AUDIO_PATH, async (req, res) => {
+        const headers = new Headers()
+        for (const [k, v] of Object.entries(req.headers)) if (typeof v === 'string') headers.set(k, v)
+        const host = req.headers.host || 'localhost'
+        // Connect leaves a "/" where the mount path was; the handler, like the Worker, answers the exact path only.
+        const rest = (req.url || '').replace(/^\/(?=\?|$)/, '')
+        const response = await handleVideoAudioRequest(
+          { method: req.method || 'GET', url: `http://${host}${VIDEO_AUDIO_PATH}${rest}`, headers },
+          { sameOrigin, clientKey, limiter, cost: VIDEO_AUDIO_COST }
+        )
+        res.statusCode = response.status
+        // Every header, so dev serves the same nosniff / sandbox / attachment answer as the Worker.
+        response.headers.forEach((value, key) => res.setHeader(key, value))
+        try {
+          res.end(Buffer.from(await response.arrayBuffer()))
+        } catch {
+          res.destroy()
+        }
+      })
+    },
+  }
+}
+
 /** Dev-only stand-in for the Worker's public access route, kept in memory. STATION_ADMINS from the shell. */
 function publicAccessDevProxy(): Plugin {
   const store = memoryTapeStore()
@@ -286,6 +346,8 @@ export default defineConfig(({ mode }) => ({
     openSeaDevProxy(loadEnv(mode, __dirname, ['OPENSEA_'])),
     stationDevProxy(),
     publicAccessDevProxy(),
+    sampleMediaDevProxy(),
+    videoAudioDevProxy(),
     tvLiveDevProxy(loadEnv(mode, __dirname, ['YOUTUBE_'])),
     marketDevProxy(loadEnv(mode, __dirname, ['OPENSEA_'])),
     react(),
