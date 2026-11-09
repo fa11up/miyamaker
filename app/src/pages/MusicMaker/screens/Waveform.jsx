@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { startHandleDrag } from '../dragSession.js'
 import { paintWave, WAVE_VIEWS } from '../waveform.js'
 import { model, touch } from '../model.js'
 
@@ -18,6 +19,8 @@ export function Waveform({ pcm, sr, trim = null, onTrim, marks = null, onMark, t
   const pinchRef = useRef(null)
   const lockRef = useRef(false)
   const playAtRef = useRef(playAt)
+  /** Stops the handle drag in progress (window listeners), so closing the editor mid-drag leaves nothing behind. */
+  const endDragRef = useRef(null)
   const [zoom, setZoom] = useState(1)
   const [pan, setPan] = useState(0)
   const view = model.waveView === 0 || model.waveView === 1 || model.waveView === 2 ? model.waveView : 2
@@ -42,6 +45,8 @@ export function Waveform({ pcm, sr, trim = null, onTrim, marks = null, onMark, t
     const anchor = basePan + x / Math.max(0.0001, baseZoom)
     setView(z, anchor - x / z)
   }
+
+  useEffect(() => () => endDragRef.current?.(), [])
 
   useEffect(() => {
     setZoom(1)
@@ -113,12 +118,16 @@ export function Waveform({ pcm, sr, trim = null, onTrim, marks = null, onMark, t
       if (heads.current) heads.current.replaceChildren()
       return undefined
     }
+    // Every frame while a voice sounds; a few checks a second when nothing does, so an idle editor costs ~nothing.
     let frame = 0
+    let timer = 0
     const tick = () => {
       const box = heads.current
       const read = playAtRef.current
+      let busy = false
       if (box && read) {
         const spots = read() || []
+        busy = spots.length > 0
         while (box.children.length < spots.length) box.appendChild(document.createElement('i'))
         while (box.children.length > spots.length) box.removeChild(box.lastChild)
         const { zoom: z, pan: p } = viewRef.current
@@ -130,10 +139,14 @@ export function Waveform({ pcm, sr, trim = null, onTrim, marks = null, onMark, t
           line.style.left = `${pct}%`
         }
       }
-      frame = requestAnimationFrame(tick)
+      if (busy) frame = requestAnimationFrame(tick)
+      else timer = window.setTimeout(tick, 250)
     }
     frame = requestAnimationFrame(tick)
-    return () => cancelAnimationFrame(frame)
+    return () => {
+      cancelAnimationFrame(frame)
+      window.clearTimeout(timer)
+    }
   }, [showHeads])
 
   function toFraction(clientX) {
@@ -276,20 +289,22 @@ export function Waveform({ pcm, sr, trim = null, onTrim, marks = null, onMark, t
     hoverCursor(event)
   }
 
+  /** One handle drag at a time; the previous one (if any) is dropped first. */
+  function handleDrag(event, apply) {
+    endDragRef.current?.()
+    const stop = startHandleDrag(window, event, toFraction, (at, done) => {
+      if (done && endDragRef.current === stop) endDragRef.current = null
+      apply(at, done)
+    })
+    endDragRef.current = stop
+  }
+
   function drag(which) {
     return (event) => {
       if (!onTrim || event.button !== 0) return
       event.preventDefault()
       event.stopPropagation()
-      const move = (ev) => onTrim(which, toFraction(ev.clientX), false)
-      const up = (ev) => {
-        onTrim(which, toFraction(ev.clientX), true)
-        window.removeEventListener('pointermove', move)
-        window.removeEventListener('pointerup', up)
-      }
-      move(event)
-      window.addEventListener('pointermove', move)
-      window.addEventListener('pointerup', up)
+      handleDrag(event, (at, done) => onTrim(which, at, done))
     }
   }
 
@@ -298,15 +313,7 @@ export function Waveform({ pcm, sr, trim = null, onTrim, marks = null, onMark, t
       if (!onMark || event.button !== 0) return
       event.preventDefault()
       event.stopPropagation()
-      const move = (ev) => onMark(index, toFraction(ev.clientX), false)
-      const up = (ev) => {
-        onMark(index, toFraction(ev.clientX), true)
-        window.removeEventListener('pointermove', move)
-        window.removeEventListener('pointerup', up)
-      }
-      move(event)
-      window.addEventListener('pointermove', move)
-      window.addEventListener('pointerup', up)
+      handleDrag(event, (at, done) => onMark(index, at, done))
     }
   }
 

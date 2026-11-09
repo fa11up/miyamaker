@@ -2,7 +2,7 @@ import { sampleWindow, stitchGrains } from './grain.js'
 import { midiAction, midiLayout } from './midi.js'
 import { limitStereo } from './limiter.js'
 import { encodeWav, trimSilence } from './wav.js'
-import { evenPoints, evenSlices } from './slice.js'
+import { chopRange, evenPoints, evenSlices, nextEmptyPad } from './slice.js'
 import { workletSource } from './numpadFx.js'
 import { kneeWorkletSource } from './knee.js'
 import { cachePcm, ensureLibrary, newFolder } from '../media/library.js'
@@ -10,7 +10,7 @@ import { allowedMediaUrl, SAMPLE_MEDIA_LIMIT, SAMPLE_MEDIA_PATH } from '../media
 import { fetchCapped } from '../media/capped.js'
 import { VIDEO_AUDIO_PATH, videoPage } from '../media/videoaudio.js'
 import { beginUndo, endUndo, stashUndo } from '../history.js'
-import { createBufferCache, finiteOr, heldForPort, liveVoices, locateStep, scrubPcm, stepSeconds, stepsBehind } from './voices.js'
+import { createBufferCache, finiteOr, heldForPort, liveVoices, locateStep, playFraction, scrubPcm, stepSeconds, stepsBehind, voicesToFade } from './voices.js'
 import { importKitFile, importSongFile } from './song.js'
 import { SongChanged, loadTicket, songId } from '../jobs.js'
 import { BUS_COUNT, TRACK_VEL, audioBank, budgetNote, model, currentSequence, ensurePattern, stepCount, writeEvent, commitTrackerNote, setUndoBatch, touch, rememberSample, idbSet, selectPad, flushSave } from '../model.js'
@@ -929,20 +929,11 @@ function pruneVoices(now) {
 }
 
 function makeRoom() {
-  const sounding = () => voices.reduce((n, v) => n + (!v.dead && !v.dropped && !v.ended ? 1 : 0), 0)
-  while (sounding() >= VOICE_CAP) {
-    let oldest = null
-    for (const v of voices) {
-      if (v.dead || v.dropped || v.ended) continue
-      if (!oldest || v.startAt < oldest.startAt) oldest = v
-    }
-    if (!oldest) break
+  for (const oldest of voicesToFade(voices, VOICE_CAP)) {
     silence(oldest, ctx.currentTime + 0.012, 0.02)
-    // A note that is already ending keeps its own tail. Mark it so the search moves on.
-    if (!oldest.dead) {
-      oldest.dead = true
-      if (oldest.quietAt == null) oldest.quietAt = ctx.currentTime
-    }
+    // A note that is already ending keeps its own tail. Mark it so it no longer counts as sounding.
+    oldest.dead = true
+    if (oldest.quietAt == null) oldest.quietAt = ctx.currentTime
   }
 }
 
@@ -1216,28 +1207,7 @@ export function voicePositions(padIndex) {
 }
 
 function bufferFraction(v, now) {
-  const play = v.play
-  const dur = Math.max(0.0001, play.dur || 0.0001)
-  const rate = v.rate || 1
-  const elapsed = Math.max(0, (now - v.startAt) * rate)
-  let bufTime
-  if (play.mode === 'held') {
-    const first = Math.max(0.0001, play.end - play.offset)
-    if (elapsed <= first) bufTime = play.offset + elapsed
-    else {
-      const loopLen = Math.max(0.0001, play.end - play.loopAt)
-      bufTime = play.loopAt + ((elapsed - first) % loopLen)
-    }
-  } else if (play.mode === 'loop') {
-    const loopLen = Math.max(0.0001, play.end - play.offset)
-    bufTime = play.offset + (elapsed % loopLen)
-  } else if (play.mode === 'gate') {
-    bufTime = Math.min(dur, play.offset + elapsed)
-  } else {
-    bufTime = Math.min(play.end, play.offset + elapsed)
-  }
-  const buf = Math.max(0, Math.min(1, bufTime / dur))
-  return play.reverse ? 1 - buf : buf
+  return playFraction(v.play, v.startAt, v.rate, now)
 }
 
 function grainFraction(v, now) {
@@ -2474,20 +2444,9 @@ export async function chopSelection(index = model.selected) {
   const entry = audioBank.get(index)
   if (!entry?.pcm) throw new Error('That pad has no sample to chop')
   const pad = model.pads[index]
-  const n = entry.pcm.length
-  let a = Math.floor(clamp(pad.trimStart || 0, 0, 1) * n)
-  let b = Math.ceil(clamp(pad.trimEnd ?? 1, 0, 1) * n)
-  a = Math.max(0, Math.min(n - 1, a))
-  b = Math.max(a + 1, Math.min(n, b))
+  const [a, b] = chopRange(entry.pcm.length, pad.trimStart, pad.trimEnd)
   const piece = new Float32Array(entry.pcm.subarray(a, b))
-  let dest = -1
-  for (let i = 1; i <= 64; i++) {
-    const at = (index + i) % 64
-    if (model.pads[at]?.source === 'empty') {
-      dest = at
-      break
-    }
-  }
+  const dest = nextEmptyPad(model.pads, index)
   if (dest < 0) throw new Error('No empty pad for the chop')
   const name = `${String(pad.name || 'sample').slice(0, 24)} cut`
   await placePcm(dest, piece, entry.sr || 44100, name, { forceName: true, song })

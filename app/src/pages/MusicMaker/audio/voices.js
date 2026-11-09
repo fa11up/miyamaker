@@ -74,3 +74,35 @@ export function scrubPcm(pcm) {
   }
   return bad
 }
+
+/** Voices to fade so one more note fits under `cap` sounding voices: the oldest first. */
+export function voicesToFade(list, cap) {
+  const sounding = list.filter((v) => v && !v.dead && !v.dropped && !v.ended)
+  const over = sounding.length - cap + 1
+  if (over <= 0) return []
+  return sounding.slice().sort((a, b) => a.startAt - b.startAt).slice(0, over)
+}
+
+/** Where a sample voice is in its pad's audio, 0-1 (flipped for a reversed pad). `play` is what playPad stored. */
+export function playFraction(play, startAt, rate, now) {
+  const dur = Math.max(0.0001, play.dur || 0.0001)
+  const elapsed = Math.max(0, (now - startAt) * (rate || 1))
+  let bufTime
+  if (play.mode === 'held') {
+    const first = Math.max(0.0001, play.end - play.offset)
+    if (elapsed <= first) bufTime = play.offset + elapsed
+    else {
+      const loopLen = Math.max(0.0001, play.end - play.loopAt)
+      bufTime = play.loopAt + ((elapsed - first) % loopLen)
+    }
+  } else if (play.mode === 'loop') {
+    const loopLen = Math.max(0.0001, play.end - play.offset)
+    bufTime = play.offset + (elapsed % loopLen)
+  } else if (play.mode === 'gate') {
+    bufTime = Math.min(dur, play.offset + elapsed)
+  } else {
+    bufTime = Math.min(play.end, play.offset + elapsed)
+  }
+  const buf = Math.max(0, Math.min(1, bufTime / dur))
+  return play.reverse ? 1 - buf : buf
+}

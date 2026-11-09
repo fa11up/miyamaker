@@ -25,3 +25,22 @@ export function evenSlices(pcm, count) {
   for (let i = 0; i < n; i++) out.push(new Float32Array(pcm.subarray(i * len, (i + 1) * len)))
   return out
 }
+
+/** Sample indexes [a, b) of a pad's trim, at least one sample, inside `n`. */
+export function chopRange(n, trimStart, trimEnd) {
+  const clamp01 = (v) => Math.max(0, Math.min(1, Number.isFinite(v) ? v : 0))
+  let a = Math.floor(clamp01(trimStart || 0) * n)
+  let b = Math.ceil(clamp01(trimEnd ?? 1) * n)
+  a = Math.max(0, Math.min(n - 1, a))
+  b = Math.max(a + 1, Math.min(n, b))
+  return [a, b]
+}
+
+/** The next empty pad after `from`, wrapping, never `from` itself; -1 if every other pad is used. */
+export function nextEmptyPad(pads, from, count = 64) {
+  for (let i = 1; i < count; i++) {
+    const at = (from + i) % count
+    if (pads[at]?.source === 'empty') return at
+  }
+  return -1
+}
