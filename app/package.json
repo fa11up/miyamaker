@@ -10,7 +10,7 @@
     "build": "tsc && vite build",
     "preview": "vite preview --port 8174",
     "deploy": "yarn build && wrangler deploy",
-    "test": "node --test tests/",
+    "test": "node --test \"tests/**/*.test.mts\"",
     "prepare:local": "wagmi generate",
     "generate:types": "json2ts -i './src/abis/**/*.json' ",
     "typecheck": "tsc --noEmit -p .",
