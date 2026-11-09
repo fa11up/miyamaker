@@ -774,10 +774,39 @@ contract UniAlignmentVaultTest is VaultTestBase {
         uint256 shares = _convert();
         uint256 twinShares = _convert(twin);
 
-        // dan gets shares for his own value only; the strays raise every existing share instead.
-        assertApproxEqRel(shares, twinShares, 0.01e18, "the strays don't go to the batch");
+        // dan's slice of the position is what his own value bought; the strays go to the holders before him.
+        assertApproxEqRel(
+            shares * vault.totalLPUnits() / vault.totalShares(),
+            twinShares * twin.totalLPUnits() / twin.totalShares(),
+            0.001e18,
+            "the strays don't go to the batch"
+        );
         assertLt(vault.totalShares(), vault.totalLPUnits(), "the strays raised every share");
         assertGt(vault.totalLPUnits() - twin.totalLPUnits(), 0);
+        _assertSolvent(vault);
+    }
+
+    function test_convert_largeBatchTakesNoneOfTheStrays() public {
+        // A batch as large as the position: with the strays priced in before its shares, it still gets none of them.
+        TestableUniAlignmentVault twin = _newVault();
+        _contributeEth(alice, 1 ether);
+        _convert();
+        _giveEth(alice, 1 ether, twin);
+        _convert(twin);
+        infer.mint(address(vault), 2500e18);
+        imd.mint(address(vault), 2500e18);
+        _contributeEth(bob, 1 ether);
+        _giveEth(bob, 1 ether, twin);
+        uint256 shares = _convert();
+        uint256 twinShares = _convert(twin);
+        // Shares cost more once the strays lift the price, so compare what bob's shares are worth in liquidity units.
+        uint256 bobUnits = shares * vault.totalLPUnits() / vault.totalShares();
+        uint256 twinBobUnits = twinShares * twin.totalLPUnits() / twin.totalShares();
+        assertApproxEqRel(bobUnits, twinBobUnits, 0.001e18, "bob's slice as if no strays");
+        // alice's shares now hold her units plus all the strays' liquidity
+        uint256 aliceUnits = vault.benefactorShares(alice) * vault.totalLPUnits() / vault.totalShares();
+        uint256 twinAliceUnits = twin.benefactorShares(alice) * twin.totalLPUnits() / twin.totalShares();
+        assertGt(aliceUnits, twinAliceUnits + 2000e18, "alice keeps the strays");
         _assertSolvent(vault);
     }
 

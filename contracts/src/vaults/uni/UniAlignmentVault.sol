@@ -365,7 +365,7 @@ contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignm
         sharesIssued = _batchShares(liquidity, values, before, rateImd, rateInfer);
         if (sharesIssued == 0) revert InsufficientLiquidity();
         _closeBatch(p, sharesIssued, values, pendingBefore);
-        emit BatchConverted(closedBatches, liquidity, inferAdded, imdAdded, reward);
+        emit BatchConverted(closedBatches, sharesIssued, inferAdded, imdAdded, reward);
         _payCallerReward(reward);
         _checkSolvent();
     }
@@ -551,7 +551,7 @@ contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignm
     /// @dev Split the batch's liquidity across its tokens by realized IMD value; each token's pool pays its part to that
     ///      token's benefactors pro rata (PendingLedger.convert), from the fee indexes as they stand now.
     /// @dev Shares for this batch: the part of `liquidity` its own value paid for (the rest came from leftovers and
-    ///      strays, and lifts every holder's share), priced at the share price before the add.
+    ///      strays, and lifts the shares of holders before this batch), priced at the share price once that rest is in.
     function _batchShares(
         uint256 liquidity,
         uint256[] memory values,
@@ -564,7 +564,8 @@ contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignm
         for (uint256 i; i < values.length; ++i) own += values[i];
         uint256 left = before[1] + FixedPointMathLib.fullMulDiv(before[0], rateImd, rateInfer);
         uint256 ownLiquidity = left == 0 ? liquidity : FixedPointMathLib.fullMulDiv(liquidity, own, own + left);
-        return _sharesFor(ownLiquidity, before[2]);
+        // Price after the leftover's liquidity is in: holders before this batch keep all of it.
+        return _sharesFor(ownLiquidity, before[2] + (liquidity - ownLiquidity));
     }
 
     /// @dev Shares worth `liquidity` units at the current share price (totalShares / units before the add). The first

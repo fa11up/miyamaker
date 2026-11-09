@@ -269,9 +269,8 @@ deployed); the v1 notes above describe the hardening it keeps. New review surfac
   claimant's floor; they cannot touch anyone else's balance.
 - **Removed from v1**: the price validator (no on-chain reference exists for these pools), `pendingFeeTokens` /
   `convertFeeTokens` (fees are paid in the tokens earned, so the keeper never swaps them), `depositFees`.
-- **Still awkward**: leftovers from earlier adds (INFER/IMD the balancing could not pair) feed the next batch and are
-  credited to whatever tokens it converts, as in v1; with subsets a small batch can collect a large leftover. The
-  keeper is trusted to choose sensible batches. Pro rata means a late top-up is converted in part with the rest (its
+- **Leftovers** from earlier adds (INFER/IMD the balancing could not pair) and strays are added with the next batch,
+  but belong to the holders before it (see "Audit-suite fixes"). Pro rata means a late top-up is converted in part with the rest (its
   holder's balance shrinks by the same fraction as everyone's), not first-in-first-out.
 - Tests: `test/vaults/` (unit with a simulated pool: subsets, exact amounts, several tokens per benefactor partly
   converted, the merged ETH leg and order independence, griefing after the quote, minimums, rescale and dust paths;
@@ -328,9 +327,9 @@ docs/IMD-INFER-VAULT.md. Earlier sections describe the ETH-only collections; whe
 ## Audit-suite fixes (2026-11-08)
 
 - **Leftovers no longer go to the next batch.** INFER/IMD already free before a conversion (earlier leftovers, strays)
-  is still added to the position, but the batch is issued shares only for its own value, at the share price before the
-  add (`_batchShares`, `_sharesFor`). The rest raises every holder's share (shares <= liquidity units, as the invariant
-  already allowed). Reinvest also mints at the share price. A first batch (no shares yet) takes everything.
+  is still added to the position, but the batch is issued shares only for its own value, priced once the leftover's
+  liquidity is in (`_batchShares`, `_sharesFor`), so holders before the batch keep all of it (shares <= liquidity
+  units, as the invariant already allowed). `BatchConverted` reports shares issued. Reinvest also mints at the share price. A first batch (no shares yet) takes everything.
 - **Fee tokens from the vault.** Collections forward the vault's own `infer()` / `imd()` (read per claim), not mainnet
   constants, so fees forward on any chain.
 - **`withdrawAll` skips a token that can't pay out** (and emits `WithdrawSkipped`) instead of reverting for all.
