@@ -110,8 +110,7 @@ contract DynamicPricingModuleTest is Test {
         minted = uint16(bound(minted, 0, 200));
         uint256 price = module.calculatePrice(base, rate, minted);
         uint256 cost = module.calculateBatchCost(base, rate, minted, 1);
-        assertApproxEqAbs(cost, price, price / 1e12 + 2); // the batch sum rounds up (twice)
-        assertGe(cost + 1, price);
+        assertEq(cost, price, "the quote is exactly what one mint charges (audit c89f023c #1)");
     }
 
     function test_batchCost_tinyBasePriceNeverBelowBase() public view {

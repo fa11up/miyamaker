@@ -61,7 +61,7 @@ contract, add it to the list in `export-abis.sh` and to `MAP` in `app/tests/abi-
 | 9 | registry: `setConversionKeeper(KEEPER)`, `setVaultFactory`, `setFactory` x3, `setComponent(dynamicPricing)`; `ERC1155Factory.setDynamicPricingModule` | calls | |
 | 9b | registry `setPaymentToken` per `paymentTokens`; vault factory `setSwapTarget` per `swapTargets`, `setEthPool(ethPool)`, `setMinContribution` per `minContributions` | calls | |
 | 10 | registry `addTarget(name, [INFER, IMD])` → target 0; `vaultFactory.deployVault(...)` → **default vault** (CREATE3 via the factory) | calls | vault owned by the vault factory |
-| 11 | `transferOwnership(OWNER)` on registry, vault factory, auction factory, 1155 factory, modules (skipped when `OWNER` is unset) | calls | |
+| 11 | `transferOwnership(OWNER)` on registry, vault factory, auction factory, 1155 factory, modules (testnets only: skipped when `OWNER` is unset; on 1 and 4663 `OWNER` is required) | calls | |
 
 Then it asserts the wiring (factories/vault factory/components registered, target active, vault registered,
 owners, treasury, fee bps, vault-factory parameters, the vault's pool key, config and treasury, every payment token
@@ -80,6 +80,13 @@ namespace = same address on every chain, and nobody else can claim it. Contracts
 deployer EOA (nonce 0) on every chain**, the CREATE addresses match across chains too (the dry runs on 1 and 4663
 produced identical addresses). Re-running with the same deployer and namespace reverts with
 `already deployed at this salt: change SALT_NAMESPACE`.
+
+**A run that stops partway.** Forge broadcasts one transaction per call, so a failure between step 1 and the
+handoff (step 11) leaves a registry, vault factory and possibly a default vault that work but are owned by the
+deployer key, and the final checks never ran. Do not use or announce any of it: either finish by hand from the
+deployer (the remaining steps, then `transferOwnership(OWNER)` on each contract, then confirm every `owner()`), or
+abandon it and redeploy with a new `SALT_NAMESPACE` (the CREATE addresses then differ across chains unless the
+deployer nonces still match).
 
 ## Per-chain config
 
@@ -101,7 +108,7 @@ produced identical addresses). Re-running with the same deployer and namespace r
 
 | Var | Required | Meaning |
 |---|---|---|
-| `OWNER` | strongly recommended | Final owner (a Safe on that chain). Unset = the deployer keeps ownership and the script prints a loud warning. |
+| `OWNER` | 1 and 4663: yes | Final owner (a Safe on that chain). On 1 and 4663 the script refuses before sending anything unless `OWNER` is set, differs from the deployer and has code, and its final check fails if the registry, vault factory, auction or 1155 factory or a module is still owned by the deployer. Testnets: unset = the deployer keeps ownership and the script prints a loud warning. |
 | `KEEPER` | strongly recommended | The only address that can run vault conversions (`MiyaRegistry.conversionKeeper`). Unset = conversions stay paused until the owner calls `setConversionKeeper`; the script prints a loud warning. |
 | `TREASURY` | 4663: yes | Overrides config `treasury`. On 4663 the mainnet imdUSD Treasury address has no code. |
 | `ALIGNMENT_TOKEN`, `ALIGNMENT_TARGET_NAME` | no | Override the default vault's token / target name. The INFER/IMD-shaped alignment pool (`alignmentPool`) must be initialized with liquidity, else the script stops and names the pool, fee and tick spacing. |
@@ -161,9 +168,9 @@ before you broadcast, because no check here can know it.
    others (constructor args are in the script and in `broadcast/DeployMiyamints.s.sol/<chainId>/run-latest.json`).
    Artist collections deployed later by the factories are verified the same way.
 6. **Ownership.** With `OWNER` set, the script already transferred ownership (solady one-step `transferOwnership`,
-   no acceptance needed) and asserted it. Confirm: `cast call <registry> "owner()(address)"` etc. for the vault
-   factory, auction factory, 1155 factory and dynamic pricing module. If you deployed without `OWNER`, do it now
-   from the deployer: `cast send <each> "transferOwnership(address)" 0xSafe --account miyamints-deployer`. Drop
+   no acceptance needed) and asserted that none of them is still owned by the deployer. Confirm: `cast call <registry> "owner()(address)"` etc. for the vault
+   factory, auction factory, 1155 factory and dynamic pricing module. On a testnet deployed without `OWNER`, do it
+   now from the deployer: `cast send <each> "transferOwnership(address)" 0xSafe --account miyamints-deployer`. Drop
    factory and pool factory are ownerless; vaults are owned by the vault factory.
 7. **Commit `deployments/<chainId>.json`** (to `main`, then release it with the matching app; see Release rules). The app bundles it (`app/src/constants/contracts.ts`), so music drops
    and the other miyamints addresses work without env. Or set the printed env lines (Vercel / `app/.env.local`):

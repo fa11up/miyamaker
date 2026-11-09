@@ -7,21 +7,32 @@ import { IMiyaRegistry } from "./interfaces/IMiyaRegistry.sol";
 /**
  * @title MiyaRegistry
  * @notice Slim, non-upgradeable protocol registry. The owner (a multisig) can only:
- *         - set the treasury, the protocol fee (capped) and the minimum alignment share for FUTURE launches;
+ *         - set the treasury, the protocol fee (capped) and the minimum alignment share. Collections snapshot the
+ *           treasury and fee at launch, so for them these apply to FUTURE launches only; every deployed vault reads
+ *           `treasury` live, so a new treasury receives every vault's protocol cut of LP fees from then on,
+ *           including cuts already accrued and not yet withdrawn;
+ *         - set the conversion keeper, read live by every deployed vault: the new keeper runs all their conversions
+ *           of pending balances at once (unset pauses them);
  *         - add and deactivate alignment targets;
  *         - approve and revoke add-on components;
  *         - register and unregister factories and vault factories;
- *         - allow and drop payment tokens (ERC-20s collections may price in; ETH is always allowed). Dropping a token
- *           only stops new sales and contributions in it; balances already held stay withdrawable.
- *         It cannot touch deployed collections, their fee terms, their vaults, or any pool. Collections snapshot
- *         their fee terms at launch.
+ *         - allow and drop payment tokens (ERC-20s collections may price in; ETH is always allowed), also live for
+ *           every deployed collection and vault. Dropping a token stops new sales in it and new vault contributions
+ *           in it (deployed vaults refuse it). Balances already held stay withdrawable: a collection's vault cut
+ *           parked in a dropped token is released to the artist by its `flushPendingVaultCut`, and a vault keeps
+ *           converting what it already holds pending in it.
+ *         It cannot change deployed collections' fee terms (protocol and alignment bps, split treasury, vault: all
+ *         snapshotted at launch), move funds out of collections or vaults, or touch any pool.
  */
 contract MiyaRegistry is Ownable, IMiyaRegistry {
     uint16 public constant BPS = 10_000;
     /// @dev Hard ceiling on the protocol fee, whatever the owner sets.
     uint16 public constant MAX_PROTOCOL_FEE_BPS = 500;
     /// @notice Most ERC-20s allowed at once. A vault holds at most 16 distinct tokens pending (in all, and per
-    ///         benefactor), ETH included, so 15 ERC-20s + ETH always fit and no allowed token can be refused for that.
+    ///         benefactor), ETH included, so 15 ERC-20s + ETH fit. Not a guarantee: a token dropped while still
+    ///         pending in a vault keeps its place there until the keeper converts it, so with a replacement allowed
+    ///         a vault can be asked for a 17th token and refuse it (TooManyTokens). The collection then parks that
+    ///         cut and retries it with its next split or `flushPendingVaultCut` once the dropped token converts.
     uint256 public constant MAX_PAYMENT_TOKENS = 15;
 
     struct Target {

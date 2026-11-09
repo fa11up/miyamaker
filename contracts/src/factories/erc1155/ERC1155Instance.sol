@@ -353,7 +353,8 @@ contract ERC1155Instance is Ownable, ReentrancyGuard, IInstanceLifecycle {
     }
 
     /// @notice Replace the accepted tokens (each on the registry allowlist). Balances already held in a removed
-    ///         token stay withdrawable; editions can only sell for accepted tokens.
+    ///         token stay withdrawable (a vault cut parked in a token the registry dropped is released to the owner
+    ///         by `flushPendingVaultCut`); editions can only sell for accepted tokens.
     function setAcceptedTokens(address[] calldata tokens) external onlyOwner {
         PaymentLib.setAccepted(_pay, registry, tokens);
     }
@@ -387,19 +388,11 @@ contract ERC1155Instance is Ownable, ReentrancyGuard, IInstanceLifecycle {
      * @notice Get current price for an edition in `token`
      * @param editionId Edition ID
      * @param token Payment token (address(0) = ETH)
-     * @return price Current price for the next mint
+     * @return price Current price for the next mint: exactly what `mint` charges for one piece
+     *         (`calculateMintCost(editionId, 1, token)`), so it is always a sufficient `maxCost` for one.
      */
     function getCurrentPrice(uint256 editionId, address token) public view returns (uint256 price) {
-        Edition storage edition = editions[editionId];
-        (bool priced, uint256 basePrice) = priceOf(editionId, token);
-        if (!priced) revert TokenNotPriced();
-
-        if (edition.pricingModel == PricingModel.UNLIMITED || edition.pricingModel == PricingModel.LIMITED_FIXED) {
-            return basePrice;
-        } else {
-            // LIMITED_DYNAMIC
-            return dynamicPricingModule.calculatePrice(basePrice, edition.priceIncreaseRate, edition.minted);
-        }
+        return calculateMintCost(editionId, 1, token);
     }
 
     /**
@@ -562,9 +555,9 @@ contract ERC1155Instance is Ownable, ReentrancyGuard, IInstanceLifecycle {
     }
 
     /// @notice Count `token` that reached this contract outside a mint as proceeds, so the next split shares it.
-    ///         Only tokens this collection has accepted. Anyone can call this.
+    ///         Only tokens this collection has accepted, and ETH always. Anyone can call this.
     function sweepUntracked(address token) external nonReentrant {
-        if (!_pay.isKnown[token]) revert PaymentLib.TokenNotAccepted(token);
+        PaymentLib.checkSweepable(_pay, token);
         uint256 untracked = PaymentLib.untracked(_pay, token);
         if (untracked == 0) revert AmountMustBePositive();
         totalProceeds[token] += untracked;
@@ -576,10 +569,12 @@ contract ERC1155Instance is Ownable, ReentrancyGuard, IInstanceLifecycle {
      * @dev Permissionless — anyone can call once the vault is restored. A parked cut under the vault's minimum
      *      (e.g. the last split of a sold-out collection) can be topped up by `topUp` (ETH: msg.value == topUp; an
      *      ERC-20 is pulled from the caller): all of it goes to the vault, credited to this collection like the cut,
-     *      and a total still under the minimum reverts, which returns the top-up.
+     *      and a total still under the minimum reverts, which returns the top-up. A token the registry has since
+     *      dropped can never reach the vault, so its parked cut is credited to the owner's balance instead (topUp
+     *      must be 0).
      */
     function flushPendingVaultCut(address token, uint256 topUp) external payable nonReentrant {
-        PaymentLib.flushVault(_pay, address(vault), token, topUp);
+        PaymentLib.flushVault(_pay, registry, address(vault), token, topUp);
     }
 
     // ── Payment views ─────────────────────────────────────────────────────────
@@ -588,7 +583,7 @@ contract ERC1155Instance is Ownable, ReentrancyGuard, IInstanceLifecycle {
         return _pay.accepted;
     }
 
-    /// @notice Every token this collection has ever accepted (withdrawAll walks these).
+    /// @notice Every token this collection has ever accepted, plus ETH once swept (withdrawAll walks these).
     function knownTokens() external view returns (address[] memory) {
         return _pay.known;
     }

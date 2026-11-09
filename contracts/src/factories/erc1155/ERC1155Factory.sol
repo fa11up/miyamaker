@@ -111,7 +111,7 @@ contract ERC1155Factory is Ownable, ReentrancyGuard, IFactory {
             protocolFeeBps: protocolFeeBps,
             alignmentBps: params.alignmentBps,
             gatingModule: params.gatingModule,
-            dynamicPricingModule: dynamicPricingModule,
+            dynamicPricingModule: _activePricingModule(),
             weth: weth,
             registry: address(registry),
             acceptedTokens: params.acceptedTokens
@@ -125,7 +125,8 @@ contract ERC1155Factory is Ownable, ReentrancyGuard, IFactory {
     // ── Admin ─────────────────────────────────────────────────────────────────
 
     /// @notice Set the default dynamic pricing module for new instances.
-    ///         address(0) disables dynamic pricing for new deployments.
+    ///         address(0) disables dynamic pricing for new deployments. New instances get the module only while the
+    ///         registry still approves it (checked at every createInstance).
     function setDynamicPricingModule(address module) external onlyOwner {
         if (module != address(0)) {
             if (!registry.isApprovedComponent(module)) revert UnapprovedComponent();
@@ -147,7 +148,7 @@ contract ERC1155Factory is Ownable, ReentrancyGuard, IFactory {
     /// @notice Returns supported component feature tags.
     ///         DYNAMIC_PRICING included lazily when a module is set.
     function features() external view returns (bytes32[] memory f) {
-        if (dynamicPricingModule != address(0)) {
+        if (_activePricingModule() != address(0)) {
             f = new bytes32[](2);
             f[0] = GATING;
             f[1] = DYNAMIC_PRICING;
@@ -162,6 +163,14 @@ contract ERC1155Factory is Ownable, ReentrancyGuard, IFactory {
     }
 
     // ── Utilities ────────────────────────────────────────────────────────────
+
+    /// @dev The default pricing module if the registry still approves it, else address(0): a module the registry
+    ///      revoked after setDynamicPricingModule is left out of new instances (their LIMITED_DYNAMIC editions are then
+    ///      refused with NoDynamicPricingModule) rather than installed.
+    function _activePricingModule() private view returns (address m) {
+        m = dynamicPricingModule;
+        if (m != address(0) && !registry.isApprovedComponent(m)) m = address(0);
+    }
 
     /// @notice Preview the deterministic address for a salt and creator.
     function computeInstanceAddress(bytes32 salt, address creator) external view returns (address) {

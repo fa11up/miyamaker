@@ -32,18 +32,14 @@ contract DynamicPricingModule is Ownable, IDynamicPricingModule {
     // ── IDynamicPricingModule ─────────────────────────────────────────────────
 
     /// @inheritdoc IDynamicPricingModule
+    /// @dev Equal to `calculateBatchCost(basePrice, priceIncreaseRate, minted, 1)`: the quoted next price is what a
+    ///      one-piece mint charges, rounded up the same way.
     function calculatePrice(
         uint256 basePrice,
         uint256 priceIncreaseRate,
         uint256 minted
     ) external pure returns (uint256) {
-        if (minted == 0 || priceIncreaseRate == 0) return basePrice;
-        // basePrice * ((10000 + rate) / 10000) ^ minted  in WAD arithmetic
-        uint256 multiplierWad = 1e18 + (priceIncreaseRate * 1e14);
-        uint256 result = FixedPointMathLib.rpow(multiplierWad, minted, 1e18);
-        uint256 currentPrice = basePrice.mulWad(result);
-        if (currentPrice < basePrice) revert PriceCalculationError();
-        return currentPrice;
+        return _batchCost(basePrice, priceIncreaseRate, minted, 1);
     }
 
     /// @inheritdoc IDynamicPricingModule
@@ -53,17 +49,30 @@ contract DynamicPricingModule is Ownable, IDynamicPricingModule {
         uint256 startMinted,
         uint256 amount
     ) external pure returns (uint256) {
+        return _batchCost(basePrice, priceIncreaseRate, startMinted, amount);
+    }
+
+    /// @dev Rounds up (the buyer never pays less than the curve) with a floor of basePrice per piece. One piece is
+    ///      basePrice * r^start rounded up; more use the geometric series.
+    function _batchCost(uint256 basePrice, uint256 priceIncreaseRate, uint256 startMinted, uint256 amount)
+        private
+        pure
+        returns (uint256 cost)
+    {
         if (priceIncreaseRate == 0) return basePrice * amount;
-        // Geometric series: sum = basePrice * r^start * (r^amount - 1) / (r - 1)
         uint256 r = 1e18 + (priceIncreaseRate * 1e14);
         uint256 rStart = FixedPointMathLib.rpow(r, startMinted, 1e18);
-        uint256 rAmount = FixedPointMathLib.rpow(r, amount, 1e18);
-        // Divide first and last by the large terms, so a small basePrice doesn't truncate to nothing on the way, and
-        // round up: the buyer never pays less than the curve. Each piece costs at least basePrice.
-        uint256 cost = FixedPointMathLib.fullMulDivUp(
-            FixedPointMathLib.fullMulDivUp(basePrice, rStart, r - 1e18), rAmount - 1e18, 1e18
-        );
+        if (amount == 1) {
+            cost = FixedPointMathLib.mulWadUp(basePrice, rStart);
+        } else {
+            // Geometric series: sum = basePrice * r^start * (r^amount - 1) / (r - 1). Divide first and last by the
+            // large terms, so a small basePrice doesn't truncate to nothing on the way.
+            uint256 rAmount = FixedPointMathLib.rpow(r, amount, 1e18);
+            cost = FixedPointMathLib.fullMulDivUp(
+                FixedPointMathLib.fullMulDivUp(basePrice, rStart, r - 1e18), rAmount - 1e18, 1e18
+            );
+        }
         uint256 least = basePrice * amount;
-        return cost < least ? least : cost;
+        if (cost < least) cost = least;
     }
 }

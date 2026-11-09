@@ -9,7 +9,9 @@ import { LibBytes } from "solady/utils/LibBytes.sol";
 ///         two SSTORE2 data contracts in its constructor (the code is then part of the factory's initcode, capped at
 ///         49,152 bytes, not its 24,576-byte runtime) and reads it back for each deployment.
 library InitCodeStore {
-    /// @dev Each data contract holds at most this much (one byte under the runtime cap, for SSTORE2's STOP prefix).
+    /// @dev Each data contract holds at most this much. With SSTORE2's 1-byte STOP prefix a data contract could hold
+    ///      up to 24,575 bytes under EIP-170's 24,576; 24,000 leaves 575 bytes of margin, so two chunks cover
+    ///      48,000 bytes of creation code (InitCodeTooLarge above that).
     uint256 private constant CHUNK = 24_000;
 
     error InitCodeTooLarge();

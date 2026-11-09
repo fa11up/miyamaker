@@ -25,7 +25,8 @@ import { IInstanceLifecycle, TYPE_ERC721, STATE_MINTING } from "../../interfaces
  *         `protocolBps` to the treasury, `alignmentBps` to the alignment vault (in the token paid), the rest to the
  *         owner's balance for that token, which only the owner withdraws (`withdraw(token)`, `withdrawAll()`).
  *         A refused vault cut is parked per token (`pendingVaultCut(token)`) and retried with the next split or
- *         `flushPendingVaultCut`; it is never redirected to the owner. A refused protocol cut is parked likewise.
+ *         `flushPendingVaultCut`; it goes to the owner only once the registry drops that token (the vault then
+ *         refuses it for good), through `flushPendingVaultCut`. A refused protocol cut is parked likewise.
  */
 contract ERC721DropInstance is ERC721, ERC2981, Ownable, ReentrancyGuard, IInstanceLifecycle {
     using LibString for uint256;
@@ -329,9 +330,9 @@ contract ERC721DropInstance is ERC721, ERC2981, Ownable, ReentrancyGuard, IInsta
     }
 
     /// @notice Count `token` that reached this drop outside a mint (royalties, transfers) as proceeds, so the next
-    ///         split shares it. Only tokens this drop has accepted. Anyone can call this.
+    ///         split shares it. Only tokens this drop has accepted, and ETH always. Anyone can call this.
     function sweepUntracked(address token) external nonReentrant {
-        if (!_pay.isKnown[token]) revert PaymentLib.TokenNotAccepted(token);
+        PaymentLib.checkSweepable(_pay, token);
         uint256 extra = PaymentLib.untracked(_pay, token);
         if (extra == 0) revert NothingToWithdraw();
         _pay.unsplit[token] += extra;
@@ -345,9 +346,10 @@ contract ERC721DropInstance is ERC721, ERC2981, Ownable, ReentrancyGuard, IInsta
     /// @notice Retry delivering vault cuts in `token` the vault previously rejected. Anyone can call this.
     /// @dev A parked cut under the vault's minimum can be topped up by `topUp` (ETH: msg.value == topUp; an ERC-20
     ///      is pulled from the caller): all of it goes to the vault, credited to this collection, and a total still
-    ///      under the minimum reverts, which returns the top-up.
+    ///      under the minimum reverts, which returns the top-up. A token the registry has since dropped can never
+    ///      reach the vault, so its parked cut is credited to the owner's balance instead (topUp must be 0).
     function flushPendingVaultCut(address token, uint256 topUp) external payable nonReentrant {
-        PaymentLib.flushVault(_pay, address(vault), token, topUp);
+        PaymentLib.flushVault(_pay, registry, address(vault), token, topUp);
     }
 
     /// @notice Claim this collection's vault fees in `mode` and forward what the vault pays (INFER, IMD, ETH) to
@@ -369,7 +371,7 @@ contract ERC721DropInstance is ERC721, ERC2981, Ownable, ReentrancyGuard, IInsta
         return _pay.accepted;
     }
 
-    /// @notice Every token this drop has ever accepted (withdrawAll walks these).
+    /// @notice Every token this drop has ever accepted, plus ETH once swept (withdrawAll walks these).
     function knownTokens() external view returns (address[] memory) {
         return _pay.known;
     }
@@ -430,7 +432,8 @@ contract ERC721DropInstance is ERC721, ERC2981, Ownable, ReentrancyGuard, IInsta
     }
 
     /// @notice Replace the accepted tokens (each on the registry allowlist). Balances already held in a removed
-    ///         token stay withdrawable; phases can only sell for accepted tokens.
+    ///         token stay withdrawable (a vault cut parked in a token the registry dropped is released to the owner
+    ///         by `flushPendingVaultCut`); phases can only sell for accepted tokens.
     function setAcceptedTokens(address[] calldata tokens) external onlyOwner {
         PaymentLib.setAccepted(_pay, registry, tokens);
     }

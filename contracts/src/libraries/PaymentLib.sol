@@ -22,9 +22,15 @@ import { TokenPrice } from "../factories/interfaces/TokenPrice.sol";
 ///         Per token, the collection owes:
 ///         - `unsplit`:      sale proceeds not yet split (drop, 1155: split by the permissionless `distribute`)
 ///         - `ownerOwed`:    the artist's share, paid only by the owner's `withdraw` (pull: a blocklisted
-///                           artist never blocks a sale, a split or anyone's refund)
+///                           artist never blocks a sale, a split or anyone's refund). One exception: an ETH
+///                           auction pushes the deposit and the artist's share to owner() at settlement
+///                           (forceSafeTransferETH / smartTransferETH with a WETH fallback, so the owner still
+///                           cannot block it) and never credits ownerOwed for them
 ///         - `protocolOwed`: protocol cuts the treasury refused, retried with the next cut or `flushPendingProtocolCut`
-///         - `vaultOwed`:    vault cuts the vault refused, carried by the next split or `flushPendingVaultCut`
+///         - `vaultOwed`:    vault cuts the vault refused, carried by the next split or `flushPendingVaultCut`. Once
+///                           the registry drops the token (the vault then refuses it for good), `flushPendingVaultCut`
+///                           releases the parked cut to `ownerOwed` instead; for an allowed token it only ever goes
+///                           to the vault
 ///         - `escrow`:       anything else held for others (auction deposits, live bids, outbid refunds)
 ///         The collection's balance of a token is always at least the sum of these (`liabilities`).
 library PaymentLib {
@@ -60,6 +66,8 @@ library PaymentLib {
     event ProtocolCutParked(address indexed token, uint256 amount);
     event VaultContributionFailed(address indexed token, uint256 amount);
     event VaultContributionRetried(address indexed token, uint256 amount);
+    /// @notice A parked vault cut in a token the registry no longer allows was credited to the owner's balance.
+    event VaultCutReleased(address indexed token, uint256 amount);
     event OwnerWithdrawn(address indexed token, address indexed to, uint256 amount);
     event VaultFeesForwarded(address indexed to, ClaimMode mode, uint256 infer, uint256 imd, uint256 eth);
 
@@ -111,7 +119,8 @@ library PaymentLib {
     }
 
     /// @dev A token a sale can be paid in right now: accepted by the collection and still on the allowlist (the
-    ///      registry can drop a token for new sales; balances already held stay withdrawable).
+    ///      registry can drop a token for new sales; balances already held stay withdrawable, and a vault cut parked
+    ///      in a dropped token is released to the owner by `flushVault`).
     function checkUsable(Ledger storage l, address registry, address token) internal view {
         if (!l.isAccepted[token]) revert TokenNotAccepted(token);
         checkAllowed(registry, token);
@@ -191,9 +200,24 @@ library PaymentLib {
     /// @dev Retry a parked vault cut, optionally topped up by the caller (msg.value for ETH, pulled for an ERC-20),
     ///      so a final cut under the vault's minimum can still reach it. Reverts if the vault refuses, returning the
     ///      top-up. Returns the amount sent.
-    function flushVault(Ledger storage l, address vault, address token, uint256 topUp) internal returns (uint256) {
+    ///      A token the registry no longer allows can never reach the vault (it refuses non-allowlisted tokens), so
+    ///      its parked cut is released to the owner's balance instead (no top-up; returns 0). Only a delisting by
+    ///      the registry owner opens this, and it pays the artist, not the party that delists; while a token is
+    ///      allowed (and ETH always is) its vault cut only ever goes to the vault. Re-listing the token before
+    ///      anyone calls this sends the cut to the vault as usual.
+    function flushVault(Ledger storage l, address registry, address vault, address token, uint256 topUp)
+        internal
+        returns (uint256)
+    {
         uint256 pending = l.vaultOwed[token];
         if (pending == 0) revert NothingParked();
+        if (token != ETH && !IMiyaRegistry(registry).isPaymentToken(token)) {
+            if (topUp != 0 || msg.value != 0) revert WrongValue();
+            l.vaultOwed[token] = 0;
+            l.ownerOwed[token] += pending;
+            emit VaultCutReleased(token, pending);
+            return 0;
+        }
         collect(token, topUp);
         l.vaultOwed[token] = 0;
         uint256 amount = pending + topUp;
@@ -214,6 +238,16 @@ library PaymentLib {
         l.protocolOwed[token] = 0;
         if (token == ETH) SafeTransferLib.safeTransferETH(treasury, pending);
         else SafeTransferLib.safeTransfer(token, treasury, pending);
+    }
+
+    /// @dev The token `sweepUntracked` may count: one the collection has ever accepted, or ETH, which every
+    ///      collection can receive (royalties, mistaken transfers) and the registry always allows. ETH swept for
+    ///      the first time is added to `known`, so withdrawAll pays the owner's share of it.
+    function checkSweepable(Ledger storage l, address token) internal {
+        if (l.isKnown[token]) return;
+        if (token != ETH) revert TokenNotAccepted(token);
+        l.isKnown[ETH] = true;
+        l.known.push(ETH);
     }
 
     /// @dev Pay `to` the owner's balance of `token`. Returns the amount (0 if none).

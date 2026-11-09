@@ -9,8 +9,8 @@ import {IComponentModule} from "../../../interfaces/IComponentModule.sol";
 interface IDynamicPricingModule is IComponentModule {
     error PriceCalculationError();
 
-    /// @notice Current price for the next single mint.
-    /// @param basePrice      Starting price in wei.
+    /// @notice Current price for the next single mint: equal to `calculateBatchCost(.., minted, 1)` (rounded up).
+    /// @param basePrice      Starting price, in the payment token's own units.
     /// @param priceIncreaseRate  Basis-point rate per mint (e.g. 100 = 1%).
     /// @param minted         Number already minted before this call.
     function calculatePrice(
@@ -20,7 +20,7 @@ interface IDynamicPricingModule is IComponentModule {
     ) external pure returns (uint256);
 
     /// @notice Total cost to mint `amount` tokens starting at `startMinted`.
-    /// @param basePrice          Starting price in wei.
+    /// @param basePrice          Starting price, in the payment token's own units.
     /// @param priceIncreaseRate  Basis-point rate per mint.
     /// @param startMinted        Tokens already minted before this batch.
     /// @param amount             Number of tokens in this batch.

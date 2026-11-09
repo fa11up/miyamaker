@@ -15,6 +15,17 @@ import { ERC1155Factory } from "../../src/factories/erc1155/ERC1155Factory.sol";
 import { ERC721AuctionFactory } from "../../src/factories/erc721/ERC721AuctionFactory.sol";
 import { MockExtsloadPoolManager } from "../mocks/MockExtsloadPoolManager.sol";
 
+/// @dev Exposes the script's internal steps, so the production-chain rules can be checked without a fork.
+contract DeployMiyamintsHarness is DeployMiyamints {
+    function deployAll(Config memory c, address deployer) external returns (Deployment memory) {
+        return _deployAll(c, deployer);
+    }
+
+    function check(Config memory c, Deployment memory d) external view {
+        _check(c, d);
+    }
+}
+
 /// @notice Runs script/DeployMiyamints.s.sol with no RPC: chain 31337 and script/config/31337.json, whose addresses this
 ///         test fills with mocks (tokens via deployCodeTo, a PoolManager that answers extsload, code at the router and
 ///         AllowanceHolder stand-ins, CreateX etched). Checks the wiring the script does before the handoff: payment
@@ -128,5 +139,58 @@ contract DeployMiyamintsOfflineTest is Test {
             )
         );
         s.runAs(deployer, safe);
+    }
+
+    // ── audit c89f023c finding 4: production chains must end owned by the Safe ──
+
+    function _refusesOnProduction(uint256 chainId, address owner, string memory reason) internal {
+        DeployMiyamintsHarness h = new DeployMiyamintsHarness();
+        DeployMiyamints.Config memory c = h.loadConfig();
+        c.owner = owner;
+        vm.chainId(chainId);
+        vm.expectRevert(abi.encodeWithSelector(DeployMiyamints.ConfigError.selector, reason));
+        h.deployAll(c, deployer);
+        vm.chainId(31337);
+    }
+
+    function test_offline_productionRefusesOwnerUnset() public {
+        _refusesOnProduction(1, address(0), "OWNER unset: set OWNER to the Safe that will own the system");
+        _refusesOnProduction(4663, address(0), "OWNER unset: set OWNER to the Safe that will own the system");
+    }
+
+    function test_offline_productionRefusesDeployerAsOwner() public {
+        _refusesOnProduction(1, deployer, "OWNER is the deployer: set OWNER to the Safe");
+    }
+
+    function test_offline_productionRefusesEoaOwner() public {
+        _refusesOnProduction(4663, makeAddr("eoa"), "OWNER has no code on this chain");
+    }
+
+    /// The report's reproduction: OWNER unset leaves every owner role on the deployer. Still allowed on a local chain
+    /// (with a warning); on a production chain the final check refuses that state.
+    function test_offline_ownerUnsetLeavesDeployerAsOwner_checkRefusesOnProduction() public {
+        DeployMiyamintsHarness h = new DeployMiyamintsHarness();
+        DeployMiyamints.Config memory c = h.loadConfig();
+        DeployMiyamints.Deployment memory d = h.runAs(deployer, address(0));
+        assertEq(MiyaRegistry(d.registry).owner(), deployer, "local: deployer keeps ownership");
+        assertEq(UniAlignmentVaultFactory(d.vaultFactory).owner(), deployer);
+        assertEq(Ownable(d.dynamicPricingModule).owner(), deployer);
+
+        vm.chainId(1);
+        c.owner = deployer;
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                DeployMiyamints.CheckFailed.selector, "owner is a contract other than the deployer"
+            )
+        );
+        h.check(c, d);
+
+        // Even with the config naming a Safe, contracts still owned by the deployer fail the check.
+        vm.etch(safe, hex"00");
+        c.owner = safe;
+        vm.expectRevert(
+            abi.encodeWithSelector(DeployMiyamints.CheckFailed.selector, "registry still owned by the deployer")
+        );
+        h.check(c, d);
     }
 }

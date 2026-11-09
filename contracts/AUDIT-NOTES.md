@@ -346,6 +346,45 @@ docs/IMD-INFER-VAULT.md. Earlier sections describe the ETH-only collections; whe
 - Not fixed, by decision: an issuer blocklist (USDC) on the vault makes that token's splits revert (approve outside the
   try).
 
+## External audit c89f023c: collections, registry and deploy (2026-11-09)
+
+Audited at b5bdcc6 (4 low, 5 info, nothing above low). All fixed; each has a regression test
+(`test/factories/payments/AuditRegressions.t.sol`, `test/deploy/DeployMiyamintsOffline.t.sol`).
+
+- **Dynamic price quote vs charge** (Low): `getCurrentPrice` rounded the curve down while `mint` charged it rounded up,
+  so `maxCost = getCurrentPrice` was refused. `getCurrentPrice` now returns `calculateMintCost(id, 1, token)`, and the
+  module's `calculatePrice` equals `calculateBatchCost(.., 1)`, whose one-piece case is `mulWadUp(basePrice, r^minted)`
+  (still at least basePrice; batches of 2+ keep the series formula, rounded up). `basePrice` is in the payment token's
+  units, not wei.
+- **Delisted token strands the vault cut** (Low): the vault refuses a token the registry dropped, so a cut parked in it
+  had no exit. `flushPendingVaultCut(token, 0)` now credits a parked cut in a token the registry no longer allows to the
+  owner's balance (`VaultCutReleased(token, amount)`; a top-up is refused). Why the artist and not the treasury: the
+  registry owner decides delistings, so the party that can open the exit gets nothing from it; the artist cannot open
+  it. While a token is allowed (ETH always is) a parked cut only ever goes to the vault, so this is no way around the
+  alignment share; re-listing before anyone flushes sends it to the vault as before. Accepted: a delisting releases the
+  alignment share of every undistributed sale in that token, in every collection, to its artist.
+- **Stray ETH on an ERC-20 auction house** (Low): `sweepUntracked(address(0))` now works on every collection, whatever
+  it accepts (ETH can arrive anywhere: royalties, mistaken transfers). It is counted as proceeds and split like a sale,
+  the same as drops and editions (auctions split at once; drops and 1155 add it to `unsplitProceeds`). ETH swept for the
+  first time joins `knownTokens`, so `withdrawAll` pays the artist's share; the auction's `withdrawAll` now walks
+  `knownTokens` (its currency, plus ETH once swept). Other tokens a collection never accepted are still refused.
+- **Deploy without OWNER** (Low): on chains 1 and 4663 the script refuses before its first transaction unless `OWNER`
+  is set, differs from the deployer and has code, and `_check` fails if the registry, vault factory, auction or 1155
+  factory, the pricing module or the gating module is still owned by the deployer. Testnets keep the warning. DEPLOY.md
+  now says what to do after a run that stops partway (abandon it or finish by hand; nothing deployer-owned is used).
+- **ETH auctions push the artist's share** (Info): PaymentLib's NatSpec now says so (deposit and share pushed at
+  settlement with forceSafeTransferETH / smartTransferETH, never credited to `ownerOwed`). Behaviour unchanged.
+- **Registry powers that apply live** (Info): MiyaRegistry's NatSpec now says the treasury (each vault's protocol cut of
+  LP fees, including accrued cuts), the conversion keeper and the payment-token allowlist apply to every deployed vault
+  at once; collections' fee terms stay snapshotted.
+- **MAX_PAYMENT_TOKENS** (Info): the comment no longer promises an allowed token can never hit the vault's 16-token cap
+  (a token dropped while pending keeps its place until converted; the collection parks the cut meanwhile).
+- **InitCodeStore CHUNK** (Info): comment corrected (24,000 = 575 bytes of margin; two chunks hold 48,000 bytes).
+- **Revoked pricing module** (Info): `ERC1155Factory.createInstance` installs the default pricing module only while the
+  registry approves it; a revoked one is left out (address(0)), so that instance refuses LIMITED_DYNAMIC editions with
+  `NoDynamicPricingModule`, and `features()` stops listing dynamic pricing. Leaving it out rather than reverting keeps
+  1155 launches open while the owner sets a new module.
+
 ## Vault v2: aggregator calldata replaces the route table (2026-11-08, not yet reviewed)
 
 Decision (2026-11-08): conversions still happen on chain in the vault, but the swap path comes from the keeper as

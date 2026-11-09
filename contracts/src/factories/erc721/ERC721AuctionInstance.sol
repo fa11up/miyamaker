@@ -494,16 +494,18 @@ contract ERC721AuctionInstance is ERC721, Ownable, ReentrancyGuard, IInstanceLif
     /// @dev Permissionless — anyone can call once the vault is healthy again. A parked cut under the vault's minimum
     ///      can be topped up by `topUp` (ETH: msg.value == topUp; an ERC-20 is pulled from the caller): all of it goes
     ///      to the vault, credited to this collection like the cut, and a total still under the minimum reverts,
-    ///      which returns the top-up.
+    ///      which returns the top-up. A token the registry has since dropped can never reach the vault, so its
+    ///      parked cut is credited to the owner's balance instead (topUp must be 0).
     function flushPendingVaultCut(address token, uint256 topUp) external payable nonReentrant {
-        PaymentLib.flushVault(_pay, address(vault), token, topUp);
+        PaymentLib.flushVault(_pay, registry, address(vault), token, topUp);
     }
 
     /// @notice Count `token` that reached this auction house outside a bid or deposit (royalties, transfers) as
-    ///         proceeds and split it like a sale. Only the auction currency; escrow and everything owed is excluded.
-    ///         Anyone can call this.
+    ///         proceeds and split it like a sale. The auction currency, and ETH on any house (an ERC-20 house can
+    ///         still receive ETH: royalties, mistaken transfers); escrow and everything owed is excluded. Anyone can
+    ///         call this. The owner's share of swept ETH is withdrawn with `withdraw(address(0))` or `withdrawAll`.
     function sweepUntracked(address token) external nonReentrant {
-        if (!_pay.isKnown[token]) revert PaymentLib.TokenNotAccepted(token);
+        PaymentLib.checkSweepable(_pay, token);
         uint256 extra = PaymentLib.untracked(_pay, token);
         if (extra == 0) revert PaymentLib.NothingToWithdraw();
         PaymentLib.split(_pay, _terms(), token, extra);
@@ -514,9 +516,14 @@ contract ERC721AuctionInstance is ERC721, Ownable, ReentrancyGuard, IInstanceLif
         if (PaymentLib.payOwner(_pay, token, owner(), weth) == 0) revert PaymentLib.NothingToWithdraw();
     }
 
-    /// @notice `withdraw` for every token this collection accepts (its one currency).
+    /// @notice `withdraw` for its currency and, once swept on an ERC-20 house, ETH.
     function withdrawAll() external onlyOwner nonReentrant {
-        if (PaymentLib.payOwner(_pay, currency, owner(), weth) == 0) revert PaymentLib.NothingToWithdraw();
+        address[] storage known = _pay.known;
+        bool any;
+        for (uint256 i; i < known.length; ++i) {
+            if (PaymentLib.payOwner(_pay, known[i], owner(), weth) != 0) any = true;
+        }
+        if (!any) revert PaymentLib.NothingToWithdraw();
     }
 
     // ── Payment views ─────────────────────────────────────────────────────────
@@ -616,6 +623,7 @@ contract ERC721AuctionInstance is ERC721, Ownable, ReentrancyGuard, IInstanceLif
         revert RenounceDisabled();
     }
 
-    // Allow receiving ETH (for vault refunds etc.)
+    /// @dev Accepts vault fee payouts (forwarded in `claimVaultFees`), royalties and ETH sent by mistake. ETH outside
+    ///      escrow and what is owed counts as proceeds once someone calls `sweepUntracked(address(0))`.
     receive() external payable {}
 }

@@ -219,15 +219,24 @@ contract DeployMiyamints is Script {
 
     // ── deployment ──────────────────────────────────────────────────────────
 
+    /// @dev Chains where the system must end owned by a Safe (OWNER), never by the deployer key.
+    function _isProduction() internal view returns (bool) {
+        return block.chainid == 1 || block.chainid == 4663;
+    }
+
     function _deployAll(Config memory c, address deployer) internal returns (Deployment memory d) {
         d.deployer = deployer;
-        if (c.owner == address(0)) c.owner = deployer;
-        if (c.treasury == address(0)) c.treasury = deployer; // testnet only (loadConfig enforces)
         // Ownership moves in one step and the treasury is fixed in every collection, so neither can be a dead address.
-        if (block.chainid == 1 || block.chainid == 4663) {
-            if (c.owner != deployer) _requireCode(c.owner, "OWNER");
+        // On production chains OWNER is required, must not be the deployer and must be a contract (the Safe): checked
+        // here, before the first transaction, so a run without it sends nothing.
+        if (_isProduction()) {
+            if (c.owner == address(0)) revert ConfigError("OWNER unset: set OWNER to the Safe that will own the system");
+            if (c.owner == deployer) revert ConfigError("OWNER is the deployer: set OWNER to the Safe");
+            _requireCode(c.owner, "OWNER");
             _requireCode(c.treasury, "TREASURY");
         }
+        if (c.owner == address(0)) c.owner = deployer; // testnets and local only
+        if (c.treasury == address(0)) c.treasury = deployer; // testnet only (loadConfig enforces)
 
         // 0. Testnet alignment token.
         d.alignmentToken = c.alignmentToken;
@@ -332,6 +341,19 @@ contract DeployMiyamints is Script {
 
     function _check(Config memory c, Deployment memory d) internal view {
         MiyaRegistry r = MiyaRegistry(d.registry);
+        // Production: every owner role ended with the Safe, none with the deployer key (checked against the deployed
+        // contracts, not just the config's owner).
+        if (_isProduction()) {
+            _t(c.owner != d.deployer && c.owner.code.length != 0, "owner is a contract other than the deployer");
+            _t(r.owner() != d.deployer, "registry still owned by the deployer");
+            _t(Ownable(d.vaultFactory).owner() != d.deployer, "vault factory still owned by the deployer");
+            _t(Ownable(d.auctionFactory).owner() != d.deployer, "auction factory still owned by the deployer");
+            _t(Ownable(d.erc1155Factory).owner() != d.deployer, "1155 factory still owned by the deployer");
+            _t(Ownable(d.dynamicPricingModule).owner() != d.deployer, "dynamic pricing still owned by the deployer");
+            if (d.gatingModule != address(0)) {
+                _t(Ownable(d.gatingModule).owner() != d.deployer, "gating module still owned by the deployer");
+            }
+        }
         _eq(r.owner(), c.owner, "registry.owner");
         _eq(r.treasury(), c.treasury, "registry.treasury");
         _t(r.protocolFeeBps() == c.protocolFeeBps, "registry.protocolFeeBps");
