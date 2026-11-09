@@ -2,7 +2,7 @@ import { BANKS, busLabel, currentPattern, hexByte, model, padKeyLabel, touch } f
 import { SEQ_KEYS } from '../keys.js'
 import { padGesture } from '../padEdit.js'
 import { useModel } from '../useModel.js'
-import { Slider } from '../widgets.jsx'
+import { HelpButton, Slider } from '../widgets.jsx'
 
 export function Pads() {
   useModel()
@@ -12,13 +12,12 @@ export function Pads() {
   const pat = currentPattern()
   return (
     <div className="screen">
-      <p className="hint">
-        {BANKS[model.bank]} pads on 1 2 3 4 / Q W E R / A S D F / Z X C V. Pattern {hexByte(model.pattern)} {pat.name || 'untitled'} · slot {slot + 1} ({SEQ_KEYS[slot].toUpperCase()}) · sequence bank {bank + 1}.
-        {model.keyboard && model.keyMap === 'renoise'
-          ? ` Keys on the selected pad: Z is C, Q and comma are the C above, I is the next C. A or Caps Lock stops the note. Octave ${model.renoiseOct}.`
-          : ''}
-        {' '}Drag a sample onto a pad. Right-click, or hold on a touch screen, then Copy pad and Paste. Paste &amp; replace shows when that pad already has a sound.
-      </p>
+      <div className="screen-head">
+        <span className="hint">{BANKS[model.bank]} · {hexByte(model.pattern)} {pat.name || 'untitled'}</span>
+        <HelpButton title="Pads">
+          {`${BANKS[model.bank]} pads on 1 2 3 4 / Q W E R / A S D F / Z X C V. Pattern ${hexByte(model.pattern)} ${pat.name || 'untitled'} · slot ${slot + 1} (${SEQ_KEYS[slot].toUpperCase()}) · sequence bank ${bank + 1}. Keys plays the selected pad: Z is C, Q and comma are the C above, I is the next C. A or Caps Lock stops the note. Drag a sample onto a pad. Right-click, or hold on a touch screen, then Copy pad and Paste. Paste & replace shows when that pad already has a sound. Shift selects several pads. N solos. B mutes. The open hat and closed hat share choke 1. Loop on this page, and holding a pad, still loops. Tracker notes play once.`}
+        </HelpButton>
+      </div>
       <div className="pad-layout">
         <div className="pad-grid">
           {Array.from({ length: 16 }, (_, local) => {
@@ -107,7 +106,6 @@ function PadQuick() {
         </select>
         <em />
       </label>
-      <p className="hint">Shift selects several pads. N solos. B mutes. The open hat and closed hat share choke 1.</p>
     </fieldset>
   )
 }

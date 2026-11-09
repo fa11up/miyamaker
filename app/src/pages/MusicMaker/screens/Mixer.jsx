@@ -9,7 +9,7 @@ import { snapOctave } from '../audio/knee.js'
 import { FX_TYPES, model, touch } from '../model.js'
 import { getCompReduction, getMeters, syncMasterComp, syncMixer } from '../audio/engine.js'
 import { useModel } from '../useModel.js'
-import { Knob } from '../widgets.jsx'
+import { HelpButton, Knob } from '../widgets.jsx'
 
 const KNOBS = [
   { key: 'kKnee', label: 'Knee Compression', x: 64.42, y: 23.45, art: d0 },
@@ -43,6 +43,9 @@ export function Mixer() {
         <button type="button" className={`btn free-width ${page === 1 ? 'on' : ''}`} onClick={() => setPage(1)}>
           9–16
         </button>
+        <HelpButton title="Mixer">
+          Sixteen buses, eight on a page, five effect slots each. Empty slots stay unwired, and notes on a bus share one reverb tank. The brickwall limiter still sits after the master compressor and will not pass 0 dBFS. Attack 1 ms, release 1.2 s.
+        </HelpButton>
       </div>
       <div className="mix">
         {visible.map((bus, local) => (
@@ -50,7 +53,6 @@ export function Mixer() {
         ))}
       </div>
       <Compressor />
-      <p className="hint">Sixteen buses, eight on a page, five effect slots each. Empty slots stay unwired, and notes on a bus share one reverb tank. The brickwall limiter still sits after the master compressor and will not pass 0 dBFS. Attack 1 ms, release 1.2 s.</p>
     </div>
   )
 }

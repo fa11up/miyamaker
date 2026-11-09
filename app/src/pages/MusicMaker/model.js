@@ -38,6 +38,8 @@ export const model = {
   selection: [],
   hold: null,
   keyboard: false,
+  /** Off hides the on-screen pads and keys on a narrow window. The hardware map stays. */
+  playSurface: 'pads',
   keyMap: 'koala',
   octave: 4,
   renoiseOct: 3,
@@ -58,6 +60,8 @@ export const model = {
   settings: { autoTrim: true, autoNorm: true, midiOffset: 36, velocity: true },
   browser: false,
   dockOpen: true,
+  arrangeOpen: false,
+  dockWidth: 232,
   help: false,
   about: false,
   tracker: { row: 0, col: 0, pair: 0, focus: false, hex: '', sign: 1, edit: false, step: 1, follow: true, grains: false },
@@ -79,6 +83,10 @@ export const model = {
   comp: defaultComp(),
   songOrder: null,
   songCursor: 0,
+  /** wrap plays the order and repeats it. section repeats one cell. once plays through and stops. */
+  songLoop: 'wrap',
+  /** Cell to start on the next step, or null. */
+  launchCursor: null,
   songName: '',
   songFile: '',
   songPlay: false,
@@ -948,6 +956,62 @@ export function deleteSelection() {
   }).finally(() => touch(true))
 }
 
+export function cyclePlaySurface() {
+  const order = ['off', 'pads', 'keys']
+  const cur = order.includes(model.playSurface) ? model.playSurface : 'pads'
+  const next = order[(order.indexOf(cur) + 1) % order.length]
+  model.playSurface = next
+  if (next === 'pads') {
+    model.keyboard = false
+    model.keyMap = 'koala'
+  } else if (next === 'keys') {
+    model.keyboard = true
+    model.keyMap = 'renoise'
+  }
+  touch(true)
+}
+
+export function setSongLoop(loop) {
+  model.songLoop = loop === 'section' || loop === 'once' ? loop : 'wrap'
+  touch(true)
+}
+
+export function appendSongPattern(pat = model.pattern) {
+  const order = Array.isArray(model.songOrder) ? model.songOrder.slice() : []
+  order.push((pat | 0) & 255)
+  model.songOrder = order.slice(0, 256)
+  model.songPlay = true
+  touch(true)
+}
+
+export function removeSongCell(index) {
+  const order = Array.isArray(model.songOrder) ? model.songOrder.slice() : []
+  if (index < 0 || index >= order.length) return
+  order.splice(index, 1)
+  model.songOrder = order
+  if (model.songCursor >= order.length) model.songCursor = Math.max(0, order.length - 1)
+  if (model.launchCursor != null && model.launchCursor >= order.length) model.launchCursor = null
+  touch(true)
+}
+
+export function moveSongCell(from, to) {
+  const order = Array.isArray(model.songOrder) ? model.songOrder.slice() : []
+  if (from === to || from < 0 || to < 0 || from >= order.length || to >= order.length) return
+  const [item] = order.splice(from, 1)
+  order.splice(to, 0, item)
+  const shift = (cursor) => {
+    if (cursor == null) return cursor
+    if (cursor === from) return to
+    if (from < cursor && to >= cursor) return cursor - 1
+    if (from > cursor && to <= cursor) return cursor + 1
+    return cursor
+  }
+  model.songOrder = order
+  model.songCursor = shift(model.songCursor | 0)
+  model.launchCursor = model.launchCursor == null ? null : shift(model.launchCursor | 0)
+  touch(true)
+}
+
 export function setScreen(id) {
   model.screen = id
   if (id === 'track') {
@@ -1018,6 +1082,9 @@ export function save() {
     editStep: editStep(),
     grainCols: !!model.tracker.grains,
     dockOpen: model.dockOpen !== false,
+    arrangeOpen: !!model.arrangeOpen,
+    dockWidth: Math.max(120, Math.min(640, model.dockWidth | 0 || 232)),
+    playSurface: model.playSurface === 'off' || model.playSurface === 'keys' ? model.playSurface : 'pads',
     settings: model.settings,
     octave: model.octave,
     keyMap: model.keyMap === 'renoise' ? 'renoise' : 'koala',
@@ -1036,6 +1103,8 @@ export function save() {
     songName: model.songName || '',
     songFile: model.songFile || '',
     songPlay: !!model.songPlay,
+    songLoop: model.songLoop === 'section' || model.songLoop === 'once' ? model.songLoop : 'wrap',
+    songCursor: model.songCursor | 0,
   }
   try {
     localStorage.setItem(SAVE_KEY, JSON.stringify(data))
@@ -1309,7 +1378,15 @@ export function boot() {
       songName: typeof data.songName === 'string' ? data.songName : '',
       songFile: typeof data.songFile === 'string' ? data.songFile : '',
       songPlay: !!data.songPlay,
+      songLoop: data.songLoop === 'section' || data.songLoop === 'once' ? data.songLoop : 'wrap',
+      songCursor: Math.max(0, data.songCursor | 0),
+      playSurface: data.playSurface === 'off' || data.playSurface === 'keys' || data.playSurface === 'pads'
+        ? data.playSurface
+        : (data.keyMap === 'renoise' ? 'keys' : 'pads'),
+      arrangeOpen: !!data.arrangeOpen,
+      dockWidth: Math.max(120, Math.min(640, Number(data.dockWidth) || 232)),
     })
+    model.keyboard = model.playSurface === 'keys' || (model.playSurface === 'off' && model.keyMap === 'renoise')
     if (data.v === 2) {
       restorePatterns(data.patterns)
       model.pattern = int(data.pattern, 0, 0, 255)

@@ -4,7 +4,7 @@ import { defaultPatch, renderSynth } from '../audio/synth.js'
 import { previewPcm } from '../audio/engine.js'
 import { model, renderPad, selectedPad, touch } from '../model.js'
 import { useModel } from '../useModel.js'
-import { Knob } from '../widgets.jsx'
+import { HelpButton, Knob } from '../widgets.jsx'
 
 export function Synth() {
   useModel()
@@ -30,6 +30,9 @@ export function Synth() {
   return (
     <div className="screen synth-screen">
       <div className="synth-top">
+        <HelpButton title="Synth">
+          Draw a sound for the selected pad. A preset replaces the patch. The knobs are the oscillators, the filter, and the envelope.
+        </HelpButton>
         <div className="presets">
           {FACTORY.map((item) => (
             <button

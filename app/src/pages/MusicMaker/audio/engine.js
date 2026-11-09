@@ -9,11 +9,13 @@ import { cachePcm, ensureLibrary, newFolder } from '../media/library.js'
 import { allowedMediaUrl, SAMPLE_MEDIA_LIMIT, SAMPLE_MEDIA_PATH } from '../media/allow.js'
 import { fetchCapped } from '../media/capped.js'
 import { VIDEO_AUDIO_PATH, videoPage } from '../media/videoaudio.js'
+import { nextSongCursor, samplePlayKind } from './playKind.js'
+import { shapeSample, sliceSpan, urlSampleHint, VIDEO_FETCH_CAP } from './sampleShape.js'
 import { beginUndo, endUndo, stashUndo } from '../history.js'
 import { createBufferCache, finiteOr, heldForPort, liveVoices, locateStep, playFraction, scrubPcm, stepSeconds, stepsBehind, voicesToFade } from './voices.js'
 import { importKitFile, importSongFile } from './song.js'
 import { SongChanged, loadTicket, songId } from '../jobs.js'
-import { BUS_COUNT, TRACK_VEL, audioBank, budgetNote, model, currentSequence, ensurePattern, stepCount, writeEvent, commitTrackerNote, setUndoBatch, touch, rememberSample, idbSet, selectPad, flushSave } from '../model.js'
+import { BUS_COUNT, TRACK_VEL, audioBank, budgetNote, model, currentSequence, ensurePattern, stepCount, trackerFields, writeEvent, commitTrackerNote, setUndoBatch, touch, rememberSample, idbSet, selectPad, flushSave } from '../model.js'
 
 setUndoBatch({ begin: beginUndo, end: endUndo })
 
@@ -1034,7 +1036,9 @@ export function playPad(index, velocity = TRACK_VEL, when = 0, opts = {}) {
       }
       if (!ok) return
       if (!wait.released) return playPad(index, velocity, 0, { ...opts, resumed: true })
-      if (model.pads[index]?.mode === 'oneshot') playPad(index, velocity, 0, { ...opts, holdId: undefined, resumed: true })
+      if (opts.trackerNote || opts.pattern || model.pads[index]?.mode === 'oneshot') {
+        playPad(index, velocity, 0, { ...opts, holdId: undefined, resumed: true })
+      }
     }).catch(() => {
       if (opts.holdId && deferred.get(opts.holdId) === wait) deferred.delete(opts.holdId)
     })
@@ -1089,8 +1093,18 @@ export function playPad(index, velocity = TRACK_VEL, when = 0, opts = {}) {
   const region = Math.max(grainLoop ? 0.03 : 0.01, end - offset)
   const regionDur = region / rate
   const vel = clamp(finiteOr(velocity, 0), 0, 1) * clamp(finiteOr(pad.volume, 0.85), 0, 1)
-  const heldLive = !!opts.holdId && !opts.pattern
-  const envTotal = grainLoop ? 3600 : (heldLive || pad.mode !== 'oneshot' ? Math.max(regionDur, 32) : regionDur)
+  const heldLive = !!opts.holdId && !opts.pattern && !opts.trackerNote
+  const kind = samplePlayKind({
+    grain: grainLoop,
+    pattern: !!opts.pattern,
+    trackerNote: !!opts.trackerNote,
+    held: heldLive,
+    mode: pad.mode || 'oneshot',
+  })
+  const looping = kind === 'loop'
+  const gated = kind === 'gate'
+  if (opts.trackerNote) silenceLane(opts.lane ?? 0, t)
+  const envTotal = grainLoop ? 3600 : (looping || gated ? Math.max(regionDur, 32) : regionDur)
   const stops = []
   const fx = pad.fx || {}
 
@@ -1119,17 +1133,12 @@ export function playPad(index, velocity = TRACK_VEL, when = 0, opts = {}) {
   scheduleAmp(amp, pad.amp, vel, t, envTotal)
 
   if (!grainLoop) {
-    if (heldLive) {
+    if (looping) {
       src.loop = true
-      src.loopStart = loopAt
+      src.loopStart = heldLive ? loopAt : offset
       src.loopEnd = end
       src.start(t, offset)
-    } else if (pad.mode === 'loop') {
-      src.loop = true
-      src.loopStart = offset
-      src.loopEnd = end
-      src.start(t, offset)
-    } else if (pad.mode === 'gate') {
+    } else if (gated) {
       src.start(t, offset)
     } else {
       src.start(t, offset, region)
@@ -1147,11 +1156,11 @@ export function playPad(index, velocity = TRACK_VEL, when = 0, opts = {}) {
     choke: groupId(pad.choke),
     pad: index,
     dead: false,
-    quietAt: grainLoop || heldLive || pad.mode !== 'oneshot' ? null : t + regionDur + 0.03,
+    quietAt: grainLoop || looping || gated ? null : t + regionDur + 0.03,
     startAt: t,
     pattern: !!opts.pattern,
-    lane: opts.pattern ? (opts.lane ?? null) : null,
-    heldLoop: heldLive,
+    lane: opts.pattern || opts.trackerNote ? (opts.lane ?? null) : null,
+    heldLoop: looping && heldLive,
     introUntil: t + regionDur,
     peak: Math.max(0.0001, vel * clamp(pad.amp.s ?? 1, 0, 1)),
     stops,
@@ -1169,15 +1178,15 @@ export function playPad(index, velocity = TRACK_VEL, when = 0, opts = {}) {
       offset,
       end,
       loopAt,
-      mode: grainLoop ? 'grain' : heldLive ? 'held' : (pad.mode || 'oneshot'),
+      mode: grainLoop ? 'grain' : heldLive && looping ? 'held' : kind === 'loop' ? 'loop' : kind,
       reverse: !!pad.reverse,
     },
   }
   pruneVoices()
   makeRoom()
   voices.push(voice)
-  if (opts.pattern) patternVoices.push(voice)
-  if (opts.holdId) held.set(opts.holdId, voice)
+  if (opts.pattern || opts.trackerNote) patternVoices.push(voice)
+  if (opts.holdId && (looping || gated)) held.set(opts.holdId, voice)
   if (src) {
     src.onended = () => {
       voice.dead = true
@@ -1349,11 +1358,58 @@ function fireStep(step, time) {
   if (step % 2 === 0) touch(false)
 }
 
+function haltClock() {
+  model.playing = false
+  started = false
+  window.clearInterval(timer)
+  touch(false)
+}
+
+/** True when play-once has finished and the clock should stop without cutting the last notes. */
 function advanceSong() {
   const order = model.songOrder
-  if (!model.songPlay || !Array.isArray(order) || order.length < 2) return
-  model.songCursor = ((model.songCursor || 0) + 1) % order.length
+  if (!model.songPlay || !Array.isArray(order) || !order.length) return false
+  const next = nextSongCursor(model.songCursor || 0, order.length, model.songLoop || 'wrap')
+  if (next < 0) {
+    model.songPlay = false
+    haltClock()
+    return true
+  }
+  model.songCursor = next
+  model.pattern = order[next] | 0
+  return false
+}
+
+/** Jump to a queued cell at this step. The step time stays where it is. */
+function takeLaunch() {
+  if (model.launchCursor == null) return false
+  const order = model.songOrder
+  const at = model.launchCursor | 0
+  model.launchCursor = null
+  if (!model.songPlay || !Array.isArray(order) || !order.length) return false
+  model.songCursor = Math.max(0, Math.min(order.length - 1, at))
   model.pattern = order[model.songCursor] | 0
+  nextStep = 0
+  return true
+}
+
+/** Launch a cell on the next step. From stop, Play starts on that cell. */
+export async function launchSongSection(index) {
+  const order = model.songOrder
+  if (!Array.isArray(order) || !order.length) return
+  const at = Math.max(0, Math.min(order.length - 1, index | 0))
+  model.songPlay = true
+  if (model.playing) {
+    model.launchCursor = at
+    touch(false)
+    return
+  }
+  model.songCursor = at
+  model.pattern = order[at] | 0
+  model.launchCursor = null
+  // The first tap in a session is what wakes the audio context. Play cannot start before that.
+  if (!(await resume())) return
+  startTransport({ keepCursor: true })
 }
 
 function pumpGrains() {
@@ -1407,12 +1463,15 @@ function scheduler() {
     const n = Math.max(1, stepCount(currentSequence()))
     const total = nextStep + skip
     nextStep = total % n
-    if (total >= n) advanceSong()
+    if (total >= n) {
+      if (!takeLaunch() && advanceSong()) return
+    }
     nextTime += skip * base
   }
   let guard = 0
   while (nextTime < horizon && guard < 64) {
     guard += 1
+    if (model.launchCursor != null) takeLaunch()
     const seq = currentSequence()
     const n = Math.max(1, stepCount(seq))
     if (nextStep >= n) nextStep = 0
@@ -1426,7 +1485,7 @@ function scheduler() {
     nextStep += 1
     if (nextStep >= n) {
       nextStep = 0
-      advanceSong()
+      if (!takeLaunch() && advanceSong()) return
     }
     nextTime += base
   }
@@ -1438,7 +1497,7 @@ export async function togglePlay() {
   else startTransport()
 }
 
-export function startTransport() {
+export function startTransport(opts = {}) {
   if (!ctx) return
   if (model.playing) return
   patternVoices.forEach((v) => silence(v, ctx.currentTime, 0.02))
@@ -1448,9 +1507,12 @@ export function startTransport() {
   nextTime = ctx.currentTime + 0.05
   nextStep = 0
   anchor = { step: 0, time: nextTime }
+  model.launchCursor = null
   if (model.songPlay && Array.isArray(model.songOrder) && model.songOrder.length) {
-    model.songCursor = 0
-    model.pattern = model.songOrder[0] | 0
+    if (!opts.keepCursor) model.songCursor = 0
+    const at = Math.max(0, Math.min(model.songOrder.length - 1, model.songCursor | 0))
+    model.songCursor = at
+    model.pattern = model.songOrder[at] | 0
   }
   window.clearInterval(timer)
   timer = window.setInterval(scheduler, 25)
@@ -1817,11 +1879,13 @@ export function onMidi(event) {
       })
     }
   }
+  const onTrack = model.screen === 'track'
+  const track = onTrack ? { trackerNote: true, lane: Math.floor((model.tracker.col || 0) / trackerFields()) } : {}
   if ('pad' in action) {
     if (model.selected !== action.pad || model.selection.length) selectPad(action.pad)
-    playPad(action.pad, vel, 0, { holdId, noCapture: model.screen === 'track' })
+    playPad(action.pad, vel, 0, { holdId, noCapture: onTrack, ...track })
   } else {
-    playPad(model.selected, vel, 0, { pitch: action.pitch, holdId, noCapture: model.screen === 'track' })
+    playPad(model.selected, vel, 0, { pitch: action.pitch, holdId, noCapture: onTrack, ...track })
   }
   midiState.last = `${port?.name || 'MIDI'} note ${note}`
 }
@@ -2408,9 +2472,10 @@ export async function cacheRemote(url, name = 'media') {
   await storeInCache(decoded.pcm, decoded.sr, name)
 }
 
-export async function importVideoLink(raw) {
+export async function readVideoLink(raw) {
   const page = videoPage(String(raw || '').trim())
   if (!page) throw new Error('Use a YouTube, Odysee, LBRY, or X link.')
+  const hint = urlSampleHint(raw)
   await resume()
   model.browserNote = 'Reading that video'
   touch(false)
@@ -2426,7 +2491,7 @@ export async function importVideoLink(raw) {
     throw new Error(message)
   }
   const header = res.headers.get('x-sample-name')
-  let name = 'video'
+  let name = hint.name || 'video'
   try {
     name = decodeURIComponent(header || '') || name
   } catch {
@@ -2434,7 +2499,90 @@ export async function importVideoLink(raw) {
   }
   const bytes = await res.arrayBuffer()
   const decoded = await decodeAny(bytes, `${name}.webm`)
-  await storeInCache(decoded.pcm, decoded.sr, name)
+  const sr = decoded.sr || 44100
+  const seconds = decoded.pcm.length / sr
+  return {
+    pcm: decoded.pcm,
+    sr,
+    name: sampleTitle(name),
+    seconds,
+    capped: bytes.byteLength >= VIDEO_FETCH_CAP - 4096,
+    hint,
+  }
+}
+
+function peakNorm(pcm) {
+  if (!model.settings.autoNorm || !pcm?.length) return pcm
+  let peak = 0
+  for (let i = 0; i < pcm.length; i++) peak = Math.max(peak, Math.abs(pcm[i]))
+  if (peak <= 0.001) return pcm
+  const gain = 0.98 / peak
+  const out = new Float32Array(pcm.length)
+  for (let i = 0; i < pcm.length; i++) out[i] = pcm[i] * gain
+  return out
+}
+
+async function cacheShaped(pcm, sr, name) {
+  const title = sampleTitle(name)
+  const out = peakNorm(pcm)
+  ensureLibrary()
+  await cachePcm('imports', title, out, sr || 44100, 'wav')
+  return { title, pcm: out, sr: sr || 44100 }
+}
+
+/**
+ * Keep a cropped video take. `where` is `cache`, `pad`, or `slices`.
+ * One pad is capped at 16 seconds. Slices split the crop and each piece is capped the same way.
+ */
+export async function commitVideoSample(take, opts = {}) {
+  if (!take?.pcm?.length) throw new Error('That video has no audio')
+  const song = songId()
+  const name = sampleTitle(opts.name || take.name)
+  const pad = Math.max(0, Math.min(63, (opts.pad ?? model.selected) | 0))
+  if (opts.where === 'slices') {
+    const cut = sliceSpan(take.pcm, take.sr, opts)
+    beginUndo()
+    try {
+      for (let i = 0; i < cut.pieces.length; i++) {
+        const piece = peakNorm(cut.pieces[i].pcm)
+        const at = (pad + i) % 64
+        await rememberSample(at, {
+          pcm: piece,
+          sr: cut.pieces[i].sr,
+          name: cut.pieces.length > 1 ? `${name} ${i + 1}` : name,
+          forceName: true,
+          song,
+          padPatch: { trimStart: 0, trimEnd: 1, mode: 'oneshot' },
+        })
+        ensureLibrary()
+        await cachePcm('imports', cut.pieces.length > 1 ? `${name} ${i + 1}` : name, piece, cut.pieces[i].sr, 'wav')
+      }
+      model.selected = pad
+      const left = budgetNote()
+      const tail = cut.clipped ? ' Each slice keeps 16 seconds.' : ''
+      model.browserNote = `${cut.count} slices from ${name} on pad ${pad + 1}${tail}${left ? ` ${left}` : ''}`
+      touch(true)
+      return { count: cut.count, clipped: cut.clipped }
+    } finally {
+      endUndo()
+    }
+  }
+  const shaped = shapeSample(take.pcm, take.sr, opts)
+  const audio = peakNorm(shaped.pcm)
+  if (!audio.length) throw new Error('That crop is empty')
+  if (opts.where === 'pad') {
+    await placePcm(pad, audio, shaped.sr, name, { forceName: true, song })
+    if (shaped.clipped) {
+      model.browserNote = `${name} on pad ${pad + 1}. Kept 16 seconds from the in point.`
+      touch(true)
+    }
+    return { clipped: shaped.clipped, seconds: shaped.seconds }
+  }
+  const stored = await cacheShaped(audio, shaped.sr, name)
+  const clip = shaped.clipped ? ' Kept 16 seconds from the in point.' : ''
+  model.browserNote = `${stored.title} is in Cache.${clip} Load it onto a pad to keep it in a song.`
+  touch(true)
+  return { clipped: shaped.clipped, seconds: shaped.seconds }
 }
 
 /** Copy the trimmed span onto the next empty pad. The original sample stays. */

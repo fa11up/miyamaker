@@ -1,7 +1,7 @@
 import { useRef } from 'react'
 import { model, currentPattern, setHit, clearHit, addBar, removeBar, doubleUp, stepCount, touch } from '../model.js'
 import { useModel } from '../useModel.js'
-import { Slider } from '../widgets.jsx'
+import { HelpButton, Slider } from '../widgets.jsx'
 import { PatternBar } from './PatternBar.jsx'
 
 export function Sequencer() {
@@ -25,6 +25,9 @@ export function Sequencer() {
           Double
         </button>
         <span className="hint">{steps === 1 ? '1 step' : `${steps} steps`}</span>
+        <HelpButton title="Sequence">
+          Patterns are addresses 00–FF. Drag a cell up or down to set velocity. Micro is how far the hit sits from the 16th, in percent of a step. Grid record snaps. Natural record writes that offset into the micro-move lane.
+        </HelpButton>
         <Slider
           label="Swing"
           min={0}
@@ -94,9 +97,6 @@ export function Sequencer() {
           </button>
         </div>
       )}
-      <p className="hint">
-        Patterns are addresses 00–FF. Drag a cell up or down to set velocity. Micro is how far the hit sits from the 16th, in percent of a step. Grid record snaps. Natural record writes that offset into the micro-move lane.
-      </p>
     </div>
   )
 }

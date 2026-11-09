@@ -651,6 +651,8 @@ async function loadSongNow(doc, fileId, ticket) {
     const order = (Array.isArray(doc.order) && doc.order.length ? doc.order : [0]).slice(0, 256).map((n) => n & 255)
     model.songOrder = order
     model.songCursor = 0
+    model.songLoop = 'wrap'
+    model.launchCursor = null
     model.songPlay = true
     model.songName = plainText(doc.name, 80) || 'Song'
     model.songFile = fileId || ''

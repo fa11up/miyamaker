@@ -295,7 +295,14 @@ export function SaveMenu() {
   const [busy, setBusy] = useState(false)
   const [name, setName] = useState(() => model.songName || 'Song')
   const windowId = model.fileWindow || ''
+  const saveRef = useRef(null)
   useMenuCloser(menu, root, setMenu)
+  saveRef.current = saveOver
+  useEffect(() => {
+    const onSave = () => saveRef.current?.()
+    window.addEventListener('mmm-save', onSave)
+    return () => window.removeEventListener('mmm-save', onSave)
+  }, [])
 
   function choose(id) {
     setMenu(false)

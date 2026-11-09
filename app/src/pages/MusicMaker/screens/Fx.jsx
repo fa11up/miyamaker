@@ -1,8 +1,8 @@
 import { GRAIN_DIRS, REPEAT_NAMES, SLICE_FILLS, SLICE_PATTERNS, repeatAmount } from '../audio/numpadFx.js'
-import { pushNumpadFx } from '../audio/engine.js'
+import { holdNumpadFx, pushNumpadFx, releaseNumpadFx } from '../audio/engine.js'
 import { model, touch } from '../model.js'
 import { useModel } from '../useModel.js'
-import { Knob } from '../widgets.jsx'
+import { HelpButton, Knob } from '../widgets.jsx'
 
 const ORDER = [7, 8, 9, 4, 5, 6, 1, 2, 3, 0]
 
@@ -30,10 +30,11 @@ export function Fx() {
   const type = slot.type
   return (
     <div className="screen fx-screen">
-      <p className="hint">
-        Hold Shift and a numpad digit. Repeat and Slice follow the project tempo. Grain, filter, chorus, and flanger leave the beat alone.
-        Numpad / and * still move the Keys octave.
-      </p>
+      <div className="screen-head">
+        <HelpButton title="FX">
+          {`Hold a numpad key, or hold Shift and that digit. A short tap selects the slot. ${hintFor(type)} Repeat and Slice follow the project tempo. Grain, filter, chorus, and flanger leave the beat alone. Numpad / and * still move the Keys octave.`}
+        </HelpButton>
+      </div>
       <div className="fx-layout">
       <div className="numpad" role="listbox" aria-label="Numpad FX">
         {ORDER.map((digit) => {
@@ -47,9 +48,32 @@ export function Fx() {
               role="option"
               aria-selected={on}
               className={`num-key ${on ? 'on' : ''} ${held ? 'live' : ''} ${digit === 0 ? 'zero' : ''}`}
-              onClick={() => {
-                model.fxEdit = digit
-                touch(false)
+              onPointerDown={(event) => {
+                const id = event.pointerId
+                const x = event.clientX
+                const y = event.clientY
+                let moved = false
+                holdNumpadFx(digit)
+                const move = (ev) => {
+                  if (ev.pointerId !== id) return
+                  const dx = ev.clientX - x
+                  const dy = ev.clientY - y
+                  if (dx * dx + dy * dy > 64) moved = true
+                }
+                const up = (ev) => {
+                  if (ev.pointerId !== id) return
+                  window.removeEventListener('pointermove', move)
+                  window.removeEventListener('pointerup', up)
+                  window.removeEventListener('pointercancel', up)
+                  releaseNumpadFx(digit)
+                  if (!moved && ev.type !== 'pointercancel') {
+                    model.fxEdit = digit
+                    touch(false)
+                  }
+                }
+                window.addEventListener('pointermove', move)
+                window.addEventListener('pointerup', up)
+                window.addEventListener('pointercancel', up)
               }}
             >
               <b>{digit}</b>
@@ -173,7 +197,6 @@ export function Fx() {
             />
           )}
         </div>
-        <p className="hint">{hintFor(type)}</p>
       </fieldset>
       </div>
     </div>

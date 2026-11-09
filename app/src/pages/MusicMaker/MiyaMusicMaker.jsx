@@ -1,13 +1,15 @@
-import { useEffect } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { PAD_KEYS, SCREENS, SEQ_KEYS, SHORTCUTS, pianoNote, renoiseNote, typing } from './keys.js'
 import {
   addBar,
   clearHit,
   commitTrackerNote,
+  cyclePlaySurface,
   cycleScreen,
   deleteSelection,
   doubleUp,
   model,
+  save,
   removeBar,
   selectPad,
   setBank,
@@ -38,6 +40,8 @@ import { KeysMap } from './screens/KeysMap.jsx'
 import { buildPublish, listenForFiles } from './publish.js'
 import { NewMenu, SaveMenu } from './screens/SongMenus.jsx'
 import { PadMenu } from './screens/PadMenu.jsx'
+import { Arranger } from './screens/Arranger.jsx'
+import { PlaySurface } from './screens/PlaySurface.jsx'
 
 export function MiyaMusicMaker() {
   useModel()
@@ -70,6 +74,46 @@ export function MiyaMusicMaker() {
     }
     window.addEventListener('keydown', down)
     window.addEventListener('keyup', up)
+    const pads = { held: new Array(16).fill(false), at: new Array(16).fill(0) }
+    let raf = 0
+    const poll = () => {
+      const list = navigator.getGamepads?.() || []
+      const now = performance.now()
+      for (const gp of list) {
+        if (!gp || (gp.mapping && gp.mapping !== 'standard')) continue
+        const r1 = !!gp.buttons[5]?.pressed
+        const arrows = [[12, 'ArrowUp'], [13, 'ArrowDown'], [14, 'ArrowLeft'], [15, 'ArrowRight']]
+        for (const [btn, key] of arrows) {
+          const downPad = !!gp.buttons[btn]?.pressed
+          let fire = false
+          if (downPad && !pads.held[btn]) {
+            fire = true
+            pads.at[btn] = now + 380
+          } else if (downPad && now >= pads.at[btn]) {
+            fire = true
+            pads.at[btn] = now + 70
+          }
+          pads.held[btn] = downPad
+          if (fire) {
+            onKey({
+              key,
+              ctrlKey: r1,
+              shiftKey: false,
+              altKey: false,
+              metaKey: false,
+              repeat: false,
+              code: '',
+              preventDefault() {},
+              stopPropagation() {},
+              target: null,
+              composedPath() { return [] },
+            })
+          }
+        }
+      }
+      raf = requestAnimationFrame(poll)
+    }
+    raf = requestAnimationFrame(poll)
     window.addEventListener('blur', blur)
     document.addEventListener('visibilitychange', hidden)
     const frame = document.querySelector('[data-miya-music]')?.closest('.react-draggable')
@@ -81,6 +125,7 @@ export function MiyaMusicMaker() {
       watch.observe(frame, { attributes: true, attributeFilter: ['class'] })
     }
     return () => {
+      cancelAnimationFrame(raf)
       window.removeEventListener('keydown', down)
       window.removeEventListener('keyup', up)
       window.removeEventListener('blur', blur)
@@ -91,7 +136,7 @@ export function MiyaMusicMaker() {
 
   return (
     <div
-      className={`mmm ${model.k3 ? 'theme-k3' : ''}`}
+      className={`mmm surface-${model.playSurface || 'pads'} ${model.k3 ? 'theme-k3' : ''}`}
       onDragOver={(e) => e.preventDefault()}
       onDrop={(e) => {
         e.preventDefault()
@@ -100,25 +145,56 @@ export function MiyaMusicMaker() {
       }}
     >
       <div className="mmm-bar">
-        <FileMenu />
-        <NewMenu />
-        <SaveMenu />
+        <div className="bar-files">
+          <FileMenu />
+          <NewMenu />
+          <SaveMenu />
+        </div>
+        <BarMenu />
         <Transport />
       </div>
-      <div className={`mmm-body${model.dockOpen === false ? ' dock-shut' : ''}`}>
-        <button
-          type="button"
-          className="dock-toggle btn"
-          aria-label={model.dockOpen === false ? 'Show sample browser' : 'Hide sample browser'}
-          onClick={() => {
-            model.dockOpen = model.dockOpen === false
-            touch(true)
-          }}
-        >
-          {model.dockOpen === false ? '>' : '<'}
-        </button>
-        <SampleBrowser />
+      <div
+        className={`mmm-body${model.dockOpen === false && !model.arrangeOpen ? ' dock-shut' : ''}`}
+        style={{ '--dock-size': `${Math.max(120, model.dockWidth || 232)}px` }}
+      >
+        <div className="dock-rail">
+          <button
+            type="button"
+            className={`btn ${model.dockOpen !== false ? 'on' : ''}`}
+            aria-label={model.dockOpen === false ? 'Show sample browser' : 'Hide sample browser'}
+            onClick={() => {
+              model.dockOpen = model.dockOpen === false
+              if (model.dockOpen !== false && (model.dockWidth || 0) < 120) model.dockWidth = 232
+              touch(true)
+            }}
+          >
+            {model.dockOpen === false ? '>' : '<'}
+          </button>
+          <button
+            type="button"
+            className={`btn ${model.arrangeOpen ? 'on' : ''}`}
+            aria-label={model.arrangeOpen ? 'Hide arranger' : 'Show arranger'}
+            onClick={() => {
+              model.arrangeOpen = !model.arrangeOpen
+              if (model.arrangeOpen && (model.dockWidth || 0) < 120) model.dockWidth = 232
+              touch(true)
+            }}
+          >
+            ≡
+          </button>
+        </div>
+        {(model.dockOpen !== false || model.arrangeOpen) && (
+          <>
+            <div className="dock-pane">
+              {model.dockOpen !== false && <SampleBrowser />}
+              {model.dockOpen !== false && model.arrangeOpen && <div className="dock-rule" />}
+              {model.arrangeOpen && <Arranger />}
+            </div>
+            <div className="dock-splitter" onPointerDown={splitDrag} />
+          </>
+        )}
         <div className="mmm-main">
+          <PlaySurface />
           {model.screen === 'pads' && <Pads />}
           {model.screen === 'edit' && <Editor />}
           {model.screen === 'seq' && <Sequencer />}
@@ -142,7 +218,6 @@ export function MiyaMusicMaker() {
                   ))}
                 </tbody>
               </table>
-              <p className="hint">Pad plays the bank, including the A B C D pages on [ ] and the arrow keys. Keys plays the selected pad. Click MIDI for a Launchpad, MPC, MPD, MPK, or any other controller. Shift and a numpad digit holds a master FX slot.</p>
             </Dialog>
           )}
         </div>
@@ -175,12 +250,12 @@ function Transport() {
           >
             Rec
           </button>
-          <button type="button" className={`btn free-width ${model.metro ? 'on' : ''}`} onClick={() => toggleMetro()}>
+          <button type="button" className={`btn free-width bar-wide ${model.metro ? 'on' : ''}`} onClick={() => toggleMetro()}>
             Metro
           </button>
           <button
             type="button"
-            className="btn free-width"
+            className="btn free-width bar-wide"
             onClick={() => {
               undo().then((did) => {
                 if (!did) return
@@ -207,7 +282,7 @@ function Transport() {
             />
             <em />
           </label>
-          <span className="song-name" title={model.songName || 'No song'}>{model.songName || 'No song'}</span>
+          <span className="song-name bar-wide" title={model.songName || 'No song'}>{model.songName || 'No song'}</span>
           {model.saveError && (
             <span className="save-error" role="status" title={model.saveError}>
               Not saved
@@ -221,29 +296,13 @@ function Transport() {
             </button>
           ))}
         </div>
-        <div className="mode-toggle" role="group" aria-label="Play mode">
-          <button type="button" className={`btn free-width ${keysMode() ? '' : 'on'}`} onClick={() => setPlayMode('pad')}>
-            Pad
-          </button>
-          <button type="button" className={`btn free-width ${keysMode() ? 'on' : ''}`} onClick={() => setPlayMode('keys')}>
-            {keysMode() ? `Keys ${model.renoiseOct}` : 'Keys'}
-          </button>
-          <button
-            type="button"
-            className={`btn keys-map-btn ${model.keysHelp ? 'on' : ''}`}
-            aria-label="Pad and Keys keyboard"
-            title="Pad and Keys"
-            onClick={() => {
-              model.keysHelp = !model.keysHelp
-              touch(false)
-            }}
-          >
-            <span className="keys-mark" aria-hidden="true" />
-          </button>
-        </div>
+        <button type="button" className="btn free-width surface-btn" aria-label="Play surface" onClick={() => cyclePlaySurface()}>
+          {surfaceLabel()}
+        </button>
+        <BankMenu />
         <button
           type="button"
-          className={`btn free-width midi-btn ${midiLive ? 'on' : ''}`}
+          className={`btn free-width midi-btn bar-wide ${midiLive ? 'on' : ''}`}
           title={midi.title}
           onClick={() => enableMidi().catch(() => {})}
         >
@@ -261,8 +320,157 @@ function Transport() {
             </button>
           ))}
         </div>
+        <ScreenMenu />
     </>
   )
+}
+
+function surfaceLabel() {
+  if (model.playSurface === 'off') return 'Off'
+  if (model.playSurface === 'keys') return `Keys ${model.renoiseOct}`
+  return 'Pads'
+}
+
+function useMenuCloser(open, root, setOpen) {
+  useEffect(() => {
+    if (!open) return undefined
+    const down = (event) => {
+      const node = root.current
+      if (!node) return
+      if (node.contains(event.target)) return
+      if (event.composedPath?.().includes(node)) return
+      setOpen(false)
+    }
+    window.addEventListener('pointerdown', down)
+    return () => window.removeEventListener('pointerdown', down)
+  }, [open, root, setOpen])
+}
+
+function BarMenu() {
+  const root = useRef(null)
+  const [open, setOpen] = useState(false)
+  useMenuCloser(open, root, setOpen)
+  function go(id) {
+    setOpen(false)
+    if (id === 'save-over') {
+      window.dispatchEvent(new Event('mmm-save'))
+      return
+    }
+    model.fileWindow = id
+    touch(false)
+  }
+  return (
+    <div className="mmm-file bar-menu" ref={root}>
+      <button type="button" className={`btn free-width ${open ? 'on' : ''}`} aria-expanded={open} aria-haspopup="menu" onClick={() => setOpen((v) => !v)}>
+        Menu
+      </button>
+      {open && (
+        <div className="file-menu" role="menu">
+          <button type="button" onClick={() => go('open')}>Open file…</button>
+          <button type="button" onClick={() => go('folder')}>Open folder…</button>
+          <button type="button" onClick={() => go('link')}>Load song link…</button>
+          <button type="button" onClick={() => go('wallet')}>Wallet…</button>
+          <button type="button" onClick={() => go('video')}>Video link…</button>
+          <button type="button" onClick={() => go('image')}>Image…</button>
+          <hr />
+          <button type="button" onClick={() => go('new-blank')}>New blank</button>
+          <button type="button" onClick={() => go('new-template')}>New from template</button>
+          <button type="button" onClick={() => go('new-duplicate')}>New duplicate</button>
+          <button type="button" onClick={() => go('new-folder')}>Folder</button>
+          <button type="button" onClick={() => go('new-kit')}>Kit</button>
+          <button type="button" onClick={() => go('new-slice')}>Slice</button>
+          <hr />
+          <button type="button" onClick={() => go('save-over')}>Save</button>
+          <button type="button" onClick={() => go('save-as')}>Save as…</button>
+          <button type="button" onClick={() => go('save-template')}>Save as template</button>
+          <button type="button" onClick={() => go('song')}>Save song…</button>
+          <button type="button" onClick={() => go('kit')}>Save kit…</button>
+          <hr className="menu-phone" />
+          <button type="button" className="menu-phone" onClick={() => { setOpen(false); undo().then((did) => { if (!did) return; syncMasterComp(); syncMixer(true); pushNumpadFx() }) }}>Undo</button>
+          <button type="button" className="menu-phone" onClick={() => { setOpen(false); toggleMetro() }}>Metro</button>
+          <button type="button" className="menu-phone" onClick={() => { setOpen(false); enableMidi().catch(() => {}) }}>MIDI</button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function BankMenu() {
+  const root = useRef(null)
+  const [open, setOpen] = useState(false)
+  useMenuCloser(open, root, setOpen)
+  return (
+    <div className="mmm-file bank-one" ref={root}>
+      <button type="button" className="btn free-width on" aria-expanded={open} aria-label="Sample bank" onClick={() => setOpen((v) => !v)}>
+        {['A', 'B', 'C', 'D'][model.bank] || 'A'}
+      </button>
+      {open && (
+        <div className="file-menu" role="menu">
+          {['A', 'B', 'C', 'D'].map((name, i) => (
+            <button key={name} type="button" onClick={() => { setOpen(false); setBank(i) }}>{name}</button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ScreenMenu() {
+  const root = useRef(null)
+  const [open, setOpen] = useState(false)
+  useMenuCloser(open, root, setOpen)
+  const current = SCREENS.find((screen) => screen.id === model.screen) || SCREENS[0]
+  return (
+    <div className="mmm-file screen-one" ref={root}>
+      <button type="button" className="btn free-width on" aria-expanded={open} aria-label="Screen" onClick={() => setOpen((v) => !v)}>
+        {current.label}
+      </button>
+      {open && (
+        <div className="file-menu" role="menu">
+          {SCREENS.map((screen) => (
+            <button key={screen.id} type="button" onClick={() => { setOpen(false); setScreen(screen.id) }}>{screen.label}</button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function splitDrag(event) {
+  if (event.button != null && event.button !== 0) return
+  const splitter = event.currentTarget
+  const body = splitter.parentElement
+  if (!body) return
+  const stacked = getComputedStyle(body).flexDirection === 'column'
+  const start = stacked ? event.clientY : event.clientX
+  const origin = model.dockWidth || 232
+  const id = event.pointerId
+  const move = (ev) => {
+    if (ev.pointerId !== id) return
+    const delta = (stacked ? ev.clientY : ev.clientX) - start
+    const room = (stacked ? body.clientHeight : body.clientWidth) - 200
+    const next = origin + delta
+    if (next < 56) {
+      model.dockOpen = false
+      model.arrangeOpen = false
+      touch(true)
+      end(ev)
+      return
+    }
+    model.dockWidth = Math.max(120, Math.min(Math.max(120, room), next))
+    touch(false)
+  }
+  const end = (ev) => {
+    if (ev && ev.pointerId !== id) return
+    splitter.removeEventListener('pointermove', move)
+    splitter.removeEventListener('pointerup', end)
+    splitter.removeEventListener('pointercancel', end)
+    save()
+  }
+  splitter.setPointerCapture?.(id)
+  splitter.addEventListener('pointermove', move)
+  splitter.addEventListener('pointerup', end)
+  splitter.addEventListener('pointercancel', end)
 }
 
 /**
@@ -294,15 +502,75 @@ function keysMode() {
   return model.keyboard && model.keyMap === 'renoise'
 }
 
-function setPlayMode(mode) {
-  if (mode === 'keys') {
-    model.keyboard = true
-    model.keyMap = 'renoise'
-  } else {
-    model.keyboard = false
-    model.keyMap = 'koala'
+function playKey(index, holdId, pitch, extra) {
+  const opts = { ...(extra || {}) }
+  if (model.screen === 'track') {
+    opts.trackerNote = true
+    if (opts.lane == null) opts.lane = Math.floor((model.tracker.col || 0) / trackerFields())
   }
-  touch(true)
+  noteOn(index, TRACK_VEL, holdId, pitch, opts)
+}
+
+function musicRoot() {
+  return document.querySelector('[data-miya-music]')?.shadowRoot || null
+}
+
+function navItems() {
+  const root = musicRoot()
+  if (!root) return []
+  return [...root.querySelectorAll('.mmm-main .dial, .mmm-main input[type="range"], .mmm-main select, .mmm-main [data-nav], .dock-pane [data-nav], .dock-pane select, .dock-pane input[type="range"]')]
+    .filter((el) => el.offsetParent !== null && !el.disabled)
+}
+
+function focusedControl() {
+  const el = musicRoot()?.activeElement
+  if (!el) return null
+  return el
+}
+
+function moveNav(dir) {
+  const items = navItems()
+  if (!items.length) return
+  const cur = focusedControl()
+  let i = items.indexOf(cur)
+  if (i < 0) i = dir > 0 ? 0 : items.length - 1
+  else i = (i + dir + items.length) % items.length
+  items.forEach((el) => el.classList.remove('nav-hot'))
+  items[i].classList.add('nav-hot')
+  items[i].focus()
+  items[i].scrollIntoView({ block: 'nearest', inline: 'nearest' })
+}
+
+function editNav(dir, shift) {
+  const el = focusedControl()
+  if (!el) return
+  if (el.classList?.contains('dial')) {
+    el.dispatchEvent(new KeyboardEvent('keydown', {
+      key: dir > 0 ? 'ArrowRight' : 'ArrowLeft',
+      shiftKey: !!shift,
+      bubbles: true,
+      cancelable: true,
+    }))
+    return
+  }
+  if (el.matches?.('input[type="range"]')) {
+    const min = Number(el.min)
+    const max = Number(el.max)
+    const step = Number(el.step) > 0 ? Number(el.step) : 1
+    const jump = shift ? step * 16 : step
+    const next = Math.min(max, Math.max(min, Number(el.value) + dir * jump))
+    const proto = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')
+    proto.set.call(el, String(next))
+    el.dispatchEvent(new Event('input', { bubbles: true }))
+    el.dispatchEvent(new Event('change', { bubbles: true }))
+    return
+  }
+  if (el.tagName === 'SELECT') {
+    const next = el.selectedIndex + dir
+    if (next < 0 || next >= el.options.length) return
+    el.selectedIndex = next
+    el.dispatchEvent(new Event('change', { bubbles: true }))
+  }
 }
 
 function renoiseLive() {
@@ -327,7 +595,7 @@ function onTrackerNote(e) {
   if (model.tracker.edit) {
     commitTrackerNote({ pad: model.selected, vel: TRACK_VEL, pitch: note - 60, typed: true })
   }
-  noteOn(model.selected, TRACK_VEL, `key:${e.code}`, note - 60, { noCapture: true })
+  playKey(model.selected, `key:${e.code}`, note - 60, { noCapture: true })
   return true
 }
 
@@ -343,7 +611,7 @@ function onTrackerPad(e) {
     commitTrackerNote({ pad: index, vel: TRACK_VEL, pitch: 0, typed: true })
   }
   selectPad(index)
-  noteOn(index, TRACK_VEL, `key:${e.code}`, undefined, { noCapture: true })
+  playKey(index, `key:${e.code}`, undefined, { noCapture: true })
   return true
 }
 
@@ -416,6 +684,11 @@ function onKey(e) {
     touch(true)
     return
   }
+  if (e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && (key === 'ArrowLeft' || key === 'ArrowRight' || key === 'ArrowUp' || key === 'ArrowDown')) {
+    e.preventDefault()
+    cycleScreen(key === 'ArrowRight' || key === 'ArrowDown' ? 1 : -1)
+    return
+  }
   if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && !e.repeat && (key === 'z' || key === 'Z')) {
     e.preventDefault()
     undo().then((did) => {
@@ -471,6 +744,9 @@ function onKey(e) {
     return
   }
   if (key === ' ') {
+    const el = focusedControl()
+    if (el && el.tagName === 'BUTTON' && !el.classList.contains('dial')) return
+    if (el && (el.tagName === 'SELECT' || el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) return
     e.preventDefault()
     togglePlay()
     return
@@ -497,7 +773,7 @@ function onKey(e) {
   }
   if (key === '/') {
     e.preventDefault()
-    setPlayMode(keysMode() ? 'pad' : 'keys')
+    cyclePlaySurface()
     return
   }
   if (key === 'Tab') {
@@ -537,9 +813,23 @@ function onKey(e) {
     doubleUp()
     return
   }
-  if (key === 'ArrowDown' && !(model.screen === 'track' && model.tracker.focus)) {
+  if (!trackerFocusNow && (key === 'ArrowUp' || key === 'ArrowDown')) {
     e.preventDefault()
-    document.querySelector('.browser-search input')?.focus()
+    moveNav(key === 'ArrowDown' ? 1 : -1)
+    return
+  }
+  if (!trackerFocusNow && (key === 'ArrowLeft' || key === 'ArrowRight')) {
+    const dir = key === 'ArrowRight' ? 1 : -1
+    const el = focusedControl()
+    if (el && navItems().includes(el)) {
+      e.preventDefault()
+      editNav(dir, e.shiftKey)
+      return
+    }
+    if (!model.keyboard) {
+      e.preventDefault()
+      setBank(model.bank + dir)
+    }
     return
   }
   if ((key === 'Delete' || key === 'Backspace') && !(model.screen === 'track' && model.tracker.focus)) {
@@ -564,7 +854,7 @@ function onKey(e) {
       const note = renoiseNote(key, model.renoiseOct)
       if (note != null) {
         e.preventDefault()
-        noteOn(model.selected, TRACK_VEL, `key:${e.code}`, note - 60)
+        playKey(model.selected, `key:${e.code}`, note - 60)
       }
       return
     }
@@ -583,19 +873,8 @@ function onKey(e) {
     const note = pianoNote(key, model.octave)
     if (note != null) {
       e.preventDefault()
-      noteOn(model.selected, TRACK_VEL, `key:${e.code}`, note - 60)
+      playKey(model.selected, `key:${e.code}`, note - 60)
     }
-    return
-  }
-
-  if (key === 'ArrowLeft') {
-    e.preventDefault()
-    setBank(model.bank - 1)
-    return
-  }
-  if (key === 'ArrowRight') {
-    e.preventDefault()
-    setBank(model.bank + 1)
     return
   }
 
@@ -608,7 +887,7 @@ function onKey(e) {
       return
     }
     selectPad(index)
-    noteOn(index, TRACK_VEL, `key:${e.code}`)
+    playKey(index, `key:${e.code}`)
     return
   }
 

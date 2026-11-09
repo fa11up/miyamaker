@@ -328,6 +328,14 @@ h1, h2, h3, h4, p { margin: 0; }
 .mmm-bar .slider.bpm em { display: none; }
 .mmm-bar .slider.bpm .field { width: 4.2em; min-width: 0; padding: 1px 4px; }
 
+.bar-files {
+  display: flex;
+  gap: 3px;
+  align-items: center;
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
 .mmm-file {
   position: relative;
   flex: 0 0 auto;
@@ -692,13 +700,17 @@ h1, h2, h3, h4, p { margin: 0; }
   margin: 0;
 }
 
-.mmm-body.dock-shut .browser-dock { display: none; }
+.mmm-body.dock-shut .dock-pane,
+.mmm-body.dock-shut .dock-splitter { display: none; }
 
 /* A window narrower than the browser dock plus a screen: the dock goes on top. */
 @container mmm (max-width: 800px) {
   .mmm-body { flex-direction: column; }
-  .browser-dock { width: auto; flex: 0 0 220px; }
-  .dock-toggle { align-self: flex-start; width: 36px; min-width: 36px; height: 36px; flex: 0 0 36px; }
+  .mmm-main { min-height: 200px; }
+  .dock-pane { width: auto; flex-basis: var(--dock-size, 220px); max-height: calc(100% - 200px); }
+  .dock-rail { flex-direction: row; width: auto; height: 36px; flex: 0 0 36px; align-self: stretch; }
+  .dock-rail .btn { min-height: 36px; min-width: 36px; flex: 0 0 36px; }
+  .dock-splitter { width: auto; height: 8px; flex-basis: 8px; cursor: row-resize; }
 }
 
 .transport {
@@ -2184,7 +2196,7 @@ input[type='range']::-webkit-slider-thumb {
   .screen-tabs, .bank-row, .transport-group, .mix-pages { flex-wrap: wrap; }
   .transport-row > * { min-width: 0; max-width: 100%; }
   .transport-row em:empty { display: none; }
-  .browser-dock { flex-basis: 260px; }
+  .dock-pane { flex-basis: var(--dock-size, 220px); }
   .pad-layout { grid-template-columns: minmax(0, 1fr); }
   .edit-screen .synth-grid,
   .synth-grid,
@@ -2209,6 +2221,163 @@ input[type='range']::-webkit-slider-thumb {
   border: 1px solid currentColor;
   color: #c0392b;
   white-space: nowrap;
+}
+
+.bar-menu,
+.bank-one,
+.screen-one { display: none; }
+.file-menu .menu-phone { display: none; }
+
+.screen-head {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 6px;
+  min-height: 0;
+}
+
+.screen-head .hint {
+  margin-right: auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.help-btn {
+  min-width: 36px;
+  min-height: 36px;
+  padding: 0 8px;
+  font-weight: 700;
+}
+
+.dock-rail {
+  flex: 0 0 18px;
+  width: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.dock-rail .btn {
+  flex: 1 1 50%;
+  width: 100%;
+  min-height: 0;
+  padding: 0;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.dock-pane {
+  flex: 0 0 var(--dock-size, 232px);
+  width: var(--dock-size, 232px);
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.dock-pane .browser-dock,
+.dock-pane .arranger {
+  width: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.dock-rule { flex: 0 0 4px; background: var(--shadow); }
+
+.dock-splitter {
+  flex: 0 0 6px;
+  width: 6px;
+  cursor: col-resize;
+  touch-action: none;
+  background: transparent;
+}
+
+.arranger { display: flex; flex-direction: column; gap: 4px; overflow: auto; padding: 6px; background: var(--face); box-shadow: var(--raised); }
+.arranger-tools, .arranger-side, .dialog-actions { display: flex; gap: 4px; flex-wrap: wrap; }
+.arranger-list { display: flex; flex-direction: column; gap: 4px; }
+.arrange-cell {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) auto;
+  gap: 4px;
+  align-items: center;
+  padding: 4px;
+  background: var(--well);
+  box-shadow: var(--sunken);
+  touch-action: none;
+}
+.arrange-mark {
+  width: 42px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  font-weight: 700;
+  background: var(--face);
+  box-shadow: var(--raised);
+}
+.arrange-cell.live .arrange-mark { background: var(--accent); color: var(--highlight); }
+.arrange-cell.pending .arrange-mark { outline: 2px solid var(--accent); }
+.arrange-copy { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.arrange-copy b, .arrange-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.arrange-copy i { display: block; height: 4px; background: var(--shadow); }
+.arrange-copy i span { display: block; height: 100%; background: var(--accent); }
+.arrange-side .btn { min-height: 36px; min-width: 36px; }
+
+.perf-surface { display: none; }
+.perf-row { display: flex; gap: 2px; }
+.perf-key, .perf-oct .btn { min-height: 36px; min-width: 0; flex: 1 1 0; }
+.perf-key.idle { flex: 0.4 1 0; }
+.perf-oct { display: flex; align-items: center; gap: 6px; }
+.perf-pads { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+
+.dial:focus-visible,
+.nav-hot,
+select:focus-visible,
+input[type="range"]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@media (pointer: coarse) {
+  .dock-rail { flex-basis: 36px; width: 36px; }
+  .dock-rail .btn { min-height: 36px; min-width: 36px; }
+  .num-key { min-height: 64px; }
+}
+
+@container mmm (max-width: 900px) {
+  .mmm-bar { flex-wrap: nowrap; min-width: 0; }
+  .bar-files { display: none; }
+  .bar-menu { display: flex; }
+  .bank-row { display: none; }
+  .bank-one { display: flex; }
+  .screen-tabs { flex: 1 1 auto; min-width: 0; flex-wrap: nowrap; overflow-x: auto; }
+  .numpad { width: 100%; grid-template-columns: repeat(3, minmax(64px, 1fr)); }
+  .num-key { min-height: 64px; }
+}
+
+@container mmm (max-width: 600px) {
+  .mmm-bar { flex-wrap: nowrap; }
+  .bar-wide,
+  .screen-tabs,
+  .bank-row { display: none; }
+  .screen-one { display: flex; }
+  .file-menu .menu-phone { display: block; }
+  .mmm-bar .slider.bpm { grid-template-columns: 3.2em; }
+  .mmm-bar .slider.bpm span { display: none; }
+  .surface-btn { min-width: 52px; }
+  .bank-one > .btn,
+  .screen-one > .btn { min-width: 36px; }
+  .mmm.surface-pads .perf-surface.for-pads,
+  .mmm.surface-keys .perf-surface.for-keys { display: block; }
+  .mmm.surface-off .pad-grid,
+  .mmm.surface-keys .pad-grid { display: none; }
+  .perf-surface { margin-bottom: 4px; }
+}
+
+@container mmm (max-width: 800px) {
+  .dock-rail { flex-direction: row; width: auto; height: 36px; flex: 0 0 36px; }
 }
 
 .dialog:focus { outline: none; }

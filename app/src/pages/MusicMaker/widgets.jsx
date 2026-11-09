@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 
 function hexTop(bits) {
   if (bits >= 16) return 65535
@@ -72,7 +72,7 @@ export function Knob({ label, value, min, max, bits = 8, onChange, text }) {
         onPointerUp={() => { drag.current = null }}
         onPointerCancel={() => { drag.current = null }}
         onKeyDown={(e) => {
-          const dir = e.key === 'ArrowUp' || e.key === 'ArrowRight' ? 1 : e.key === 'ArrowDown' || e.key === 'ArrowLeft' ? -1 : 0
+          const dir = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0
           if (!dir) return
           e.preventDefault()
           e.stopPropagation()
@@ -220,5 +220,20 @@ export function Dialog({ title, onClose, busy = false, children }) {
         <div className="body">{children}</div>
       </div>
     </div>
+  )
+}
+
+/** Opens the old on-screen note. Escape closes it, same as every other dialog. */
+export function HelpButton({ title, children }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <>
+      <button type="button" className="btn help-btn" aria-label={title || 'Help'} onClick={() => setOpen(true)}>?</button>
+      {open && (
+        <Dialog title={title || 'Help'} onClose={() => setOpen(false)}>
+          {typeof children === 'string' ? <p className="hint">{children}</p> : children}
+        </Dialog>
+      )}
+    </>
   )
 }

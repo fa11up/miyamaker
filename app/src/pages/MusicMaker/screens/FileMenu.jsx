@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { cacheRemote, importFile, importRemote, importVideoLink } from '../audio/engine.js'
+import { cacheRemote, importFile, importRemote, readVideoLink } from '../audio/engine.js'
 import { importImageFile } from '../audio/imageSpectrum.js'
 import {
   captureKit,
@@ -18,6 +18,7 @@ import { isAddress, loadWalletPacks, plainName, requestAccount, walletSummary } 
 import { model, touch } from '../model.js'
 import { useModel } from '../useModel.js'
 import { Dialog } from '../widgets.jsx'
+import { VideoTake } from './VideoTake.jsx'
 
 const ACCEPT = 'audio/*,video/*,.wav,.mp3,.m4a,.ogg,.flac,.aiff,.mp4,.webm,.mov,.m1ya,.mod,.xm,.k1t'
 const SONG_RE = /\.(m1ya|mod|xm)$/i
@@ -44,6 +45,7 @@ export function FileMenu() {
   const [kitName, setKitName] = useState(() => model.kitName || 'Kit')
   const [ipfs, setIpfs] = useState('')
   const [videoUrl, setVideoUrl] = useState('')
+  const [videoTake, setVideoTake] = useState(null)
   const [imageFile, setImageFile] = useState(null)
   const [imageSet, setImageSet] = useState({ columns: 64, bins: 32, octave: 4, octaves: 4, speed: 8 })
   const [busy, setBusy] = useState(false)
@@ -87,6 +89,7 @@ export function FileMenu() {
   }
 
   function closeWindow() {
+    setVideoTake(null)
     model.fileWindow = ''
     touch(false)
   }
@@ -254,8 +257,7 @@ export function FileMenu() {
   async function makeVideo() {
     setBusy(true)
     try {
-      await importVideoLink(videoUrl)
-      closeWindow()
+      setVideoTake(await readVideoLink(videoUrl))
     } catch (error) {
       note(error.message || 'Could not read that video')
     } finally {
@@ -414,18 +416,24 @@ export function FileMenu() {
         </Dialog>
       )}
       {windowId === 'video' && (
-        <Dialog title="Video link" onClose={closeWindow} busy={busy}>
-          <p className="hint">Paste a YouTube, Odysee, LBRY, or X link. The app keeps the first 16 seconds, trims the silence, and stores a sample in Cache. It stays out of the song until you load it onto a pad and save.</p>
-          <input
-            className="field"
-            aria-label="Video link"
-            placeholder="https://odysee.com/… or https://youtu.be/…"
-            value={videoUrl}
-            onChange={(e) => setVideoUrl(e.target.value)}
-          />
-          <div className="dialog-actions">
-            <button type="button" className="btn" disabled={busy || !videoUrl.trim()} onClick={makeVideo}>Make sample</button>
-          </div>
+        <Dialog title={videoTake ? 'Video sample' : 'Video link'} onClose={closeWindow} busy={busy}>
+          {!videoTake && (
+            <>
+              <input
+                className="field"
+                aria-label="Video link"
+                placeholder="https://odysee.com/… or https://youtu.be/…"
+                value={videoUrl}
+                onChange={(e) => setVideoUrl(e.target.value)}
+              />
+              <div className="dialog-actions">
+                <button type="button" className="btn" disabled={busy || !videoUrl.trim()} onClick={makeVideo}>Read</button>
+              </div>
+            </>
+          )}
+          {videoTake && (
+            <VideoTake take={videoTake} busy={busy} setBusy={setBusy} onDone={closeWindow} />
+          )}
           <p className="hint">{model.browserNote}</p>
         </Dialog>
       )}

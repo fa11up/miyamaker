@@ -4,7 +4,7 @@ import { chopSelection, importFile, audioRecordLabel, audioStartingLabel, record
 import { padGesture } from '../padEdit.js'
 import { loadSliceSource, moveSliceMarker, sliceMarkers } from '../audio/song.js'
 import { useModel } from '../useModel.js'
-import { Knob } from '../widgets.jsx'
+import { HelpButton, Knob } from '../widgets.jsx'
 import { Waveform } from './Waveform.jsx'
 
 export function Editor() {
@@ -81,6 +81,11 @@ export function Editor() {
   const label = audioRecordLabel() || audioStartingLabel()
   return (
     <div className="screen edit-screen">
+      <div className="screen-head">
+        <HelpButton title="Sample">
+          Drag the wave to set S and E. Drag inside the span to slide it. Pinch or ctrl-scroll to zoom, double-click to fit. Chop copies the span to the next empty pad. Hold a note on the Pads page to loop from LP. Tracker notes play once from the trim start to the trim end, and the same lane chokes the previous note. Drag a slice line to move a chop. Release writes that chop back into the folder.
+        </HelpButton>
+      </div>
       <div className="slot-grid" role="listbox" aria-label="Sample slots">
         {model.pads.map((slot, i) => (
           <button
@@ -223,11 +228,7 @@ export function Editor() {
           }}
         />
       )}
-      <p className="hint">
-        {slice
-          ? `Drag a slice line on ${slice.name}. Pinch or ctrl-scroll to zoom. Release writes that chop back into the folder.`
-          : 'Drag the wave to set S and E. Drag inside the span to slide it. Pinch or ctrl-scroll to zoom, double-click to fit. Chop copies the span to the next empty pad. Hold a note to loop from LP.'}
-      </p>
+      {slice && <p className="hint">{slice.name}</p>}
       <div className="synth-grid">
         <div className="edit-col">
           <fieldset className="group">

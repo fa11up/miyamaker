@@ -20,6 +20,7 @@ import {
 } from '../model.js'
 import { useModel } from '../useModel.js'
 import { PatternBar } from './PatternBar.jsx'
+import { HelpButton } from '../widgets.jsx'
 
 const HEADS = ['NOTE', 'INST', 'VEL', 'MOVE', 'SL', 'LP']
 
@@ -62,6 +63,9 @@ export function Tracker() {
     <div className="screen tracker-screen">
       <div className="tracker-bar">
         <PatternBar />
+        <HelpButton title="Tracker">
+          Esc or Rec arms edit. Arrows move the cursor. Notes play once from the trim start to the trim end. The same lane chokes the previous note. SL and LP still loop a grain until the next note or OFF. Ctrl and an arrow, or R1 and the d-pad, change page. A plain arrow on any other page moves the highlighted setting.
+        </HelpButton>
         <div className="tracker-tools">
           <label className="slider">
             <span title="Rows to skip after a note or a finished value. 0 stays on the row. Ctrl and 1–0 set this from the grid.">Step</span>

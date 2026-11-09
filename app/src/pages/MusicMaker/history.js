@@ -52,6 +52,8 @@ function takeSnapshot() {
     mixPage: model.mixPage,
     comp: model.comp,
     songOrder: model.songOrder,
+    songCursor: model.songCursor | 0,
+    songLoop: model.songLoop === 'section' || model.songLoop === 'once' ? model.songLoop : 'wrap',
     songName: model.songName || '',
     songFile: model.songFile || '',
     songPlay: !!model.songPlay,
@@ -75,6 +77,9 @@ function applySnapshot(data) {
   model.mixPage = data.mixPage === 1 ? 1 : 0
   model.comp = data.comp
   model.songOrder = data.songOrder || null
+  model.songCursor = Math.max(0, data.songCursor | 0)
+  model.songLoop = data.songLoop === 'section' || data.songLoop === 'once' ? data.songLoop : 'wrap'
+  model.launchCursor = null
   model.songName = data.songName || ''
   model.songFile = data.songFile || ''
   model.songPlay = !!data.songPlay

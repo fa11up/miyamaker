@@ -15,19 +15,19 @@ You do not need to read music. You do not need a controller. The computer keyboa
 
 The pads on screen are the keys `1 2 3 4`, then `Q W E R`, then `A S D F`, then `Z X C V`. That is one bank of sixteen. Banks **A B C D** are the other instruments. `[` and `]` change bank.
 
-Drop a sound file onto the window and it lands on the selected pad. You can also drag a row out of the browser onto a pad. The **<** button beside the browser hides that panel so the pages have the width. It turns into **>**, which opens the browser again.
+Drop a sound file onto the window and it lands on the selected pad. You can also drag a row out of the browser onto a pad. The top button on the left rail hides the sample browser. The button under it opens the arranger. Drag the divider to resize that column, and drag it to the outer edge to close it.
 
-On the Sample page, **Rec mic** records the microphone. A video link or a picture can become a sample too, from the **FILE** menu. None of that is required. The starter kit is already something you can play.
+On the Sample page, **Rec mic** records the microphone. A video link or a picture can become a sample too, from the **FILE** menu. The video window crops the in and out points, downsamples, slices a long clip, and can put the result on a pad right away. A start time in the link is the suggested in point. None of that is required. The starter kit is already something you can play.
 
 ## Pad and Keys
 
-The **Pad / Keys** switch is the whole instrument.
+The **Off / Pads / Keys** button is the whole instrument. **Off** hides the on-screen pads and keys on a narrow window and keeps the last map for a hardware keyboard.
 
 **Pad** plays drums. Each key, and each pad on a controller, is a different instrument.
 
 **Keys** plays the selected pad as a melody. On the computer, `Z` is C, `Q` and comma are the next C, and `I` is the C above that. `A` and Caps Lock stop the note. The button shows the octave, like `Keys 3`. Numpad `/` and `*` move that octave.
 
-Press `/` to flip between Pad and Keys. The small keyboard button next to them draws the map.
+Press `/` to cycle Off, Pads, and Keys. The **?** button on a page draws the map and the other notes.
 
 That is enough to make a beat and a bass line. Pick a drum pad, play it in Pad. Pick a tone you like, switch to Keys, and play a note at a time.
 
@@ -35,7 +35,7 @@ That is enough to make a beat and a bass line. Pick a drum pad, play it in Pad. 
 
 Banks A, B, C, and D hold sixteen pads each. The pad you are on is the selected instrument. The Sample page trims it, tunes it, and sets how it plays: one shot, while you hold it, or looping. Pads in the same choke group cut each other off, which is how a closed hat silences an open hat.
 
-The Synth page draws a sound and stores it on a pad. The Mixer page is four buses and the master. The FX page is ten performance slots. Hold Shift and a numpad digit while the song plays. Repeat locks one note value, from a half note to a 128th, to the project tempo and retriggers it. Slice rearranges a run of those notes. Grain sprays short pieces and is not a retrigger.
+The Synth page draws a sound and stores it on a pad. The Mixer page is four buses and the master. The FX page is ten performance slots. Hold Shift and a numpad digit while the song plays, or hold the on-screen numpad key on that page. Repeat locks one note value, from a half note to a 128th, to the project tempo and retriggers it. Slice rearranges a run of those notes. Grain sprays short pieces and is not a retrigger. Tracker notes play once. A pad set to loop, and a pad you hold on the Pads page, still loop.
 
 You can ignore every one of those pages until you want them.
 
