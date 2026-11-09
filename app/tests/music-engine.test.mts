@@ -312,6 +312,21 @@ test('numpad FX survive NaN input and reset clears the beat-repeat buffer', () =
   assert.ok(outL.every((v) => v === 0), 'nothing from before the press is replayed')
 })
 
+test('numpad FX passes the master through when no key is held', () => {
+  const fx = createFx(44100)
+  const n = 32
+  const input = sine(n, 0.4)
+  input[3] = NaN
+  const outL = new Float32Array(n)
+  const outR = new Float32Array(n)
+  fx.process(input, input, outL, outR, null, 120)
+  assert.equal(outL[0], input[0])
+  assert.equal(outL[3], 0)
+  assert.equal(outR[1], input[1])
+  fx.process(input, input, outL, outR, undefined, 96)
+  assert.equal(outL[0], input[0])
+})
+
 function renderFx(fx: ReturnType<typeof createFx>, slot: object, bpm: number, total: number, fill: (at: number) => number, time?: number, origin?: number) {
   const sr = 44100
   const got = new Float32Array(total)

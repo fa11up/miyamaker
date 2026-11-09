@@ -240,6 +240,18 @@ export function createFx(sampleRate) {
   function process(inL, inR, outL, outR, slot, bpm, time, origin) {
     const n = inL.length
     const type = slot && slot.type && slot.type !== 'off' ? slot.type : ''
+    // No key held: the master chain still runs through this node. Reading slot.mix here threw and muted everything.
+    if (!type) {
+      for (let i = 0; i < n; i++) {
+        let l = inL[i]
+        let r = inR[i]
+        if (!(l > -Infinity && l < Infinity)) l = 0
+        if (!(r > -Infinity && r < Infinity)) r = 0
+        outL[i] = l
+        outR[i] = r
+      }
+      return
+    }
     const tempo = bpm >= 20 && bpm <= 300 ? bpm : 96
     const div = type ? slotDiv(slot, type) : 0
     const synced = Number.isFinite(time) && Number.isFinite(origin)
