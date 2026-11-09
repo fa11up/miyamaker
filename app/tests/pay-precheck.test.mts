@@ -127,7 +127,10 @@ test('the screens wire it: every token payment re-reads first, and Reinvest stay
   assert.match(manage, /NEEDS_QUOTE: readonly ClaimModeName\[\] = \['REINVEST', 'ETH'\]/)
   assert.match(manage, /disabled=\{NEEDS_QUOTE\.includes\(m\.mode\)\}/)
   const live = src('pages/Mint/LiveMint/index.tsx')
-  // A new press clears the last approval's error before anything else, and the drop is read again before approving.
+  // A new press clears the last approval's error before anything else. The order (read again -> approve -> send) and
+  // its stops are runPay's, tested on its own in pay-run.test.mts; here only that both payment paths run it.
   assert.match(live, /\) => \{\s+approval\.reset\(\)\s+setCheckError\(undefined\)/)
-  assert.ok(live.indexOf('await recheck(') < live.indexOf("approval.run('approve'"))
+  assert.match(live, /await runPay\(/)
+  assert.match(live, /prepare: async \(\) => \{\s+const fresh = await recheck\(/)
+  assert.match(src('miyamints/usePay.ts'), /return runPay\(/)
 })

@@ -19,6 +19,7 @@ import type { PayToken } from '@/miyamints/tokens'
 import { revertName } from '@/miyamints/errors'
 import { COULDNT_CHECK_WORDS, freshCost, phaseGate, priceRoseWords } from '@/miyamints/precheck'
 import { approveWords, ETH, isEth, knownToken, payPlan, pickToken, sameToken, tokenLabel } from '@/miyamints/tokens'
+import { runPay } from '@/miyamints/payRun'
 import { readTokenGate, useTokenInfo, useWalletToken } from '@/miyamints/usePay'
 import { useTx } from '@/miyamints/useTx'
 import ArtistTag from '@/pages/Mint/ArtistTag'
@@ -113,55 +114,65 @@ function useMint(card: LiveMintCard, phaseId: number | undefined, onStale: () =>
     // A new press starts clean: an earlier approval's error or a refused check must not stand over this mint.
     approval.reset()
     setCheckError(undefined)
-    let value = price * BigInt(qty)
+    const value = price * BigInt(qty)
     if (card.kind === 'drop') {
       if (phaseId === undefined || checking) return
-      setChecking(true)
-      const fresh = await recheck(qty, value, token, symbol).catch(() => ({ ok: false as const, error: COULDNT_CHECK_WORDS }))
-      setChecking(false)
-      if (!fresh.ok) {
-        setCheckError(fresh.error)
-        onStale()
-        return
-      }
-      if (fresh.changed) onStale()
-      if (fresh.rose) {
-        setCheckError(priceRoseWords(money(fresh.amount)))
-        return
-      }
-      value = fresh.amount
-      const plan = payPlan(token, value)
-      if (!isEth(token) && value > 0n && address) {
-        const allowance = await readContract(wagmiConfig, {
-          address: token,
-          abi: erc20Abi,
-          functionName: 'allowance',
-          args: [address, card.address as Address],
-          chainId,
-        }).catch(() => undefined)
-        const need = payPlan(token, value, allowance).approve
-        if (need !== undefined) {
-          const ok = await approval.run('approve', {
-            address: token,
-            abi: erc20Abi,
-            functionName: 'approve',
-            args: [card.address as Address, need],
-            chainId,
-          })
-          if (!ok) return
+      // Read again, approve if short, then mint: runPay (src/miyamints/payRun.ts) keeps that order and its stops.
+      await runPay(
+        {
+          token,
+          amount: value,
+          call: undefined,
+          account: address,
+          prepare: async () => {
+            const fresh = await recheck(qty, value, token, symbol).catch(() => ({
+              ok: false as const,
+              error: COULDNT_CHECK_WORDS,
+            }))
+            if (!fresh.ok) {
+              onStale()
+              return fresh
+            }
+            if (fresh.changed) onStale()
+            if (fresh.rose) return { ok: false as const, error: priceRoseWords(money(fresh.amount)) }
+            return { ok: true as const, amount: fresh.amount }
+          },
+        },
+        {
+          step: (s) => setChecking(s === 'check'),
+          refuse: setCheckError,
+          readAllowance: () =>
+            readContract(wagmiConfig, {
+              address: token,
+              abi: erc20Abi,
+              functionName: 'allowance',
+              args: [address as Address, card.address as Address],
+              chainId,
+            }),
+          approve: (need) =>
+            approval.run('approve', {
+              address: token,
+              abi: erc20Abi,
+              functionName: 'approve',
+              args: [card.address as Address, need],
+              chainId,
+            }),
+          send: async (_call, total) => {
+            const plan = payPlan(token, total)
+            const common = { address: card.address as Address, abi: dropAbi, chainId, value: plan.value }
+            if (to) {
+              write.writeContract({
+                ...common,
+                functionName: 'mintTo',
+                args: [to, BigInt(phaseId), BigInt(qty), [], token, plan.maxCost],
+              })
+            } else {
+              write.writeContract({ ...common, functionName: 'mint', args: [BigInt(phaseId), BigInt(qty), [], token, plan.maxCost] })
+            }
+            return true
+          },
         }
-      }
-      const common = { address: card.address as Address, abi: dropAbi, chainId, value: plan.value }
-      if (to) {
-        write.writeContract({
-          ...common,
-          functionName: 'mintTo',
-          args: [to, BigInt(phaseId), BigInt(qty), [], token, plan.maxCost],
-        })
-      } else {
-        write.writeContract({ ...common, functionName: 'mint', args: [BigInt(phaseId), BigInt(qty), [], token, plan.maxCost] })
-      }
-
+      )
       return
     }
 

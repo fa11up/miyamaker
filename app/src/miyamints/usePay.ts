@@ -8,9 +8,11 @@ import type { SupportedChainId } from '@/config/wagmi'
 import { wagmiConfig } from '@/config/wagmi'
 
 import { dropInstanceAbi, registryAbi } from './abi'
-import { COULDNT_CHECK_WORDS, tokenGate } from './precheck'
+import type { Prepared } from './payRun'
+import { runPay } from './payRun'
+import { tokenGate } from './precheck'
 import type { PayToken } from './tokens'
-import { chainSymbol, isEth, knownToken, payPlan } from './tokens'
+import { chainSymbol, isEth, knownToken } from './tokens'
 import { useTx } from './useTx'
 
 /**
@@ -131,9 +133,7 @@ export async function readTokenGate(
   return tokenGate(token, symbol, accepted as readonly string[] | undefined, allowed)
 }
 
-/** What a payment's `prepare` says: stop with a reason, or go on (with a fresh amount and call when they changed). */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export type Prepared = { ok: false; error: string } | { ok: true; amount?: bigint; call?: any }
+export type { Prepared } from './payRun'
 
 /**
  * Pays for one contract call in ETH or an ERC-20. ETH: the call goes with `value`. An ERC-20: the allowance is read
@@ -142,7 +142,8 @@ export type Prepared = { ok: false; error: string } | { ok: true; amount?: bigin
  *
  * `prepare`, when given, runs first and reads again what can change between the screen's read and the send (the
  * price, the sale still on, the token still taken). It can stop with a reason (shown as a refused step: nothing was
- * sent) or hand back a fresh amount and call, which are then what is approved and sent.
+ * sent) or hand back a fresh amount and call, which are then what is approved and sent. The order and its stops are
+ * runPay (payRun.ts, tested on its own).
  */
 export function usePay(onDone?: (id: string) => void) {
   const t = useTx(onDone)
@@ -164,48 +165,33 @@ export function usePay(onDone?: (id: string) => void) {
     }
   ): Promise<boolean> => {
     if (checking.current) return false
-    let { amount, call } = p
-    if (p.prepare) {
-      checking.current = true
-      setStep('check')
-      const r: Prepared = await p.prepare().catch(() => ({ ok: false as const, error: COULDNT_CHECK_WORDS }))
-      checking.current = false
-      if (!r.ok) {
-        setStep(undefined)
-        t.refuse(id, r.error)
-        return false
+    return runPay(
+      { token: p.token, amount: p.amount, call: p.call, account, prepare: p.prepare },
+      {
+        step: (s) => {
+          checking.current = s === 'check'
+          setStep(s)
+        },
+        refuse: (error) => t.refuse(id, error),
+        readAllowance: () =>
+          readContract(wagmiConfig, {
+            address: p.token as Address,
+            abi: erc20Abi,
+            functionName: 'allowance',
+            args: [account as Address, p.spender],
+            chainId: p.chainId as SupportedChainId,
+          }),
+        approve: (amount) =>
+          t.run(`${id}:approve`, {
+            address: p.token as Address,
+            abi: erc20Abi,
+            functionName: 'approve',
+            args: [p.spender, amount],
+            chainId: p.chainId,
+          }),
+        send: (call) => t.run(id, call),
       }
-      amount = r.amount ?? amount
-      call = r.call ?? call
-    }
-    if (!isEth(p.token) && account && amount > 0n) {
-      const allowance = await readContract(wagmiConfig, {
-        address: p.token as Address,
-        abi: erc20Abi,
-        functionName: 'allowance',
-        args: [account, p.spender],
-        chainId: p.chainId as SupportedChainId,
-      }).catch(() => undefined)
-      const plan = payPlan(p.token, amount, allowance)
-      if (plan.approve !== undefined) {
-        setStep('approve')
-        const approved = await t.run(`${id}:approve`, {
-          address: p.token as Address,
-          abi: erc20Abi,
-          functionName: 'approve',
-          args: [p.spender, plan.approve],
-          chainId: p.chainId,
-        })
-        if (!approved) {
-          setStep(undefined)
-          return false
-        }
-      }
-    }
-    setStep('pay')
-    const done = await t.run(id, call)
-    setStep(undefined)
-    return done
+    )
   }
 
   return { ...t, busy: t.busy || step === 'check', pay, step }

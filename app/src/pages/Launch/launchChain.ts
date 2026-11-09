@@ -8,6 +8,7 @@ import { waitForTx } from '@/miyamints/useTxOutcome'
 import { tryBatch, waitForBatch } from '@/utils/batch'
 import { instanceAddressAbi } from '@/utils/batchCalls'
 
+import { auctionFirstAbi, editionIdsAbi } from './launchAbi'
 import type { LaunchAsk, LaunchProgress, NonceRead } from './resume'
 import { batchInstance, leftoverVerdict, nextLaunchStep, sentVerdict } from './resume'
 
@@ -452,14 +453,7 @@ function approveCall(a: { token: Address; amount: bigint }, spender: Address): C
   return { address: a.token, abi: erc20Abi, functionName: 'approve', args: [spender, a.amount] }
 }
 
-/** The auction's first piece is token 1: queued once `nextTokenId` has moved past it. */
-export const auctionFirstAbi = [
-  { type: 'function', name: 'nextTokenId', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint24' }] },
-] as const
-
-export const editionIdsAbi = [
-  { type: 'function', name: 'getAllEditionIds', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256[]' }] },
-] as const
+export { auctionFirstAbi, editionIdsAbi }
 
 export async function findAuctionPiece(chainId: number, instance: Address): Promise<bigint | undefined> {
   const next = await readContract(wagmiConfig, {
