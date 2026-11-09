@@ -1,6 +1,7 @@
 # Design: multi-token sales, aligned to the INFER/IMD pool
 
-Status: agreed decisions, ready to build (2026-11-08). Nothing here is built or deployed. Mainnet (chain 1) only.
+Status: agreed decisions, built on branch design/imd-infer-vault, not deployed (2026-11-08). Mainnet (chain 1) only.
+Revised 2026-11-08: conversions run keeper-built aggregator calldata (0x, zRouter fallback) instead of a route table.
 
 ## Decisions
 
@@ -15,6 +16,7 @@ Status: agreed decisions, ready to build (2026-11-08). Nothing here is built or 
 | Vault fee claims | Default: take as tokens (INFER + IMD). Also: take as ETH, or reinvest |
 | Chains | Mainnet only for now |
 | Keeper batch | Minimum 0.1 ETH of value, adjusted for gas cost |
+| Conversion swaps | On chain in the vault, along aggregator calldata from the keeper: 0x (AllowanceHolder, taker = the vault), zRouter as the fallback the keeper builds itself. Allowlisted targets only |
 
 ## Tokens (mainnet, read from chain 2026-11-08)
 
@@ -43,27 +45,46 @@ artist withdraws), so a blocklist never blocks a sale or another person's refund
 | ETH/WBTC | fee 500, spacing 10, no hook | 1.29e17 |
 | cbBTC | v4 ETH/cbBTC is thin (3000/60: 1.28e14); v3 cbBTC/WETH 0.3% `0x15aA…7C3b` is deeper (1.04e15) | |
 
-## Conversion routes (to IMD; INFER and IMD need none)
+## Conversions (to IMD; INFER and IMD need none)
 
-| Paid in | Route | Swapped by |
+The keeper brings the swap for each token as calldata for an allowlisted target: **0x** first (it calls the 0x API off
+chain with `taker` = the vault and gets AllowanceHolder calldata), **zRouter** as the fallback it builds itself on the
+pools below. The vault runs each call itself; nothing leaves it except through these calls.
+
+| Paid in | Swap (to the vault) | zRouter fallback pool |
 |---|---|---|
 | IMD | none | |
 | INFER | none: used as the INFER side directly | |
-| imdUSD | imdUSD/IMD (v4) | zRouter |
-| ETH | IMD/ETH (v4) | zRouter |
-| USDC | ETH/USDC (v4) -> the batch's ETH leg | zRouter |
-| WBTC | ETH/WBTC (v4) -> the batch's ETH leg | zRouter |
-| cbBTC | cbBTC/WETH (v3) -> unwrap -> the batch's ETH leg | zRouter (v3 and v4) |
-| IMD -> INFER (the split) | INFER/IMD (v4, hooked) | the vault itself, through `PoolManager.unlock` (zRouter cannot route a hooked pool) |
+| imdUSD | -> IMD | imdUSD/IMD (v4 3000/60) |
+| USDC | -> ETH, joins the batch's ETH leg | ETH/USDC (v4 500/10) |
+| WBTC | -> ETH, joins the batch's ETH leg | ETH/WBTC (v4 500/10) |
+| cbBTC | -> ETH, joins the batch's ETH leg | cbBTC/WETH (v3 0.3%, zRouter unwraps) |
+| ETH (the leg) | all the batch's ETH -> IMD in one swap | IMD/ETH (v4 10000/200), `swapAmount` 0 = all of msg.value |
+| IMD -> INFER (the split) | the vault itself, through `PoolManager.unlock` | INFER/IMD (v4, hooked; no router can route a hooked pool) |
+| IMD -> ETH (claims as ETH) | the vault, through zRouter `swapV4` on the factory's `ethPool` | IMD/ETH (v4 10000/200) |
 
-Routes are an owner-set table per token in the vault factory (owner = a Safe). A route ends in IMD (swapped on its own)
-or, for tokens other than ETH, in ETH: the vault then sends ALL of a batch's ETH (pending ETH net of the keeper reward,
-plus every route that ended in ETH) to IMD in one swap along the ETH route (IMD/ETH v4), and shares its output pro rata
-to each token's ETH, so the order tokens are listed in changes nothing. The same table holds a minimum per ERC-20
-contribution (`minContribution`, 0 = none; deployed at ~0.001 ETH worth each: USDC 2, IMD 1, INFER 3,500, imdUSD 3,
-WBTC/cbBTC 3,000 sats). The keeper supplies `minOut` for every hop and for the ETH leg from live quotes, through a
-private mempool. No on-chain price reference exists for
-these pools (v4 has no TWAP), so the keeper floors are the protection, as today.
+Each token's swap outputs ETH or IMD. Every token swapped to ETH joins the batch's ETH: the vault then sends ALL of a
+batch's ETH (pending ETH net of the keeper reward, plus those outputs) to IMD in one swap (the ETH leg) and shares its
+output pro rata to each token's ETH in, so the order tokens are listed in changes nothing (as long as no two tokens'
+swaps share a pool, which the keeper keeps so). A token swapped to IMD (imdUSD) is valued by its own IMD out.
+
+The guards on every keeper swap (`VaultSwaps`), since the calldata is the keeper's:
+
+- the target is on the vault factory's allowlist (`setSwapTarget`, owner = a Safe; EOAs, the tokens, the PoolManager
+  and the registry are refused), checked live on each call; the keeper can't add one;
+- the vault approves exactly the amount in to the target, and resets the approval to 0 after the call;
+- an ERC-20 input's balance must drop by exactly the amount in: a partial fill, an over-pull or a refund of unspent
+  input reverts (`InputMismatch`); ETH in is sent as exactly the amount, as value;
+- the vault's balance of `tokenOut` (ETH or IMD; the leg's must be IMD) must rise by at least `minOut`, which must be
+  non-zero (`ZeroFloor`, `InsufficientOutput`);
+- nonReentrant throughout; ETH arriving during a swap is never booked as a contribution;
+- after the batch, everything owed (fees, protocol cut, every pending token) is still held, or the call reverts.
+
+ETH the leg hands back (a refund, a router's stray balance) is ETH beyond what is owed: dust for the holders before the
+batch, as before. The minimum per ERC-20 contribution (`minContribution`, 0 = none; deployed at ~0.001 ETH worth each:
+USDC 2, IMD 1, INFER 3,500, imdUSD 3, WBTC/cbBTC 3,000 sats) lives in the vault factory too. The keeper supplies
+`minOut` for every swap and for the leg from live quotes, through a private mempool. No on-chain price reference exists
+for these pools (v4 has no TWAP), so the keeper floors are the protection, as today.
 
 ## Sale flow (collections)
 
@@ -85,18 +106,19 @@ these pools (v4 has no TWAP), so the keeper floors are the protection, as today.
 ### Contributions and batches
 
 - `receiveContribution(Currency currency, uint256 amount, address benefactor)`: accepts ETH (at least 0.001) or any
-  allowlisted token (at least its `minContribution`); books the benefactor's pending balance in that token and the
-  vault's `pendingByToken[token]`.
+  token on the registry allowlist (at least its `minContribution`; no route needed); books the benefactor's pending
+  balance in that token and the vault's `pendingByToken[token]`. The registry allows at most 15 ERC-20s, so ETH and
+  every allowed token fit the vault's 16 distinct pending tokens.
 - `convertAndAddLiquidity(ConvertParams)` (keeper only) converts one batch: any non-empty subset of the pending tokens
   (no duplicates, any order), exactly `amounts[i]` of each (0 < amount <= pending). Unlisted tokens, and whatever
   arrived after the keeper read the amounts, stay pending for a later batch, so a contribution landing mid-flight can't
   break the call.
   1. Take the amounts out of pending. Keeper reward from the ETH converted (0.0012 ETH, capped at 1% of it); 0 if no
      ETH is converted.
-  2. Each listed token along its own route, with the keeper's floor per hop: routes ending in IMD (imdUSD) give their
-     IMD; routes ending in ETH (USDC, WBTC, cbBTC) give ETH. Then ONE ETH -> IMD swap along the ETH route for all the
-     batch's ETH (converted ETH net of the reward + those routes' ETH), floored by `ethLegMinOuts`; each token's IMD
-     value is the leg's output times its share of the ETH in. IMD counts as is; INFER at the realized rate of step 3.
+  2. Each listed token through its keeper swap (`swaps[i]`, guarded as above): to IMD (imdUSD) gives its IMD; to ETH
+     (USDC, WBTC, cbBTC) gives ETH. Then ONE ETH -> IMD swap (`ethLeg`) for all the batch's ETH (converted ETH net of
+     the reward + those swaps' ETH), floored by its `minOut`; each token's IMD value is the leg's output times its
+     share of the ETH in. IMD counts as is; INFER at the realized rate of step 3.
   3. Swap the balanced part of the free IMD/INFER (beyond fees owed and beyond what is still pending) in the INFER/IMD
      pool (vault-side swap), floor from the keeper.
   4. Add INFER + IMD full range (spacing 60) to the vault's single INFER/IMD position. Leftover stays for next batch.
@@ -115,7 +137,8 @@ these pools (v4 has no TWAP), so the keeper floors are the protection, as today.
   checkpoints; 1% of each goes to the protocol (`withdrawProtocolFees(token)`). ETH dust keeps an ETH accumulator.
 - `claimFees(ClaimMode mode, uint256 minEthOut)`, paid to the benefactor or its delegate:
   - `TOKENS` (default): send INFER and IMD.
-  - `ETH`: swap the claim INFER -> IMD (vault-side) -> ETH (zRouter), check `minEthOut`, send ETH.
+  - `ETH`: swap the claim INFER -> IMD (vault-side) -> ETH (zRouter `swapV4` on the factory's `ethPool`, default
+    10000/200, under the same balance guards), check `minEthOut` (non-zero), send ETH.
   - `REINVEST`: add the claim's INFER + IMD to the position and issue shares at the current share price.
 - Collections: `claimVaultFees(mode, minEthOut)` (owner only) forwards whatever the vault pays to `owner()`.
 
@@ -131,28 +154,40 @@ function claimFees(ClaimMode mode, uint256 minEthOut) external returns (uint256 
 function claimable(address benefactor) external view returns (uint256 infer, uint256 imd, uint256 eth);
 
 // UniAlignmentVault: keeper only
+struct SwapCall {            // src/vaults/uni/IVaultConfig.sol
+    address target;          // allowlisted swap target (0x AllowanceHolder or zRouter); also the approval spender
+    address tokenOut;        // ETH (address(0)) or IMD only
+    bytes data;              // calldata for target (value = amount in when the token is ETH)
+    uint256 minOut;          // the vault's balance of tokenOut must rise by at least this; must be > 0
+}
 struct ConvertParams {
     address[] tokens;        // non-empty subset of openBatchTokens(), no duplicates, any order
     uint256[] amounts;       // per token: exactly this much converts, 0 < amount <= pendingByToken(token)
-    uint256[][] minOuts;     // per token: one floor per hop of its own route (last = ETH for a route ending in ETH,
-                             // else IMD); empty for ETH, IMD, INFER
-    uint256[] ethLegMinOuts; // one floor per hop of the ETH route: the batch's one ETH -> IMD swap
+    SwapCall[] swaps;        // one per token; ignored (may be empty) for ETH, IMD, INFER
+    SwapCall ethLeg;         // the batch's single ETH -> IMD swap (tokenOut IMD); required when any ETH reaches it
     uint256 minSplitOut;     // the INFER/IMD balancing swap's total output (non-zero if it swaps)
     uint256 deadline;
 }
 function convertAndAddLiquidity(ConvertParams calldata p) external returns (uint256 sharesIssued);
 function openBatchTokens() external view returns (address[] memory); // tokens with something pending, any order
+function config() external view returns (address);                  // the vault factory (IVaultConfig)
 event TokenConverted(uint256 indexed batchId, address indexed token, uint256 amountIn, uint256 imdValue);
 event EthLegSwapped(uint256 indexed batchId, uint256 ethIn, uint256 imdOut);
+error SwapTargetNotAllowed(address target); error BadSwapOutput(); error InputMismatch();
+error InsufficientOutput(); error ZeroFloor(); error Insolvent(address token);
 
-// UniAlignmentVaultFactory (route table, owner = Safe)
-function setRoute(address token, RouteHop[] calldata hops) external;      // ends in IMD, or in ETH (not for ETH itself)
-function setMinContribution(address token, uint256 amount) external;     // ERC-20s; 0 = none
+// UniAlignmentVaultFactory (IVaultConfig, owner = Safe)
+function setSwapTarget(address target, bool allowed) external;          // refuses EOAs, INFER, IMD, PoolManager, registry
+function isSwapTarget(address target) external view returns (bool);
+event SwapTargetSet(address indexed target, bool allowed);
+function setEthPool(uint24 fee, int24 tickSpacing) external;            // default 10000 / 200
+function ethPool() external view returns (uint24 fee, int24 tickSpacing);
+function setMinContribution(address token, uint256 amount) external;    // ERC-20s; 0 = none
 function minContribution(address token) external view returns (uint256);
 
 // Registry
 function isPaymentToken(address token) external view returns (bool);
-function setPaymentToken(address token, bool allowed) external; // onlyOwner
+function setPaymentToken(address token, bool allowed) external; // onlyOwner; at most 15 ERC-20s (TooManyPaymentTokens)
 
 // Collections (drop, 1155, auction)
 function acceptedTokens() external view returns (address[] memory);
@@ -164,14 +199,16 @@ function claimVaultFees(ClaimMode mode, uint256 minEthOut) external; // onlyOwne
 
 - Watches each vault's pending value per token; converts when the batch is worth at least 0.1 ETH and gas is under the
   ceiling (both config), each included token at exactly the amount it read.
-- Quotes every hop and the one ETH leg (v4 Quoter, v3 QuoterV2), applies a slippage margin per hop (compounded, the
-  leg's after its feeding routes'), simulates, then sends through a private RPC. Same guard rails as imd-keeper: kill
-  switch, gas ceiling, ETH floor, spend ledger, unknown-outcome handling.
-- Leaves a token out (it stays pending) when its route fails to quote, its price impact is over `MAX_IMPACT_BPS`
-  (3%), or, for USD tokens (USDC, imdUSD), its route pays more than `MAX_REFERENCE_DEVIATION_BPS` (3%) under 1 USD
-  priced through ETH/USDC and IMD/ETH. Floors only protect against slippage from the live quote; the reference catches
-  a pool that is far off market (2026-11-08: imdUSD/IMD sits at IMD = 4.17 imdUSD vs ~2.47 at market, its only
-  liquidity out of range). If the ETH leg is over the impact limit, its largest inputs are left out until it is not.
+- Per token, gets a 0x quote (AllowanceHolder, `taker` = the vault, sell exactly the amount) or, when 0x has no route
+  or fails, builds zRouter calldata on the table's pool; the leg likewise, built to sell its whole msg.value (zRouter
+  `swapAmount` 0; for 0x, quoted for the expected ETH). Sets each `minOut` from the quote less a slippage margin (the
+  leg's after its feeding swaps'), simulates the whole call, then sends through a private RPC. Same guard rails as
+  imd-keeper: kill switch, gas ceiling, ETH floor, spend ledger, unknown-outcome handling.
+- Leaves a token out (it stays pending) when no target quotes it, its price impact is over `MAX_IMPACT_BPS` (3%), or,
+  for USD tokens (USDC, imdUSD), it pays more than `MAX_REFERENCE_DEVIATION_BPS` (3%) under 1 USD priced through
+  ETH/USDC and IMD/ETH. Floors only protect against slippage from the live quote; the reference catches a pool that is
+  far off market (2026-11-08: imdUSD/IMD sits at IMD = 4.17 imdUSD vs ~2.47 at market, its only liquidity out of
+  range). If the ETH leg is over the impact limit, its largest inputs are left out until it is not.
 
 ## App
 
@@ -186,16 +223,21 @@ function claimVaultFees(ClaimMode mode, uint256 minEthOut) external; // onlyOwne
 - Unit, per collection type and per token (ETH, 6-decimal, 8-decimal, 18-decimal): payment, split, withdraw, refunds,
   dynamic price, phases; auctions in ETH and in an ERC-20, outbid refunds (push for ETH, pull for ERC-20), settle,
   reclaim.
-- Vault: each route, realized-rate share issuance across mixed batches, two-token accumulators, the three claim modes,
-  reinvest share pricing, protocol cut per token, leftovers, dust.
+- Vault: each token's swap, every guard on the keeper's calldata (a failing case each: zero floor, unlisted target,
+  wrong output, under-delivery, output sent elsewhere, partial pull, over-pull, refunded input, reentry, a target
+  touching another pending token), realized-rate share issuance across mixed batches and every order, two-token
+  accumulators, the three claim modes, reinvest share pricing, protocol cut per token, leftovers, dust.
 - Invariants: no balance owed beyond what is held, per token; shares and fees per share never decrease.
-- Fork tests against the real pools: every route, a mixed batch, each claim mode.
+- Fork tests against the real pools: every token through zRouter calldata, the AllowanceHolder flow with a Settler
+  stand-in, a mixed batch, order independence, a subset batch, each claim mode.
 - `/audit-suite contracts`, then an independent review before mainnet.
 
 ## Risks
 
 - **Scope**: every collection's payment code changes; the ETH-only hardening has to be redone per token.
 - **Vault exposure** to IMD and INFER; two-hop conversions cost pool fees on the swapped part.
-- **Thin routes**: cbBTC and small pools; the keeper sizes batches and the route table can be changed by the owner.
+- **Thin pools**: cbBTC and small pools; the keeper sizes batches and picks the route per batch (0x, or zRouter).
+- **Keeper-chosen calldata**: bounded by the guards above; within them a dishonest keeper can still sell a batch at
+  its own floors (AUDIT-NOTES.md, vault v2).
 - **Token admin powers**: USDC/WBTC blocklists, cbBTC custody; handled by pull payouts, and the allowlist can drop a
   token for new sales (existing balances stay withdrawable).

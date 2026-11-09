@@ -3,87 +3,90 @@ pragma solidity ^0.8.24;
 
 import {SafeTransferLib} from "solady/utils/SafeTransferLib.sol";
 import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
-import {IVaultRoutes, IzRouter, RouteHop, HOP_V3, HOP_V4} from "./IVaultRoutes.sol";
+import {IVaultConfig, IzRouter, SwapCall} from "./IVaultConfig.sol";
 
 /**
  * @title VaultSwaps
- * @notice UniAlignmentVault's route execution through zRouter and the balancing-swap math, as a linked library: the vault
- *         calls it by DELEGATECALL, so every swap, approval and balance is the vault's own (and its receive() sees the
- *         same transient "collecting" flag), while this code stays out of the vault's bytecode (EIP-170).
+ * @notice UniAlignmentVault's guarded aggregator calls and the balancing-swap math, as a linked library: the vault calls
+ *         it by DELEGATECALL, so every call, approval and balance is the vault's own (and its receive() sees the same
+ *         transient "collecting" flag), while this code stays out of the vault's bytecode (EIP-170).
  * @dev Errors carry the vault's names and so the vault's selectors.
+ *      A swap's calldata is chosen by the keeper. What bounds it (docs/IMD-INFER-VAULT.md, AUDIT-NOTES.md):
+ *      - the target is allowlisted in the vault factory (Safe-owned; EOAs refused), checked live on every call;
+ *      - the vault approves exactly the amount in to the target, and resets the approval to 0 after the call;
+ *      - an ERC-20 input's balance must drop by exactly the amount in (a partial fill, an over-pull or a refund of
+ *        unspent input reverts); an ETH input is sent as exactly the amount in, as value;
+ *      - the output token's balance must rise by at least `minOut`, which must be non-zero;
+ *      - the vault is nonReentrant throughout, and receive() books nothing while a swap runs;
+ *      - after the batch the vault checks it still holds everything it owes, in every token.
  */
 library VaultSwaps {
-    error NoRoute(address token);
-    error BadRoute(address token);
-    error BadParams();
+    error SwapTargetNotAllowed(address target);
+    error BadSwapOutput();
+    error InputMismatch();
     error InsufficientOutput();
+    error ZeroFloor();
 
     address internal constant ETH = address(0);
-    uint256 internal constant MAX_ROUTE_HOPS = 4;
     uint256 private constant Q96 = 1 << 96;
-    /// @dev = UniAlignmentVault._COLLECTING_SLOT: set while zRouter pays the vault, so receive() books nothing.
+    /// @dev = UniAlignmentVault._COLLECTING_SLOT: set while a swap pays the vault, so receive() books nothing.
     uint256 private constant _COLLECTING_SLOT = 0x9fffd68a8e82dadd8810fe84758545b0fb4c40f84b514ef129e417c2e244d1a1;
 
-    /// @dev Run `token`'s route (or its reverse) through zRouter; returns the final output and whether it is ETH (a
-    ///      route ending in ETH, for the batch's one ETH -> IMD swap). The ETH route itself always ends in IMD. A hop that
-    ///      receives nothing (dust) ends the route at 0.
-    function route(
-        IVaultRoutes routes,
-        address zRouter,
-        address imd,
-        address token,
-        uint256 amountIn,
-        uint256[] memory minOuts,
-        bool reverse
-    ) external returns (uint256 amount, bool toEth) {
-        RouteHop[] memory hops = routes.getRoute(token);
-        uint256 h = hops.length;
-        if (h == 0) revert NoRoute(token);
-        if (h > MAX_ROUTE_HOPS) revert BadRoute(token);
-        if (!reverse && minOuts.length != h) revert BadParams();
-        // Re-checked here so a bad table can never send the vault's tokens anywhere but to IMD (or to ETH, then IMD).
-        address first = reverse ? hops[h - 1].tokenOut : hops[0].tokenIn;
-        address last = reverse ? hops[0].tokenIn : hops[h - 1].tokenOut;
-        toEth = !reverse && token != ETH && last == ETH;
-        if (first != (reverse ? imd : token) || (last != (reverse ? token : imd) && !toEth)) revert BadRoute(token);
-
-        amount = amountIn;
-        for (uint256 k; k < h; ++k) {
-            if (amount == 0) return (0, toEth);
-            RouteHop memory hop = hops[reverse ? h - 1 - k : k];
-            if (reverse) (hop.tokenIn, hop.tokenOut) = (hop.tokenOut, hop.tokenIn);
-            amount = _swapHop(zRouter, hop, amount, reverse ? 0 : minOuts[k]);
-        }
+    /// @dev Run one keeper swap of exactly `amountIn` of `tokenIn` (ETH or an ERC-20) through an allowlisted target.
+    ///      `legOnly`: the batch's ETH leg, whose output must be IMD; any other swap may output ETH or IMD.
+    function swap(IVaultConfig config, SwapCall memory s, address tokenIn, uint256 amountIn, address imd, bool legOnly)
+        external
+        returns (uint256)
+    {
+        if (!config.isSwapTarget(s.target)) revert SwapTargetNotAllowed(s.target);
+        if (s.tokenOut != imd && (legOnly || s.tokenOut != ETH)) revert BadSwapOutput();
+        return _exec(s.target, tokenIn, amountIn, s.tokenOut, s.data, s.minOut);
     }
 
-    // slither-disable-next-line arbitrary-send-eth,unused-return
-    function _swapHop(address zRouter, RouteHop memory hop, uint256 amountIn, uint256 minOut)
+    /// @dev An ETH-mode claim's IMD -> ETH: zRouter.swapV4 on the factory's IMD/ETH pool, under the same guards.
+    function imdToEth(address zRouter, IVaultConfig config, address imd, uint256 amountIn, uint256 minOut)
+        external
+        returns (uint256)
+    {
+        (uint24 fee, int24 tickSpacing) = config.ethPool();
+        bytes memory data = abi.encodeCall(
+            IzRouter.swapV4, (address(this), false, fee, tickSpacing, imd, ETH, amountIn, 0, block.timestamp)
+        );
+        return _exec(zRouter, imd, amountIn, ETH, data, minOut);
+    }
+
+    // slither-disable-next-line arbitrary-send-eth,low-level-calls
+    function _exec(address target, address tokenIn, uint256 amountIn, address tokenOut, bytes memory data, uint256 minOut)
         private
         returns (uint256 amountOut)
     {
-        uint256 before = _balanceOf(hop.tokenOut);
+        if (minOut == 0) revert ZeroFloor();
+        uint256 outBefore = _balanceOf(tokenOut);
+        uint256 inBefore;
         uint256 value;
-        if (hop.tokenIn == ETH) value = amountIn;
-        else SafeTransferLib.safeApproveWithRetry(hop.tokenIn, zRouter, amountIn);
-
-        // zRouter pays ETH outputs and refunds into receive(): not contributions.
-        _setCollecting(true);
-        if (hop.kind == HOP_V4) {
-            IzRouter(zRouter).swapV4{value: value}(
-                address(this), false, hop.fee, hop.tickSpacing, hop.tokenIn, hop.tokenOut, amountIn, minOut,
-                block.timestamp
-            );
-        } else if (hop.kind == HOP_V3) {
-            IzRouter(zRouter).swapV3{value: value}(
-                address(this), false, hop.fee, hop.tokenIn, hop.tokenOut, amountIn, minOut, block.timestamp
-            );
+        if (tokenIn == ETH) {
+            value = amountIn;
         } else {
-            revert BadRoute(hop.tokenIn);
+            inBefore = _balanceOf(tokenIn);
+            SafeTransferLib.safeApproveWithRetry(tokenIn, target, amountIn);
         }
-        _setCollecting(false);
-        if (hop.tokenIn != ETH) SafeTransferLib.safeApprove(hop.tokenIn, zRouter, 0);
 
-        amountOut = _balanceOf(hop.tokenOut) - before;
+        // Outputs and refunds paid in ETH land in receive(): not contributions.
+        _setCollecting(true);
+        (bool ok, bytes memory ret) = target.call{value: value}(data);
+        _setCollecting(false);
+        if (!ok) {
+            assembly ("memory-safe") {
+                revert(add(ret, 0x20), mload(ret))
+            }
+        }
+
+        if (tokenIn != ETH) {
+            SafeTransferLib.safeApprove(tokenIn, target, 0);
+            if (_balanceOf(tokenIn) + amountIn != inBefore) revert InputMismatch();
+        }
+        uint256 outAfter = _balanceOf(tokenOut);
+        amountOut = outAfter > outBefore ? outAfter - outBefore : 0;
         if (amountOut < minOut) revert InsufficientOutput();
     }
 

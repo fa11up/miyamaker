@@ -69,12 +69,12 @@
   },
   {
     "type": "error",
-    "name": "BadRoute",
+    "name": "InvalidAddress",
     "inputs": []
   },
   {
     "type": "error",
-    "name": "InvalidAddress",
+    "name": "InvalidPool",
     "inputs": []
   },
   {
@@ -96,6 +96,25 @@
     "type": "error",
     "name": "Unauthorized",
     "inputs": []
+  },
+  {
+    "type": "event",
+    "name": "EthPoolSet",
+    "inputs": [
+      {
+        "name": "fee",
+        "type": "uint24",
+        "indexed": false,
+        "internalType": "uint24"
+      },
+      {
+        "name": "tickSpacing",
+        "type": "int24",
+        "indexed": false,
+        "internalType": "int24"
+      }
+    ],
+    "anonymous": false
   },
   {
     "type": "event",
@@ -163,46 +182,19 @@
   },
   {
     "type": "event",
-    "name": "RouteSet",
+    "name": "SwapTargetSet",
     "inputs": [
       {
-        "name": "token",
+        "name": "target",
         "type": "address",
         "indexed": true,
         "internalType": "address"
       },
       {
-        "name": "hops",
-        "type": "tuple[]",
+        "name": "allowed",
+        "type": "bool",
         "indexed": false,
-        "internalType": "struct RouteHop[]",
-        "components": [
-          {
-            "name": "kind",
-            "type": "uint8",
-            "internalType": "uint8"
-          },
-          {
-            "name": "tokenIn",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "tokenOut",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "fee",
-            "type": "uint24",
-            "internalType": "uint24"
-          },
-          {
-            "name": "tickSpacing",
-            "type": "int24",
-            "internalType": "int24"
-          }
-        ]
+        "internalType": "bool"
       }
     ],
     "anonymous": false
@@ -225,19 +217,6 @@
       }
     ],
     "anonymous": false
-  },
-  {
-    "type": "function",
-    "name": "MAX_ROUTE_HOPS",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -344,65 +323,18 @@
   },
   {
     "type": "function",
-    "name": "getRoute",
-    "inputs": [
-      {
-        "name": "token",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
+    "name": "ethPool",
+    "inputs": [],
     "outputs": [
       {
-        "name": "",
-        "type": "tuple[]",
-        "internalType": "struct RouteHop[]",
-        "components": [
-          {
-            "name": "kind",
-            "type": "uint8",
-            "internalType": "uint8"
-          },
-          {
-            "name": "tokenIn",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "tokenOut",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "fee",
-            "type": "uint24",
-            "internalType": "uint24"
-          },
-          {
-            "name": "tickSpacing",
-            "type": "int24",
-            "internalType": "int24"
-          }
-        ]
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "hasRoute",
-    "inputs": [
+        "name": "fee",
+        "type": "uint24",
+        "internalType": "uint24"
+      },
       {
-        "name": "token",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bool",
-        "internalType": "bool"
+        "name": "tickSpacing",
+        "type": "int24",
+        "internalType": "int24"
       }
     ],
     "stateMutability": "view"
@@ -429,6 +361,25 @@
         "name": "",
         "type": "address",
         "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "isSwapTarget",
+    "inputs": [
+      {
+        "name": "target",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
       }
     ],
     "stateMutability": "view"
@@ -526,16 +477,21 @@
   },
   {
     "type": "function",
-    "name": "routedTokens",
-    "inputs": [],
-    "outputs": [
+    "name": "setEthPool",
+    "inputs": [
       {
-        "name": "",
-        "type": "address[]",
-        "internalType": "address[]"
+        "name": "fee",
+        "type": "uint24",
+        "internalType": "uint24"
+      },
+      {
+        "name": "tickSpacing",
+        "type": "int24",
+        "internalType": "int24"
       }
     ],
-    "stateMutability": "view"
+    "outputs": [],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -557,44 +513,17 @@
   },
   {
     "type": "function",
-    "name": "setRoute",
+    "name": "setSwapTarget",
     "inputs": [
       {
-        "name": "token",
+        "name": "target",
         "type": "address",
         "internalType": "address"
       },
       {
-        "name": "hops",
-        "type": "tuple[]",
-        "internalType": "struct RouteHop[]",
-        "components": [
-          {
-            "name": "kind",
-            "type": "uint8",
-            "internalType": "uint8"
-          },
-          {
-            "name": "tokenIn",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "tokenOut",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "fee",
-            "type": "uint24",
-            "internalType": "uint24"
-          },
-          {
-            "name": "tickSpacing",
-            "type": "int24",
-            "internalType": "int24"
-          }
-        ]
+        "name": "allowed",
+        "type": "bool",
+        "internalType": "bool"
       }
     ],
     "outputs": [],

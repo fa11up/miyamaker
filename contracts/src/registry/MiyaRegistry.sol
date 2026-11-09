@@ -20,6 +20,9 @@ contract MiyaRegistry is Ownable, IMiyaRegistry {
     uint16 public constant BPS = 10_000;
     /// @dev Hard ceiling on the protocol fee, whatever the owner sets.
     uint16 public constant MAX_PROTOCOL_FEE_BPS = 500;
+    /// @notice Most ERC-20s allowed at once. A vault holds at most 16 distinct tokens pending (in all, and per
+    ///         benefactor), ETH included, so 15 ERC-20s + ETH always fit and no allowed token can be refused for that.
+    uint256 public constant MAX_PAYMENT_TOKENS = 15;
 
     struct Target {
         string name;
@@ -67,6 +70,7 @@ contract MiyaRegistry is Ownable, IMiyaRegistry {
     error NotFactory();
     error NotVaultFactory();
     error AlreadyRegistered();
+    error TooManyPaymentTokens();
 
     constructor(address owner_, address treasury_, uint16 protocolFeeBps_, uint16 minAlignmentBps_) {
         _initializeOwner(owner_);
@@ -172,6 +176,7 @@ contract MiyaRegistry is Ownable, IMiyaRegistry {
         if (_paymentToken[token] == allowed) return;
         _paymentToken[token] = allowed;
         if (allowed) {
+            if (_paymentTokens.length >= MAX_PAYMENT_TOKENS) revert TooManyPaymentTokens();
             _paymentTokens.push(token);
         } else {
             uint256 n = _paymentTokens.length;

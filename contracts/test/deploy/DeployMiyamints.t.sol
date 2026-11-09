@@ -1,13 +1,12 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import { UniswapVaultPriceValidator } from "../../src/peripherals/UniswapVaultPriceValidator.sol";
 import { Test } from "forge-std/Test.sol";
 import { DeployMiyamints } from "../../script/DeployMiyamints.s.sol";
 import { MiyaRegistry } from "../../src/registry/MiyaRegistry.sol";
 import { UniAlignmentVault } from "../../src/vaults/uni/UniAlignmentVault.sol";
 import { UniAlignmentVaultFactory } from "../../src/vaults/uni/UniAlignmentVaultFactory.sol";
-import { RouteHop, HOP_V3, HOP_V4 } from "../../src/vaults/uni/IVaultRoutes.sol";
+import { SwapCall, IzRouter } from "../../src/vaults/uni/IVaultConfig.sol";
 import { ERC721DropFactory } from "../../src/factories/erc721drop/ERC721DropFactory.sol";
 import { ERC721DropInstance } from "../../src/factories/erc721drop/ERC721DropInstance.sol";
 import { ERC721AuctionFactory } from "../../src/factories/erc721/ERC721AuctionFactory.sol";
@@ -238,17 +237,19 @@ contract DeployMiyamintsForkTest is Test {
     IPoolManager constant MANAGER = IPoolManager(0x000000000004444c5dc75cB358380D2e3dE08A90);
     address constant IMD = 0xD34a99Bc0f67aE1bbd63C660e6d0b0dd03E263B7;
 
-    /// @dev The script sets the route table from script/config/1.json; the ETH route is the spec's single v4 hop.
-    function _setEthRoute() internal view {
-        RouteHop[] memory r = UniAlignmentVaultFactory(d.vaultFactory).getRoute(address(0));
-        assertEq(r.length, 1);
-        assertEq(r[0].kind, HOP_V4);
-        assertEq(r[0].tokenOut, IMD);
-        assertEq(r[0].fee, 10000);
-        assertEq(r[0].tickSpacing, 200);
+    address constant ALLOWANCE_HOLDER = 0x0000000000001fF3684f28c67538d4D072C22734;
+
+    /// @dev The script sets the swap targets and the ETH-claim pool from script/config/1.json.
+    function _checkSwapConfig() internal view {
+        UniAlignmentVaultFactory vf = UniAlignmentVaultFactory(d.vaultFactory);
+        assertTrue(vf.isSwapTarget(ALLOWANCE_HOLDER), "0x AllowanceHolder");
+        assertTrue(vf.isSwapTarget(Z_ROUTER), "zRouter");
+        (uint24 fee, int24 ts) = vf.ethPool();
+        assertEq(fee, 10000);
+        assertEq(ts, 200);
     }
 
-    function test_fork_paymentTokensAndRoutes() public onFork {
+    function test_fork_paymentTokensAndSwapTargets() public onFork {
         MiyaRegistry r = MiyaRegistry(d.registry);
         UniAlignmentVaultFactory vf = UniAlignmentVaultFactory(d.vaultFactory);
         address[6] memory toks = [
@@ -259,35 +260,32 @@ contract DeployMiyamintsForkTest is Test {
             0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf,
             0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599
         ];
-        for (uint256 i; i < 6; ++i) {
-            assertTrue(r.isPaymentToken(toks[i]), "allowed");
-            if (i >= 2) assertGt(vf.getRoute(toks[i]).length, 0, "routed");
-        }
-        assertTrue(vf.hasRoute(address(0)), "ETH routed");
-        assertEq(vf.getRoute(toks[4])[0].kind, HOP_V3, "cbBTC via v3");
-        // USDC, cbBTC and WBTC end in ETH (the batch's one ETH -> IMD swap); imdUSD goes straight to IMD.
-        assertEq(vf.getRoute(toks[2]).length, 1);
-        assertEq(vf.getRoute(toks[2])[0].tokenOut, address(0));
-        assertEq(vf.getRoute(toks[3])[0].tokenOut, IMD);
+        for (uint256 i; i < 6; ++i) assertTrue(r.isPaymentToken(toks[i]), "allowed");
+        _checkSwapConfig();
         // Per-token minimums from config, about 0.001 ETH each.
         uint256[6] memory mins = [uint256(1e18), 3500e18, 2e6, 3e18, 3000, 3000];
         for (uint256 i; i < 6; ++i) assertEq(vf.minContribution(toks[i]), mins[i], "min contribution");
         assertEq(vf.owner(), safe);
     }
 
+    /// @dev Everything pending in ETH; the leg is zRouter calldata on the IMD/ETH pool selling all of msg.value.
     function _ethParams(UniAlignmentVault v) internal view returns (UniAlignmentVault.ConvertParams memory p) {
         p.tokens = v.openBatchTokens();
         p.amounts = new uint256[](p.tokens.length);
         p.amounts[0] = v.pendingByToken(p.tokens[0]);
-        p.minOuts = new uint256[][](p.tokens.length);
-        p.ethLegMinOuts = new uint256[](1);
-        p.ethLegMinOuts[0] = 1;
+        p.swaps = new SwapCall[](p.tokens.length);
+        p.ethLeg = SwapCall(
+            Z_ROUTER,
+            IMD,
+            abi.encodeCall(IzRouter.swapV4, (address(v), false, 10000, 200, address(0), IMD, 0, 0, block.timestamp)),
+            1
+        );
         p.minSplitOut = 1;
         p.deadline = block.timestamp;
     }
 
     function test_fork_defaultVault_convertsIntoRealPool() public onFork {
-        _setEthRoute();
+        _checkSwapConfig();
         ERC721DropInstance drop = _drop();
         vm.prank(buyer);
         drop.mint{ value: 1 ether }(0, 100, new bytes32[](0), address(0), 0);
@@ -308,7 +306,7 @@ contract DeployMiyamintsForkTest is Test {
     }
 
     function test_fork_oneWeiInRouterDoesNotBlockConversion() public onFork {
-        _setEthRoute();
+        _checkSwapConfig();
         vm.deal(address(this), 1 ether);
         (bool ok,) = Z_ROUTER.call{ value: 1 }("");
         assertTrue(ok, "router accepts ETH");

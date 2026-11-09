@@ -440,4 +440,22 @@ contract MiyaRegistryTest is Test {
         }
         assertEq(list.length, allowed);
     }
+
+    function test_paymentToken_capOf15Erc20s() public {
+        // The vault holds at most 16 distinct tokens pending (ETH included): 15 ERC-20s + ETH always fit, so the cap
+        // can't be used to make a vault refuse an allowed token's cut.
+        assertEq(registry.MAX_PAYMENT_TOKENS(), 15);
+        vm.startPrank(owner);
+        for (uint256 i; i < 15; ++i) registry.setPaymentToken(_codeToken(string.concat("t", vm.toString(i))), true);
+        address extra = _codeToken("extra");
+        vm.expectRevert(MiyaRegistry.TooManyPaymentTokens.selector);
+        registry.setPaymentToken(extra, true);
+        // Re-allowing an allowed token is still a no-op, and dropping one frees a slot.
+        registry.setPaymentToken(registry.paymentTokens()[0], true);
+        registry.setPaymentToken(registry.paymentTokens()[0], false);
+        registry.setPaymentToken(extra, true);
+        vm.stopPrank();
+        assertEq(registry.paymentTokens().length, 15);
+        assertTrue(registry.isPaymentToken(extra));
+    }
 }

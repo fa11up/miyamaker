@@ -8,13 +8,15 @@ import {IHooks} from "v4-core/interfaces/IHooks.sol";
 import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
 import {UniAlignmentVault} from "../../src/vaults/uni/UniAlignmentVault.sol";
 import {UniAlignmentVaultFactory} from "../../src/vaults/uni/UniAlignmentVaultFactory.sol";
-import {RouteHop, HOP_V3, HOP_V4} from "../../src/vaults/uni/IVaultRoutes.sol";
 import {IMiyaRegistry} from "../../src/registry/interfaces/IMiyaRegistry.sol";
 import {MiyaRegistry} from "../../src/registry/MiyaRegistry.sol";
 import {VaultTestBase} from "./VaultTestBase.sol";
+import {ClaimMode} from "../../src/interfaces/IAlignmentVault.sol";
+import {IzRouter} from "../../src/vaults/uni/IVaultConfig.sol";
 
 contract UniAlignmentVaultFactoryTest is VaultTestBase {
-    event RouteSet(address indexed token, RouteHop[] hops);
+    event SwapTargetSet(address indexed target, bool allowed);
+    event EthPoolSet(uint24 fee, int24 tickSpacing);
     event VaultDeployed(address indexed vault, uint256 indexed alignmentTargetId);
 
     function _salt(bytes11 tag) internal view returns (bytes32) {
@@ -33,7 +35,7 @@ contract UniAlignmentVaultFactoryTest is VaultTestBase {
         assertEq(address(v.poolManager()), POOL_MANAGER);
         assertEq(v.zRouter(), address(router));
         assertEq(address(v.registry()), address(registry));
-        assertEq(address(v.routes()), address(factory));
+        assertEq(address(v.config()), address(factory));
         assertEq(v.infer(), INFER_ADDR);
         assertEq(v.imd(), IMD_ADDR);
         assertEq(v.alignmentTargetId(), 0);
@@ -86,129 +88,89 @@ contract UniAlignmentVaultFactoryTest is VaultTestBase {
         impl.disableInitializer();
     }
 
-    function test_vaults_shareTheRouteTable() public {
+    function test_vaults_shareTheConfig() public {
         UniAlignmentVault v1 = UniAlignmentVault(payable(factory.deployVault(_salt(bytes11("a")), 0)));
         UniAlignmentVault v2 = UniAlignmentVault(payable(factory.deployVault(_salt(bytes11("b")), 0)));
-        assertEq(address(v1.routes()), address(v2.routes()));
-        assertTrue(factory.hasRoute(USDC_ADDR));
+        assertEq(address(v1.config()), address(v2.config()));
+        assertTrue(factory.isSwapTarget(address(router)));
     }
 
-    // ── routes ──────────────────────────────────────────────────────────────
+    // ── swap targets ────────────────────────────────────────────────────────
 
-    function test_specRoutes() public view {
-        RouteHop[] memory r = factory.getRoute(CBBTC_ADDR);
-        assertEq(r.length, 1, "ends in ETH: the batch's ETH leg takes it on to IMD");
-        assertEq(r[0].kind, HOP_V3);
-        assertEq(r[0].tokenIn, CBBTC_ADDR);
-        assertEq(r[0].tokenOut, ETH);
-        assertEq(r[0].fee, 3000);
-        r = factory.getRoute(ETH);
-        assertEq(r.length, 1);
-        assertEq(r[0].kind, HOP_V4);
-        assertEq(r[0].tokenOut, IMD_ADDR);
-        assertEq(r[0].fee, 10000);
-        assertEq(r[0].tickSpacing, 200);
-        assertFalse(factory.hasRoute(IMD_ADDR));
-        assertFalse(factory.hasRoute(INFER_ADDR));
-        assertEq(factory.routedTokens().length, 5);
+    function test_setSwapTarget_allowAndRemove() public {
+        address agg = address(new MiyaRegistry(address(this), treasury, 0, 0)); // any contract
+        assertFalse(factory.isSwapTarget(agg));
+        vm.expectEmit(true, false, false, true, address(factory));
+        emit SwapTargetSet(agg, true);
+        factory.setSwapTarget(agg, true);
+        assertTrue(factory.isSwapTarget(agg));
+        vm.expectEmit(true, false, false, true, address(factory));
+        emit SwapTargetSet(agg, false);
+        factory.setSwapTarget(agg, false);
+        assertFalse(factory.isSwapTarget(agg));
     }
 
-    function test_setRoute_onlyOwner() public {
-        RouteHop[] memory r = new RouteHop[](1);
-        r[0] = _hop(HOP_V4, ETH, IMD_ADDR, 3000, 60);
+    function test_setSwapTarget_onlyOwner() public {
+        vm.prank(keeper); // the keeper can't add targets
+        vm.expectRevert(Ownable.Unauthorized.selector);
+        factory.setSwapTarget(address(router), true);
         vm.prank(alice);
         vm.expectRevert(Ownable.Unauthorized.selector);
-        factory.setRoute(ETH, r);
+        factory.setSwapTarget(address(router), false);
     }
 
-    function test_setRoute_replaceAndClear() public {
-        RouteHop[] memory r = new RouteHop[](1);
-        r[0] = _hop(HOP_V4, USDC_ADDR, IMD_ADDR, 3000, 60);
-        vm.expectEmit(true, false, false, true, address(factory));
-        emit RouteSet(USDC_ADDR, r);
-        factory.setRoute(USDC_ADDR, r);
-        assertEq(factory.getRoute(USDC_ADDR).length, 1);
-        factory.setRoute(USDC_ADDR, new RouteHop[](0));
-        assertFalse(factory.hasRoute(USDC_ADDR));
-        assertEq(factory.routedTokens().length, 5, "list is append-only");
+    function test_setSwapTarget_refusesEoasAndVaultInternals() public {
+        address[6] memory bad = [alice, address(0), INFER_ADDR, IMD_ADDR, address(registry), address(factory)];
+        for (uint256 i; i < bad.length; ++i) {
+            vm.expectRevert(UniAlignmentVaultFactory.InvalidAddress.selector);
+            factory.setSwapTarget(bad[i], true);
+        }
+        // The PoolManager, once it has code.
+        vm.etch(POOL_MANAGER, hex"00");
+        vm.expectRevert(UniAlignmentVaultFactory.InvalidAddress.selector);
+        factory.setSwapTarget(POOL_MANAGER, true);
+        // Removing is always possible (an EOA was never allowed, so this is a no-op).
+        factory.setSwapTarget(alice, false);
     }
 
-    function test_setRoute_validation() public {
-        RouteHop[] memory r = new RouteHop[](1);
+    // ── ETH-claim pool ──────────────────────────────────────────────────────
 
-        r[0] = _hop(HOP_V4, IMD_ADDR, INFER_ADDR, 3000, 60);
-        vm.expectRevert(UniAlignmentVaultFactory.BadRoute.selector);
-        factory.setRoute(IMD_ADDR, r); // IMD and INFER take no route
-        vm.expectRevert(UniAlignmentVaultFactory.BadRoute.selector);
-        factory.setRoute(INFER_ADDR, r);
-
-        r[0] = _hop(HOP_V4, ETH, IMD_ADDR, 3000, 60);
-        vm.expectRevert(UniAlignmentVaultFactory.BadRoute.selector);
-        factory.setRoute(USDC_ADDR, r); // first hop must start at the token
-
-        r[0] = _hop(HOP_V4, USDC_ADDR, WBTC_ADDR, 500, 10);
-        vm.expectRevert(UniAlignmentVaultFactory.BadRoute.selector);
-        factory.setRoute(USDC_ADDR, r); // must end at IMD or ETH
-
-        r[0] = _hop(HOP_V4, ETH, USDC_ADDR, 500, 10);
-        vm.expectRevert(UniAlignmentVaultFactory.BadRoute.selector);
-        factory.setRoute(ETH, r); // the ETH route must end at IMD
-
-        r[0] = _hop(2, USDC_ADDR, IMD_ADDR, 500, 10);
-        vm.expectRevert(UniAlignmentVaultFactory.BadRoute.selector);
-        factory.setRoute(USDC_ADDR, r); // v2 not supported
-
-        r[0] = _hop(HOP_V3, USDC_ADDR, IMD_ADDR, 2500, 0);
-        vm.expectRevert(UniAlignmentVaultFactory.BadRoute.selector);
-        factory.setRoute(USDC_ADDR, r); // not a v3 fee tier
-
-        r[0] = _hop(HOP_V4, USDC_ADDR, IMD_ADDR, 0x800000, 10);
-        vm.expectRevert(UniAlignmentVaultFactory.BadRoute.selector);
-        factory.setRoute(USDC_ADDR, r); // dynamic fee: not a hookless pool zRouter can route
-
-        r[0] = _hop(HOP_V4, USDC_ADDR, IMD_ADDR, 500, 0);
-        vm.expectRevert(UniAlignmentVaultFactory.BadRoute.selector);
-        factory.setRoute(USDC_ADDR, r);
-
-        RouteHop[] memory r2 = new RouteHop[](2);
-        r2[0] = _hop(HOP_V4, USDC_ADDR, ETH, 500, 10);
-        r2[1] = _hop(HOP_V4, WBTC_ADDR, IMD_ADDR, 500, 10);
-        vm.expectRevert(UniAlignmentVaultFactory.BadRoute.selector);
-        factory.setRoute(USDC_ADDR, r2); // hops must chain
-
-        r2[1] = _hop(HOP_V4, ETH, ETH, 500, 10);
-        vm.expectRevert(UniAlignmentVaultFactory.BadRoute.selector);
-        factory.setRoute(USDC_ADDR, r2);
-
-        RouteHop[] memory r5 = new RouteHop[](5);
-        vm.expectRevert(UniAlignmentVaultFactory.BadRoute.selector);
-        factory.setRoute(USDC_ADDR, r5);
+    function test_ethPool_defaultAndSet() public {
+        (uint24 fee, int24 ts) = factory.ethPool();
+        assertEq(fee, 10000);
+        assertEq(ts, 200);
+        vm.expectEmit(false, false, false, true, address(factory));
+        emit EthPoolSet(3000, 60);
+        factory.setEthPool(3000, 60);
+        (fee, ts) = factory.ethPool();
+        assertEq(fee, 3000);
+        assertEq(ts, 60);
+        vm.expectRevert(UniAlignmentVaultFactory.InvalidPool.selector);
+        factory.setEthPool(0x800000, 60); // dynamic fee
+        vm.expectRevert(UniAlignmentVaultFactory.InvalidPool.selector);
+        factory.setEthPool(3000, 0);
+        vm.prank(alice);
+        vm.expectRevert(Ownable.Unauthorized.selector);
+        factory.setEthPool(500, 10);
     }
 
-    function test_routeChange_appliesToPendingBatch() public {
-        _contribute(alice, usdc, 3000e6);
-        // Owner moves USDC to a direct (hypothetical) USDC/IMD pool: the next conversion uses it.
-        router.setRate(USDC_ADDR, IMD_ADDR, uint256(10_000e18) * 1e18 / 3000e6);
-        RouteHop[] memory r = new RouteHop[](1);
-        r[0] = _hop(HOP_V4, USDC_ADDR, IMD_ADDR, 3000, 60);
-        factory.setRoute(USDC_ADDR, r);
-        uint256 calls = router.calls();
+    function test_ethPool_usedByEthClaims() public {
+        _contributeEth(alice, 1 ether);
         _convert();
-        assertEq(router.calls(), calls + 1, "one hop");
-        assertGt(vault.benefactorShares(alice), 0);
-    }
-
-    function test_routeThroughEthToImd_runsOnItsOwn() public {
-        // A route may still pass through ETH and end at IMD; it then swaps on its own (not in the merged ETH leg).
-        RouteHop[] memory r2 = new RouteHop[](2);
-        r2[0] = _hop(HOP_V4, USDC_ADDR, ETH, 500, 10);
-        r2[1] = _hop(HOP_V4, ETH, IMD_ADDR, 10000, 200);
-        factory.setRoute(USDC_ADDR, r2);
-        _contribute(alice, usdc, 3000e6);
-        uint256 calls = router.calls();
-        _convert();
-        assertEq(router.calls(), calls + 2);
-        assertApproxEqRel(vault.benefactorShares(alice), 5000e18, 0.02e18);
+        vault.accrueFees(0, 100e18);
+        vault.collectFees();
+        factory.setEthPool(3000, 60);
+        (uint256 inferOwed, uint256 imdOwed,) = vault.claimable(alice);
+        assertEq(inferOwed, 0);
+        // The claim sells its IMD through zRouter.swapV4 on the factory's pool, read live.
+        vm.expectCall(
+            address(router),
+            abi.encodeCall(IzRouter.swapV4, (address(vault), false, 3000, 60, IMD_ADDR, ETH, imdOwed, 0, block.timestamp))
+        );
+        vm.prank(alice);
+        (,, uint256 ethOut) = vault.claimFees(ClaimMode.ETH, 1);
+        assertEq(alice.balance, ethOut);
+        assertEq(ethOut, imdOwed * R_IMD_ETH / 1e18);
     }
 
     function test_minContribution_ownerSet() public {

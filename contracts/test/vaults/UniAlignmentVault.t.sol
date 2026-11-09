@@ -10,8 +10,9 @@ import {LibClone} from "solady/utils/LibClone.sol";
 import {Ownable} from "solady/auth/Ownable.sol";
 import {UniAlignmentVault} from "../../src/vaults/uni/UniAlignmentVault.sol";
 import {UniAlignmentVaultFactory} from "../../src/vaults/uni/UniAlignmentVaultFactory.sol";
-import {IVaultRoutes, RouteHop, HOP_V3, HOP_V4} from "../../src/vaults/uni/IVaultRoutes.sol";
+import {IVaultConfig, SwapCall} from "../../src/vaults/uni/IVaultConfig.sol";
 import {IMiyaRegistry} from "../../src/registry/interfaces/IMiyaRegistry.sol";
+import {MiyaRegistry} from "../../src/registry/MiyaRegistry.sol";
 import {IAlignmentVault, ClaimMode} from "../../src/interfaces/IAlignmentVault.sol";
 import {TestableUniAlignmentVault} from "../helpers/TestableUniAlignmentVault.sol";
 import {MockToken, MockFeeOnTransferToken} from "./mocks/VaultMocks.sol";
@@ -106,11 +107,11 @@ contract UniAlignmentVaultTest is VaultTestBase {
         vault.receiveContribution{value: 1}(Currency.wrap(USDC_ADDR), 1e6, alice);
         vm.stopPrank();
 
-        // Allowlisted but no route: refused, so a batch never holds a token it can't convert.
+        // Allowlisted in the registry: accepted (no route needed; the keeper brings the swap).
         registry.setPaymentToken(address(stray), true);
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(UniAlignmentVault.NoRoute.selector, address(stray)));
         vault.receiveContribution(Currency.wrap(address(stray)), 1e18, alice);
+        assertEq(vault.pendingOf(alice, address(stray)), 1e18);
 
         // No allowance: the pull fails.
         imd.mint(bob, 1e18);
@@ -124,9 +125,9 @@ contract UniAlignmentVaultTest is VaultTestBase {
         assertEq(vault.pendingOf(alice, WBTC_ADDR), 1);
     }
 
-    function test_erc20Contribution_minimumFromRouteTable() public {
+    function test_erc20Contribution_minimumFromFactory() public {
         factory.setMinContribution(WBTC_ADDR, 3000);
-        factory.setMinContribution(IMD_ADDR, 1e18); // IMD has no route, but can still have a minimum
+        factory.setMinContribution(IMD_ADDR, 1e18); // IMD is never swapped, but can still have a minimum
         wbtc.mint(alice, 1e8);
         imd.mint(alice, 1e18);
         vm.startPrank(alice);
@@ -153,9 +154,6 @@ contract UniAlignmentVaultTest is VaultTestBase {
     function test_feeOnTransferToken_refused() public {
         MockFeeOnTransferToken fot = new MockFeeOnTransferToken();
         registry.setPaymentToken(address(fot), true);
-        RouteHop[] memory r = new RouteHop[](1);
-        r[0] = _hop(HOP_V4, address(fot), IMD_ADDR, 3000, 60);
-        factory.setRoute(address(fot), r);
         fot.mint(alice, 100e18);
         vm.startPrank(alice);
         fot.approve(address(vault), 100e18);
@@ -179,24 +177,31 @@ contract UniAlignmentVaultTest is VaultTestBase {
     }
 
     function test_tooManyTokens() public {
-        for (uint256 i; i < 16; ++i) {
-            MockToken t = new MockToken("T", "T", 18);
-            registry.setPaymentToken(address(t), true);
-            RouteHop[] memory r = new RouteHop[](1);
-            r[0] = _hop(HOP_V4, address(t), IMD_ADDR, 3000, 60);
-            factory.setRoute(address(t), r);
-            if (i == 15) {
-                _contribute(alice, imd, 1e18); // the 16th distinct token for alice and the batch
-                t.mint(alice, 1e18);
-                vm.startPrank(alice);
-                t.approve(address(vault), 1e18);
-                vm.expectRevert(UniAlignmentVault.TooManyTokens.selector);
-                vault.receiveContribution(Currency.wrap(address(t)), 1e18, alice);
-                vm.stopPrank();
-            } else {
-                _contribute(alice, t, 1e18);
-            }
+        // The registry allows at most 15 ERC-20s, so ETH + every allowed token fits the vault's 16 (in all and per
+        // benefactor): alice holds all 16.
+        _contributeEth(alice, 0.01 ether);
+        MockToken[6] memory base = [infer, imd, usdc, imdUsd, cbBtc, wbtc];
+        for (uint256 i; i < 6; ++i) _contribute(alice, base[i], 1e8);
+        MockToken last;
+        for (uint256 i; i < 9; ++i) {
+            last = new MockToken("T", "T", 18);
+            registry.setPaymentToken(address(last), true);
+            _contribute(alice, last, 1e18);
         }
+        assertEq(vault.openBatchTokens().length, 16);
+        MockToken extra = new MockToken("X", "X", 18);
+        vm.expectRevert(MiyaRegistry.TooManyPaymentTokens.selector);
+        registry.setPaymentToken(address(extra), true);
+        // Only a token dropped while still pending can push past it: the vault then refuses the 17th (a collection
+        // parks that cut until the dropped token converts).
+        registry.setPaymentToken(address(last), false);
+        registry.setPaymentToken(address(extra), true);
+        extra.mint(bob, 1e18);
+        vm.startPrank(bob);
+        extra.approve(address(vault), 1e18);
+        vm.expectRevert(UniAlignmentVault.TooManyTokens.selector);
+        vault.receiveContribution(Currency.wrap(address(extra)), 1e18, bob);
+        vm.stopPrank();
     }
 
     // ═══ conversion: access and params ═══════════════════════════════════
@@ -223,7 +228,7 @@ contract UniAlignmentVaultTest is VaultTestBase {
         UniAlignmentVault.ConvertParams memory p = _params(vault);
 
         // A duplicate token, an amount above what is pending, a zero amount, a token with nothing pending, arrays of
-        // the wrong length, a floor list that doesn't match the route: all BadParams.
+        // the wrong length (amounts or swaps): all BadParams.
         UniAlignmentVault.ConvertParams memory q = _paramsFor(_two(USDC_ADDR, USDC_ADDR), _amts(1e6, 1e6));
         _expectBadParams(q);
         q = _paramsFor(_one(USDC_ADDR), _amts(3000e6 + 1));
@@ -237,11 +242,13 @@ contract UniAlignmentVaultTest is VaultTestBase {
         q = _paramsFor(new address[](0), new uint256[](0));
         _expectBadParams(q);
         q = _params(vault);
-        q.minOuts[1] = new uint256[](2); // USDC's route has 1 hop
+        q.swaps = new SwapCall[](1); // two tokens, one swap
         _expectBadParams(q);
         q = _params(vault);
-        q.ethLegMinOuts = new uint256[](0); // the ETH route has 1 hop
-        _expectBadParams(q);
+        q.ethLeg.target = address(0); // ETH reaches the leg: it is required
+        vm.prank(keeper);
+        vm.expectRevert(abi.encodeWithSelector(UniAlignmentVault.SwapTargetNotAllowed.selector, address(0)));
+        vault.convertAndAddLiquidity(q);
 
         q = _params(vault);
         q.deadline = block.timestamp - 1;
@@ -259,17 +266,17 @@ contract UniAlignmentVaultTest is VaultTestBase {
         vault.convertAndAddLiquidity(q);
     }
 
-    function test_convert_hopFloorEnforced() public {
+    function test_convert_swapFloorEnforced() public {
         _contribute(bob, usdc, 3000e6);
         UniAlignmentVault.ConvertParams memory p = _params(vault);
-        p.minOuts[0][0] = 1.0001 ether; // 3000 USDC -> 1 ETH
+        p.swaps[0].minOut = 1.0001 ether; // 3000 USDC -> 1 ETH
         vm.prank(keeper);
-        vm.expectRevert(); // the router's own amountLimit check
+        vm.expectRevert(UniAlignmentVault.InsufficientOutput.selector); // the vault's own balance check
         vault.convertAndAddLiquidity(p);
         p = _params(vault);
-        p.ethLegMinOuts[0] = 10_001e18; // 1 ETH -> 10,000 IMD (the merged ETH leg)
+        p.ethLeg.minOut = 10_001e18; // 1 ETH -> 10,000 IMD (the merged ETH leg)
         vm.prank(keeper);
-        vm.expectRevert();
+        vm.expectRevert(UniAlignmentVault.InsufficientOutput.selector);
         vault.convertAndAddLiquidity(p);
         p = _params(vault);
         vm.prank(keeper);
@@ -299,7 +306,7 @@ contract UniAlignmentVaultTest is VaultTestBase {
         vault.convertAndAddLiquidity(p);
     }
 
-    // ═══ conversion: every route ═════════════════════════════════════════
+    // ═══ conversion: every token (the spec's pools, as zRouter calldata) ═══
 
     function _assertSingleRoute(MockToken t, uint256 amount, uint256 expectedImdValue) internal {
         _contribute(alice, t, amount);
@@ -371,13 +378,12 @@ contract UniAlignmentVaultTest is VaultTestBase {
         assertLe(vault.benefactorShares(alice), vault.benefactorShares(bob) / 1e5);
     }
 
-    function test_noRouteAtConversion_reverts() public {
+    function test_targetRemovedAtConversion_reverts() public {
         _contribute(alice, usdc, 3000e6);
-        factory.setRoute(USDC_ADDR, new RouteHop[](0)); // owner clears the route while USDC is pending
+        factory.setSwapTarget(address(router), false); // the Safe drops the target while USDC is pending
         UniAlignmentVault.ConvertParams memory p = _params(vault);
-        p.minOuts[0] = new uint256[](0);
         vm.prank(keeper);
-        vm.expectRevert(abi.encodeWithSelector(UniAlignmentVault.NoRoute.selector, USDC_ADDR));
+        vm.expectRevert(abi.encodeWithSelector(UniAlignmentVault.SwapTargetNotAllowed.selector, address(router)));
         vault.convertAndAddLiquidity(p);
     }
 
@@ -1123,7 +1129,7 @@ contract UniAlignmentVaultTest is VaultTestBase {
             IPoolManager(POOL_MANAGER),
             address(router),
             IMiyaRegistry(address(registry)),
-            IVaultRoutes(address(factory)),
+            IVaultConfig(address(factory)),
             INFER_ADDR,
             IMD_ADDR,
             k,

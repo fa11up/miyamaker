@@ -15,7 +15,7 @@ import {TickMath} from "v4-core/libraries/TickMath.sol";
 import {Position} from "v4-core/libraries/Position.sol";
 import {UniAlignmentVault} from "../../src/vaults/uni/UniAlignmentVault.sol";
 import {UniAlignmentVaultFactory} from "../../src/vaults/uni/UniAlignmentVaultFactory.sol";
-import {RouteHop, HOP_V3, HOP_V4} from "../../src/vaults/uni/IVaultRoutes.sol";
+import {SwapCall, IzRouter} from "../../src/vaults/uni/IVaultConfig.sol";
 import {MiyaRegistry} from "../../src/registry/MiyaRegistry.sol";
 import {IMiyaRegistry} from "../../src/registry/interfaces/IMiyaRegistry.sol";
 import {ClaimMode} from "../../src/interfaces/IAlignmentVault.sol";
@@ -64,9 +64,45 @@ contract PoolSwapper is IUnlockCallback {
     }
 }
 
-/// @notice Vault v2 against the REAL mainnet pools, zRouter and PoolManager: every route converting a batch, a mixed
-///         batch from several benefactors split by realized value, real swaps generating fees, each claim mode, reinvest
-///         share pricing, and the keeper's quote-then-floor flow.
+interface IAllowanceHolder {
+    function exec(address operator, address token, uint256 amount, address payable target, bytes calldata data)
+        external
+        payable
+        returns (bytes memory result);
+
+    function transferFrom(address token, address owner, address recipient, uint256 amount) external returns (bool);
+}
+
+/// @notice A 0x Settler stand-in for the AllowanceHolder flow on the fork: as operator and target of the vault's
+///         AllowanceHolder.exec, it pulls the input through AllowanceHolder.transferFrom (the vault's exact approval and the
+///         ephemeral allowance), swaps it on zRouter, and pays the output to the vault. 0x quotes can't be fetched inside
+///         forge; this exercises the real AllowanceHolder with the vault as taker.
+contract MiniSettler {
+    IAllowanceHolder constant AH = IAllowanceHolder(0x0000000000001fF3684f28c67538d4D072C22734);
+    address constant ZROUTER = 0x000000000000FB114709235f1ccBFfb925F600e4;
+
+    receive() external payable {}
+
+    /// @dev Sell `amount` of `token` (ETH = all of msg.value) on zRouter's v4 pool (`fee`, `ts`) for `tokenOut`, to the
+    ///      AllowanceHolder caller (ERC-2771 style: the last 20 bytes of calldata).
+    function sellV4(address token, uint256 amount, address tokenOut, uint24 fee, int24 ts) external payable {
+        require(msg.sender == address(AH), "only via AllowanceHolder");
+        address taker = address(bytes20(msg.data[msg.data.length - 20:]));
+        if (token != address(0)) {
+            AH.transferFrom(token, taker, address(this), amount);
+            IERC20F(token).approve(ZROUTER, amount);
+        }
+        IzRouter(ZROUTER).swapV4{value: msg.value}(
+            taker, false, fee, ts, token, tokenOut, token == address(0) ? 0 : amount, 0, block.timestamp
+        );
+    }
+}
+
+/// @notice Vault v2 against the REAL mainnet pools, zRouter and PoolManager: every payment token converting a batch
+///         through zRouter calldata built here (the keeper's fallback path; 0x quotes can't be fetched inside forge), the
+///         0x AllowanceHolder flow with a Settler stand-in, a mixed batch from several benefactors split by realized
+///         value, order independence, a subset batch, real swaps generating fees, each claim mode, reinvest share
+///         pricing, and the keeper's quote-then-floor flow.
 ///         RPC: MAINNET_RPC_URL (default https://ethereum-rpc.publicnode.com); FORK_BLOCK pins a block.
 ///         Skipped (not failed) when the RPC is unreachable or SKIP_FORK_TESTS=true; REQUIRE_FORK_TESTS=true fails instead.
 contract UniAlignmentVaultForkTest is Test {
@@ -83,6 +119,7 @@ contract UniAlignmentVaultForkTest is Test {
     address constant WBTC = 0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599;
     address constant HOOK = 0x784FF9a3ac5d88A30bfff6F7f2a270161FBE6000;
     address constant TREASURY = 0x6Ac8fF96Fb8DCF5d79A8eF1E59D9AC23f2BD27Bc;
+    address constant ALLOWANCE_HOLDER = 0x0000000000001fF3684f28c67538d4D072C22734;
 
     bool forked;
     MiyaRegistry registry;
@@ -130,7 +167,8 @@ contract UniAlignmentVaultForkTest is Test {
         alignKey = PoolKey(Currency.wrap(INFER), Currency.wrap(IMD), 12500, 60, IHooks(HOOK));
         factory = new UniAlignmentVaultFactory(IMiyaRegistry(address(registry)), PM, ZROUTER, INFER, IMD, alignKey);
         registry.setVaultFactory(address(factory), true);
-        _setRoutes();
+        factory.setSwapTarget(ZROUTER, true);
+        factory.setSwapTarget(ALLOWANCE_HOLDER, true);
         bytes32 salt = bytes32(abi.encodePacked(address(factory), bytes1(0x00), bytes11(keccak256("forkVault"))));
         vault = UniAlignmentVault(payable(factory.deployVault(salt, 0)));
         swapper = new PoolSwapper(PM);
@@ -144,24 +182,26 @@ contract UniAlignmentVaultForkTest is Test {
         _;
     }
 
-    function _hop(uint8 kind, address a, address b, uint24 fee, int24 ts) internal pure returns (RouteHop memory) {
-        return RouteHop(kind, a, b, fee, ts);
-    }
-
-    /// @dev The spec's route table (docs/IMD-INFER-VAULT.md, "Conversion routes").
-    function _setRoutes() internal {
-        RouteHop[] memory r1 = new RouteHop[](1);
-        r1[0] = _hop(HOP_V4, ETH, IMD, 10000, 200);
-        factory.setRoute(ETH, r1);
-        r1[0] = _hop(HOP_V4, IMDUSD, IMD, 3000, 60);
-        factory.setRoute(IMDUSD, r1);
-        // These end in ETH: the vault sends all of a batch's ETH to IMD in one swap along the ETH route.
-        r1[0] = _hop(HOP_V4, USDC, ETH, 500, 10);
-        factory.setRoute(USDC, r1);
-        r1[0] = _hop(HOP_V4, WBTC, ETH, 500, 10);
-        factory.setRoute(WBTC, r1);
-        r1[0] = _hop(HOP_V3, CBBTC, ETH, 3000, 0); // v3 cbBTC/WETH 0.3%, zRouter unwraps to ETH
-        factory.setRoute(CBBTC, r1);
+    /// @dev The keeper's zRouter fallback for `token`, on the spec's pools (docs/IMD-INFER-VAULT.md): exactly `amount`
+    ///      to the vault, floor 1 (amount 0 = all of msg.value, the ETH leg). USDC, WBTC -> ETH (v4 500/10), cbBTC ->
+    ///      ETH (v3 cbBTC/WETH 0.3%, zRouter unwraps), imdUSD -> IMD (v4 3000/60), ETH -> IMD (v4 10000/200).
+    function _zSwap(address token, uint256 amount) internal view returns (SwapCall memory c) {
+        address to = address(vault);
+        c.target = ZROUTER;
+        c.minOut = 1;
+        if (token == ETH) {
+            c.tokenOut = IMD;
+            c.data = abi.encodeCall(IzRouter.swapV4, (to, false, 10000, 200, ETH, IMD, amount, 0, block.timestamp));
+        } else if (token == CBBTC) {
+            c.tokenOut = ETH;
+            c.data = abi.encodeCall(IzRouter.swapV3, (to, false, 3000, CBBTC, ETH, amount, 0, block.timestamp));
+        } else if (token == IMDUSD) {
+            c.tokenOut = IMD;
+            c.data = abi.encodeCall(IzRouter.swapV4, (to, false, 3000, 60, IMDUSD, IMD, amount, 0, block.timestamp));
+        } else {
+            c.tokenOut = ETH;
+            c.data = abi.encodeCall(IzRouter.swapV4, (to, false, 500, 10, token, ETH, amount, 0, block.timestamp));
+        }
     }
 
     // ── helpers ─────────────────────────────────────────────────────────────
@@ -196,15 +236,12 @@ contract UniAlignmentVaultForkTest is Test {
     {
         p.tokens = toks;
         p.amounts = amts;
-        p.minOuts = new uint256[][](toks.length);
+        p.swaps = new SwapCall[](toks.length);
         for (uint256 i; i < toks.length; ++i) {
             if (toks[i] == INFER || toks[i] == IMD || toks[i] == ETH) continue;
-            uint256 h = factory.getRoute(toks[i]).length;
-            p.minOuts[i] = new uint256[](h);
-            for (uint256 k; k < h; ++k) p.minOuts[i][k] = 1;
+            p.swaps[i] = _zSwap(toks[i], amts[i]);
         }
-        p.ethLegMinOuts = new uint256[](1);
-        p.ethLegMinOuts[0] = 1;
+        p.ethLeg = _zSwap(ETH, 0);
         p.minSplitOut = 1;
         p.deadline = block.timestamp;
     }
@@ -213,9 +250,9 @@ contract UniAlignmentVaultForkTest is Test {
         return _quotedFrom(_loose(), slipBps);
     }
 
-    /// @dev The keeper's flow: simulate with loose floors, read each route's output, the ETH leg's and the split's
-    ///      from the logs, then set floors at (100 - slipBps/100)% of them. A route ending in ETH gets its ETH out back
-    ///      from its share of the leg (rounded down, so a 0 slip floor still holds).
+    /// @dev The keeper's flow: simulate with loose floors, read each swap's output, the ETH leg's and the split's
+    ///      from the logs, then set floors at (100 - slipBps/100)% of them. A swap to ETH gets its ETH out back from its
+    ///      share of the leg (rounded down, so a 0 slip floor still holds).
     function _quotedFrom(UniAlignmentVault.ConvertParams memory p, uint256 slipBps)
         internal
         returns (UniAlignmentVault.ConvertParams memory)
@@ -227,7 +264,7 @@ contract UniAlignmentVaultForkTest is Test {
         Vm.Log[] memory logs = vm.getRecordedLogs();
         vm.revertToState(snap);
         (uint256 ethIn, uint256 imdOut) = _leg(logs);
-        if (imdOut != 0) p.ethLegMinOuts[0] = imdOut * (10_000 - slipBps) / 10_000;
+        if (imdOut != 0) p.ethLeg.minOut = imdOut * (10_000 - slipBps) / 10_000;
         bytes32 tc = keccak256("TokenConverted(uint256,address,uint256,uint256)");
         bytes32 ss = keccak256("SplitSwap(bool,uint256,uint256)");
         for (uint256 j; j < logs.length; ++j) {
@@ -236,9 +273,9 @@ contract UniAlignmentVaultForkTest is Test {
                 address tok = address(uint160(uint256(logs[j].topics[2])));
                 (, uint256 value) = abi.decode(logs[j].data, (uint256, uint256));
                 for (uint256 i; i < p.tokens.length; ++i) {
-                    if (p.tokens[i] != tok || p.minOuts[i].length == 0) continue;
-                    if (factory.getRoute(tok)[0].tokenOut == ETH) value = value * ethIn / imdOut;
-                    p.minOuts[i][p.minOuts[i].length - 1] = value * (10_000 - slipBps) / 10_000;
+                    if (p.tokens[i] != tok || p.swaps[i].target == address(0)) continue;
+                    if (p.swaps[i].tokenOut == ETH) value = value * ethIn / imdOut;
+                    p.swaps[i].minOut = value * (10_000 - slipBps) / 10_000;
                 }
             } else if (logs[j].topics[0] == ss) {
                 (,, uint256 out) = abi.decode(logs[j].data, (bool, uint256, uint256));
@@ -316,7 +353,7 @@ contract UniAlignmentVaultForkTest is Test {
             : imdAmount * uint256(s) / (1 << 96) * uint256(s) / (1 << 96);
     }
 
-    // ── every route ─────────────────────────────────────────────────────────
+    // ── every payment token, through zRouter calldata ───────────────────────
 
     function _singleRoute(address token, uint256 amount) internal {
         _give(alice, token, amount);
@@ -327,7 +364,7 @@ contract UniAlignmentVaultForkTest is Test {
         assertEq(uint256(_positionLiquidity() - before), shares, "1 share = 1 unit of the vault's real position");
         assertEq(vault.totalLPUnits(), uint256(_positionLiquidity()));
         if (token != ETH && token != INFER && token != IMD) {
-            assertEq(IERC20F(token).balanceOf(address(vault)), 0, "route spent the token");
+            assertEq(IERC20F(token).balanceOf(address(vault)), 0, "the swap spent the token");
         }
         assertEq(vault.pendingByToken(token), 0);
         _assertSolvent();
@@ -519,14 +556,14 @@ contract UniAlignmentVaultForkTest is Test {
         UniAlignmentVault.ConvertParams memory tight = _quoted(0);
         // A floor 0.1% above the live quote fails; the quote itself passes.
         UniAlignmentVault.ConvertParams memory over = _quoted(0);
-        over.minOuts[0][0] = over.minOuts[0][0] * 1001 / 1000; // USDC's hop (ETH out)
+        over.swaps[0].minOut = over.swaps[0].minOut * 1001 / 1000; // USDC's swap (ETH out)
         vm.prank(keeper);
-        vm.expectRevert();
+        vm.expectRevert(UniAlignmentVault.InsufficientOutput.selector);
         vault.convertAndAddLiquidity(over);
         over = _quoted(0);
-        over.ethLegMinOuts[0] = over.ethLegMinOuts[0] * 1001 / 1000; // the batch's ETH -> IMD swap
+        over.ethLeg.minOut = over.ethLeg.minOut * 1001 / 1000; // the batch's ETH -> IMD swap
         vm.prank(keeper);
-        vm.expectRevert();
+        vm.expectRevert(UniAlignmentVault.InsufficientOutput.selector);
         vault.convertAndAddLiquidity(over);
         over = _quoted(0);
         over.minSplitOut = over.minSplitOut * 1001 / 1000;
@@ -651,4 +688,74 @@ contract UniAlignmentVaultForkTest is Test {
         assertEq(ib + mb, 0);
         _assertSolvent();
     }
+
+    // ── 0x AllowanceHolder: the keeper's main path, with a Settler stand-in ─
+
+    function _ahCall(MiniSettler settler, address token, uint256 amount, address tokenOut, uint24 fee, int24 ts)
+        internal
+        pure
+        returns (SwapCall memory)
+    {
+        bytes memory inner = abi.encodeCall(MiniSettler.sellV4, (token, amount, tokenOut, fee, ts));
+        return SwapCall(
+            ALLOWANCE_HOLDER,
+            tokenOut,
+            abi.encodeCall(IAllowanceHolder.exec, (address(settler), token, amount, payable(address(settler)), inner)),
+            1
+        );
+    }
+
+    function test_fork_allowanceHolder_erc20AndEthLeg() public onFork {
+        MiniSettler settler = new MiniSettler();
+        _give(alice, USDC, _amount(USDC));
+        _give(bob, ETH, _amount(ETH));
+        UniAlignmentVault.ConvertParams memory p = _loose();
+        assertEq(p.tokens[0], USDC);
+        // Both swaps through the real AllowanceHolder: USDC -> ETH (ephemeral allowance, pulled by the operator), and
+        // the leg ETH -> IMD (value forwarded).
+        p.swaps[0] = _ahCall(settler, USDC, _amount(USDC), ETH, 500, 10);
+        p.ethLeg = _ahCall(settler, ETH, 0, IMD, 10000, 200);
+
+        UniAlignmentVault.ConvertParams memory z = _loose();
+        uint256 snap = vm.snapshotState();
+        vm.prank(keeper);
+        uint256 viaZRouter = vault.convertAndAddLiquidity(z);
+        vm.revertToState(snap);
+
+        vm.prank(keeper);
+        uint256 shares = vault.convertAndAddLiquidity(p);
+        assertGt(shares, 0);
+        assertApproxEqRel(shares, viaZRouter, 1e12, "same pools, same result as the zRouter path");
+        assertGt(vault.benefactorShares(alice), 0);
+        assertGt(vault.benefactorShares(bob), 0);
+        assertEq(IERC20F(USDC).balanceOf(address(vault)), 0);
+        assertEq(IAllowance(USDC).allowance(address(vault), ALLOWANCE_HOLDER), 0, "approval reset");
+        assertEq(IERC20F(USDC).balanceOf(address(settler)), 0);
+        _assertSolvent();
+    }
+
+    function test_fork_allowanceHolder_operatorCannotTakeMoreThanTheAmount() public onFork {
+        MiniSettler settler = new MiniSettler();
+        _give(alice, USDC, 2 * _amount(USDC)); // the vault holds twice the swap's amount
+        address[] memory t = new address[](1);
+        uint256[] memory a = new uint256[](1);
+        (t[0], a[0]) = (USDC, _amount(USDC));
+        UniAlignmentVault.ConvertParams memory p = _looseFor(t, a);
+        // The calldata asks AllowanceHolder for an ephemeral allowance of twice the amount; the vault approved only the
+        // amount, so the operator's pull fails in USDC itself.
+        bytes memory inner = abi.encodeCall(MiniSettler.sellV4, (USDC, 2 * _amount(USDC), ETH, 500, 10));
+        p.swaps[0] = SwapCall(
+            ALLOWANCE_HOLDER,
+            ETH,
+            abi.encodeCall(IAllowanceHolder.exec, (address(settler), USDC, 2 * _amount(USDC), payable(address(settler)), inner)),
+            1
+        );
+        vm.prank(keeper);
+        vm.expectRevert(bytes("ERC20: transfer amount exceeds allowance"));
+        vault.convertAndAddLiquidity(p);
+    }
+}
+
+interface IAllowance {
+    function allowance(address owner, address spender) external view returns (uint256);
 }

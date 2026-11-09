@@ -21,14 +21,8 @@
   },
   {
     "type": "error",
-    "name": "BadRoute",
-    "inputs": [
-      {
-        "name": "token",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
+    "name": "BadSwapOutput",
+    "inputs": []
   },
   {
     "type": "error",
@@ -38,6 +32,11 @@
   {
     "type": "error",
     "name": "Expired",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InputMismatch",
     "inputs": []
   },
   {
@@ -88,17 +87,6 @@
   },
   {
     "type": "error",
-    "name": "NoRoute",
-    "inputs": [
-      {
-        "name": "token",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "NoShares",
     "inputs": []
   },
@@ -136,6 +124,17 @@
     "type": "error",
     "name": "Reentrancy",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SwapTargetNotAllowed",
+    "inputs": [
+      {
+        "name": "target",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
   },
   {
     "type": "error",
@@ -631,19 +630,6 @@
   },
   {
     "type": "function",
-    "name": "MAX_ROUTE_HOPS",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "MIN_CONTRIBUTION",
     "inputs": [],
     "outputs": [
@@ -903,6 +889,19 @@
   },
   {
     "type": "function",
+    "name": "config",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract IVaultConfig"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "contributionOf",
     "inputs": [
       {
@@ -945,14 +944,58 @@
             "internalType": "uint256[]"
           },
           {
-            "name": "minOuts",
-            "type": "uint256[][]",
-            "internalType": "uint256[][]"
+            "name": "swaps",
+            "type": "tuple[]",
+            "internalType": "struct SwapCall[]",
+            "components": [
+              {
+                "name": "target",
+                "type": "address",
+                "internalType": "address"
+              },
+              {
+                "name": "tokenOut",
+                "type": "address",
+                "internalType": "address"
+              },
+              {
+                "name": "data",
+                "type": "bytes",
+                "internalType": "bytes"
+              },
+              {
+                "name": "minOut",
+                "type": "uint256",
+                "internalType": "uint256"
+              }
+            ]
           },
           {
-            "name": "ethLegMinOuts",
-            "type": "uint256[]",
-            "internalType": "uint256[]"
+            "name": "ethLeg",
+            "type": "tuple",
+            "internalType": "struct SwapCall",
+            "components": [
+              {
+                "name": "target",
+                "type": "address",
+                "internalType": "address"
+              },
+              {
+                "name": "tokenOut",
+                "type": "address",
+                "internalType": "address"
+              },
+              {
+                "name": "data",
+                "type": "bytes",
+                "internalType": "bytes"
+              },
+              {
+                "name": "minOut",
+                "type": "uint256",
+                "internalType": "uint256"
+              }
+            ]
           },
           {
             "name": "minSplitOut",
@@ -1145,9 +1188,9 @@
         "internalType": "contract IMiyaRegistry"
       },
       {
-        "name": "routes_",
+        "name": "config_",
         "type": "address",
-        "internalType": "contract IVaultRoutes"
+        "internalType": "contract IVaultConfig"
       },
       {
         "name": "infer_",
@@ -1395,19 +1438,6 @@
     "inputs": [],
     "outputs": [],
     "stateMutability": "payable"
-  },
-  {
-    "type": "function",
-    "name": "routes",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "contract IVaultRoutes"
-      }
-    ],
-    "stateMutability": "view"
   },
   {
     "type": "function",

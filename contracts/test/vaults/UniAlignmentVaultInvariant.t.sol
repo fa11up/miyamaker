@@ -7,12 +7,14 @@ import {UniAlignmentVault} from "../../src/vaults/uni/UniAlignmentVault.sol";
 import {UniAlignmentVaultFactory} from "../../src/vaults/uni/UniAlignmentVaultFactory.sol";
 import {ClaimMode} from "../../src/interfaces/IAlignmentVault.sol";
 import {TestableUniAlignmentVault} from "../helpers/TestableUniAlignmentVault.sol";
-import {MockToken} from "./mocks/VaultMocks.sol";
-import {VaultTestBase} from "./VaultTestBase.sol";
+import {MockToken, MockAggregator} from "./mocks/VaultMocks.sol";
+import {VaultTestBase, zSwapCall} from "./VaultTestBase.sol";
+import {SwapCall} from "../../src/vaults/uni/IVaultConfig.sol";
 
 contract VaultHandler is Test {
     TestableUniAlignmentVault public vault;
     UniAlignmentVaultFactory public factory;
+    address public router;
     address public keeper;
     address[] public actors;
     address[] public tokens; // address(0) = ETH
@@ -30,6 +32,8 @@ contract VaultHandler is Test {
     bytes public unexpectedErr;
     uint256 public claims;
     uint256 public partials;
+    uint256 public guarded;
+    MockAggregator public agg;
     /// @dev Pro-rata model of each benefactor's pending balance, kept independently of the vault's ledger.
     mapping(address => mapping(address => uint256)) public expectedPending;
     mapping(address => uint256) public conversionsOf;
@@ -37,12 +41,16 @@ contract VaultHandler is Test {
     constructor(
         TestableUniAlignmentVault v,
         UniAlignmentVaultFactory f,
+        address router_,
+        MockAggregator agg_,
         address keeper_,
         address[] memory actors_,
         address[] memory tokens_
     ) {
         vault = v;
         factory = f;
+        router = router_;
+        agg = agg_;
         keeper = keeper_;
         actors = actors_;
         tokens = tokens_;
@@ -85,7 +93,7 @@ contract VaultHandler is Test {
         UniAlignmentVault.ConvertParams memory p;
         p.tokens = new address[](m);
         p.amounts = new uint256[](m);
-        p.minOuts = new uint256[][](m);
+        p.swaps = new SwapCall[](m);
         uint256[] memory pend = new uint256[](m);
         uint256 rot = fracSeed % m; // rotate the order
         uint256 k;
@@ -100,10 +108,10 @@ contract VaultHandler is Test {
             p.tokens[slot] = t;
             p.amounts[slot] = amt;
             pend[slot] = pending;
-            if (t != INFER && t != IMD && t != address(0)) p.minOuts[slot] = new uint256[](factory.getRoute(t).length);
+            if (t != INFER && t != IMD && t != address(0)) p.swaps[slot] = zSwapCall(router, t, amt, address(vault));
             ++k;
         }
-        p.ethLegMinOuts = new uint256[](factory.getRoute(address(0)).length);
+        p.ethLeg = zSwapCall(router, address(0), 0, address(vault));
         p.minSplitOut = 1;
         p.deadline = block.timestamp;
         vm.prank(keeper);
@@ -127,6 +135,54 @@ contract VaultHandler is Test {
                 unexpected = sel;
                 unexpectedErr = err;
             }
+        }
+        _check();
+    }
+
+    /// @dev A keeper call whose swap for one ERC-20 goes to a misbehaving (allowlisted) aggregator: it must revert on a
+    ///      guard and change nothing.
+    function convertBadly(uint256 pick, uint256 modeSeed) external {
+        address[] memory open = vault.openBatchTokens();
+        address t;
+        for (uint256 i; i < open.length; ++i) {
+            address c = open[(pick % open.length + i) % open.length];
+            if (c != INFER && c != IMD && c != address(0)) {
+                t = c;
+                break;
+            }
+        }
+        if (t == address(0)) return;
+        uint256 amt = vault.pendingByToken(t);
+        if (amt < 2) return;
+        MockAggregator.Mode[4] memory modes = [
+            MockAggregator.Mode.UnderDeliver,
+            MockAggregator.Mode.PullLess,
+            MockAggregator.Mode.SendElsewhere,
+            MockAggregator.Mode.RefundInput
+        ];
+        agg.setMode(modes[modeSeed % 4]);
+        UniAlignmentVault.ConvertParams memory p;
+        p.tokens = new address[](1);
+        p.amounts = new uint256[](1);
+        p.swaps = new SwapCall[](1);
+        (p.tokens[0], p.amounts[0]) = (t, amt);
+        address out = zSwapCall(router, t, amt, address(vault)).tokenOut;
+        uint256 fair = amt * agg.rate(t, out) / 1e18;
+        p.swaps[0] = SwapCall(address(agg), out, abi.encodeCall(MockAggregator.swap, (t, amt, out)), fair == 0 ? 1 : fair);
+        p.ethLeg = zSwapCall(router, address(0), 0, address(vault));
+        p.minSplitOut = 1;
+        p.deadline = block.timestamp;
+        vm.prank(keeper);
+        try vault.convertAndAddLiquidity(p) {
+            unexpected = bytes4(0xdeadbeef);
+            unexpectedErr = "bad swap converted";
+        } catch (bytes memory err) {
+            bytes4 sel = bytes4(err);
+            if (
+                sel == UniAlignmentVault.InsufficientOutput.selector || sel == UniAlignmentVault.InputMismatch.selector
+                    || sel == UniAlignmentVault.InsufficientLiquidity.selector
+            ) ++guarded;
+            else (unexpected, unexpectedErr) = (sel, err);
         }
         _check();
     }
@@ -204,7 +260,14 @@ contract UniAlignmentVaultInvariantTest is VaultTestBase {
         tokenList.push(IMDUSD_ADDR);
         tokenList.push(IMD_ADDR);
         tokenList.push(INFER_ADDR);
-        handler = new VaultHandler(vault, factory, keeper, actorList, tokenList);
+        MockAggregator agg = new MockAggregator();
+        vm.deal(address(agg), 1e30);
+        agg.setRate(USDC_ADDR, ETH, R_USDC_ETH);
+        agg.setRate(WBTC_ADDR, ETH, R_BTC_ETH);
+        agg.setRate(CBBTC_ADDR, ETH, R_BTC_ETH);
+        agg.setRate(IMDUSD_ADDR, IMD_ADDR, R_IMDUSD_IMD);
+        factory.setSwapTarget(address(agg), true);
+        handler = new VaultHandler(vault, factory, address(router), agg, keeper, actorList, tokenList);
         targetContract(address(handler));
     }
 
@@ -271,5 +334,6 @@ contract UniAlignmentVaultInvariantTest is VaultTestBase {
         // The campaign must actually exercise conversions and claims.
         assertGt(handler.conversions(), 0, "no conversion ran");
         assertGt(handler.partials(), 0, "no partial conversion ran");
+        assertGt(handler.guarded(), 0, "no bad swap was tried");
     }
 }

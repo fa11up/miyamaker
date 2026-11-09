@@ -19,16 +19,17 @@ import {CurrencySettler} from "../../libraries/v4/CurrencySettler.sol";
 import {LiquidityAmounts} from "../../libraries/v4/LiquidityAmounts.sol";
 import {IAlignmentVault, ClaimMode} from "../../interfaces/IAlignmentVault.sol";
 import {IMiyaRegistry} from "../../registry/interfaces/IMiyaRegistry.sol";
-import {IVaultRoutes} from "./IVaultRoutes.sol";
+import {IVaultConfig, SwapCall} from "./IVaultConfig.sol";
 import {PendingLedger} from "./PendingLedger.sol";
 import {VaultSwaps} from "./VaultSwaps.sol";
 
 /**
  * @title UniAlignmentVault (v2: multi-token, aligned to the INFER/IMD pool)
  * @notice Collections send their vault share in the token paid (ETH or a registry-allowlisted ERC-20). The keeper converts
- *         a batch: any subset of the pending tokens, an exact amount of each. Every token whose route ends in ETH goes to
- *         ETH first, then all of the batch's ETH goes to IMD in ONE swap along the ETH route, its output shared by each
- *         token's ETH; other routes (imdUSD) go to IMD on their own. The balanced part of the IMD goes to INFER in the
+ *         a batch: any subset of the pending tokens, an exact amount of each, each through one aggregator call the keeper
+ *         built (0x AllowanceHolder, or zRouter as the fallback) to an allowlisted target. A token swapped to ETH joins
+ *         the batch's ETH, which then goes to IMD in ONE swap (the ETH leg), its output shared by each token's ETH; a
+ *         token swapped to IMD (imdUSD) is valued by its own IMD out. The balanced part of the IMD goes to INFER in the
  *         hooked INFER/IMD pool (vault-side, through PoolManager.unlock), then INFER + IMD as one full-range position.
  *         Shares (= liquidity units) go to each token's benefactors in proportion to the IMD value the converted amount
  *         realized, pro rata to each benefactor's pending balance in it (PendingLedger). The position's INFER and IMD
@@ -37,7 +38,9 @@ import {VaultSwaps} from "./VaultSwaps.sol";
  * @dev Clone (EIP-1167), initialized once by the factory, which owns it. Keeps v1's hardening:
  *      - conversions cost O(tokens) whatever the number of contributors; each benefactor collects its shares lazily;
  *      - per-share fee indexes with checkpoints (each payout rounds down once), fees booked before every share change;
- *      - conversions are keeper-only (registry.conversionKeeper) with the keeper's floors as the price protection;
+ *      - conversions are keeper-only (registry.conversionKeeper) with the keeper's floors as the price protection; each
+ *        swap is guarded in VaultSwaps (allowlisted target, exact approval reset after, input drops by exactly the
+ *        amount in, output rises by at least a non-zero floor);
  *      - the keeper reward comes out of the batch's ETH only (0.0012 ETH, capped at 1% of it);
  *      - receive() ignores ETH the vault pulls in itself (transient flag), everything nonReentrant;
  *      - nothing owed is ever spent: conversions work only from balances beyond what is owed, checked at the end.
@@ -58,8 +61,9 @@ contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignm
     error AmountMismatch();
     error ContributionBelowMinimum();
     error TokenNotAllowed(address token);
-    error NoRoute(address token);
-    error BadRoute(address token);
+    error SwapTargetNotAllowed(address target);
+    error BadSwapOutput();
+    error InputMismatch();
     error TooManyTokens();
     error ReceivedLess();
     error NothingPending();
@@ -82,11 +86,10 @@ contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignm
     // ========== Constants ==========
 
     address internal constant ETH = address(0);
-    /// @notice Least ETH a contribution can carry. ERC-20 minimums are per token in the route table (minContribution).
+    /// @notice Least ETH a contribution can carry. ERC-20 minimums are per token in the factory (minContribution).
     uint256 public constant MIN_CONTRIBUTION = 0.001 ether;
     /// @notice Most distinct tokens one batch (and one benefactor's pending batch) can hold.
     uint256 public constant MAX_BATCH_TOKENS = 16;
-    uint256 public constant MAX_ROUTE_HOPS = 4;
     /// @notice Flat keeper reward, paid from the batch's pending ETH only, capped at MAX_CONVERSION_REWARD_BPS of it.
     uint256 public constant CONVERSION_REWARD = 0.0012 ether;
     uint256 public constant MAX_CONVERSION_REWARD_BPS = 100;
@@ -106,7 +109,7 @@ contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignm
     uint8 private constant ACTION_MODIFY = 1;
     uint8 private constant ACTION_SWAP = 2;
 
-    /// @dev Set while the vault pulls ETH in itself (zRouter outputs and refunds), so receive() does not book it as a
+    /// @dev Set while the vault pulls ETH in itself (swap outputs and refunds), so receive() does not book it as a
     ///      contribution. = keccak256("miyamaker.UniAlignmentVault.collecting")
     uint256 private constant _COLLECTING_SLOT = 0x9fffd68a8e82dadd8810fe84758545b0fb4c40f84b514ef129e417c2e244d1a1;
 
@@ -115,7 +118,8 @@ contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignm
     IPoolManager public poolManager;
     address public zRouter;
     IMiyaRegistry public registry;
-    IVaultRoutes public routes;
+    /// @notice Swap targets, ERC-20 minimums and the ETH-claim pool, read live (the factory).
+    IVaultConfig public config;
     address public infer;
     address public imd;
     uint256 public alignmentTargetId;
@@ -168,18 +172,18 @@ contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignm
     ///        duplicates. Tokens left out stay pending, their benefactors' balances untouched.
     /// @param amounts Per token, exactly how much to convert: 0 < amount <= pendingByToken(token). What arrives after
     ///        the keeper read it stays pending for a later batch. Each benefactor's balance converts pro rata.
-    /// @param minOuts Per token, one floor per hop of its own route: for a route ending in ETH, the last is that ETH;
-    ///        otherwise the last is the IMD out. Empty for ETH, IMD and INFER.
-    /// @param ethLegMinOuts One floor per hop of the ETH route (the last is the IMD out), for the one swap of all the
-    ///        batch's ETH (pending ETH net of the keeper reward, plus every route that ended in ETH). Ignored when no ETH
-    ///        reaches it.
+    /// @param swaps One per token (same order): exactly `amounts[i]` of the token to ETH or IMD (SwapCall). Ignored
+    ///        (may be empty) for ETH, IMD and INFER.
+    /// @param ethLeg The batch's one ETH -> IMD swap (tokenOut IMD), sent all the batch's ETH as value: pending ETH net
+    ///        of the keeper reward, plus every swap that output ETH. Required when any ETH reaches it, else ignored.
+    ///        Build it to sell its whole msg.value (zRouter: swapAmount 0); ETH it hands back is dust for holders.
     /// @param minSplitOut Floor on the INFER/IMD balancing swap's total output (non-zero if a swap happens).
     /// @param deadline Last timestamp the call may land.
     struct ConvertParams {
         address[] tokens;
         uint256[] amounts;
-        uint256[][] minOuts;
-        uint256[] ethLegMinOuts;
+        SwapCall[] swaps;
+        SwapCall ethLeg;
         uint256 minSplitOut;
         uint256 deadline;
     }
@@ -220,7 +224,7 @@ contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignm
         IPoolManager poolManager_,
         address zRouter_,
         IMiyaRegistry registry_,
-        IVaultRoutes routes_,
+        IVaultConfig config_,
         address infer_,
         address imd_,
         PoolKey calldata key_,
@@ -232,7 +236,7 @@ contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignm
 
         if (
             address(poolManager_) == address(0) || zRouter_ == address(0) || address(registry_) == address(0)
-                || address(routes_) == address(0) || infer_ == address(0) || imd_ == address(0) || infer_ == imd_
+                || address(config_) == address(0) || infer_ == address(0) || imd_ == address(0) || infer_ == imd_
         ) revert InvalidAddress();
         if (!registry_.isAlignmentTargetActive(alignmentTargetId_)) revert TargetNotActive();
         if (!registry_.isTokenInTarget(alignmentTargetId_, infer_)) revert TokenNotInTarget();
@@ -241,7 +245,7 @@ contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignm
         poolManager = poolManager_;
         zRouter = zRouter_;
         registry = registry_;
-        routes = routes_;
+        config = config_;
         infer = infer_;
         imd = imd_;
         alignmentTargetId = alignmentTargetId_;
@@ -289,8 +293,7 @@ contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignm
         } else {
             if (msg.value != 0) revert AmountMismatch();
             if (!registry.isPaymentToken(token)) revert TokenNotAllowed(token);
-            if (token != imd && token != infer && !routes.hasRoute(token)) revert NoRoute(token);
-            if (amount < routes.minContribution(token)) revert ContributionBelowMinimum();
+            if (amount < config.minContribution(token)) revert ContributionBelowMinimum();
             uint256 before = SafeTransferLib.balanceOf(token, address(this));
             SafeTransferLib.safeTransferFrom(token, msg.sender, address(this), amount);
             if (SafeTransferLib.balanceOf(token, address(this)) - before != amount) revert ReceivedLess();
@@ -323,9 +326,10 @@ contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignm
     // ========== Conversion ==========
 
     /// @notice Convert part of what is pending into INFER/IMD liquidity and issue its shares. Keeper only.
-    /// @dev The keeper quotes every hop, simulates, and sends through a private mempool: its floors are the only price
-    ///      protection (no on-chain reference exists for these pools). Order independent: the per-token hops each use
-    ///      their own pool and every token's ETH meets in one ETH -> IMD swap, so permuting `tokens` changes nothing.
+    /// @dev The keeper quotes every swap (0x, zRouter fallback), simulates, and sends through a private mempool: its
+    ///      floors are the only price protection (no on-chain reference exists for these pools). Order independent as
+    ///      long as no two tokens' swaps share a pool: every token's ETH meets in one ETH -> IMD swap, so permuting
+    ///      `tokens` changes nothing.
     // slither-disable-next-line reentrancy-benign,reentrancy-eth
     function convertAndAddLiquidity(ConvertParams calldata p)
         external
@@ -336,7 +340,7 @@ contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignm
         if (block.timestamp > p.deadline) revert Expired();
         if (_openTokens.length == 0) revert NothingPending();
         uint256 n = p.tokens.length;
-        if (n == 0 || p.amounts.length != n || p.minOuts.length != n) revert BadParams();
+        if (n == 0 || p.amounts.length != n || p.swaps.length != n) revert BadParams();
 
         // Yield earned so far belongs to current holders: book it before any share change.
         _collectFees();
@@ -368,6 +372,11 @@ contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignm
         emit BatchConverted(closedBatches, sharesIssued, inferAdded, imdAdded, reward);
         _payCallerReward(reward);
         _checkSolvent();
+        // Every other token still pending is still held: no swap reached what is owed to others.
+        for (uint256 k; k < _openTokens.length; ++k) {
+            address t = _openTokens[k];
+            if (_balanceOf(t) < pendingByToken[t]) revert Insolvent(t);
+        }
     }
 
     /// @dev Check the listed tokens and amounts and take the amounts out of pending. Returns what was pending before,
@@ -392,8 +401,8 @@ contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignm
         }
     }
 
-    /// @dev Each listed token to IMD (its own route), or to ETH for the batch's one ETH -> IMD swap, whose output is
-    ///      shared by each token's ETH in. Returns the IMD each token realized (INFER's is filled in after the split).
+    /// @dev Each listed token to IMD, or to ETH for the batch's one ETH -> IMD swap, whose output is shared by each
+    ///      token's ETH in. Returns the IMD each token realized (INFER's is filled in after the split).
     function _toImd(ConvertParams calldata p, uint256 reward)
         private
         returns (uint256[] memory values, uint256 inferSlot)
@@ -412,14 +421,15 @@ contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignm
             } else if (t == ETH) {
                 ethIn[i] = p.amounts[i] - reward;
             } else {
-                (uint256 out, bool toEth) = _route(t, p.amounts[i], p.minOuts[i], false);
-                if (toEth) ethIn[i] = out;
+                SwapCall calldata s = p.swaps[i];
+                uint256 out = VaultSwaps.swap(config, s, t, p.amounts[i], imd, false);
+                if (s.tokenOut == ETH) ethIn[i] = out;
                 else values[i] = out;
             }
             ethTotal += ethIn[i];
         }
         if (ethTotal != 0) {
-            (uint256 imdOut,) = _route(ETH, ethTotal, p.ethLegMinOuts, false);
+            uint256 imdOut = VaultSwaps.swap(config, p.ethLeg, ETH, ethTotal, imd, true);
             emit EthLegSwapped(closedBatches + 1, ethTotal, imdOut);
             for (uint256 i; i < n; ++i) {
                 if (ethIn[i] != 0) values[i] = FixedPointMathLib.fullMulDiv(imdOut, ethIn[i], ethTotal); // round down
@@ -431,14 +441,6 @@ contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignm
     function _conversionReward(uint256 ethAmount) internal pure returns (uint256) {
         uint256 cap = (ethAmount * MAX_CONVERSION_REWARD_BPS) / 10000; // round down: favors benefactors
         return cap < CONVERSION_REWARD ? cap : CONVERSION_REWARD;
-    }
-
-    /// @dev Run `token`'s route (or its reverse) through zRouter (VaultSwaps.route, by DELEGATECALL).
-    function _route(address token, uint256 amountIn, uint256[] memory minOuts, bool reverse)
-        internal
-        returns (uint256, bool)
-    {
-        return VaultSwaps.route(routes, zRouter, imd, token, amountIn, minOuts, reverse);
     }
 
     function _splitAmount(uint256 amtInfer, uint256 amtImd, uint160 sqrtP, uint128 poolL)
@@ -590,7 +592,6 @@ contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignm
             PendingLedger.convert(_pools[t], pendingBefore[i], p.amounts[i], tokenShares, acc);
             emit TokenConverted(batchId, t, p.amounts[i], values[i]);
             if (pendingByToken[t] == 0) _removeOpenToken(t);
-            else if (t != ETH && t != infer && t != imd && _balanceOf(t) < pendingByToken[t]) revert Insolvent(t);
         }
         closedBatches = batchId;
         totalShares += liquidity;
@@ -797,14 +798,13 @@ contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignm
             if (inferOut != 0) SafeTransferLib.safeTransfer(infer, to, inferOut);
             if (imdOut != 0) SafeTransferLib.safeTransfer(imd, to, imdOut);
         } else {
-            // ETH: INFER -> IMD in the alignment pool (vault-side), IMD -> ETH along the reverse of the ETH route.
+            // ETH: INFER -> IMD in the alignment pool (vault-side), IMD -> ETH in the factory's IMD/ETH pool (zRouter).
             if (minEthOut == 0) revert ZeroFloor();
             uint256 imdTotal = a[1];
             if (a[0] != 0) imdTotal += _alignSwap(true, a[0]);
             ethOut = a[2];
             if (imdTotal != 0) {
-                (uint256 out,) = _route(ETH, imdTotal, new uint256[](0), true);
-                ethOut += out;
+                ethOut += VaultSwaps.imdToEth(zRouter, config, imd, imdTotal, minEthOut > ethOut ? minEthOut - ethOut : 1);
             }
             if (ethOut < minEthOut) revert InsufficientOutput();
         }

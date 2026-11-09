@@ -9,7 +9,7 @@ import {IHooks} from "v4-core/interfaces/IHooks.sol";
 import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
 import {UniAlignmentVault} from "../../src/vaults/uni/UniAlignmentVault.sol";
 import {UniAlignmentVaultFactory} from "../../src/vaults/uni/UniAlignmentVaultFactory.sol";
-import {IVaultRoutes, RouteHop, HOP_V3, HOP_V4} from "../../src/vaults/uni/IVaultRoutes.sol";
+import {IVaultConfig, IzRouter, SwapCall} from "../../src/vaults/uni/IVaultConfig.sol";
 import {MiyaRegistry} from "../../src/registry/MiyaRegistry.sol";
 import {IMiyaRegistry} from "../../src/registry/interfaces/IMiyaRegistry.sol";
 import {ClaimMode} from "../../src/interfaces/IAlignmentVault.sol";
@@ -18,9 +18,35 @@ import {MockToken, MockRouteRouter} from "./mocks/VaultMocks.sol";
 import {CREATEX} from "../../src/shared/CreateXConstants.sol";
 import {CREATEX_BYTECODE} from "createx-forge/script/CreateX.d.sol";
 
+/// @dev The spec's pool per token as zRouter calldata (the keeper's fallback path): exactly `amount` of `token` to `to`;
+///      amount 0 = all of msg.value (the ETH leg). USDC, WBTC, cbBTC (v3) -> ETH; imdUSD -> IMD; ETH -> IMD. Floor 1 wei.
+function zSwapCall(address router, address token, uint256 amount, address to) view returns (SwapCall memory c) {
+    address eth = address(0);
+    address imd = 0xD34a99Bc0f67aE1bbd63C660e6d0b0dd03E263B7;
+    address cbBtc = 0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf;
+    address imdUsd = 0x61aAF8a992A3143e2B0C9cB0030b9fE702854a25;
+    c.target = router;
+    c.minOut = 1;
+    if (token == eth) {
+        c.tokenOut = imd;
+        c.data = abi.encodeCall(IzRouter.swapV4, (to, false, 10000, 200, eth, imd, amount, 0, block.timestamp));
+    } else if (token == cbBtc) {
+        c.tokenOut = eth;
+        c.data = abi.encodeCall(IzRouter.swapV3, (to, false, 3000, cbBtc, eth, amount, 0, block.timestamp));
+    } else if (token == imdUsd) {
+        c.tokenOut = imd;
+        c.data = abi.encodeCall(IzRouter.swapV4, (to, false, 3000, 60, imdUsd, imd, amount, 0, block.timestamp));
+    } else {
+        c.tokenOut = eth;
+        c.data = abi.encodeCall(IzRouter.swapV4, (to, false, 500, 10, token, eth, amount, 0, block.timestamp));
+    }
+}
+
 /// @notice Shared setup for vault v2 unit tests: mainnet-shaped tokens (at their mainnet addresses, so INFER sorts
-///         first like on chain), the spec's route table on a real factory, a mock router at fixed rates, and a
-///         TestableUniAlignmentVault (simulated alignment pool at 1 IMD per INFER).
+///         first like on chain), a real factory with the mock zRouter allowlisted as a swap target, a mock router at
+///         fixed rates, and a TestableUniAlignmentVault (simulated alignment pool at 1 IMD per INFER). Conversions use
+///         zRouter calldata built here, the keeper's fallback path (the spec's pools: USDC, WBTC, cbBTC -> ETH;
+///         imdUSD -> IMD; the ETH leg ETH -> IMD).
 abstract contract VaultTestBase is Test {
     address constant ETH = address(0);
     address constant INFER_ADDR = 0x53d0eA0A685220718Dc6a0a6e4617194C6F37921;
@@ -102,7 +128,7 @@ abstract contract VaultTestBase is Test {
             IMiyaRegistry(address(registry)), IPoolManager(POOL_MANAGER), address(router), INFER_ADDR, IMD_ADDR, key
         );
         registry.setVaultFactory(address(factory), true);
-        _setSpecRoutes();
+        factory.setSwapTarget(address(router), true);
 
         vault = _newVault();
     }
@@ -120,7 +146,7 @@ abstract contract VaultTestBase is Test {
             IPoolManager(POOL_MANAGER),
             address(router),
             IMiyaRegistry(address(registry)),
-            IVaultRoutes(address(factory)),
+            IVaultConfig(address(factory)),
             INFER_ADDR,
             IMD_ADDR,
             key,
@@ -129,23 +155,8 @@ abstract contract VaultTestBase is Test {
         v.setMockPool(Q96, 1e24); // 1 IMD per INFER, 1e24 of other liquidity
     }
 
-    function _hop(uint8 kind, address tIn, address tOut, uint24 fee, int24 ts) internal pure returns (RouteHop memory) {
-        return RouteHop({kind: kind, tokenIn: tIn, tokenOut: tOut, fee: fee, tickSpacing: ts});
-    }
-
-    function _setSpecRoutes() internal {
-        RouteHop[] memory r = new RouteHop[](1);
-        r[0] = _hop(HOP_V4, ETH, IMD_ADDR, 10000, 200);
-        factory.setRoute(ETH, r);
-        r[0] = _hop(HOP_V4, IMDUSD_ADDR, IMD_ADDR, 3000, 60);
-        factory.setRoute(IMDUSD_ADDR, r);
-        // Routes that end in ETH: that ETH joins the batch's one ETH -> IMD swap along the ETH route.
-        r[0] = _hop(HOP_V4, USDC_ADDR, ETH, 500, 10);
-        factory.setRoute(USDC_ADDR, r);
-        r[0] = _hop(HOP_V4, WBTC_ADDR, ETH, 500, 10);
-        factory.setRoute(WBTC_ADDR, r);
-        r[0] = _hop(HOP_V3, CBBTC_ADDR, ETH, 3000, 0);
-        factory.setRoute(CBBTC_ADDR, r);
+    function _zSwap(address token, uint256 amount, address to) internal view returns (SwapCall memory) {
+        return zSwapCall(address(router), token, amount, to);
     }
 
     // ── helpers ─────────────────────────────────────────────────────────────
@@ -178,27 +189,31 @@ abstract contract VaultTestBase is Test {
         address[] memory toks = v.openBatchTokens();
         uint256[] memory amts = new uint256[](toks.length);
         for (uint256 i; i < toks.length; ++i) amts[i] = v.pendingByToken(toks[i]);
-        return _paramsFor(toks, amts);
+        return _paramsFor(toks, amts, address(v));
     }
 
-    /// @dev Keeper params converting exactly `amts` of `toks` (any subset, any order), permissive floors.
+    /// @dev Keeper params converting exactly `amts` of `toks` (any subset, any order), permissive floors (1 wei).
     function _paramsFor(address[] memory toks, uint256[] memory amts)
+        internal
+        view
+        returns (UniAlignmentVault.ConvertParams memory p)
+    {
+        return _paramsFor(toks, amts, address(vault));
+    }
+
+    function _paramsFor(address[] memory toks, uint256[] memory amts, address v)
         internal
         view
         returns (UniAlignmentVault.ConvertParams memory p)
     {
         p.tokens = toks;
         p.amounts = amts;
-        p.minOuts = new uint256[][](toks.length);
+        p.swaps = new SwapCall[](toks.length);
         for (uint256 i; i < toks.length; ++i) {
             if (toks[i] == INFER_ADDR || toks[i] == IMD_ADDR || toks[i] == ETH) continue;
-            uint256 h = factory.getRoute(toks[i]).length;
-            p.minOuts[i] = new uint256[](h);
-            for (uint256 k; k < h; ++k) p.minOuts[i][k] = 1;
+            p.swaps[i] = _zSwap(toks[i], i < amts.length ? amts[i] : 0, v);
         }
-        uint256 e = factory.getRoute(ETH).length;
-        p.ethLegMinOuts = new uint256[](e);
-        for (uint256 k; k < e; ++k) p.ethLegMinOuts[k] = 1;
+        p.ethLeg = _zSwap(ETH, 0, v);
         p.minSplitOut = 1;
         p.deadline = block.timestamp;
     }
