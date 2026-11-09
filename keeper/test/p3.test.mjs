@@ -27,12 +27,12 @@ test("impact unknown (an amount too small for the 1/1000 probe) is skipped and s
   assert.equal(q.included.length, 1);
 });
 
-test("a route that quotes 0 is skipped: never converted for 0 IMD", async () => {
+test("a zRouter fallback that quotes 0 is not used (0x off): skipped, never converted for 0 IMD", async () => {
   const c = fakeChain({ tokens: [ETH, IMDUSD], amounts: { [ETH]: E, [IMDUSD]: 400n * E } });
   c.state.rates[`${IMDUSD}>${IMD}`] = [0n, 1n];
   const ctx = fakeCtx();
   const q = await quoteBatch(c, cfg, ctx, await readBatch(c, ctx, 100n));
-  assert.match(q.items.find((x) => x.token === IMDUSD).skip, /route quotes 0/);
+  assert.match(q.items.find((x) => x.token === IMDUSD).skip, /zRouter quotes 0/);
   assert.deepEqual(q.included.map((x) => x.token), [ETH]);
 });
 
@@ -101,9 +101,16 @@ test("keeper.service is hardened (and the README says to verify it on the host)"
     "RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX", "SystemCallFilter=@system-service", "NoNewPrivileges=true",
     "ProtectSystem=strict",
   ]) assert.match(unit, new RegExp(`^${line.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "m"), line);
-  assert.match(unit, /^BindReadOnlyPaths=.*%h\/miyamaker-vault-keeper/m);
-  assert.match(unit, /^BindReadOnlyPaths=.*KEY_FILE|^BindReadOnlyPaths=.*\.key/m);
-  assert.match(unit, /^BindPaths=%h\/miyamaker-vault-keeper\/state$/m);
+  // One name everywhere: the unit (imd-vault-keeper.service), its folder, its .env, its state/ and its key folder.
+  assert.match(unit, /^WorkingDirectory=%h\/imd-vault-keeper$/m);
+  assert.match(unit, /^EnvironmentFile=%h\/imd-vault-keeper\/\.env$/m);
+  assert.match(unit, /^BindReadOnlyPaths=%h\/imd-vault-keeper$/m);
+  assert.match(unit, /^BindReadOnlyPaths=%h\/\.config\/imd-vault-keeper\/keeper\.key$/m);
+  assert.match(unit, /^BindPaths=%h\/imd-vault-keeper\/state$/m);
+  assert.match(unit, /^ReadWritePaths=%h\/imd-vault-keeper\/state$/m);
+  const paths = [...unit.matchAll(/%h\/(?:\.config\/)?([\w.-]+)/g)].map((m) => m[1]);
+  assert.ok(paths.length >= 6);
+  for (const p of paths) assert.equal(p, "imd-vault-keeper", `every path in the unit uses imd-vault-keeper (found ${p})`);
   assert.doesNotMatch(unit, /^ProtectHome=read-only/m);
   const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
   assert.match(readme, /systemd-analyze --user security imd-vault-keeper/);

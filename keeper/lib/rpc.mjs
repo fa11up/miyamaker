@@ -1,6 +1,8 @@
 // Reads and sends go to different places (as in imd-keeper). Reads: READ_RPC_URLS with failover. A signed
-// transaction goes ONLY to PRIVATE_RPC_URL (Flashbots Protect or similar), never to a public mempool: with none
-// configured, sendRaw refuses. Logs and errors name hosts only, since a keyed URL carries its key in the path.
+// transaction goes ONLY to PRIVATE_RPC_URL (default MEV Blocker https://rpc.mevblocker.io/noreverts: private, and a tx
+// that would revert is never included), never to a public mempool: with none configured, sendRaw refuses. A private
+// RPC may hold a tx and never include it: the unknown-outcome record (lib/outcome.mjs) waits for its deadline, then
+// the nonce is reused. Logs and errors name hosts only, since a keyed URL carries its key in the path.
 import { createPublicClient, fallback, http, keccak256 } from "viem";
 import { mainnet } from "viem/chains";
 

@@ -2,17 +2,16 @@
 // test/abi.test.mjs checks every fragment against contracts/abi/*.json when that folder is present.
 import { parseAbi } from "viem";
 
-export const ROUTE_HOP = "(uint8 kind, address tokenIn, address tokenOut, uint24 fee, int24 tickSpacing)";
+export const SWAP_CALL = "(address target, address tokenOut, bytes data, uint256 minOut)";
 const POOL_KEY = "(address currency0, address currency1, uint24 fee, int24 tickSpacing, address hooks)";
-const CONVERT_PARAMS =
-  "(address[] tokens, uint256[] amounts, uint256[][] minOuts, uint256[] ethLegMinOuts, uint256 minSplitOut, uint256 deadline)";
+const CONVERT_PARAMS = `(address[] tokens, uint256[] amounts, ${SWAP_CALL}[] swaps, ${SWAP_CALL} ethLeg, uint256 minSplitOut, uint256 deadline)`;
 
 export const vaultAbi = parseAbi([
   "function openBatchTokens() view returns (address[])",
   "function pendingByToken(address) view returns (uint256)",
   "function closedBatches() view returns (uint256)",
   "function registry() view returns (address)",
-  "function routes() view returns (address)",
+  "function config() view returns (address)",
   "function infer() view returns (address)",
   "function imd() view returns (address)",
   "function poolManager() view returns (address)",
@@ -29,8 +28,9 @@ export const vaultAbi = parseAbi([
   "error Expired()",
   "error NothingPending()",
   "error NotKeeper()",
-  "error NoRoute(address token)",
-  "error BadRoute(address token)",
+  "error SwapTargetNotAllowed(address target)",
+  "error BadSwapOutput()",
+  "error InputMismatch()",
   "error InsufficientOutput()",
   "error InsufficientLiquidity()",
   "error ZeroFloor()",
@@ -39,11 +39,11 @@ export const vaultAbi = parseAbi([
   "error Reentrancy()",
 ]);
 
-export const routesAbi = parseAbi([
-  `function getRoute(address token) view returns (${ROUTE_HOP}[])`,
-  "function hasRoute(address token) view returns (bool)",
+// The vault factory (the vaults' IVaultConfig).
+export const factoryAbi = parseAbi([
+  "function isSwapTarget(address target) view returns (bool)",
   "function minContribution(address token) view returns (uint256)",
-  "function routedTokens() view returns (address[])",
+  "function ethPool() view returns (uint24 fee, int24 tickSpacing)",
   "function registry() view returns (address)",
   "event VaultDeployed(address indexed vault, uint256 indexed alignmentTargetId)",
 ]);

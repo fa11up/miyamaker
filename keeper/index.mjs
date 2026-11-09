@@ -3,7 +3,8 @@
 //
 //   node index.mjs            report every INTERVAL_SECONDS: what each vault's batch is worth, the floors, the decision
 //   node index.mjs --once     one pass, then exit
-//   node index.mjs --execute  also send (needs KEEPER_PRIVATE_KEY or KEEPER_KEY_FILE, and PRIVATE_RPC_URL)
+//   node index.mjs --execute  also send (needs KEEPER_PRIVATE_KEY or KEEPER_KEY_FILE; sends only via PRIVATE_RPC_URL)
+// 0x quotes need ZEROEX_API_KEY in the environment; without it every swap goes through the zRouter fallback.
 //
 // One process, one key, one tx in flight at a time (lib/outcome.mjs). A tick that throws is logged and the loop goes
 // on: a keeper that dies on the first RPC hiccup is worse than one that reports it.
@@ -14,6 +15,7 @@ import { tick, vaultsToKeep } from "./lib/keeper.mjs";
 import { describeReferences } from "./lib/reference.mjs";
 import { verifyQuoters } from "./lib/quote.mjs";
 import { killSwitch } from "./lib/guards.mjs";
+import { zeroExClient } from "./lib/zeroex.mjs";
 
 const EXECUTE = process.argv.includes("--execute");
 const ONCE = process.argv.includes("--once");
@@ -28,7 +30,9 @@ const sender = privateSender(cfg, { log });
 const account = keeperAccount();
 
 const crossClient = crossCheckClient(cfg);
-log(`starting ${EXECUTE ? "IN EXECUTE MODE" : "in report-only mode"}; reads via ${cfg.READ_RPC_URLS.length} RPC(s); ETH leg cross-checked on ${crossClient ? hostOf(cfg.READ_RPC_URLS[1]) : "no second RPC (only one configured)"}`);
+const zx = zeroExClient(cfg); // ZEROEX_API_KEY from the environment; never logged
+log(zx.enabled ? "swaps: 0x (AllowanceHolder) first, zRouter fallback" : `swaps: ${zx.why}`);
+log(`starting ${EXECUTE ? "IN EXECUTE MODE" : "in report-only mode"}; reads via ${cfg.READ_RPC_URLS.length} RPC(s); IMD/ETH spot cross-checked on ${crossClient ? hostOf(cfg.READ_RPC_URLS[1]) : "no second RPC (only one configured)"}`);
 if (EXECUTE) {
   if (!account) {
     log("--execute without KEEPER_PRIVATE_KEY or KEEPER_KEY_FILE: refusing to start");
@@ -70,7 +74,7 @@ for (;;) {
     // Discovery failing (getLogs limits, a 5xx) never stops the fixed VAULTS or the settling of a tx in flight.
     const vaults = await vaultsToKeep(client, cfg, discovered, log);
     if (!vaults.length) log("no vaults configured (VAULTS, or FACTORY + DISCOVER_FROM_BLOCK)");
-    await tick({ client, cfg, account, sender, execute: EXECUTE, vaults, contexts, crossClient, log });
+    await tick({ client, cfg, account, sender, execute: EXECUTE, vaults, contexts, crossClient, zx, log });
   } catch (e) {
     log(`tick error: ${(e.shortMessage ?? e.message).slice(0, 200)}`);
   }

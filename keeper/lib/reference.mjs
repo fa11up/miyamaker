@@ -1,15 +1,19 @@
-// Independent price references: prices that do NOT come from the pools the routes swap through.
+// Reference prices: what each swap is checked against. The market, not an oracle of ours (no debt is collateralized
+// by the vault, so the IMD price feed is not needed; USE_IMD_FEED=true adds it back as an extra check on the ETH leg).
 //
 //   ETH/USD   Chainlink 0x5f4e…8419 (8 decimals, heartbeat 1 h)      1 USD (USDC, imdUSD) in ETH
 //   BTC/ETH   Chainlink 0xdeb2…89e8 (18 decimals, heartbeat 24 h)    WBTC / cbBTC in ETH
 //             fallback when it does not verify: BTC/USD 0xF403…E88c (8 decimals) / ETH/USD
-//   IMD/ETH   our IMD price feed 0x070e…EC97 (latestValue(): ETH per IMD, 18 decimals; isStale())
-//             the ETH -> IMD leg, and the IMD side of imdUSD's reference
+//   IMD/ETH   the hookless IMD/ETH v4 pool's spot (fee 10000, tick spacing 200: IMD_ETH_POOL) at the planning block,
+//             read from the PoolManager's slot0. IMD in USD = that spot x Chainlink ETH/USD. Used for the IMD side of
+//             imdUSD's reference (1 USD -> ETH -> IMD) and for the ETH leg (its implied IMD per ETH vs the spot).
+//   IMD/ETH   (optional, USE_IMD_FEED) our IMD price feed 0x070e…EC97 (latestValue(): ETH per IMD; isStale())
 //
-// Every address, description and decimals was read on chain on 2026-11-08 (`npm run smoke` re-reads them), and each
-// read re-checks description, decimals, a positive answer and its age against the block's timestamp. A read that fails
-// any check returns { err } for the tokens that need it: those tokens are skipped (they stay pending), the rest convert.
-import { getAddress, parseAbi } from "viem";
+// Every Chainlink address, description and decimals was read on chain on 2026-11-08 (`npm run smoke` re-reads them),
+// and each read re-checks description, decimals, a positive answer and its age against the block's timestamp. A read
+// that fails any check returns { err } for the tokens that need it: those tokens are skipped (they stay pending).
+import { getAddress, parseAbi, zeroAddress } from "viem";
+import { poolState } from "./split.mjs";
 
 export const chainlinkAbi = parseAbi([
   "function latestRoundData() view returns (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound)",
@@ -27,6 +31,20 @@ export const DEFAULT_CHAINLINK = {
   BTC_USD: { address: "0xF4030086522a5bEEa4988F8cA5B36dbC97BeE88c", description: "BTC / USD", decimals: 8, maxAge: 3600 },
 };
 export const DEFAULT_IMD_PRICE_FEED = "0x070e0603737242B01aBC1D223f7C92D63E86EC97";
+export const DEFAULT_IMD = "0xD34a99Bc0f67aE1bbd63C660e6d0b0dd03E263B7";
+/** The hookless IMD/native-ETH v4 pool whose spot is IMD's market price (ETH is currency0). */
+export const DEFAULT_IMD_ETH_POOL = { fee: 10000, tickSpacing: 200 };
+const Q192 = 1n << 192n;
+
+/** The IMD/ETH pool's key (ETH = address(0) is always currency0). */
+export const imdEthKey = (imd, pool = DEFAULT_IMD_ETH_POOL) => ({
+  currency0: zeroAddress, currency1: getAddress(imd), fee: pool.fee, tickSpacing: pool.tickSpacing, hooks: zeroAddress,
+});
+
+/** IMD per `wei` of ETH at sqrtPriceX96 (price = currency1 per currency0 = IMD per ETH), before fees. */
+export const imdAtSpot = (wei, sqrtP) => (wei * sqrtP * sqrtP) / Q192;
+/** ETH (wei) per `imd` at sqrtPriceX96. */
+export const ethAtSpot = (imd, sqrtP) => (imd * Q192) / (sqrtP * sqrtP);
 export const DEFAULT_BTC_TOKENS = {
   "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599": 8, // WBTC
   "0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf": 8, // cbBTC
@@ -67,7 +85,7 @@ export async function readImdFeed(client, address, { blockNumber, now, maxAge })
  * The references for one batch, read lazily and at most once each (a USDC-only batch never reads BTC/ETH). Every read
  * settles to { v } or { err }, so one failed read only affects the tokens that need it.
  */
-export function referenceReader(client, cfg, { blockNumber, now }) {
+export function referenceReader(client, cfg, { blockNumber, now, imd = cfg.IMD ?? DEFAULT_IMD }) {
   const cl = { ...DEFAULT_CHAINLINK, ...(cfg.CHAINLINK ?? {}) };
   const usdTokens = cfg.USD_TOKENS ?? {};
   const btcTokens = cfg.BTC_TOKENS ?? DEFAULT_BTC_TOKENS;
@@ -94,9 +112,16 @@ export function referenceReader(client, cfg, { blockNumber, now }) {
     });
   const imdFeed = () =>
     once("imdFeed", () => readImdFeed(client, cfg.IMD_PRICE_FEED ?? DEFAULT_IMD_PRICE_FEED, { ...at, maxAge: cfg.IMD_FEED_MAX_AGE_SECONDS ?? null }));
+  // IMD's market price: the IMD/ETH v4 pool's spot at this block. A pool with no price (uninitialized) is an error.
+  const imdSpot = () =>
+    once("imdSpot", async () => {
+      const { sqrtP, liquidity } = await poolState(client, cfg.POOL_MANAGER, imdEthKey(imd, cfg.IMD_ETH_POOL ?? DEFAULT_IMD_ETH_POOL), blockNumber);
+      if (sqrtP === 0n) throw new Error("IMD/ETH v4 pool has no price (not initialized)");
+      return { sqrtP, liquidity, imdPerEth1e18: imdAtSpot(E18, sqrtP) };
+    });
 
   return {
-    ethUsd, btcEth, imdFeed,
+    ethUsd, btcEth, imdFeed, imdSpot,
     /** Does `token` have an independent reference? */
     has: (token) => usdTokens[getAddress(token)] != null || btcTokens[getAddress(token)] != null,
     /**
@@ -118,8 +143,20 @@ export function referenceReader(client, cfg, { blockNumber, now }) {
       }
       return null;
     },
-    /** IMD (wei) that `wei` of ETH buys at the IMD price feed: { imd } | { err }. */
+    /** IMD (wei) that `wei` of ETH is worth at the IMD/ETH pool's spot (no fee): { imd, via } | { err }. */
     async imdForEth(wei) {
+      const r = await imdSpot();
+      if (r.err) return { err: r.err };
+      return { imd: imdAtSpot(wei, r.v.sqrtP), via: "the IMD/ETH v4 pool's spot" };
+    },
+    /** ETH (wei) that `imd` is worth at the IMD/ETH pool's spot: { wei } | { err }. */
+    async ethForImd(imdAmount) {
+      const r = await imdSpot();
+      if (r.err) return { err: r.err };
+      return { wei: ethAtSpot(imdAmount, r.v.sqrtP) };
+    },
+    /** IMD (wei) that `wei` of ETH buys at the IMD price feed (USE_IMD_FEED only): { imd } | { err }. */
+    async imdForEthByFeed(wei) {
       const r = await imdFeed();
       if (r.err) return { err: r.err };
       return { imd: (wei * E18) / r.v.ethPerImd };
@@ -143,7 +180,17 @@ export async function describeReferences(client, cfg) {
   }
   const b = await refs.btcEth();
   lines.push(b.err ? `BTC in ETH: UNAVAILABLE ${b.err}` : `BTC in ETH via ${b.v.via}: 1 BTC = ${Number((b.v.num * 10_000n) / b.v.den) / 10_000} ETH`);
-  const f = await refs.imdFeed();
-  lines.push(f.err ? `IMD price feed: ${f.err} -> the ETH leg (and imdUSD) is skipped while it is stale` : `IMD price feed ${cfg.IMD_PRICE_FEED ?? DEFAULT_IMD_PRICE_FEED}: ${f.v.ethPerImd} wei per IMD (${Number((E18 * 100n) / f.v.ethPerImd) / 100} IMD per ETH), ${f.v.age}s old: OK`);
+  const s = await refs.imdSpot();
+  const u = await refs.ethUsd();
+  if (s.err) lines.push(`IMD/ETH v4 pool spot: UNAVAILABLE ${s.err} -> imdUSD and the ETH leg are skipped`);
+  else {
+    const perEth = Number((s.v.imdPerEth1e18 * 100n) / E18) / 100;
+    const usd = u.err ? "ETH/USD unavailable" : `IMD = $${(Number(u.v.answer) / 10 ** u.v.decimals / perEth).toFixed(4)}`;
+    lines.push(`IMD/ETH v4 pool spot (fee ${(cfg.IMD_ETH_POOL ?? DEFAULT_IMD_ETH_POOL).fee}): ${perEth} IMD per ETH; ${usd}`);
+  }
+  if (cfg.USE_IMD_FEED) {
+    const f = await refs.imdFeed();
+    lines.push(f.err ? `IMD price feed (USE_IMD_FEED): ${f.err} -> the ETH leg is skipped while it is stale` : `IMD price feed ${cfg.IMD_PRICE_FEED ?? DEFAULT_IMD_PRICE_FEED}: ${f.v.ethPerImd} wei per IMD (${Number((E18 * 100n) / f.v.ethPerImd) / 100} IMD per ETH), ${f.v.age}s old: OK`);
+  } else lines.push("IMD price feed: not used (USE_IMD_FEED=false)");
   return lines;
 }

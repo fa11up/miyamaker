@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 // End to end on a LOCAL anvil fork of mainnet (never mainnet itself): deploy the registry, the vault libraries, the
-// vault factory and one vault from contracts/out (run `forge build` in contracts/ first), set the spec's route table and
-// contribution minimums, contribute every routed token plus IMD, then let the keeper plan and SEND
-// convertAndAddLiquidity to the fork through its own send path (lib/keeper.mjs sendConvert, "private RPC" = the anvil
-// URL). imdUSD's pool is off market (2026-11-08), so the keeper leaves it pending and converts the rest. Then the
-// griefing case: a new token and a top-up land between the keeper's quote and its call; the call goes through.
+// vault factory and one vault from contracts/out (run `forge build` in contracts/ first), allow the swap targets (0x
+// AllowanceHolder, zRouter) and set the contribution minimums, contribute every payment token plus IMD, then let the
+// keeper plan and SEND convertAndAddLiquidity to the fork through its own send path (lib/keeper.mjs sendConvert,
+// "private RPC" = the anvil URL). Swaps: zRouter calldata built by the keeper; 0x too when ZEROEX_API_KEY is set (its
+// quotes are made against mainnet's live state, the fork's is a few blocks older). imdUSD's pool is off market
+// (2026-11-08), so the keeper leaves it pending and converts the rest. Then the griefing case: a new token and a top-up
+// land between the keeper's quote and its call; the call goes through.
 //
 //   npm run fork-e2e        FORK_URL (default https://ethereum-rpc.publicnode.com), needs anvil on PATH
 // Keys: anvil's well-known public test accounts, valid only on the local fork.
@@ -12,17 +14,16 @@ import { spawn } from "node:child_process";
 import { readFileSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createPublicClient, createWalletClient, getAddress, http, parseEther, maxUint256, parseAbi, encodePacked, keccak256, formatEther, toFunctionSelector } from "viem";
+import { createPublicClient, createWalletClient, getAddress, http, parseEther, maxUint256, parseAbi, encodePacked, keccak256, formatEther } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { mainnet } from "viem/chains";
 import base from "../config.example.mjs";
 import { applyEnv } from "../lib/config.mjs";
 import { describePlan, planVault, sendConvert, settlePending } from "../lib/keeper.mjs";
-import { feeless, vaultContext } from "../lib/plan.mjs";
-import { quoteRoute } from "../lib/quote.mjs";
-import { ETH as ETH_, routesFromConfig } from "../lib/routes.mjs";
-import { imdFeedAbi } from "../lib/reference.mjs";
+import { vaultContext } from "../lib/plan.mjs";
 import { privateSender } from "../lib/rpc.mjs";
+import { ALLOWANCE_HOLDER, zeroExClient } from "../lib/zeroex.mjs";
+import { ZROUTER } from "../lib/zrouter.mjs";
 
 const FORK = process.env.FORK_URL ?? "https://ethereum-rpc.publicnode.com";
 const PORT = 8547;
@@ -93,7 +94,9 @@ for (const t of json.paymentTokens) await write(W.owner, registry, "setPaymentTo
 const key = { currency0: INFER, currency1: IMD, fee: json.alignmentPool.fee, tickSpacing: json.alignmentPool.tickSpacing, hooks: json.alignmentPool.hook };
 const factory = await deploy("UniAlignmentVaultFactory", [registry.address, json.poolManager, json.zRouter, INFER, IMD, key]);
 await write(W.owner, registry, "setVaultFactory", [factory.address, true]);
-for (const r of json.routes) await write(W.owner, factory, "setRoute", [r.token, r.hops]);
+// The swap targets: config/1.json `swapTargets` when the deploy config lists them, else the two the keeper uses.
+for (const t of json.swapTargets ?? [ALLOWANCE_HOLDER, ZROUTER]) await write(W.owner, factory, "setSwapTarget", [typeof t === "string" ? t : t.target, true]);
+if (json.ethPool) await write(W.owner, factory, "setEthPool", [json.ethPool.fee, json.ethPool.tickSpacing]);
 for (const m of json.minContributions ?? []) await write(W.owner, factory, "setMinContribution", [m.token, BigInt(m.amount)]);
 const salt = encodePacked(["address", "bytes1", "bytes11"], [factory.address, "0x00", keccak256("0x666f726b").slice(0, 24)]);
 const vaultAddr = await pub.readContract({ address: factory.address, abi: factory.abi, functionName: "computeVaultAddress", args: [salt] });
@@ -139,14 +142,16 @@ await give(IMD, (await bal(IMD)) / 2n);
 console.log(`batch: ${(await pub.readContract({ address: vaultAddr, abi: vault.abi, functionName: "openBatchTokens" })).length} tokens`);
 
 // The keeper, against the fork. Its "private RPC" is the anvil node.
-const cfg = applyEnv({ ...base, READ_RPC_URLS: [URL_], PRIVATE_RPC_URL: [URL_], STATE_DIR: mkdtempSync(join(tmpdir(), "vk-e2e-")), TX_WAIT_SECONDS: 30, MAX_GAS_GWEI: 1000, MAX_ETH_PER_DAY: 1 }, {});
+const cfg = applyEnv({ ...base, READ_RPC_URLS: [URL_], PRIVATE_RPC_URL: [URL_], STATE_DIR: mkdtempSync(join(tmpdir(), "vk-e2e-")), TX_WAIT_SECONDS: 30, MAX_GAS_GWEI: 1000, MAX_ETH_PER_DAY: 1, DEADLINE_SECONDS: 3600 }, {});
+const zx = zeroExClient(cfg);
+console.log(`swaps: ${zx.enabled ? "0x first (live mainnet quotes), zRouter fallback" : `${zx.why}`}`);
 const sender = privateSender(cfg);
 const ctx = await vaultContext(pub, vaultAddr);
 await wait(createWalletClient({ account: OWNER, chain: mainnet, transport: http(URL_) }).sendTransaction({ to: KEEPER.address, value: parseEther("1") }));
 const keeperAccount = privateKeyToAccount("0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f2603b6b78690d");
 
 async function convertOnce(label, hooks) {
-  const plan = await planVault(pub, cfg, ctx, { from: keeperAccount.address, hooks });
+  const plan = await planVault(pub, cfg, ctx, { from: keeperAccount.address, hooks, zx });
   console.log(`\n== ${label}\n${describePlan(ctx, plan)}`);
   if (plan.action !== "convert") throw new Error(`expected convert, got ${plan.action}: ${plan.why}`);
   const r = await sendConvert({ client: pub, cfg, account: keeperAccount, sender, ctx, plan, log: (l) => console.log(`  ${l}`) });
@@ -161,32 +166,13 @@ async function convertOnce(label, hooks) {
     console.log(`  off-chain pass-1 split size vs realized: ${(d * 100).toFixed(4)}%`);
   }
   for (const tc of logs.converted) console.log(`  ${tc.token}: in ${tc.amountIn}, IMD value ${tc.imdValue}`);
-  if (logs.leg) console.log(`  ETH leg: ${formatEther(logs.leg.ethIn)} ETH -> ${logs.leg.imdOut} IMD (floor ${plan.params.ethLegMinOuts.at(-1)})`);
+  if (logs.leg) console.log(`  ETH leg: ${formatEther(logs.leg.ethIn)} ETH -> ${logs.leg.imdOut} IMD (minOut ${plan.params.ethLeg.minOut}, via ${plan.quoted.leg.swap.source})`);
+  for (const x of plan.quoted.included.filter((i) => i.kind === "swap")) console.log(`  ${x.token} via ${x.swap.source}: expected ${x.swap.expectedOut}, minOut ${x.swap.minOut}`);
   return plan;
 }
 
 const read = (functionName, args = []) => pub.readContract({ address: vaultAddr, abi: vault.abi, functionName, args });
 
-// The IMD price feed as it is on mainnet: if it is stale, the ETH leg must not convert (fail closed). Report-only plan.
-const feedStale = await pub.readContract({ address: cfg.IMD_PRICE_FEED, abi: imdFeedAbi, functionName: "isStale" });
-const p0 = await planVault(pub, cfg, ctx, { from: keeperAccount.address });
-console.log(`\n== with the mainnet IMD price feed as it is (isStale() = ${feedStale}), report-only\n${describePlan(ctx, p0)}`);
-if (feedStale && p0.quoted?.leg) throw new Error("the ETH leg was planned on a stale IMD price feed");
-// FORK ONLY: put a fresh feed at that address (latestValue = the ETH route's spot, updatedAt = now; isStale() = false),
-// so the rest of the run exercises a conversion with the ETH leg. Nothing like this exists on mainnet.
-{
-  const ethRoute = routesFromConfig(json).get(ETH_);
-  const probe = 10n ** 16n;
-  const spot = feeless(ethRoute, (await quoteRoute(pub, cfg, ethRoute, probe)).at(-1)); // IMD per 0.01 ETH, before fees
-  const ethPerImd = (probe * 10n ** 18n) / spot;
-  const sel = toFunctionSelector("isStale()").slice(2);
-  // if (selector == isStale()) return 0; else return (ethPerImd, block.timestamp)
-  const code = `0x600035${"60e01c"}63${sel}14603c577f${ethPerImd.toString(16).padStart(64, "0")}6000524260205260406000f35b60206000f3`;
-  await pub.request({ method: "anvil_setCode", params: [cfg.IMD_PRICE_FEED, code] });
-  const [v] = await pub.readContract({ address: cfg.IMD_PRICE_FEED, abi: imdFeedAbi, functionName: "latestValue" });
-  if (v !== ethPerImd) throw new Error("mock feed did not take");
-  console.log(`\nFORK ONLY: mock IMD price feed at ${cfg.IMD_PRICE_FEED}: ${ethPerImd} wei per IMD (the ETH route's spot), fresh`);
-}
 const p1 = await convertOnce("mixed batch: ETH, USDC, cbBTC, imdUSD, IMD");
 const skipped = p1.quoted.items.filter((x) => x.skip).map((x) => x.token);
 console.log(`  skipped (left pending): ${skipped.join(", ") || "none"}; imdUSD still pending: ${await read("pendingOf", [ALICE.address, IMDUSD])}`);

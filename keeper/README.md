@@ -7,10 +7,18 @@ The keeper converts each alignment vault's pending contributions into INFER/IMD 
 `UniAlignmentVault.convertAndAddLiquidity(ConvertParams)` (spec: `contracts/docs/IMD-INFER-VAULT.md`, "Vault" and
 "Keeper"). It runs in **report-only mode** unless you start it with `--execute`.
 
-The vault takes **any subset** of the pending tokens at **exact amounts** (`tokens`, `amounts`), runs each token's own
-hops (routes end in IMD, or in ETH), then sends all of the batch's ETH to IMD in **one swap** along the ETH route
-(`ethLegMinOuts`), sharing its output by each token's ETH. So the keeper can leave a token out, a contribution landing
+The vault takes **any subset** of the pending tokens at **exact amounts** (`tokens`, `amounts`). It has **no route
+table**: for each token the keeper hands it a `SwapCall { target, tokenOut, data, minOut }` (aggregator calldata), and
+for the batch's ETH one more, `ethLeg`. The vault runs each call against an **allowlisted target** (0x AllowanceHolder
+`0x0000…1fF3…2C22734` or zRouter `0x0000…FB11…F600e4`, `factory.isSwapTarget`), approving exactly the amount in, and
+checks its own balances: the input drops by exactly the amount, the output (ETH or IMD) rises by at least `minOut`
+(never 0: `ZeroFloor`). Tokens swapped to ETH join **one ETH -> IMD swap** with the pending ETH (net of the keeper
+reward), sent as value, its IMD shared by each token's ETH. So the keeper can leave a token out, a contribution landing
 between its read and its call cannot break the call (it just stays pending), and the order of `tokens` changes nothing.
+
+Swaps come from **0x** (Swap API v2, AllowanceHolder flow) first and the keeper's own **zRouter** calldata as the
+fallback, and every transaction goes through **MEV Blocker** so nothing is front-run. There is **no IMD price feed in
+the loop** (no debt is collateralized by the vault): every swap is checked against the **market**.
 
 ## What one tick does
 
@@ -18,62 +26,82 @@ between its read and its call cannot break the call (it just stays pending), and
    tick re-reads `state/pending.json` after every vault (also after one that threw, e.g. a receipt poll hitting a 429),
    and `sendConvert` itself refuses while a record is in flight. Vault discovery runs in its own `try` (a failed
    `getLogs` keeps the fixed `VAULTS` and the vaults already found), so it can never stop a tx from settling.
-2. For each vault, at **one pinned block**:
-   - reads `openBatchTokens()`, `pendingByToken`, `closedBatches`, `registry.conversionKeeper`, and each token's route
-     plus the ETH route from the vault's route table (`routes().getRoute`); routes are checked the way the vault
-     checks them (`lib/routes.mjs`);
-   - **quotes every token's own hops**: v4 hops with the V4Quoter `0x52f0…1203`, v3 hops with QuoterV2 `0x61fF…B21e`.
-     Both addresses are checked on chain at startup (`poolManager()`, `factory()`, `WETH9()`);
-   - **leaves a token out** (it stays pending in the vault; the rest converts) when:
-     - its route **fails to quote** (e.g. `NotEnoughLiquidity`) or **quotes 0** (it would convert for nothing);
-     - its **price impact** is over `MAX_IMPACT_BPS` (300): its rate vs a 1/1000-size probe through the same pools; or
-       **unknown** (an amount under 1,000 units, or a probe quoting 0): not converted blind;
-     - **reference check** (`lib/reference.mjs`): its route pays more than `MAX_REFERENCE_DEVIATION_BPS` (300) under a
-       price that does not come from a pool it swaps through, or that price cannot be read:
-       - `USD_TOKENS` (USDC, imdUSD): 1 USD each, in ETH at **Chainlink ETH/USD** `0x5f4e…8419` (8 decimals, max age
-         1 h). This replaced the v4 ETH/USDC pool, which is USDC's own route pool (a manipulated pool agreed with itself);
-       - `BTC_TOKENS` (WBTC, cbBTC): **Chainlink BTC/ETH** `0xdeb2…89e8` (18 decimals, not 8; heartbeat 24 h, so max
-         age 24 h). If it fails any check, BTC/USD `0xF403…E88c` (8 decimals, 1 h) / ETH/USD is used instead;
-       - a route ending in IMD (imdUSD): that ETH in IMD at **our IMD price feed** (`IMD_PRICE_FEED`, below).
-       Each read re-checks the feed's `description()`, `decimals()`, a positive answer and its age against the block's
-       timestamp. One failed or stale reference skips only the tokens that need it (logged as an `ALERT`), not the batch.
-       On 2026-11-08 the imdUSD/IMD pool sits at IMD = 4.17 imdUSD while the market is ~2.47 (its only liquidity is out
-       of range): the fork run shows imdUSD 43.8% under its reference (skipped); USDC 7 bps, cbBTC 0 bps. IMD, INFER
-       and ETH itself have no token reference (ETH's check is the leg's);
-   - **quotes the ETH leg** once, on all the ETH of the included tokens (pending ETH minus the keeper reward, plus every
-     route ending in ETH); if the leg's impact is over `MAX_IMPACT_BPS`, its largest input is left out, again, until it
-     fits. Then the leg must pass, or **the whole leg waits this tick** (every token on it stays pending; logged loudly):
-     - the **IMD price feed** `0x070e…EC97` (`latestValue()`: ETH per IMD, 18 decimals; `isStale()`) must be fresh,
-       **fail closed**: stale (or older than `IMD_FEED_MAX_AGE_SECONDS` when set) = no leg. The leg's rate before pool
-       fees must be at most `MAX_FEED_DEVIATION_BPS` (300) under the feed's. **On 2026-11-08 the feed reports
-       `isStale() = true` (last update ~4 h old), so on mainnet today the keeper converts no ETH, USDC or BTC and no
-       imdUSD** until it is updated (`npm run smoke` shows it);
-     - with **two or more `READ_RPC_URLS`**, the leg is quoted again on the second RPC alone at the same block and the
-       two must agree within `CROSS_RPC_MAX_BPS` (0: same block, same state). A second RPC that cannot answer (after one
-       retry) fails closed. With one RPC configured there is no cross-check and the keeper works as before. (If the main
-       client has failed over to the second URL, both answers come from one node: no worse than one RPC.)
-   - **values the batch in ETH**: ETH at face value, a route ending in ETH at its ETH out, anything else (imdUSD, IMD,
-     INFER via the INFER/IMD pool) by quoting its IMD back to ETH along the reversed ETH route; skipped tokens count 0;
-   - waits if the batch is worth less than `MIN_BATCH_ETH` (0.1);
-   - **floors per hop**: `floor_k = quote_k * (1 - HOP_MARGIN_BPS)^(k+1)`, the margin compounding so a later hop still
-     has its own allowance when an earlier one slipped within its own. The ETH leg's floors compound after its feeding
-     routes' (it runs on their output);
-   - **simulates** the exact call with `eth_simulateV1` (no hop or leg floors, `minSplitOut = 1`) and reads the vault's
-     events: `SplitSwap` gives the balancing swap's total output, `TokenConverted` each route's IMD, `EthLegSwapped`
-     the leg's IMD out;
-   - sets `minSplitOut = SplitSwap.amountOut * (1 - SPLIT_MARGIN_BPS)`, and caps a route's (or the leg's) last floor at
-     its simulated output minus its margin if the quote overstated it, **but only within 2 x `HOP_MARGIN_BPS`** of the
-     quote (a safety net: in the spec's table no two routes share a pool, so quotes and the simulation agree). Further
-     under than that, or a simulated balancing swap **below the off-chain pass-1 quote** (or in the other direction),
-     the quote and the simulation disagree too much to trust either: the batch is **refused this tick** (`REFUSED` in
-     the log) instead of lowering a floor without limit;
-   - runs the final `eth_call` with the real params from the keeper address, and `estimateGas`;
-   - **gas-adjusted decision**: gas price (base fee + tip) under `MAX_GAS_GWEI`, and expected cost under
-     `MAX_GAS_SHARE_BPS` of the batch's ETH value (100 = 1%);
-   - with `--execute`: kill switch, gas ceiling, ETH floor and daily spend checked again, then the tx is signed,
-     **recorded in `state/pending.json`**, and sent **only to `PRIVATE_RPC_URL`**.
-3. A `BadParams` revert should no longer happen (the call names its tokens and amounts; later arrivals stay pending).
-   If one does, the keeper re-reads and re-quotes, at most `MAX_REQUOTES` times, then gives up until the next tick.
+2. For each vault, at **one pinned block** (`lib/plan.mjs`):
+   - reads `openBatchTokens()`, `pendingByToken`, `closedBatches`, `registry.conversionKeeper`, and from the factory
+     (`config()`) which swap targets are allowed (`isSwapTarget`);
+   - **sources every swap** (`lib/swaps.mjs`): USDC, WBTC and cbBTC are sold for **ETH** (they join the leg), imdUSD for
+     **IMD** (`FALLBACK_ROUTES` / `SWAP_OUTPUT`). For each:
+     - **0x** (`lib/zeroex.mjs`): `GET https://api.0x.org/swap/allowance-holder/quote` with headers `0x-api-key`
+       (`ZEROEX_API_KEY`, environment only, never logged) and `0x-version: v2`; `chainId=1`, `taker` = the vault,
+       `sellToken`/`buyToken` (ETH = `0xEeee…EEeE`), `sellAmount` = the exact amount, `slippageBps` = the keeper's
+       margin. The quote is **checked** like the app's `quoteGuard` before use: `transaction.to` and any spender are
+       AllowanceHolder; tokens, amount and `value` are what was asked; the calldata decodes as
+       `AllowanceHolder.exec -> Settler.execute` taking exactly the amount, paying **the vault**, buying the asked
+       token, with `minAmountOut = minBuyAmount > 0`; the Settler is the one 0x's on-chain registry names now
+       (`ownerOf(2)` / `prev(2)`). `issues.allowance` / `issues.balance` are expected for taker = vault (it approves
+       inside the call) and are not errors. `minOut` = the stricter of `minBuyAmount` and `buyAmount * (1 - HOP_MARGIN_BPS)`;
+     - **zRouter** (`lib/zrouter.mjs`): one hop from the keeper's `FALLBACK_ROUTES` (default, the old vault table:
+       USDC and WBTC -> ETH v4 500/10, cbBTC -> ETH v3 0.3%, imdUSD -> IMD v4 3000/60, ETH -> IMD v4 10000/200), quoted
+       with the V4Quoter `0x52f0…1203` / QuoterV2 `0x61fF…B21e` (checked on chain at startup), calldata
+       `swapV4`/`swapV3(to = vault, exactOut false, …, amountLimit = minOut, deadline)`. Used only when its **price
+       impact** (vs a 1/1000-size probe through the same pool) is known and at most `MAX_IMPACT_BPS` (300);
+     - **the pick**: 0x, unless it has no route, errors, **times out** (`ZEROEX_TIMEOUT_MS`), fails a check, its target
+       is not allowlisted, or it quotes more than `ZEROEX_MAX_WORSE_BPS` (default 0) under zRouter: then zRouter. Without
+       `ZEROEX_API_KEY` every swap is zRouter (the log and `npm run smoke` say 0x was skipped);
+   - **leaves a token out** (it stays pending in the vault; the rest converts) when neither source gives a usable swap,
+     it has **no reference price**, or its swap pays more than `MAX_REFERENCE_DEVIATION_BPS` (300) **under the market
+     reference** (`lib/reference.mjs`), or that reference cannot be read:
+     - `USD_TOKENS` (USDC, imdUSD): 1 USD each, in ETH at **Chainlink ETH/USD** `0x5f4e…8419` (8 decimals, max age 1 h);
+     - `BTC_TOKENS` (WBTC, cbBTC): **Chainlink BTC/ETH** `0xdeb2…89e8` (18 decimals; heartbeat 24 h). If it fails any
+       check, BTC/USD `0xF403…E88c` / ETH/USD is used instead;
+     - a swap to IMD (imdUSD): that ETH in IMD at the **IMD/ETH v4 pool's spot** (fee 10000, tick spacing 200,
+       `IMD_ETH_POOL`, read from the PoolManager at the planning block). IMD in USD = that spot x Chainlink ETH/USD.
+     Each Chainlink read re-checks `description()`, `decimals()`, a positive answer and its age. One failed reference
+     skips only the tokens that need it (an `ALERT` line). This still catches the stranded imdUSD/IMD pool (2026-11-08:
+     ~40-50% under the market at any size);
+   - **the ETH leg**: one swap for all the ETH of the included tokens (pending ETH minus the keeper reward, plus every
+     swap to ETH). The vault sends it **all of that ETH as value**, which is only known on chain when swaps feed it, so
+     a fed leg must sell its whole `msg.value`: **zRouter** (`swapAmount = 0`). **0x is asked for the leg only when its
+     ETH is exact** (pending ETH alone, no swaps feeding it), for exactly that amount. A fed leg's `minOut` compounds
+     the margin twice (its input may come in under the feeding quotes). The leg must then be within
+     `MAX_REFERENCE_DEVIATION_BPS` of the IMD/ETH pool's **spot** at the planning block, **either way**: under it, its
+     largest input is left out and it is tried again (size); **over** it (a pushed pool, or a quote made against a
+     different state), or unquotable, **the whole leg waits this tick** (logged loudly). With **two or more
+     `READ_RPC_URLS`** the spot is read again on the second RPC at the same block and must match within
+     `CROSS_RPC_MAX_BPS`. Optional, off by default: `USE_IMD_FEED=true` adds the old IMD price feed check
+     (`0x070e…EC97`, fail closed when stale, `MAX_FEED_DEVIATION_BPS`);
+   - **values the batch in ETH**: ETH at face value, a swap to ETH at its ETH out, IMD (and imdUSD's IMD, and INFER via
+     the INFER/IMD pool) at the IMD/ETH spot; skipped tokens count 0. Waits if worth less than `MIN_BATCH_ETH` (0.1);
+   - **simulates** with `eth_simulateV1` (the exact swap calldata, every `minOut` 1, never 0, `minSplitOut = 1`) and
+     reads the vault's events: `SplitSwap` (the balancing swap's total), `TokenConverted` (each swap to IMD),
+     `EthLegSwapped` (the leg). A simulated output under its `minOut`, or more than 2 x `HOP_MARGIN_BPS` under its quote,
+     or a balancing swap under the off-chain pass-1 quote: **refused this tick** (`REFUSED`);
+   - sets `minSplitOut = SplitSwap.amountOut * (1 - SPLIT_MARGIN_BPS)`, builds `ConvertParams` with
+     `deadline = block time + DEADLINE_SECONDS` (60: short, 0x quotes are short-lived), and **simulates the exact call
+     at the latest block** (`eth_simulateV1`, else `eth_call`) from the keeper, then `estimateGas`. If a call carrying
+     0x calldata reverts in either simulation, the batch is **re-planned once with zRouter only**;
+   - **gas-adjusted decision**: gas price under `MAX_GAS_GWEI`, expected cost under `MAX_GAS_SHARE_BPS` of the batch;
+   - with `--execute`: a 0x quote older than `QUOTE_MAX_AGE_SECONDS` (25; they expire after ~30 s) is **quoted again**
+     (at most `MAX_REQUOTES` times) and `sendConvert` refuses a stale one; kill switch, gas ceiling, ETH floor and daily
+     spend checked again, then the tx is signed, **recorded in `state/pending.json`**, and sent **only to
+     `PRIVATE_RPC_URL`**.
+3. A `BadParams` revert should not happen (the call names its tokens and amounts; later arrivals stay pending). If one
+   does, the keeper re-reads and re-quotes, at most `MAX_REQUOTES` times, then gives up until the next tick.
+
+### Sending: MEV Blocker
+
+Signed transactions go only to `PRIVATE_RPC_URL`, never a public mempool (unset = the keeper refuses to send). The
+default is **MEV Blocker**, keyless:
+
+| endpoint | |
+|---|---|
+| `https://rpc.mevblocker.io/noreverts` | **default.** Private; a tx that would revert is never included, so a failed conversion costs no gas |
+| `https://rpc.mevblocker.io/fast` | private, faster inclusion; a reverting tx may land and pay gas |
+| `https://rpc.mevblocker.io/fullprivacy` | no backrun auction, builders only; slowest |
+
+MEV Blocker (like any private RPC) may hold a tx and **never include it**. That is the "expired" row below: past
+`ConvertParams.deadline` the tx is dead (it would revert `Expired`, and `/noreverts` would not include it anyway), and
+the next send reuses its nonce at bumped fees.
 
 ### How `minSplitOut` is derived
 
@@ -84,8 +112,7 @@ for bit. Passes 2 and 3 depend on what the first add used, so the keeper uses th
 publicnode supports) as the source and the off-chain pass 1 as a cross-check (the simulated total covers every pass, so
 it is never under pass 1 alone: if it is, nothing is sent that tick; `SPLIT_CHECK_TOLERANCE_BPS`, default 0) and as the
 fallback on nodes without eth_simulateV1. Pass 1's output is a lower bound of the total, so the fallback floor is safe (a little
-looser). On the fork the off-chain pass-1 size matched the realized swap to 0.10% (5 tokens, where the routes
-realized slightly less IMD than quoted) and exactly (2 tokens).
+looser).
 
 ### Unknown outcomes
 
@@ -116,8 +143,10 @@ also come from the environment under the same name (env wins). Secrets only in t
 | env | |
 |---|---|
 | `KEEPER_KEY_FILE` / `KEEPER_PRIVATE_KEY` | the hot key (0x hex). Only the address is ever printed |
-| `PRIVATE_RPC_URL` | where signed txs go, comma-separated (e.g. Flashbots Protect). Unset = never sends |
-| `READ_RPC_URLS` | reads, with failover; the second one also cross-checks the ETH leg's quote (`CROSS_RPC_MAX_BPS`) |
+| `ZEROEX_API_KEY` | 0x Swap API key (header only, never logged). Unset = zRouter only |
+| `PRIVATE_RPC_URL` | where signed txs go, comma-separated (default MEV Blocker `/noreverts`, above). Empty = never sends |
+| `READ_RPC_URLS` | reads, with failover; the second one also cross-checks the IMD/ETH spot (`CROSS_RPC_MAX_BPS`) |
+| `USE_IMD_FEED` | `true` adds the IMD price feed check on the ETH leg (default `false`) |
 | `VAULTS` | vaults to keep, comma-separated; or `FACTORY` + `DISCOVER_FROM_BLOCK` to add every `VaultDeployed` the registry confirms with `isVault`, read in chunks of `LOG_CHUNK` blocks (default 9,999: many RPCs cap `eth_getLogs` at 10,000) |
 | `KEEPER_STOP=1` | kill switch (or `touch state/STOP`) |
 
@@ -125,13 +154,13 @@ also come from the environment under the same name (env wins). Secrets only in t
 
 ```sh
 cd keeper && npm ci
-npm test                       # unit tests (node:test, no network)
-npm run smoke                  # read-only mainnet: every reference (Chainlink feeds, the IMD price feed), then a batch
-                               # of every token in contracts/script/config/1.json quoted like a vault's (own hops, one
-                               # ETH leg, skip rules, the second RPC's leg quote), floors, minimums' worth
+npm test                       # unit tests (node:test, no network; 0x answers are mocked)
+npm run smoke                  # read-only mainnet: every reference (Chainlink, the IMD/ETH spot), then a batch of every
+                               # token in contracts/script/config/1.json sourced like a vault's (0x when ZEROEX_API_KEY
+                               # is set, else "0x skipped"; zRouter always; one ETH leg; skip rules), minimums' worth
 npm run fork-e2e               # local anvil fork: deploy libraries/registry/factory/vault from contracts/out (linked),
-                               # plan once on the real IMD feed (stale: no ETH leg), then mock a fresh feed ON THE FORK
-                               # and convert twice (imdUSD left pending by the reference check; a mid-flight contribution)
+                               # allow the swap targets, contribute every token, convert through the keeper's own send
+                               # path (zRouter calldata; 0x too when ZEROEX_API_KEY is set), then a mid-flight contribution
 VAULTS=0x... node index.mjs --once   # report-only: one pass, prints the plan for each vault
 ```
 
@@ -140,12 +169,15 @@ keys.
 
 ## On the keeper box (later)
 
-1. Copy `keeper/` to `~/miyamaker-vault-keeper`, `npm ci --omit=dev`.
+1. Copy `keeper/` to `~/imd-vault-keeper`, `npm ci --omit=dev`.
 2. Create a NEW hot key for this keeper (not imd-keeper's, not a governance key); store it in a mode-600 file and set
    `KEEPER_KEY_FILE` in `.env` (see `.env.example`). Fund it with gas only.
 3. Have the registry owner call `setConversionKeeper(<its address>)`.
-4. Set `PRIVATE_RPC_URL` and `VAULTS` in `.env`.
-5. Install `keeper.service` as the user unit `imd-vault-keeper` (paths inside it: the app dir, the key file, state/),
+4. Set `ZEROEX_API_KEY` and `VAULTS` in `~/imd-vault-keeper/.env` (`PRIVATE_RPC_URL` defaults to MEV Blocker
+   `/noreverts`).
+5. Install `keeper.service` as the user unit `imd-vault-keeper`. One name everywhere: `~/imd-vault-keeper` (the app,
+   `WorkingDirectory`), `~/imd-vault-keeper/.env` (`EnvironmentFile`), `~/imd-vault-keeper/state` (`BindPaths`) and
+   `~/.config/imd-vault-keeper/keeper.key` (the key file; `KEEPER_KEY_FILE` must point there). Then
    check the hardening (below), run report-only for a few cycles, then add `--execute`.
 
 ### Hardening (`keeper.service`)

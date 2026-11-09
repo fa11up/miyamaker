@@ -24,10 +24,10 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=%h/miyamaker-vault-keeper
+WorkingDirectory=%h/imd-vault-keeper
 # .env holds KEEPER_KEY_FILE (or KEEPER_PRIVATE_KEY), PRIVATE_RPC_URL, VAULTS; mode 600, never committed. It is read
 # by systemd before the sandbox is set up, so it needs no bind.
-EnvironmentFile=%h/miyamaker-vault-keeper/.env
+EnvironmentFile=%h/imd-vault-keeper/.env
 ExecStart=/usr/bin/env node index.mjs
 Restart=always
 RestartSec=30
@@ -39,10 +39,10 @@ PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=tmpfs
 # The app, read-only; the key file (KEEPER_KEY_FILE in .env must point at this same path), read-only; state/, read-write.
-BindReadOnlyPaths=%h/miyamaker-vault-keeper
+BindReadOnlyPaths=%h/imd-vault-keeper
 BindReadOnlyPaths=%h/.config/imd-vault-keeper/keeper.key
-BindPaths=%h/miyamaker-vault-keeper/state
-ReadWritePaths=%h/miyamaker-vault-keeper/state
+BindPaths=%h/imd-vault-keeper/state
+ReadWritePaths=%h/imd-vault-keeper/state
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectKernelLogs=yes

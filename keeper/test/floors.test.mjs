@@ -1,58 +1,68 @@
-// Floors per hop and the margins.
+// minOut: the keeper's margin, 0x's own minimum, the ETH leg's compounded margin; the simulation probe at minOut 1;
+// the simulation checked against the floors.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { applyMargin, hopFloors } from "../lib/quote.mjs";
+import { applyMargin } from "../lib/quote.mjs";
+import { compoundMargin } from "../lib/swaps.mjs";
+import { EMPTY_SWAP, buildParams, checkSim } from "../lib/plan.mjs";
+import { ALLOWANCE_HOLDER } from "../lib/zeroex.mjs";
+import { ZROUTER } from "../lib/zrouter.mjs";
 
-test("one hop: quote minus the margin", () => {
-  assert.deepEqual(hopFloors([10_000n], 50), [9_950n]);
+const IMD = "0xD34a99Bc0f67aE1bbd63C660e6d0b0dd03E263B7";
+const IMDUSD = "0x61aAF8a992A3143e2B0C9cB0030b9fE702854a25";
+const USDC = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48";
+const ETH = "0x0000000000000000000000000000000000000000";
+
+test("applyMargin rounds down; compoundMargin applies it n times (the ETH leg fed by swaps: twice)", () => {
+  assert.equal(applyMargin(10_000n, 50), 9_950n);
+  assert.equal(applyMargin(199n, 50), 198n);
+  assert.equal(compoundMargin(10_000n, 50, 1), 9_950n);
+  assert.equal(compoundMargin(10_000n, 50, 2), (9_950n * 9_950n) / 10_000n);
+  assert.equal(compoundMargin(10_000n, 0, 2), 10_000n);
 });
 
-test("two hops: the margin compounds, so hop 1 tolerates hop 0 slipping within its allowance", () => {
-  const [f0, f1] = hopFloors([1_000_000n, 2_000_000n], 50);
-  assert.equal(f0, 995_000n);
-  assert.equal(f1, (2_000_000n * 9950n * 9950n) / (10_000n * 10_000n)); // 1_980_050
-  // hop 0 lands exactly at its floor: hop 1's input is 0.5% short, so its fair output is 0.5% short too, and it
-  // still has its own 0.5% before its floor.
-  const hop1AtFloorInput = (2_000_000n * f0) / 1_000_000n;
-  assert.ok(applyMargin(hop1AtFloorInput, 50) >= f1);
+const quoted = () => ({
+  imd: IMD,
+  included: [
+    { token: ETH, kind: "eth", amount: 10n },
+    { token: IMDUSD, kind: "swap", amount: 5n, tokenOut: IMD, toEth: false, swap: { source: "0x", target: ALLOWANCE_HOLDER, data: "0xab", expectedOut: 2_000_000n, minOut: 1_990_000n } },
+    { token: USDC, kind: "swap", amount: 7n, tokenOut: ETH, toEth: true, swap: { source: "zRouter", target: ZROUTER, data: "0xcd", expectedOut: 1_000n, minOut: 995n } },
+  ],
+  leg: { swap: { source: "zRouter", target: ZROUTER, data: "0xef", expectedOut: 20_000n, minOut: 19_800n } },
 });
 
-test("floors never exceed quotes; zero quotes floor at zero; margin 0 = the quote", () => {
-  const outs = [123_456_789n, 987n, 0n, 1n];
-  const fl = hopFloors(outs, 50);
-  fl.forEach((f, i) => assert.ok(f <= outs[i]));
-  assert.equal(fl[2], 0n);
-  assert.equal(fl[3], 0n, "1 unit after margin rounds down to 0");
-  assert.deepEqual(hopFloors(outs, 0), outs);
+test("buildParams: one SwapCall per token (empty for ETH), the leg, exact amounts; floor1 = every minOut 1 (never 0)", () => {
+  const p = buildParams(quoted(), 7n, 99n);
+  assert.deepEqual(p.tokens, [ETH, IMDUSD, USDC]);
+  assert.deepEqual(p.amounts, [10n, 5n, 7n]);
+  assert.deepEqual(p.swaps[0], EMPTY_SWAP);
+  assert.deepEqual(p.swaps[1], { target: ALLOWANCE_HOLDER, tokenOut: IMD, data: "0xab", minOut: 1_990_000n });
+  assert.deepEqual(p.swaps[2], { target: ZROUTER, tokenOut: ETH, data: "0xcd", minOut: 995n });
+  assert.deepEqual(p.ethLeg, { target: ZROUTER, tokenOut: IMD, data: "0xef", minOut: 19_800n });
+  assert.equal(p.minSplitOut, 7n);
+  const probe = buildParams(quoted(), 1n, 99n, { floor1: true });
+  assert.deepEqual([...probe.swaps.slice(1).map((s) => s.minOut), probe.ethLeg.minOut], [1n, 1n, 1n]);
+  assert.equal(probe.swaps[1].data, "0xab", "the swap's own calldata is unchanged in the probe");
 });
 
-test("applyMargin rounds down", () => {
-  assert.equal(applyMargin(1_000_001n, 100), 990_000n);
-  assert.equal(applyMargin(0n, 100), 0n);
+test("buildParams refuses a swap without a minimum, and ETH without a leg", () => {
+  const q = quoted();
+  q.included[1].swap.minOut = 0n;
+  assert.throws(() => buildParams(q, 1n, 1n), /non-zero minOut/);
+  const r = quoted();
+  r.leg = null;
+  assert.throws(() => buildParams(r, 1n, 1n), /no ETH leg/);
 });
 
-test("an offset carries the slippage of hops that ran before (the ETH leg after the routes that feed it)", () => {
-  assert.deepEqual(hopFloors([10_000n], 50, 1), [(10_000n * 9950n * 9950n) / 10n ** 8n]);
-  assert.deepEqual(hopFloors([10_000n], 50, 0), hopFloors([10_000n], 50));
-});
-
-import { capFloorsToSim } from "../lib/plan.mjs";
-test("capFloorsToSim: a last floor above the simulation is lowered to it minus the margin; leg too", () => {
-  const IMDUSD = "0x61aAF8a992A3143e2B0C9cB0030b9fE702854a25";
-  const USDC = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48";
-  const quoted = {
-    included: [
-      { token: IMDUSD, kind: "route", floors: [1_990_050n] },
-      { token: USDC, kind: "toEth", floors: [995n] },
-      { token: "0xD34a99Bc0f67aE1bbd63C660e6d0b0dd03E263B7", kind: "imd", floors: [] },
-    ],
-    leg: { floors: [19_900n], offset: 1 },
-  };
-  const out = capFloorsToSim(quoted, { converted: [{ token: IMDUSD, imdValue: 1_990_000n }], leg: { imdOut: 20_000n } }, 50);
-  assert.deepEqual(out.included[0].floors, [(1_990_000n * 9950n) / 10n ** 4n]);
-  assert.equal(out.included[1], quoted.included[1], "routes to ETH have no per-token simulated output to cap at");
-  assert.deepEqual(out.leg.floors, [(20_000n * 9950n * 9950n) / 10n ** 8n]);
-  const high = capFloorsToSim(quoted, { converted: [{ token: IMDUSD, imdValue: 9_000_000n }], leg: { imdOut: 90_000n } }, 50);
-  assert.equal(high.included[0], quoted.included[0], "a simulation above the quote leaves the quoted floor");
-  assert.equal(high.leg, quoted.leg);
+test("checkSim: a simulated output under minOut, or > 2 x margin under the quote, refuses; within it passes", () => {
+  const q = quoted();
+  assert.deepEqual(checkSim(q, { converted: [{ token: IMDUSD, imdValue: 1_995_000n }], leg: { imdOut: 19_950n } }, 50).refuse, []);
+  const under = checkSim(q, { converted: [{ token: IMDUSD, imdValue: 1_980_000n }], leg: { imdOut: 19_950n } }, 50).refuse;
+  assert.equal(under.length, 1);
+  assert.match(under[0], /under its minOut 1990000/);
+  q.included[1].swap.minOut = 1n;
+  const far = checkSim(q, { converted: [{ token: IMDUSD, imdValue: 1_700_000n }], leg: { imdOut: 15_000n } }, 50).refuse;
+  assert.equal(far.length, 2);
+  assert.match(far[0], /1500 bps under the quote/);
+  assert.match(far[1], /^ETH leg \(zRouter\): simulated 15000 is under its minOut/);
 });

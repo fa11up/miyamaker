@@ -51,5 +51,5 @@ test("if the vault still says BadParams (keeper and vault disagree): re-read and
   const gave = await planVault(d, { ...cfg, MAX_REQUOTES: 1 }, fakeCtx(), { hooks });
   assert.equal(gave.action, "gave-up");
   assert.equal(gave.attempts.length, 2);
-  assert.match(gave.why, /BadParams on 2 attempts/);
+  assert.match(gave.why, /re-planned 2 times \(BadParams; BadParams\)/);
 });

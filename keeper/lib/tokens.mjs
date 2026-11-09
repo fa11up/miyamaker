@@ -1,7 +1,7 @@
 // Display only: symbols and decimals of the spec's tokens (docs/IMD-INFER-VAULT.md, read from chain 2026-11-08).
 import { formatUnits, getAddress } from "viem";
 
-const KNOWN = {
+export const KNOWN = {
   "0x0000000000000000000000000000000000000000": ["ETH", 18],
   "0xD34a99Bc0f67aE1bbd63C660e6d0b0dd03E263B7": ["IMD", 18],
   "0x53d0eA0A685220718Dc6a0a6e4617194C6F37921": ["INFER", 18],

@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 // Read-only mainnet smoke: a batch of every payment token in contracts/script/config/1.json at a sample amount (~0.2 ETH
-// worth each, the fork test's sizing), quoted the way the keeper quotes a vault (own hops, one ETH -> IMD leg, skip
-// rules), with each hop's quote and floor, the batch's ETH value, the balancing swap's size and floor for a fresh vault,
-// and what each configured contribution minimum is worth. No keys, no transactions: eth_call only.
+// worth each), sourced the way the keeper sources a vault's batch (0x first when ZEROEX_API_KEY is set, the zRouter
+// fallback always; one ETH -> IMD leg; the market reference checks), with each swap's source, quote and minOut, the
+// batch's ETH value, the balancing swap's size and floor for a fresh vault, and what each configured contribution
+// minimum is worth. No keys of ours, no transactions: eth_call and (with a key) 0x quotes only. The 0x taker is a
+// placeholder address (no vault is deployed yet), so 0x reports allowance/balance issues; they are expected.
 //
 //   npm run smoke [-- path/to/1.json]     RPC: SMOKE_RPC_URL (default https://ethereum-rpc.publicnode.com)
 import { readFileSync } from "node:fs";
@@ -10,23 +12,26 @@ import { createPublicClient, formatEther, getAddress, http, parseEther } from "v
 import { mainnet } from "viem/chains";
 import { applyEnv } from "../lib/config.mjs";
 import base from "../config.example.mjs";
-import { ETH, endsInEth, reverseRoute, routesFromConfig } from "../lib/routes.mjs";
-import { applyMargin, quoteRoute, quoteV4, v4Key, verifyQuoters } from "../lib/quote.mjs";
-import { deviationBps, feeless, quoteBatch } from "../lib/plan.mjs";
-import { describeReferences, imdFeedAbi, referenceReader } from "../lib/reference.mjs";
+import { ETH, fallbackRoutes } from "../lib/zrouter.mjs";
+import { applyMargin, quoteRoute, quoteV4, verifyQuoters } from "../lib/quote.mjs";
+import { quoteBatch } from "../lib/plan.mjs";
+import { describeReferences, referenceReader } from "../lib/reference.mjs";
 import { estimateSplit, poolState } from "../lib/split.mjs";
 import { simulateV1 } from "../lib/rpc.mjs";
 import { worthIt } from "../lib/decide.mjs";
 import { fmt, symbolOf } from "../lib/tokens.mjs";
+import { readSettlers, zeroExClient } from "../lib/zeroex.mjs";
 
 const file = process.argv[2] ?? new URL("../../contracts/script/config/1.json", import.meta.url).pathname;
 const json = JSON.parse(readFileSync(file, "utf8"));
 const cfg = applyEnv(base, {});
 const url = process.env.SMOKE_RPC_URL ?? "https://ethereum-rpc.publicnode.com";
 const client = createPublicClient({ chain: mainnet, transport: http(url, { timeout: 30_000, retryCount: 2 }) });
-// A second, independent read RPC for the ETH leg's cross-check (as the keeper does with two READ_RPC_URLS).
+// A second, independent read RPC for the IMD/ETH spot cross-check (as the keeper does with two READ_RPC_URLS).
 const crossUrl = process.env.SMOKE_CROSS_RPC_URL ?? cfg.READ_RPC_URLS.find((u) => new URL(u).host !== new URL(url).host);
 const crossClient = crossUrl ? createPublicClient({ chain: mainnet, transport: http(crossUrl, { timeout: 30_000, retryCount: 2 }) }) : null;
+const zx = zeroExClient(cfg);
+const TAKER = getAddress("0x000000000000000000000000000000000000dEaD"); // placeholder taker for 0x (no vault yet)
 
 const IMD = getAddress(json.imd);
 const INFER = getAddress(json.alignmentToken);
@@ -41,86 +46,58 @@ const inferIsCurrency0 = key.currency0 === INFER;
 
 const { number: blockNumber, timestamp: blockTs } = await client.getBlock({ blockTag: "latest" });
 console.log(`block ${blockNumber} via ${new URL(url).host}; config ${file.split("/").slice(-3).join("/")}`);
-console.log(`margins: HOP_MARGIN_BPS ${cfg.HOP_MARGIN_BPS} (compounding per hop), SPLIT_MARGIN_BPS ${cfg.SPLIT_MARGIN_BPS}`);
+console.log(`margins: HOP_MARGIN_BPS ${cfg.HOP_MARGIN_BPS}, SPLIT_MARGIN_BPS ${cfg.SPLIT_MARGIN_BPS}; MAX_REFERENCE_DEVIATION_BPS ${cfg.MAX_REFERENCE_DEVIATION_BPS}; MAX_IMPACT_BPS ${cfg.MAX_IMPACT_BPS} (zRouter)`);
+console.log(`0x: ${zx.enabled ? "ZEROEX_API_KEY set: quotes from the Swap API v2 (AllowanceHolder)" : "SKIPPED (ZEROEX_API_KEY not set): zRouter quotes only"}`);
+if (zx.enabled) {
+  const s = await readSettlers(client, blockNumber);
+  console.log(`0x Settler registry: ${s.length ? s.join(", ") : "UNREADABLE (every 0x quote would be refused)"}`);
+}
 
 const qc = await verifyQuoters(client, cfg);
 console.log(`quoters OK: V4Quoter.poolManager ${qc.poolManager}; QuoterV2.factory ${qc.v3Factory}, WETH9 ${qc.weth}`);
 const probe = await simulateV1(client, { from: "0x0000000000000000000000000000000000000001", to: "0x0000000000000000000000000000000000000002", data: "0x" }, blockNumber);
 console.log(`eth_simulateV1: ${probe ? "supported (minSplitOut from the vault's own SplitSwap event)" : "NOT supported (off-chain pass-1 fallback)"}`);
-console.log("\nindependent references (lib/reference.mjs):");
+console.log("\nreferences (lib/reference.mjs):");
 for (const line of await describeReferences(client, cfg)) console.log(`  ${line}`);
-console.log(`  ETH leg cross-check RPC: ${crossClient ? new URL(crossUrl).host : "none"}`);
+console.log(`  IMD/ETH spot cross-check RPC: ${crossClient ? new URL(crossUrl).host : "none"}`);
 
-const routes = routesFromConfig(json);
-const ethRoute = routes.get(ETH);
+const routes = fallbackRoutes(cfg, IMD);
+const refs = referenceReader(client, cfg, { blockNumber, now: blockTs, imd: IMD });
 const SAMPLE_ETH = parseEther("0.2");
-const imdFor02 = (await quoteRoute(client, cfg, ethRoute, SAMPLE_ETH, blockNumber)).at(-1);
-// A sample of `token` worth ~imdAmount IMD at the spot price of its route's first v4 pool (as the fork test sizes
-// imdUSD): a reverse quote would test the pool's other side, which can be thinner.
-const spotSample = async (token, imdAmount) => {
-  const h = routes.get(token)[0];
-  if (h.kind !== 4 || h.tokenOut !== IMD) throw new Error(`no spot sizing for ${token}`);
-  const { key: k } = v4Key(h.tokenIn, h.tokenOut, h.fee, h.tickSpacing);
-  const { sqrtP } = await poolState(client, json.poolManager, k, blockNumber);
-  const Q = 1n << 96n;
-  // P = currency1 per currency0
-  return k.currency0 === IMD ? (((imdAmount * sqrtP) / Q) * sqrtP) / Q : (((imdAmount * Q) / sqrtP) * Q) / sqrtP;
+const imdFor02 = (await refs.imdForEth(SAMPLE_ETH)).imd;
+// ~0.2 ETH of each token at its reference (Chainlink; imdUSD at 1 USD).
+const sample = async (t) => {
+  if (t === ETH) return SAMPLE_ETH;
+  if (t === IMD) return imdFor02;
+  if (t === INFER) return quoteV4(client, cfg, key, !inferIsCurrency0, imdFor02, blockNumber); // IMD -> INFER
+  const one = { [6]: 10n ** 6n, [8]: 10n ** 8n, [18]: 10n ** 18n }[cfg.USD_TOKENS[t] ?? cfg.BTC_TOKENS[t] ?? 18];
+  const r = await refs.ethFor(t, one);
+  return r.err ? one : (one * SAMPLE_ETH) / r.wei;
 };
-const SAMPLES = {
-  [ETH]: SAMPLE_ETH,
-  "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48": 600_000_000n,
-  "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599": 600_000n,
-  "0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf": 600_000n,
-};
-const inferSample = await quoteV4(client, cfg, key, !inferIsCurrency0, imdFor02, blockNumber); // IMD -> INFER
-const imdToEthQ = async (imd) => (await quoteRoute(client, cfg, reverseRoute(ethRoute), imd, blockNumber)).at(-1);
-
-// One batch of every payment token at ~0.2 ETH each, quoted exactly as the keeper quotes a vault's batch
-// (lib/plan.mjs quoteBatch): own hops, one ETH leg, skip rules (MAX_IMPACT_BPS), floors.
-const tokens = [...routes.keys(), IMD, INFER];
+const tokens = [ETH, ...json.paymentTokens.map((a) => getAddress(a))];
 const amounts = [];
-for (const t of tokens) amounts.push(t === IMD ? imdFor02 : t === INFER ? inferSample : (SAMPLES[t] ?? (await spotSample(t, imdFor02))));
-const ctx = { imd: IMD, infer: INFER, key, inferIsCurrency0, reward: 1_200_000_000_000_000n, rewardBps: 100n, routes: null };
-const q = await quoteBatch(client, cfg, ctx, { tokens, amounts, blockNumber }, { routes, crossClient });
-console.log(`\nMAX_IMPACT_BPS ${cfg.MAX_IMPACT_BPS}, MAX_REFERENCE_DEVIATION_BPS ${cfg.MAX_REFERENCE_DEVIATION_BPS} (USD and BTC tokens), MAX_FEED_DEVIATION_BPS ${cfg.MAX_FEED_DEVIATION_BPS} (ETH leg), CROSS_RPC_MAX_BPS ${cfg.CROSS_RPC_MAX_BPS}`);
+for (const t of tokens) amounts.push(await sample(t));
+const ctx = { vault: TAKER, config: null, imd: IMD, infer: INFER, key, inferIsCurrency0, reward: 1_200_000_000_000_000n, rewardBps: 100n };
+const q = await quoteBatch(client, cfg, ctx, { tokens, amounts, blockNumber, timestamp: blockTs }, { zx, crossClient });
+
+const cand = (c, tokenOut) => (!c ? "not asked" : c.err ? `unusable: ${c.err}` : `${fmt(tokenOut, c.expectedOut)} (minOut ${fmt(tokenOut, c.minOut)}${c.impactBps != null ? `, impact ${c.impactBps} bps` : ""})`);
 for (const a of q.alerts) console.log(`ALERT: ${a}`);
 for (const x of q.items) {
-  const head = `\n${symbolOf(x.token)}  in ${fmt(x.token, x.amount)}  (~${formatEther(x.ethValue)} ETH)${x.impactBps != null ? `  impact ${x.impactBps} bps` : ""}`;
-  if (x.skip) {
-    const also = x.refDeviationBps != null && !/reference/.test(x.skip) ? ` (its own route is ${x.refDeviationBps} bps under its reference)` : "";
-    console.log(`${head}\n  SKIPPED (would stay pending): ${x.skip}${also}`);
-    continue;
-  }
-  console.log(`${head}${x.refDeviationBps != null ? `  ${x.refDeviationBps} bps under its reference` : ""}${x.hops.length ? "" : x.kind === "eth" ? `  -> ETH leg with ${formatEther(x.ethIn)} ETH (net of the keeper reward)` : "  no route"}`);
-  x.hops.forEach((h, i) => {
-    const pool = h.kind === 4 ? `v4 ${h.fee}/${h.tickSpacing}` : `v3 ${h.fee}`;
-    console.log(`  hop ${i} ${symbolOf(h.tokenIn)}->${symbolOf(h.tokenOut)} [${pool}]  quote ${fmt(h.tokenOut, x.outs[i])}  floor ${fmt(h.tokenOut, x.floors[i])}  (raw ${x.floors[i]})`);
-  });
-  if (x.kind === "toEth" || x.kind === "eth") console.log(`  share of the ETH leg: ${fmt(IMD, x.imdOut)}`);
+  console.log(`\n${symbolOf(x.token)}  in ${fmt(x.token, x.amount)}  (~${formatEther(x.ethValue)} ETH)${x.refDeviationBps != null ? `  ${x.refDeviationBps} bps under its reference` : ""}`);
+  if (x.kind === "swap" && x.candidates) {
+    console.log(`  -> ${symbolOf(x.tokenOut)}  0x: ${cand(x.candidates.zx, x.tokenOut)}`);
+    console.log(`  -> ${symbolOf(x.tokenOut)}  zRouter ${routes.get(x.token) ? `[${routes.get(x.token).kind === 4 ? "v4" : "v3"} ${routes.get(x.token).fee}]` : ""}: ${cand(x.candidates.zr, x.tokenOut)}`);
+    if (!x.skip) console.log(`  picked ${x.swap.source}${x.swap.why ? ` (${x.swap.why})` : ""}${x.toEth ? `; its ETH joins the leg, share ${fmt(IMD, x.imdOut ?? 0n)}` : ""}`);
+  } else if (x.kind === "eth") console.log(`  -> the ETH leg with ${formatEther(x.ethIn)} ETH (net of the keeper reward)`);
+  if (x.skip) console.log(`  SKIPPED (would stay pending): ${x.skip}`);
 }
 if (q.leg) {
-  const h = q.leg.hops[0];
-  console.log(`\nETH leg [v4 ${h.fee}/${h.tickSpacing}]: ${formatEther(q.leg.ethIn)} ETH -> ${fmt(IMD, q.leg.outs.at(-1))} in one swap, impact ${q.leg.impactBps} bps, floor ${fmt(IMD, q.leg.floors.at(-1))} (raw ${q.leg.floors.at(-1)}, margin compounded ${q.leg.offset + 1}x)`);
-  console.log(`  ${q.leg.feedDeviationBps} bps under the IMD price feed before pool fees${q.leg.crossRpc ? `; second RPC quoted ${q.leg.crossRpc.other} (${q.leg.crossRpc.bps} bps apart)` : ""}`);
-} else {
-  // For information only: how the leg compares with the feed's last value even when the feed is stale.
-  const legIn = q.items.filter((x) => x.kind === "eth" || x.kind === "toEth").reduce((s, x) => s + (x.ethIn ?? 0n), 0n);
-  if (legIn > 0n) {
-    const [v, at] = await client.readContract({ address: cfg.IMD_PRICE_FEED, abi: imdFeedAbi, functionName: "latestValue", blockNumber });
-    const out = (await quoteRoute(client, cfg, ethRoute, legIn, blockNumber)).at(-1);
-    const want = (legIn * 10n ** 18n) / v;
-    console.log(`\nETH leg NOT converted at this block. For information: ${formatEther(legIn)} ETH -> ${fmt(IMD, out)}; the feed's last value (${Number(blockTs - at)}s old) implies ${fmt(IMD, want)}; the leg before pool fees is ${deviationBps(feeless(ethRoute, out), want)} bps under it`);
-    if (crossClient) {
-      try {
-        const other = (await quoteRoute(crossClient, cfg, ethRoute, legIn, blockNumber)).at(-1);
-        const diff = other > out ? other - out : out - other;
-        console.log(`  same leg quoted on ${new URL(crossUrl).host} at block ${blockNumber}: ${fmt(IMD, other)} (${Number((diff * 10_000n) / out)} bps apart; CROSS_RPC_MAX_BPS ${cfg.CROSS_RPC_MAX_BPS})`);
-      } catch (e) {
-        console.log(`  second RPC could not quote the leg: ${(e.shortMessage ?? e.message).split("\n")[0]}`);
-      }
-    }
-  }
-}
+  const l = q.leg;
+  console.log(`\nETH leg: ${formatEther(l.ethIn)} ETH -> IMD, ${l.fed ? "fed by swaps: zRouter only (sells all of msg.value)" : "exact ETH: 0x or zRouter"}`);
+  console.log(`  0x: ${cand(l.candidates.zx, IMD)}`);
+  console.log(`  zRouter: ${cand(l.candidates.zr, IMD)}`);
+  console.log(`  picked ${l.swap.source}; ${l.spotBps} bps from the IMD/ETH spot${l.crossRpc ? `; second RPC ${l.crossRpc.bps} bps apart` : ""}`);
+} else console.log("\nETH leg: none at this block (see the skips above)");
 const skipped = q.items.filter((x) => x.skip).map((x) => symbolOf(x.token));
 if (skipped.length) console.log(`\nskipped at the sample size: ${skipped.join(", ")} (they would stay pending; the rest converts)`);
 console.log(`\nbatch of every included token: ${formatEther(q.batchEth)} ETH; ${worthIt(q.batchEth, cfg).go ? "above" : "below"} MIN_BATCH_ETH ${cfg.MIN_BATCH_ETH}; keeper reward ${formatEther(q.reward)} ETH`);
@@ -134,39 +111,26 @@ else {
   const outTok = split.inferToImd ? IMD : INFER;
   const inTok = split.inferToImd ? INFER : IMD;
   console.log(`balancing swap (fresh vault, this batch): ${symbolOf(inTok)}->${symbolOf(outTok)} in ${fmt(inTok, split.swapAmount)} of excess ${fmt(inTok, split.excess)}`);
-  console.log(`  pass-1 quote ${fmt(outTok, split.amountOut)}  minSplitOut ${fmt(outTok, applyMargin(split.amountOut, cfg.SPLIT_MARGIN_BPS))}  (raw ${applyMargin(split.amountOut, cfg.SPLIT_MARGIN_BPS)})`);
+  console.log(`  pass-1 quote ${fmt(outTok, split.amountOut)}  minSplitOut ${fmt(outTok, applyMargin(split.amountOut, cfg.SPLIT_MARGIN_BPS))}`);
 }
 // The configured contribution minimums (vault factory setMinContribution): what each is worth at this block.
-console.log("\nminimum contributions (config/1.json minContributions):");
-const refs = referenceReader(client, cfg, { blockNumber, now: blockTs });
+console.log("\nminimum contributions (config/1.json minContributions), valued at the references:");
 for (const m of json.minContributions ?? []) {
   const t = getAddress(m.token);
   const amt = BigInt(m.amount);
   let eth;
-  if (t === IMD) eth = await imdToEthQ(amt);
-  else if (t === INFER) eth = await imdToEthQ(await quoteV4(client, cfg, key, inferIsCurrency0, amt, blockNumber));
+  if (t === IMD) eth = (await refs.ethForImd(amt)).wei;
+  else if (t === INFER) eth = (await refs.ethForImd(await quoteV4(client, cfg, key, inferIsCurrency0, amt, blockNumber))).wei;
   else {
-    const hops = routes.get(t);
-    const out = (await quoteRoute(client, cfg, hops, amt, blockNumber)).at(-1);
-    eth = endsInEth(hops) ? out : await imdToEthQ(out);
-  }
-  let refNote = "";
-  if (refs.has(t) && routes.get(t)) {
-    const hops = routes.get(t);
-    const out = (await quoteRoute(client, cfg, hops, amt, blockNumber)).at(-1);
     const r = await refs.ethFor(t, amt);
-    let want = r.err ? null : r.wei;
-    let err = r.err;
-    if (want != null && !endsInEth(hops)) {
-      const m = await refs.imdForEth(want);
-      want = m.err ? null : m.imd;
-      err = m.err;
-    }
-    if (want == null) refNote = `  reference unavailable (SKIPPED): ${err}`;
-    else {
-      const d = deviationBps(out, want);
-      refNote = `  reference check at this size: ${d} bps under (${d > cfg.MAX_REFERENCE_DEVIATION_BPS ? "SKIPPED" : "ok"})`;
-    }
+    eth = r.err ? null : r.wei;
   }
-  console.log(`  ${symbolOf(t).padEnd(6)} ${fmt(t, amt)}  ~ ${formatEther(eth)} ETH${refNote}`);
+  let fb = "";
+  const hop = routes.get(t);
+  if (hop) {
+    const out = (await quoteRoute(client, cfg, [hop], amt, blockNumber).catch(() => [null])).at(-1);
+    fb = out == null ? "  zRouter: quote failed" : `  zRouter at this size: ${fmt(hop.tokenOut, out)}`;
+  }
+  console.log(`  ${symbolOf(t).padEnd(6)} ${fmt(t, amt)}  ~ ${eth == null ? "?" : formatEther(eth)} ETH${fb}`);
 }
+console.log(`\n0x ${zx.enabled ? "was used" : "was skipped (no ZEROEX_API_KEY)"}; zRouter quotes ran.`);

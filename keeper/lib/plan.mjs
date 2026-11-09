@@ -1,24 +1,27 @@
-// One vault's batch: read it, quote every hop and the one ETH -> IMD leg, leave out what a route can't absorb, value
-// the rest in ETH, size the balancing-swap floor, build ConvertParams (exact amounts) and simulate the exact call.
-// Everything is read at ONE block so quotes, balances and the simulation agree with each other.
-import { decodeErrorResult, decodeEventLog, encodeFunctionData, formatEther, getAddress } from "viem";
-import { registryAbi, routesAbi, vaultAbi } from "./abi.mjs";
-import { ETH, endsInEth, parseRoute, readRoutes, reverseRoute } from "./routes.mjs";
-import { applyMargin, hopFloors, quoteRoute, quoteV4, routeImpactBps } from "./quote.mjs";
-import { referenceReader } from "./reference.mjs";
-import { estimateSplit, freeAlignmentBalances } from "./split.mjs";
+// One vault's batch: read it, source every swap (0x first, the keeper's zRouter route as the fallback), check each
+// against the market reference, leave out what cannot convert safely, value the rest in ETH, size the balancing-swap
+// floor, build ConvertParams (exact amounts, one SwapCall per token, the ETH leg) and simulate the exact call.
+// Everything on chain is read at ONE block so quotes, balances, references and the simulation agree with each other.
+import { decodeErrorResult, decodeEventLog, encodeFunctionData, formatEther, getAddress, zeroAddress } from "viem";
+import { factoryAbi, registryAbi, vaultAbi } from "./abi.mjs";
+import { ETH, ZROUTER, fallbackRoutes } from "./zrouter.mjs";
+import { applyMargin, quoteV4 } from "./quote.mjs";
+import { DEFAULT_IMD_ETH_POOL, imdAtSpot, imdEthKey, referenceReader } from "./reference.mjs";
+import { sourceSwap } from "./swaps.mjs";
+import { ALLOWANCE_HOLDER, readSettlers } from "./zeroex.mjs";
+import { estimateSplit, freeAlignmentBalances, poolState } from "./split.mjs";
 import { simulateV1 } from "./rpc.mjs";
 
-/** The vault's fixed config (set once at initialize), read once per process. */
+/** The vault's fixed config (set once at initialize), read once per process. `config` = its factory (IVaultConfig). */
 export async function vaultContext(client, vault) {
   vault = getAddress(vault);
   const r = (functionName) => client.readContract({ address: vault, abi: vaultAbi, functionName });
-  const [infer, imd, routes, registry, poolManager, key, reward, rewardBps] = await Promise.all([
-    r("infer"), r("imd"), r("routes"), r("registry"), r("poolManager"), r("alignmentPoolKey"), r("CONVERSION_REWARD"),
+  const [infer, imd, config, registry, poolManager, key, reward, rewardBps] = await Promise.all([
+    r("infer"), r("imd"), r("config"), r("registry"), r("poolManager"), r("alignmentPoolKey"), r("CONVERSION_REWARD"),
     r("MAX_CONVERSION_REWARD_BPS"),
   ]);
   return {
-    vault, infer: getAddress(infer), imd: getAddress(imd), routes: getAddress(routes), registry: getAddress(registry),
+    vault, infer: getAddress(infer), imd: getAddress(imd), config: getAddress(config), registry: getAddress(registry),
     poolManager: getAddress(poolManager), key, inferIsCurrency0: getAddress(key.currency0) === getAddress(infer),
     reward, rewardBps,
   };
@@ -43,57 +46,59 @@ export async function readBatch(client, ctx, blockNumber) {
   return { tokens: tokens.map((t) => getAddress(t)), amounts, closedBatches, keeper: getAddress(keeper), blockNumber };
 }
 
-/** Why a token is left out of this batch (it stays pending in the vault for a later one), or null. */
-function absorbCheck(impactBps, cfg) {
-  // Impact unknown (an amount too small to probe, or a probe that quotes 0) is not "no impact": skip, and say so.
-  if (impactBps == null) return "price impact unknown (the 1/1000 probe is 0 or quotes 0): not converted blind";
-  if (impactBps > cfg.MAX_IMPACT_BPS) return `price impact ${impactBps} bps > MAX_IMPACT_BPS ${cfg.MAX_IMPACT_BPS}`;
-  return null;
+/** Which swap targets the factory allows at `blockNumber` ({ zeroEx, zRouter }); both assumed allowed without a factory. */
+export async function readTargets(client, ctx, blockNumber) {
+  if (!ctx.config) return { zeroEx: true, zRouter: true };
+  const one = (t) => client.readContract({ address: ctx.config, abi: factoryAbi, functionName: "isSwapTarget", args: [t], blockNumber });
+  const [zeroEx, zRouter] = await Promise.all([one(ALLOWANCE_HOLDER), one(ZROUTER)]);
+  return { zeroEx, zRouter };
 }
-
-/** A route's output with each hop's pool fee added back: the rate before fees (what a reference price compares to). */
-export const feeless = (hops, out) => hops.reduce((o, h) => (o * 1_000_000n) / (1_000_000n - BigInt(h.fee)), out);
 
 /** How much worse `realized` is than `reference`, in bps (0 when at or better than it). */
 export const deviationBps = (realized, reference) => (reference === 0n || realized >= reference ? 0 : Number(((reference - realized) * 10_000n) / reference));
+/** Signed distance of `realized` from `reference` in bps (negative = under). */
+export const signedBps = (realized, reference) => (reference === 0n ? 0 : Number(((realized - reference) * 10_000n) / reference));
 
-const shortErr = (e) => {
-  const raw = e?.cause?.raw ?? e?.raw ?? e?.cause?.data ?? "";
-  if (typeof raw === "string" && raw.includes("7a5ed734")) return "NotEnoughLiquidity";
-  return (e?.shortMessage ?? e?.message ?? String(e)).split("\n")[0].slice(0, 120);
-};
+const shortErr = (e) => (e?.shortMessage ?? e?.message ?? String(e)).split("\n")[0].slice(0, 120);
 
 /**
  * Quote the batch the way the vault will run it (UniAlignmentVault.convertAndAddLiquidity):
- * - every token's own hops: a route ending in ETH yields ETH for the leg, a route ending in IMD (imdUSD) yields IMD;
- * - ONE ETH -> IMD swap along the ETH route for all of the batch's ETH (pending ETH minus the keeper reward, plus every
- *   route that ended in ETH), its IMD shared by each token's ETH;
+ * - every other token through its own SwapCall: USDC/WBTC/cbBTC to ETH (that ETH joins the leg), imdUSD to IMD
+ *   (output per FALLBACK_ROUTES / SWAP_OUTPUT);
+ * - ONE ETH -> IMD swap (the ETH leg) for all of the batch's ETH: pending ETH minus the keeper reward, plus every swap
+ *   that output ETH; its IMD shared by each token's ETH. The vault sends the leg its whole ETH as value, so a leg fed by
+ *   swaps (whose ETH is only known on chain) must sell all of msg.value: zRouter (swapAmount 0). 0x is asked for the
+ *   leg only when its ETH is exact (pending ETH alone);
  * - IMD as is; INFER valued at the alignment pool's INFER -> IMD quote.
- * A token is SKIPPED (it stays pending in the vault and the rest converts) when its route fails to quote or quotes 0,
- * its price impact is unknown or over MAX_IMPACT_BPS, its independent reference (lib/reference.mjs: Chainlink for
- * USD and BTC tokens, plus the IMD price feed for a route ending in IMD) cannot be read, or its route pays more than
- * MAX_REFERENCE_DEVIATION_BPS under that reference. The ETH leg: over the impact limit, its largest ETH contributors
- * are dropped until it fits; if the IMD price feed is stale, the leg pays more than MAX_FEED_DEVIATION_BPS under it,
- * or (with a second read RPC) the two RPCs disagree on its quote, the whole leg is skipped this tick.
- * Every included token converts exactly its pending amount at `batch.blockNumber`: what arrives later stays pending.
- * `crossClient`: a client on a second, independent read RPC (null = one RPC configured: no cross-check).
+ * A token is SKIPPED (it stays pending and the rest converts) when neither 0x nor zRouter gives a usable swap, it has
+ * no reference price, or its swap pays more than MAX_REFERENCE_DEVIATION_BPS under the reference (market:
+ * Chainlink for USD/BTC tokens, the IMD/ETH pool's spot for the IMD side). The ETH leg must be within
+ * MAX_REFERENCE_DEVIATION_BPS of the IMD/ETH pool's spot at this block, either way (a pushed pool or a stale quote);
+ * under it, its largest ETH contributors are dropped until it fits; over it, or unquotable, the whole leg waits.
+ * `zx`: the 0x client (lib/zeroex.mjs; null or disabled = zRouter only). `crossClient`: a second read RPC.
+ * `force`: { leg: "zRouter" } etc. to pin a source (a re-plan after a 0x call failed in simulation).
  */
-export async function quoteBatch(client, cfg, ctx, batch, { routes, crossClient = null } = {}) {
+export async function quoteBatch(client, cfg, ctx, batch, { zx = null, crossClient = null, deadline, force = {} } = {}) {
   const { blockNumber } = batch;
-  routes ??= await readRoutes(client, ctx.routes, batch.tokens, { imd: ctx.imd, infer: ctx.infer, blockNumber });
-  let ethRoute = routes.get(ETH);
-  if (!ethRoute) {
-    const raw = await client.readContract({ address: ctx.routes, abi: routesAbi, functionName: "getRoute", args: [ETH], blockNumber });
-    ethRoute = raw.length ? parseRoute(ETH, raw, ctx.imd) : null;
-  }
-  const imdToEth = async (imdAmount) => {
-    if (imdAmount === 0n) return 0n;
-    if (!ethRoute) throw new Error("no ETH route: cannot value IMD in ETH");
-    return (await quoteRoute(client, cfg, reverseRoute(ethRoute), imdAmount, blockNumber)).at(-1);
-  };
   const now = batch.timestamp ?? (await client.getBlock({ blockNumber })).timestamp;
-  const refs = referenceReader(client, cfg, { blockNumber, now });
+  deadline ??= now + BigInt(cfg.DEADLINE_SECONDS);
+  const refs = referenceReader(client, cfg, { blockNumber, now, imd: ctx.imd });
+  const routes = fallbackRoutes(cfg, ctx.imd);
+  const settlers = zx?.enabled ? await readSettlers(client, blockNumber) : [];
+  const targets = await readTargets(client, ctx, blockNumber);
   const alerts = []; // loud lines for the log: a check that refused to convert something
+  const imdToEth = async (imd) => {
+    if (imd === 0n) return 0n;
+    const r = await refs.ethForImd(imd);
+    if (r.err) throw new Error(`cannot value IMD in ETH: ${r.err}`);
+    return r.wei;
+  };
+  const outputOf = (token) => {
+    const o = cfg.SWAP_OUTPUT?.[token] ?? cfg.SWAP_OUTPUT?.[token.toLowerCase()];
+    if (o) return getAddress(o === "IMD" ? ctx.imd : o === "ETH" ? ETH : o);
+    return routes.get(token)?.tokenOut ?? ETH;
+  };
+  const common = { zx, vault: ctx.vault, blockNumber, deadline, settlers, targets };
 
   const ethIdx = batch.tokens.indexOf(ETH);
   const reward = conversionReward(ethIdx >= 0 ? batch.amounts[ethIdx] : 0n, ctx.reward, ctx.rewardBps);
@@ -101,160 +106,173 @@ export async function quoteBatch(client, cfg, ctx, batch, { routes, crossClient 
   for (const [i, token] of batch.tokens.entries()) {
     const amount = batch.amounts[i];
     if (token === ctx.imd) {
-      items.push({ token, amount, kind: "imd", hops: [], outs: [], floors: [], imdOut: amount, ethValue: await imdToEth(amount) });
+      items.push({ token, amount, kind: "imd", imdOut: amount, ethValue: await imdToEth(amount) });
       continue;
     }
     if (token === ctx.infer) {
-      // INFER needs no route; it is valued here at the alignment pool's INFER -> IMD quote (the vault values it at the
+      // INFER needs no swap; valued here at the alignment pool's INFER -> IMD quote (the vault values it at the
       // balancing swap's realized rate).
-      const { key, inferIsCurrency0 } = ctx;
-      const imdOut = await quoteV4(client, cfg, key, inferIsCurrency0, amount, blockNumber);
-      items.push({ token, amount, kind: "infer", hops: [], outs: [], floors: [], imdOut: 0n, inferImdValue: imdOut, ethValue: await imdToEth(imdOut) });
+      const imdOut = await quoteV4(client, cfg, ctx.key, ctx.inferIsCurrency0, amount, blockNumber);
+      items.push({ token, amount, kind: "infer", imdOut: 0n, inferImdValue: imdOut, ethValue: await imdToEth(imdOut) });
       continue;
     }
     if (token === ETH) {
-      items.push({ token, amount, kind: "eth", hops: [], outs: [], floors: [], ethIn: amount - reward, ethValue: amount });
+      items.push({ token, amount, kind: "eth", ethIn: amount - reward, ethValue: amount });
       continue;
     }
-    const hops = routes.get(token);
-    if (!hops) throw new Error(`no route for ${token}`);
-    const toEth = endsInEth(hops);
-    const kind = toEth ? "toEth" : "route";
-    let outs;
-    let impactBps = null;
-    try {
-      outs = await quoteRoute(client, cfg, hops, amount, blockNumber);
-      impactBps = outs.at(-1) === 0n ? null : await routeImpactBps(client, cfg, hops, amount, outs.at(-1), blockNumber);
-    } catch (e) {
-      items.push({ token, amount, kind, hops, outs: [], floors: [], skip: `quote failed: ${shortErr(e)}`, ethValue: 0n });
-      continue;
-    }
-    // A route that quotes 0 would convert the token for nothing (a 0 floor passes anything): never.
-    let skip = outs.at(-1) === 0n ? "route quotes 0 (would convert for nothing)" : absorbCheck(impactBps, cfg);
-    // Reference check: what the route yields vs the token's independent price (Chainlink), in ETH; for a route ending
-    // in IMD, that ETH in IMD at the IMD price feed.
-    let refDeviationBps = null;
-    let refNote = null;
-    if (refs.has(token) && outs.at(-1) > 0n) {
-      const r = await refs.ethFor(token, amount);
-      let want = null;
-      if (r.err) refNote = `reference unavailable: ${r.err}`;
-      else if (toEth) want = r.wei;
-      else {
-        const m = await refs.imdForEth(r.wei);
-        if (m.err) refNote = `reference unavailable (IMD side): ${m.err}`;
-        else want = m.imd;
-      }
-      if (want != null) {
-        refDeviationBps = deviationBps(outs.at(-1), want);
-        if (refDeviationBps > cfg.MAX_REFERENCE_DEVIATION_BPS) {
-          refNote = `route pays ${refDeviationBps} bps under the reference (${r.via}${toEth ? "" : " and the IMD price feed"}: ${formatEther(want)} ${toEth ? "ETH" : "IMD"}, route ${formatEther(outs.at(-1))}) > MAX_REFERENCE_DEVIATION_BPS ${cfg.MAX_REFERENCE_DEVIATION_BPS}`;
-        }
-      }
-      if (refNote) {
-        alerts.push(`${token}: ${refNote}`);
-        skip ??= refNote;
-      }
-    }
-    const floors = hopFloors(outs, cfg.HOP_MARGIN_BPS);
-    const item = { token, amount, kind, hops, outs, floors, impactBps, refDeviationBps, skip };
-    if (toEth) Object.assign(item, { ethIn: outs.at(-1), ethValue: outs.at(-1) });
-    else Object.assign(item, { imdOut: outs.at(-1), ethValue: skip ? 0n : await imdToEth(outs.at(-1)) });
+    const tokenOut = outputOf(token);
+    const toEth = tokenOut === ETH;
+    const item = { token, amount, kind: "swap", tokenOut, toEth, ethValue: 0n };
     items.push(item);
+    if (!refs.has(token)) {
+      item.skip = "no reference price for this token (USD_TOKENS / BTC_TOKENS): not converted blind";
+      continue;
+    }
+    const s = await sourceSwap(client, cfg, { ...common, tokenIn: token, tokenOut, amountIn: amount, hop: routes.get(token) ?? null, only: force[token] ?? null });
+    Object.assign(item, { swap: s.chosen, candidates: { zx: s.zx, zr: s.zr } });
+    if (s.chosen.err) {
+      item.skip = s.chosen.err;
+      continue;
+    }
+    // The reference: the token's independent price in ETH (Chainlink); for a swap to IMD, that ETH in IMD at the
+    // IMD/ETH pool's spot (IMD in USD = spot x ETH/USD).
+    const r = await refs.ethFor(token, amount);
+    let want = null;
+    let refNote = null;
+    if (r.err) refNote = `reference unavailable: ${r.err}`;
+    else if (toEth) want = r.wei;
+    else {
+      const m = await refs.imdForEth(r.wei);
+      if (m.err) refNote = `reference unavailable (IMD side): ${m.err}`;
+      else want = m.imd;
+    }
+    if (want != null) {
+      item.refDeviationBps = deviationBps(s.chosen.expectedOut, want);
+      item.reference = want;
+      if (item.refDeviationBps > cfg.MAX_REFERENCE_DEVIATION_BPS) {
+        refNote = `${s.chosen.source} pays ${item.refDeviationBps} bps under the reference (${r.via}${toEth ? "" : " and the IMD/ETH pool's spot"}: ${formatEther(want)} ${toEth ? "ETH" : "IMD"}, swap ${formatEther(s.chosen.expectedOut)}) > MAX_REFERENCE_DEVIATION_BPS ${cfg.MAX_REFERENCE_DEVIATION_BPS}`;
+      }
+    }
+    if (refNote) {
+      alerts.push(`${token}: ${refNote}`);
+      item.skip = refNote;
+      continue;
+    }
+    if (toEth) Object.assign(item, { ethIn: s.chosen.expectedOut, ethValue: s.chosen.expectedOut });
+    else Object.assign(item, { imdOut: s.chosen.expectedOut, ethValue: await imdToEth(s.chosen.expectedOut) });
   }
 
-  // The ETH leg: everything that reaches ETH, in one swap. Over the impact limit: drop the largest contributor, again.
+  // The ETH leg: everything that reaches ETH, in one swap.
   let leg = null;
   for (;;) {
-    const onLeg = items.filter((x) => !x.skip && (x.kind === "eth" || x.kind === "toEth") && x.ethIn > 0n);
+    const onLeg = items.filter((x) => !x.skip && (x.kind === "eth" || (x.kind === "swap" && x.toEth)) && x.ethIn > 0n);
     const ethIn = onLeg.reduce((s, x) => s + x.ethIn, 0n);
     if (ethIn === 0n) break;
-    if (!ethRoute) throw new Error("no ETH route: the batch's ETH cannot reach IMD");
-    let outs;
-    let impactBps = null;
-    let err = null;
-    try {
-      outs = await quoteRoute(client, cfg, ethRoute, ethIn, blockNumber);
-      if (outs.at(-1) === 0n) err = "ETH leg quotes 0";
-      else impactBps = await routeImpactBps(client, cfg, ethRoute, ethIn, outs.at(-1), blockNumber);
-    } catch (e) {
-      err = `ETH leg quote failed: ${shortErr(e)}`;
+    const fed = onLeg.some((x) => x.kind === "swap");
+    // Fed by swaps: the vault sends what they really yielded, so only a sell-all-of-msg.value call fits (zRouter).
+    const only = force.leg ?? (fed ? "zRouter" : null);
+    const s = await sourceSwap(client, cfg, { ...common, tokenIn: ETH, tokenOut: ctx.imd, amountIn: ethIn, hop: routes.get(ETH) ?? null, offset: fed ? 1 : 0, only });
+    // Too big for the zRouter pool (and no usable 0x): a size problem, so drop the largest input and try again.
+    if (s.chosen.err && s.zr?.err && s.zr.impactBps != null && onLeg.length > 1) {
+      const biggest = onLeg.reduce((m, x) => (x.ethIn > m.ethIn ? x : m));
+      biggest.skip = `ETH leg (${formatEther(ethIn)} ETH): ${s.zr.err}; left out as its largest input`;
+      continue;
     }
-    const why = err ?? absorbCheck(impactBps, cfg);
-    if (!why) {
-      // The leg is the right size. Before trusting its quote: the IMD price feed, and a second RPC if there is one.
-      const bad = await checkLeg(client, crossClient, cfg, refs, ethRoute, ethIn, outs, blockNumber);
-      if (bad.why) {
-        alerts.push(`ETH leg (${formatEther(ethIn)} ETH) NOT converted this tick: ${bad.why}`);
-        for (const x of onLeg) x.skip = `ETH leg not converted this tick: ${bad.why}`;
-        break;
+    if (s.chosen.err) {
+      const why = `ETH leg (${formatEther(ethIn)} ETH) NOT converted this tick: ${s.chosen.err}`;
+      alerts.push(why);
+      for (const x of onLeg) x.skip = why;
+      break;
+    }
+    const bad = await checkLeg(client, crossClient, cfg, refs, ctx, ethIn, s.chosen, blockNumber);
+    if (bad.why) {
+      // Under the spot by too much may be size (impact): drop the largest input and try again. Over it, or a check
+      // that could not run, is not a size problem.
+      if (bad.under && onLeg.length > 1) {
+        const biggest = onLeg.reduce((m, x) => (x.ethIn > m.ethIn ? x : m));
+        biggest.skip = `ETH leg (${formatEther(ethIn)} ETH): ${bad.why}; left out as its largest input`;
+        continue;
       }
-      // The leg's input carries the slippage of the routes that fed it: offset its floors by their longest route.
-      const offset = Math.max(0, ...onLeg.map((x) => x.hops.length));
-      leg = { hops: ethRoute, ethIn, outs, floors: hopFloors(outs, cfg.HOP_MARGIN_BPS, offset), impactBps, offset, feedDeviationBps: bad.feedDeviationBps, crossRpc: bad.crossRpc };
-      const imdOut = outs.at(-1);
-      for (const x of onLeg) x.imdOut = (imdOut * x.ethIn) / ethIn;
+      const why = `ETH leg (${formatEther(ethIn)} ETH) NOT converted this tick: ${bad.why}`;
+      alerts.push(why);
+      for (const x of onLeg) x.skip = why;
       break;
     }
-    // A leg that cannot be quoted or sized at all is not a size problem: dropping inputs one by one would not fix it.
-    if (err || impactBps == null) {
-      alerts.push(`ETH leg (${formatEther(ethIn)} ETH) NOT converted this tick: ${why}`);
-      for (const x of onLeg) x.skip = `ETH leg: ${why}`;
-      break;
-    }
-    const biggest = onLeg.reduce((m, x) => (x.ethIn > m.ethIn ? x : m));
-    biggest.skip = `ETH leg (${formatEther(ethIn)} ETH): ${why}; left out as its largest input`;
+    leg = { ethIn, swap: s.chosen, candidates: { zx: s.zx, zr: s.zr }, fed, spotBps: bad.spotBps, feedDeviationBps: bad.feedDeviationBps, crossRpc: bad.crossRpc };
+    const imdOut = s.chosen.expectedOut;
+    for (const x of onLeg) x.imdOut = (imdOut * x.ethIn) / ethIn;
+    break;
   }
 
   const included = items.filter((x) => !x.skip);
   for (const x of items) if (x.skip) x.ethValue = 0n;
   const batchEth = included.reduce((s, x) => s + x.ethValue, 0n);
-  const routedImd = included.reduce((s, x) => s + (x.kind === "route" || x.kind === "eth" || x.kind === "toEth" ? (x.imdOut ?? 0n) : 0n), 0n);
+  const routedImd = included.reduce((s, x) => s + (x.kind === "swap" || x.kind === "eth" ? (x.imdOut ?? 0n) : 0n), 0n);
   const includesEth = included.some((x) => x.token === ETH);
-  return { items, included, leg, batchEth, reward: includesEth ? reward : 0n, routedImd, blockNumber, alerts };
+  const zxTimes = [...included.map((x) => x.swap), leg?.swap].filter((w) => w?.source === "0x").map((w) => w.quotedAt);
+  return {
+    items, included, leg, batchEth, reward: includesEth ? reward : 0n, routedImd, blockNumber, alerts, imd: ctx.imd, deadline,
+    quotedAt: zxTimes.length ? Math.min(...zxTimes) : null, zeroEx: zx?.enabled ? "on" : (zx?.why ?? "off"),
+  };
 }
 
 /**
- * The ETH leg against what does not come from its own pool: the IMD price feed (fail closed: stale = no leg), the leg's
- * rate before pool fees at most MAX_FEED_DEVIATION_BPS under it; and, with a second read RPC, the same quote from it
- * (at most CROSS_RPC_MAX_BPS apart). Returns { why } to refuse, else { feedDeviationBps, crossRpc }.
+ * The ETH leg against the market: its implied IMD per ETH vs the IMD/ETH pool's spot at the planning block, at most
+ * MAX_REFERENCE_DEVIATION_BPS either way (under = too much impact or a pool pushed against us; over = the spot is off
+ * from where the quote was made: a pushed pool or a stale quote). With USE_IMD_FEED, also at most
+ * MAX_FEED_DEVIATION_BPS under the IMD price feed (fail closed when stale). With a second read RPC, the spot read
+ * there must match within CROSS_RPC_MAX_BPS. Returns { why, under } to refuse, else the checks' numbers.
  */
-async function checkLeg(client, crossClient, cfg, refs, ethRoute, ethIn, outs, blockNumber) {
-  const out = outs.at(-1);
-  const f = await refs.imdForEth(ethIn);
-  if (f.err) return { why: `IMD price feed unusable (fail closed): ${f.err}` };
-  const feedDeviationBps = deviationBps(feeless(ethRoute, out), f.imd);
-  const maxFeed = cfg.MAX_FEED_DEVIATION_BPS ?? 300;
-  if (feedDeviationBps > maxFeed) {
-    return { why: `pays ${feedDeviationBps} bps under the IMD price feed before pool fees (feed: ${formatEther(f.imd)} IMD, leg ${formatEther(out)} IMD) > MAX_FEED_DEVIATION_BPS ${maxFeed}` };
+async function checkLeg(client, crossClient, cfg, refs, ctx, ethIn, swap, blockNumber) {
+  const out = swap.expectedOut;
+  const sp = await refs.imdForEth(ethIn);
+  if (sp.err) return { why: `IMD/ETH pool spot unreadable (fail closed): ${sp.err}` };
+  const spotBps = signedBps(out, sp.imd);
+  const max = cfg.MAX_REFERENCE_DEVIATION_BPS;
+  if (spotBps < -max) return { under: true, spotBps, why: `${swap.source} pays ${-spotBps} bps under the IMD/ETH pool's spot (spot ${formatEther(sp.imd)} IMD, leg ${formatEther(out)} IMD) > MAX_REFERENCE_DEVIATION_BPS ${max}` };
+  if (spotBps > max) return { spotBps, why: `${swap.source} pays ${spotBps} bps OVER the IMD/ETH pool's spot (spot ${formatEther(sp.imd)} IMD, leg ${formatEther(out)} IMD) > MAX_REFERENCE_DEVIATION_BPS ${max}: the pool was pushed or the quote is stale` };
+  let feedDeviationBps = null;
+  if (cfg.USE_IMD_FEED) {
+    const f = await refs.imdForEthByFeed(ethIn);
+    if (f.err) return { why: `IMD price feed unusable (fail closed, USE_IMD_FEED): ${f.err}` };
+    feedDeviationBps = deviationBps(out, f.imd);
+    const maxFeed = cfg.MAX_FEED_DEVIATION_BPS ?? 300;
+    if (feedDeviationBps > maxFeed) return { why: `pays ${feedDeviationBps} bps under the IMD price feed (feed ${formatEther(f.imd)} IMD, leg ${formatEther(out)} IMD) > MAX_FEED_DEVIATION_BPS ${maxFeed}` };
   }
   let crossRpc = null;
   if (crossClient) {
     let other;
     for (let i = 0; ; i++) {
       try {
-        other = (await quoteRoute(crossClient, cfg, ethRoute, ethIn, blockNumber)).at(-1);
+        const st = await poolState(crossClient, cfg.POOL_MANAGER, imdEthKey(ctx.imd, cfg.IMD_ETH_POOL ?? DEFAULT_IMD_ETH_POOL), blockNumber);
+        other = imdAtSpot(ethIn, st.sqrtP);
         break;
       } catch (e) {
         // A second node a block behind may not have the pinned block yet: once more after a moment, then fail closed.
-        if (i >= 1) return { why: `second read RPC could not quote the leg (fail closed): ${shortErr(e)}` };
+        if (i >= 1) return { why: `second read RPC could not read the IMD/ETH spot (fail closed): ${shortErr(e)}` };
         await new Promise((r) => setTimeout(r, cfg.CROSS_RPC_RETRY_MS ?? 1500));
       }
     }
-    const diff = other > out ? other - out : out - other;
-    const bps = Number((diff * 10_000n) / (out > other ? out : other));
+    const a = sp.imd;
+    const diff = other > a ? other - a : a - other;
+    const bps = Number((diff * 10_000n) / (a > other ? a : other || 1n));
     const maxCross = cfg.CROSS_RPC_MAX_BPS ?? 0;
-    if (bps > maxCross) return { why: `the two read RPCs disagree on the leg's quote by ${bps} bps (${out} vs ${other}) > CROSS_RPC_MAX_BPS ${maxCross}` };
+    if (bps > maxCross) return { why: `the two read RPCs disagree on the IMD/ETH spot by ${bps} bps > CROSS_RPC_MAX_BPS ${maxCross}` };
     crossRpc = { other, bps };
   }
-  return { feedDeviationBps, crossRpc };
+  return { spotBps, feedDeviationBps, crossRpc };
 }
 
+/** The SwapCall the vault ignores (ETH, IMD, INFER; no ETH leg). */
+export const EMPTY_SWAP = Object.freeze({ target: zeroAddress, tokenOut: zeroAddress, data: "0x", minOut: 0n });
+const swapCall = (w, tokenOut, minOut = w.minOut) => ({ target: getAddress(w.target), tokenOut: getAddress(tokenOut), data: w.data, minOut });
+
 /**
- * ConvertParams for the included tokens (in the batch's order): each converts exactly the amount read, with one floor
- * per hop of its own route; ethLegMinOuts floors the batch's one ETH -> IMD swap.
+ * ConvertParams for the included tokens (in the batch's order): each converts exactly the amount read through its own
+ * SwapCall (empty for ETH/IMD/INFER); `ethLeg` is the batch's one ETH -> IMD swap (empty without one). `floor1`: every
+ * minOut set to 1 (the simulation probe; the vault refuses 0 with ZeroFloor).
  */
-export function buildParams(quoted, minSplitOut, deadline) {
+export function buildParams(quoted, minSplitOut, deadline, { floor1 = false } = {}) {
   const inc = quoted.included;
   if (inc.length === 0) throw new Error("nothing to convert: every token was skipped");
   const seen = new Set();
@@ -263,55 +281,41 @@ export function buildParams(quoted, minSplitOut, deadline) {
     if (seen.has(t)) throw new Error(`token ${t} twice`);
     seen.add(t);
     if (!(x.amount > 0n)) throw new Error(`token ${t}: amount must be positive`);
+    if (x.kind === "swap" && !(x.swap?.minOut > 0n)) throw new Error(`token ${t}: a swap needs a non-zero minOut`);
   }
+  const needsLeg = inc.some((x) => x.kind === "eth" || (x.kind === "swap" && x.toEth));
+  if (needsLeg && !quoted.leg) throw new Error("ETH reaches the leg but there is no ETH leg");
   return {
     tokens: inc.map((x) => getAddress(x.token)),
     amounts: inc.map((x) => x.amount),
-    minOuts: inc.map((x) => (x.kind === "route" || x.kind === "toEth" ? x.floors : [])),
-    ethLegMinOuts: quoted.leg ? quoted.leg.floors : [],
+    swaps: inc.map((x) => (x.kind === "swap" ? swapCall(x.swap, x.tokenOut, floor1 ? 1n : x.swap.minOut) : EMPTY_SWAP)),
+    ethLeg: quoted.leg ? swapCall(quoted.leg.swap, quoted.imd, floor1 ? 1n : quoted.leg.swap.minOut) : EMPTY_SWAP,
     minSplitOut,
     deadline,
   };
 }
 
-/** The same params with every hop and leg floor at 0 (the simulation probe: shows what the call really yields). */
-const probeParams = (quoted, deadline) => {
-  const p = buildParams(quoted, 1n, deadline);
-  return { ...p, minOuts: p.minOuts.map((f) => f.map(() => 0n)), ethLegMinOuts: p.ethLegMinOuts.map(() => 0n) };
-};
-
 /**
- * Safety net from the simulation: a last floor above what the call really yields at this block (a quote that
- * overstated, e.g. two routes sharing a pool, which the spec's table avoids) is lowered to the simulated output minus
- * its compounded margin, but only within 2 x HOP_MARGIN_BPS of the quote. Further under than that, the quote and the
- * simulation (one RPC each, possibly the same one) disagree too much to pick either: `refuse` lists why, and the
- * caller sends nothing this tick. Routes ending in IMD use their TokenConverted value; the ETH leg its EthLegSwapped.
+ * The simulation (every minOut 1) against the floors: a swap to IMD (its TokenConverted value) or the ETH leg (its
+ * EthLegSwapped) that yields less than its minOut would revert the real call, and one more than 2 x HOP_MARGIN_BPS
+ * under its quote means the quote and the simulation disagree too much to trust either. Returns { refuse: [...] }.
  */
-export function capFloorsToSim(quoted, simLogs, marginBps) {
+export function checkSim(quoted, simLogs, marginBps) {
   const sim = new Map(simLogs.converted.map((c) => [getAddress(c.token), c.imdValue]));
   const refuse = [];
   const maxGap = 2 * Number(marginBps);
-  const cap = (label, quote, floors, simOut, offset) => {
-    const gap = deviationBps(simOut, quote);
-    if (quote != null && gap > maxGap) {
-      refuse.push(`${label}: simulated ${simOut} is ${gap} bps under the quote ${quote} (> 2 x HOP_MARGIN_BPS = ${maxGap})`);
-      return floors;
+  const one = (label, w, simOut) => {
+    if (simOut < w.minOut) refuse.push(`${label}: simulated ${simOut} is under its minOut ${w.minOut}`);
+    else {
+      const gap = deviationBps(simOut, w.expectedOut);
+      if (gap > maxGap) refuse.push(`${label}: simulated ${simOut} is ${gap} bps under the quote ${w.expectedOut} (> 2 x HOP_MARGIN_BPS = ${maxGap})`);
     }
-    const h = floors.length;
-    const capped = hopFloors([...Array(h - 1).fill(0n), simOut], marginBps, offset).at(-1);
-    return capped >= floors[h - 1] ? floors : [...floors.slice(0, -1), capped];
   };
-  const included = quoted.included.map((x) => {
-    if (x.kind !== "route" || !sim.has(getAddress(x.token))) return x;
-    const floors = cap(`route ${x.token}`, x.outs?.at(-1) ?? null, x.floors, sim.get(getAddress(x.token)), 0);
-    return floors === x.floors ? x : { ...x, floors, simImdOut: sim.get(getAddress(x.token)) };
-  });
-  let { leg } = quoted;
-  if (leg && simLogs.leg) {
-    const floors = cap("ETH leg", leg.outs?.at(-1) ?? null, leg.floors, simLogs.leg.imdOut, leg.offset);
-    if (floors !== leg.floors) leg = { ...leg, floors, simImdOut: simLogs.leg.imdOut };
+  for (const x of quoted.included) {
+    if (x.kind === "swap" && !x.toEth && sim.has(getAddress(x.token))) one(`${x.token} (${x.swap.source})`, x.swap, sim.get(getAddress(x.token)));
   }
-  return { ...quoted, included, leg, refuse };
+  if (quoted.leg && simLogs.leg) one(`ETH leg (${quoted.leg.swap.source})`, quoted.leg.swap, simLogs.leg.imdOut);
+  return { refuse };
 }
 
 /** The error name of a vault revert (BadParams, InsufficientOutput, ...), or a short message. */
@@ -351,14 +355,15 @@ export function readSimLogs(logs, vault) {
 }
 
 /**
- * minSplitOut. Primary: simulate the exact call (per-hop floors set, minSplitOut = 1) with eth_simulateV1 and read the
- * SplitSwap event: the vault's own sizing, every pass included. Fallback (node without eth_simulateV1): pass 1
- * reproduced off chain and quoted, a lower bound of the total. Either way minus SPLIT_MARGIN_BPS.
+ * minSplitOut. Primary: simulate the call (the exact swap calldata, every minOut and minSplitOut = 1) with
+ * eth_simulateV1 at the planning block and read the SplitSwap event: the vault's own sizing, every pass included.
+ * Fallback (node without eth_simulateV1): pass 1 reproduced off chain and quoted, a lower bound of the total. Either
+ * way minus SPLIT_MARGIN_BPS.
  */
 export async function sizeSplit(client, cfg, ctx, batch, quoted, { from, deadline }) {
-  // The probe runs with no hop or leg floors (0 is allowed; only the split needs a non-zero floor), so it shows what
-  // each route and the ETH leg really yield at this block.
-  const probe = probeParams(quoted, deadline);
+  // The probe runs with every minOut at 1 (the vault refuses 0: ZeroFloor), so it shows what each swap and the ETH leg
+  // really yield at this block. The swaps' own calldata (0x minBuyAmount, zRouter amountLimit) still applies.
+  const probe = buildParams(quoted, 1n, deadline, { floor1: true });
   const data = encodeFunctionData({ abi: vaultAbi, functionName: "convertAndAddLiquidity", args: [probe] });
   const free = await freeAlignmentBalances(client, ctx.vault, ctx, batch.blockNumber);
   // IMD/INFER that stays pending (left out, or not part of this call) is not free for the vault's balancing.

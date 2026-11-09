@@ -1,23 +1,33 @@
 // One tick: resolve any tx in flight, then plan (and, with --execute, send) each vault's conversion.
 import { encodeFunctionData, formatEther, formatGwei, getAddress, keccak256, parseAbiItem, parseGwei } from "viem";
-import { registryAbi, routesAbi, vaultAbi } from "./abi.mjs";
-import { buildParams, capFloorsToSim, quoteBatch, readBatch, revertName, sizeSplit, vaultContext } from "./plan.mjs";
+import { factoryAbi, registryAbi, vaultAbi } from "./abi.mjs";
+import { buildParams, checkSim, quoteBatch, readBatch, revertName, sizeSplit, vaultContext } from "./plan.mjs";
 import { gasOk, worthIt } from "./decide.mjs";
 import { killSwitch, ledger, preSendCheck } from "./guards.mjs";
 import { BUMP_DEN, BUMP_NUM, chainOf, pendingStore, resolvePending } from "./outcome.mjs";
+import { simulateV1 } from "./rpc.mjs";
 import { fmt, symbolOf } from "./tokens.mjs";
 
 const bpsUp = (x, bps) => (x * (10_000n + BigInt(bps))) / 10_000n;
+/** Every swap (and the leg) pinned to zRouter: the re-plan after a call with 0x calldata failed its simulation. */
+const allZRouter = (batch) => Object.fromEntries([...batch.tokens.map((t) => [t, "zRouter"]), ["leg", "zRouter"]]);
+
+/** Has the plan's oldest 0x quote outlived QUOTE_MAX_AGE_SECONDS (0x quotes are good for ~30 s)? */
+export const quoteExpired = (plan, cfg, now = Date.now()) =>
+  plan?.quoted?.quotedAt != null && now - plan.quoted.quotedAt > (cfg.QUOTE_MAX_AGE_SECONDS ?? 25) * 1000;
 
 /**
- * Plan one vault's conversion at the current block: the tokens whose routes can absorb their pending amount, each at
- * exactly the amount read (what lands later stays pending in the vault; a new token or a top-up cannot break the call).
- * A BadParams revert should no longer happen; if one does (the vault and the keeper disagree), it re-reads and
- * re-quotes at most MAX_REQUOTES times, then gives up until the next tick.
+ * Plan one vault's conversion at the current block: the tokens that can convert safely, each at exactly the amount
+ * read (what lands later stays pending in the vault; a new token or a top-up cannot break the call). The exact call is
+ * then simulated at the latest block (eth_simulateV1 with the exact calldata, else eth_call) from the keeper. If that
+ * simulation reverts and 0x calldata is in the call, the batch is re-planned once with zRouter only. A BadParams
+ * revert should no longer happen; if one does (the vault and the keeper disagree), it re-reads and re-quotes at most
+ * MAX_REQUOTES times, then gives up until the next tick.
  * `hooks.afterQuote(attempt)` runs between quoting and simulating (tests use it to land a contribution there).
  */
-export async function planVault(client, cfg, ctx, { from, hooks = {}, crossClient = null } = {}) {
+export async function planVault(client, cfg, ctx, { from, hooks = {}, crossClient = null, zx = null } = {}) {
   const attempts = [];
+  let force = {};
   for (let attempt = 0; attempt <= cfg.MAX_REQUOTES; attempt++) {
     const block = await client.getBlock({ blockTag: "latest" });
     const blockNumber = block.number;
@@ -25,37 +35,51 @@ export async function planVault(client, cfg, ctx, { from, hooks = {}, crossClien
     batch.timestamp = block.timestamp;
     if (batch.tokens.length === 0) return { action: "idle", why: "nothing pending", batch, attempts };
     const sender = from ?? batch.keeper;
-    const quoted = await quoteBatch(client, cfg, ctx, batch, { crossClient });
+    const deadline = block.timestamp + BigInt(cfg.DEADLINE_SECONDS);
+    const quoted = await quoteBatch(client, cfg, ctx, batch, { crossClient, zx, deadline, force });
     if (quoted.included.length === 0) return { action: "wait", why: "every pending token was skipped (see each)", batch, quoted, attempts };
     const w = worthIt(quoted.batchEth, cfg);
     if (!w.go) return { action: "wait", why: w.why, batch, quoted, attempts };
 
-    const deadline = block.timestamp + BigInt(cfg.DEADLINE_SECONDS);
     await hooks.afterQuote?.(attempt);
     const split = await sizeSplit(client, cfg, ctx, batch, quoted, { from: sender, deadline });
+    const uses0x = () => [...quoted.included.map((x) => x.swap), quoted.leg?.swap].some((s) => s?.source === "0x");
     if (split.error === "BadParams") {
       attempts.push({ attempt, error: "BadParams", tokens: batch.tokens });
       continue;
     }
+    if (split.error && uses0x() && !force.leg) {
+      attempts.push({ attempt, error: `${split.error} with 0x calldata: re-planned with zRouter only` });
+      force = allZRouter(batch);
+      continue;
+    }
     if (split.error) return { action: "refused", why: `simulation reverted: ${split.error}`, batch, quoted, attempts };
     if (split.refuse) return { action: "refused", why: `REFUSED, nothing sent this tick: ${split.refuse}`, batch, quoted, split, attempts };
-
-    const final = split.simLogs ? capFloorsToSim(quoted, split.simLogs, cfg.HOP_MARGIN_BPS) : quoted;
-    if (final.refuse?.length) {
-      return { action: "refused", why: `REFUSED, nothing sent this tick: the simulation is far under the quotes: ${final.refuse.join("; ")}`, batch, quoted, split, attempts };
+    const sim = split.simLogs ? checkSim(quoted, split.simLogs, cfg.HOP_MARGIN_BPS) : { refuse: [] };
+    if (sim.refuse.length) {
+      return { action: "refused", why: `REFUSED, nothing sent this tick: the simulation is under the floors or far under the quotes: ${sim.refuse.join("; ")}`, batch, quoted, split, attempts };
     }
-    const params = buildParams(final, split.minSplitOut, deadline);
+    const params = buildParams(quoted, split.minSplitOut, deadline);
     // The exact call, at the latest state, from the keeper: the last check before anything is signed.
+    const data = encodeFunctionData({ abi: vaultAbi, functionName: "convertAndAddLiquidity", args: [params] });
+    let name = null;
     try {
-      await client.simulateContract({ address: ctx.vault, abi: vaultAbi, functionName: "convertAndAddLiquidity", args: [params], account: sender });
+      const v1 = await simulateV1(client, { from: sender, to: ctx.vault, data });
+      if (v1 && !v1.ok) name = revertName({ data: v1.error?.data, message: v1.error?.message });
+      if (!v1) await client.simulateContract({ address: ctx.vault, abi: vaultAbi, functionName: "convertAndAddLiquidity", args: [params], account: sender });
     } catch (e) {
-      const name = revertName(e);
-      if (name === "BadParams") {
-        attempts.push({ attempt, error: "BadParams", tokens: batch.tokens });
-        continue;
-      }
-      return { action: "refused", why: `simulation reverted: ${name}`, batch, quoted, split, params, attempts };
+      name = revertName(e);
     }
+    if (name === "BadParams") {
+      attempts.push({ attempt, error: "BadParams", tokens: batch.tokens });
+      continue;
+    }
+    if (name && uses0x() && !force.leg) {
+      attempts.push({ attempt, error: `${name} with 0x calldata: re-planned with zRouter only` });
+      force = allZRouter(batch);
+      continue;
+    }
+    if (name) return { action: "refused", why: `simulation reverted: ${name}`, batch, quoted, split, params, attempts };
     const gas = await client.estimateContractGas({ address: ctx.vault, abi: vaultAbi, functionName: "convertAndAddLiquidity", args: [params], account: sender });
     const gasLimit = bpsUp(gas, cfg.GAS_MARGIN_BPS);
     const baseFeeWei = block.baseFeePerGas ?? 0n;
@@ -66,32 +90,36 @@ export async function planVault(client, cfg, ctx, { from, hooks = {}, crossClien
       gasCheck: g, sender, attempts,
     };
   }
-  return { action: "gave-up", why: `BadParams on ${attempts.length} attempts: the batch's token list keeps changing; next tick`, attempts };
+  return { action: "gave-up", why: `re-planned ${attempts.length} times (${attempts.map((a) => a.error).join("; ")}); next tick`, attempts };
 }
+
+const swapLine = (ctx, w, tokenOut) => {
+  if (!w || w.err) return "";
+  const via = w.source === "0x" ? "0x" : `zRouter ${w.pool ?? ""}`.trim();
+  return `via ${via}: ${fmt(tokenOut, w.expectedOut)} expected, minOut ${fmt(tokenOut, w.minOut)}${w.impactBps != null ? `, impact ${w.impactBps} bps` : ""}${w.why ? ` (${w.why})` : ""}`;
+};
 
 export function describePlan(ctx, p) {
   const lines = [`vault ${ctx.vault}: ${p.action}${p.why ? ` (${p.why})` : ""}`];
   for (const a of p.quoted?.alerts ?? []) lines.push(`  ALERT: ${a}`);
   if (p.quoted) {
+    if (p.quoted.zeroEx !== "on") lines.push(`  0x: ${p.quoted.zeroEx}`);
     for (const x of p.quoted.items) {
-      const hops = x.outs.map((o, k) => `${symbolOf(x.hops[k].tokenOut)} ${fmt(x.hops[k].tokenOut, o)} floor ${fmt(x.hops[k].tokenOut, x.floors[k])}`);
-      if (p.params) {
-        const i = p.params.tokens.indexOf(x.token);
-        const last = i >= 0 ? p.params.minOuts[i]?.at(-1) : undefined;
-        if (last !== undefined && last !== x.floors.at(-1)) hops.push(`(last floor capped to the simulation: ${fmt(ctx.imd, last)})`);
+      if (x.skip) {
+        lines.push(`  SKIPPED ${fmt(x.token, x.amount)} (stays pending): ${x.skip}`);
+        continue;
       }
-      const impact = `${x.impactBps != null ? `, impact ${x.impactBps} bps` : ""}${x.refDeviationBps != null ? `, ${x.refDeviationBps} bps under reference` : ""}`;
-      const tail = hops.length ? `: ${hops.join(" -> ")}${x.kind === "toEth" ? " -> ETH leg" : ""}` : ` (${x.kind === "eth" ? "ETH leg" : `${x.kind}, no route`})`;
-      if (x.skip) lines.push(`  SKIPPED ${fmt(x.token, x.amount)} (stays pending): ${x.skip}`);
-      else lines.push(`  ${fmt(x.token, x.amount)} ~ ${formatEther(x.ethValue)} ETH${impact}${tail}`);
+      const ref = x.refDeviationBps != null ? `, ${x.refDeviationBps} bps under reference` : "";
+      const tail =
+        x.kind === "swap" ? ` -> ${symbolOf(x.tokenOut)} ${swapLine(ctx, x.swap, x.tokenOut)}${x.toEth ? " -> ETH leg" : ""}` : x.kind === "eth" ? " (ETH leg)" : ` (${x.kind}, no swap)`;
+      lines.push(`  ${fmt(x.token, x.amount)} ~ ${formatEther(x.ethValue)} ETH${ref}${tail}`);
     }
     const leg = p.quoted.leg;
     if (leg) {
-      const fl = p.params?.ethLegMinOuts?.at(-1) ?? leg.floors.at(-1);
-      const checks = `${leg.feedDeviationBps != null ? `, ${leg.feedDeviationBps} bps under the IMD price feed (before fees)` : ""}${leg.crossRpc ? `, second RPC ${leg.crossRpc.bps} bps apart` : ""}`;
-      lines.push(`  ETH leg: ${formatEther(leg.ethIn)} ETH -> ${fmt(ctx.imd, leg.outs.at(-1))} in one swap, floor ${fmt(ctx.imd, fl)}${leg.impactBps != null ? `, impact ${leg.impactBps} bps` : ""}${checks}`);
+      const checks = `${leg.spotBps != null ? `, ${leg.spotBps} bps from the IMD/ETH spot` : ""}${leg.feedDeviationBps != null ? `, ${leg.feedDeviationBps} bps under the IMD price feed` : ""}${leg.crossRpc ? `, second RPC ${leg.crossRpc.bps} bps apart` : ""}`;
+      lines.push(`  ETH leg: ${formatEther(leg.ethIn)} ETH -> IMD in one swap ${swapLine(ctx, leg.swap, ctx.imd)}${checks}`);
     }
-    lines.push(`  batch ${formatEther(p.quoted.batchEth)} ETH, keeper reward ${formatEther(p.quoted.reward)} ETH, routed IMD ${fmt(ctx.imd, p.quoted.routedImd)}`);
+    lines.push(`  batch ${formatEther(p.quoted.batchEth)} ETH, keeper reward ${formatEther(p.quoted.reward)} ETH, IMD from swaps ${fmt(ctx.imd, p.quoted.routedImd)}`);
   }
   if (p.split) {
     const s = p.split;
@@ -100,7 +128,7 @@ export function describePlan(ctx, p) {
     lines.push(`  split ${dir} via ${s.source}: out ${fmt(outTok, s.splitOut)}, minSplitOut ${fmt(outTok, s.minSplitOut)}${s.offchain ? ` (off-chain pass 1: in ${s.offchain.swapAmount}, out ${s.offchain.amountOut})` : ""}`);
   }
   if (p.gasCheck) lines.push(`  gas ${p.gas} (limit ${p.gasLimit}) at ${formatGwei(p.gasCheck.price)} gwei = ${formatEther(p.gasCheck.cost)} ETH, ${p.gasCheck.shareBps} bps of the batch`);
-  for (const a of p.attempts ?? []) lines.push(`  attempt ${a.attempt}: ${a.error}, re-read openBatchTokens and re-quoted`);
+  for (const a of p.attempts ?? []) lines.push(`  attempt ${a.attempt}: ${a.error}; re-read and re-quoted`);
   return lines.join("\n");
 }
 
@@ -112,7 +140,7 @@ export function describePlan(ctx, p) {
 export async function discoverVaults(client, cfg, cache = {}) {
   const set = new Set([...cfg.VAULTS, ...(cache.found ?? [])]);
   if (cfg.FACTORY && cfg.DISCOVER_FROM_BLOCK != null) {
-    const registry = await client.readContract({ address: cfg.FACTORY, abi: routesAbi, functionName: "registry" });
+    const registry = await client.readContract({ address: cfg.FACTORY, abi: factoryAbi, functionName: "registry" });
     const event = parseAbiItem("event VaultDeployed(address indexed vault, uint256 indexed alignmentTargetId)");
     const head = await client.getBlockNumber();
     const chunk = BigInt(cfg.LOG_CHUNK ?? DEFAULT_LOG_CHUNK);
@@ -170,6 +198,7 @@ const REFUSED = /nonce too low|nonce has already been used|insufficient funds|un
  */
 export async function sendConvert({ client, cfg, account, sender, ctx, plan, log = console.log, now = Date.now }) {
   if (!sender?.configured) return { skipped: "PRIVATE_RPC_URL is not set: refusing to send (no public mempool fallback)" };
+  if (quoteExpired(plan, cfg, now())) return { skipped: `0x quote older than QUOTE_MAX_AGE_SECONDS ${cfg.QUOTE_MAX_AGE_SECONDS ?? 25}: not sent (re-quoted next attempt)` };
   const store = pendingStore(cfg);
   const book = ledger(cfg);
   const prior = store.get();
@@ -276,7 +305,7 @@ export async function settlePending(client, cfg, now = Date.now) {
 }
 
 /** One pass over every vault. */
-export async function tick({ client, cfg, account, sender, execute, vaults, contexts = new Map(), crossClient = null, log = console.log }) {
+export async function tick({ client, cfg, account, sender, execute, vaults, contexts = new Map(), crossClient = null, zx = null, log = console.log, now = Date.now }) {
   const store = pendingStore(cfg);
   const pend = await settlePending(client, cfg);
   if (pend.line) log(pend.line);
@@ -286,8 +315,14 @@ export async function tick({ client, cfg, account, sender, execute, vaults, cont
     try {
       if (!contexts.has(vault)) contexts.set(vault, await vaultContext(client, vault));
       const ctx = contexts.get(vault);
-      const plan = await planVault(client, cfg, ctx, { from: account?.address, crossClient });
+      let plan = await planVault(client, cfg, ctx, { from: account?.address, crossClient, zx });
       log(describePlan(ctx, plan));
+      // 0x quotes are good for ~30 s: one that aged past QUOTE_MAX_AGE_SECONDS while planning is quoted again.
+      for (let i = 0; execute && plan.action === "convert" && quoteExpired(plan, cfg, now()) && i < cfg.MAX_REQUOTES; i++) {
+        log(`  0x quote older than QUOTE_MAX_AGE_SECONDS ${cfg.QUOTE_MAX_AGE_SECONDS ?? 25}: re-quoting`);
+        plan = await planVault(client, cfg, ctx, { from: account?.address, crossClient, zx });
+        log(describePlan(ctx, plan));
+      }
       results.push({ vault, plan });
       if (plan.action !== "convert") continue;
       if (!execute) {
@@ -308,7 +343,7 @@ export async function tick({ client, cfg, account, sender, execute, vaults, cont
         log(`  not sent: registry.conversionKeeper is ${plan.batch.keeper}, this key is ${account.address}`);
         continue;
       }
-      const r = await sendConvert({ client, cfg, account, sender, ctx, plan, log });
+      const r = await sendConvert({ client, cfg, account, sender, ctx, plan, log, now });
       log(`  ${JSON.stringify(r, (_, v) => (typeof v === "bigint" ? v.toString() : v))}`);
       results.at(-1).send = r;
       if (r.receipt) await settlePending(client, cfg).then((s) => s.line && log(`  ${s.line}`));

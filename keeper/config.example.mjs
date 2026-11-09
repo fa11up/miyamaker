@@ -17,9 +17,28 @@ export default {
   // --- reads and sends ---
   // Reads (quotes, simulations, receipts): the first that answers, failing over. publicnode supports eth_simulateV1.
   READ_RPC_URLS: ["https://ethereum-rpc.publicnode.com", "https://eth.drpc.org"],
-  // Signed transactions go ONLY here (e.g. Flashbots Protect, https://rpc.flashbots.net/fast). Never a public node:
-  // with this unset the keeper refuses to send at all. Comma-separated list in the env: tried in order.
-  PRIVATE_RPC_URL: null,
+  // Signed transactions go ONLY here, never a public mempool (with this unset the keeper refuses to send at all).
+  // MEV Blocker (CoW / Beaver Build / others), keyless; its endpoints:
+  //   https://rpc.mevblocker.io/noreverts    private; a tx that would revert is never included (a failed conversion
+  //                                          costs no gas). The keeper's default.
+  //   https://rpc.mevblocker.io/fast         private, faster inclusion; reverting txs may land (and pay gas)
+  //   https://rpc.mevblocker.io/fullprivacy  no backrun auction, the tx goes only to builders; slowest
+  // MEV Blocker may hold a tx and never include it: it then dies at ConvertParams.deadline and the keeper replaces it
+  // at the same nonce (lib/outcome.mjs). Comma-separated list in the env: tried in order.
+  PRIVATE_RPC_URL: "https://rpc.mevblocker.io/noreverts",
+
+  // --- swaps: 0x first, zRouter as the fallback (lib/swaps.mjs) ---
+  // 0x Swap API v2 (AllowanceHolder) needs ZEROEX_API_KEY in the environment (never in this file). Without it the keeper
+  // runs on zRouter alone and says so. A 0x quote is good for ~30 s: plan, simulate and send within QUOTE_MAX_AGE_SECONDS
+  // of fetching it, else it is quoted again.
+  QUOTE_MAX_AGE_SECONDS: 25,
+  ZEROEX_TIMEOUT_MS: 5000,
+  // zRouter is used instead of 0x when 0x quotes more than this under it (0 = always the better of the two).
+  ZEROEX_MAX_WORSE_BPS: 0,
+  // The zRouter fallback, one hop per token (kind 4 = v4 fee/tickSpacing, 3 = v3 fee). Its last token is also what the
+  // token is swapped to (ETH joins the batch's one ETH -> IMD leg). null = the default table in lib/zrouter.mjs:
+  //   ETH -> IMD v4 10000/200; imdUSD -> IMD v4 3000/60; USDC, WBTC -> ETH v4 500/10; cbBTC -> ETH v3 3000.
+  FALLBACK_ROUTES: null,
 
   // --- contracts (mainnet, checked on chain 2026-11-08: lib/quote.mjs verifyQuoters re-checks at startup) ---
   V4_QUOTER: "0x52f0e24d1c21c8a0cb1e5a5dd6198556bd9e1203", // its poolManager() must be POOL_MANAGER
@@ -34,19 +53,22 @@ export default {
   MAX_GAS_GWEI: 30, // and the network's gas price below this (base fee + tip)
 
   // --- price protection ---
-  HOP_MARGIN_BPS: 50, // floor per hop = quote * (1 - margin)^(hop index + 1): each hop may slip this much on its own
+  HOP_MARGIN_BPS: 50, // minOut = expected * (1 - margin) (the ETH leg, fed by swaps: (1 - margin)^2); 0x: the stricter
+  //                      of that and its own minBuyAmount (asked with slippageBps = the same margin)
   SPLIT_MARGIN_BPS: 100, // minSplitOut = the balancing swap's simulated output * (1 - this)
-  DEADLINE_SECONDS: 120, // ConvertParams.deadline = latest block time + this; an unmined tx is dead after it
-  MAX_IMPACT_BPS: 300, // a token whose route (or the batch's ETH leg) would move its price more than this is left out of
-  //                      the batch (it stays pending); impact = how much worse than a 1/1000-size probe through the same pools
-  // Reference checks (lib/reference.mjs). Floors only protect against slippage from the LIVE quote, not against a pool
-  // that is far off market (2026-11-08: imdUSD/IMD sits at IMD = 4.17 imdUSD, market ~2.47, its only liquidity out of
-  // range). So every route is compared with a price that does NOT come from a pool it swaps through:
+  DEADLINE_SECONDS: 60, // ConvertParams.deadline = latest block time + this; short: 0x quotes are short-lived, and an
+  //                       unmined tx is dead after it (then replaced at the same nonce)
+  MAX_IMPACT_BPS: 300, // a zRouter fallback whose pool would move more than this is not used (impact = how much worse
+  //                      than a 1/1000-size probe through the same pool)
+  // Reference checks (lib/reference.mjs): the market. Floors only protect against slippage from the LIVE quote, not
+  // against a pool that is far off market (2026-11-08: imdUSD/IMD sits at IMD = 4.17 imdUSD, market ~2.47, its only
+  // liquidity out of range). So every swap is compared with a price that does not come from its own quote:
   //   USD_TOKENS (address -> decimals): 1 USD each, in ETH at Chainlink ETH/USD;
   //   BTC_TOKENS (address -> decimals): in ETH at Chainlink BTC/ETH (or BTC/USD / ETH/USD if BTC/ETH fails its checks);
-  //   a route ending in IMD (imdUSD): that ETH in IMD at the IMD price feed (IMD_PRICE_FEED).
-  // A token whose route pays more than MAX_REFERENCE_DEVIATION_BPS under its reference, or whose reference cannot be
-  // read (stale, wrong decimals, call failed), is left pending; the rest converts.
+  //   a swap to IMD (imdUSD): that ETH in IMD at the IMD/ETH v4 pool's spot (IMD in USD = spot x Chainlink ETH/USD);
+  //   the ETH leg: its IMD per ETH vs the IMD/ETH pool's spot at the planning block, at most this far EITHER way.
+  // A token whose swap pays more than MAX_REFERENCE_DEVIATION_BPS under its reference, that has no reference, or whose
+  // reference cannot be read (stale, wrong decimals, call failed), is left pending; the rest converts.
   MAX_REFERENCE_DEVIATION_BPS: 300,
   USD_TOKENS: {
     "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48": 6, // USDC
@@ -63,14 +85,17 @@ export default {
     BTC_ETH: { address: "0xdeb288F737066589598e9214E782fa5A8eD689e8", description: "BTC / ETH", decimals: 18, maxAge: 86400 },
     BTC_USD: { address: "0xF4030086522a5bEEa4988F8cA5B36dbC97BeE88c", description: "BTC / USD", decimals: 8, maxAge: 3600 },
   },
-  // The IMD price feed (latestValue(): ETH per IMD, 18 decimals; isStale()). The ETH -> IMD leg's rate before pool
-  // fees must be at most MAX_FEED_DEVIATION_BPS under it. Stale (isStale(), or older than IMD_FEED_MAX_AGE_SECONDS when
-  // set) = the ETH leg is NOT converted that tick (fail closed), nor imdUSD (its reference needs the IMD price).
+  // IMD's market price: the hookless IMD/ETH v4 pool (ETH = currency0).
+  IMD_ETH_POOL: { fee: 10000, tickSpacing: 200 },
+  // Optional, off by default (no debt is collateralized, so the market is the reference): with USE_IMD_FEED the ETH
+  // leg must also be at most MAX_FEED_DEVIATION_BPS under our IMD price feed (latestValue(): ETH per IMD; isStale()),
+  // and a stale feed (isStale(), or older than IMD_FEED_MAX_AGE_SECONDS when set) stops the leg that tick.
+  USE_IMD_FEED: false,
   IMD_PRICE_FEED: "0x070e0603737242B01aBC1D223f7C92D63E86EC97",
   MAX_FEED_DEVIATION_BPS: 300,
   IMD_FEED_MAX_AGE_SECONDS: null,
-  // With two or more READ_RPC_URLS, the ETH leg is also quoted on the second one at the same block; the two must agree
-  // within this (same block, same state: they should be identical). One RPC configured: no cross-check.
+  // With two or more READ_RPC_URLS, the IMD/ETH spot is also read on the second one at the same block; the two must
+  // agree within this (same block, same state: they should be identical). One RPC configured: no cross-check.
   CROSS_RPC_MAX_BPS: 0,
   // The simulated balancing-swap output must not be under the off-chain pass-1 quote by more than this (0 = not under it).
   SPLIT_CHECK_TOLERANCE_BPS: 0,
