@@ -72,11 +72,14 @@ the loop** (no debt is collateralized by the vault): every swap is checked again
      (`0x070e…EC97`, fail closed when stale, `MAX_FEED_DEVIATION_BPS`);
    - **values the batch in ETH**: ETH at face value, a swap to ETH at its ETH out, IMD (and imdUSD's IMD, and INFER via
      the INFER/IMD pool) at the IMD/ETH spot; skipped tokens count 0. Waits if worth less than `MIN_BATCH_ETH` (0.1);
-   - **simulates** with `eth_simulateV1` (the exact swap calldata, every `minOut` 1, never 0, `minSplitOut = 1`) and
-     reads the vault's events: `SplitSwap` (the balancing swap's total), `TokenConverted` (each swap to IMD),
-     `EthLegSwapped` (the leg). A simulated output under its `minOut`, or more than 2 x `HOP_MARGIN_BPS` under its quote,
+   - **simulates** with `eth_simulateV1` (the exact swap calldata, every `minOut` 1, never 0, `minSplitRate = 1`,
+     `minLiquidity = 1`, `splitInferToImd` as pass 1 off chain says; the other way if the vault answers
+     `SplitDirection`) and reads the vault's events: `SplitSwap` (the balancing swap's direction and totals),
+     `BatchConverted` (the liquidity the batch adds), `TokenConverted` (each swap to IMD), `EthLegSwapped` (the leg). A simulated output under its `minOut`, or more than 2 x `HOP_MARGIN_BPS` under its quote,
      or a balancing swap under the off-chain pass-1 quote: **refused this tick** (`REFUSED`);
-   - sets `minSplitOut = SplitSwap.amountOut * (1 - SPLIT_MARGIN_BPS)`, builds `ConvertParams` with
+   - sets `splitInferToImd = SplitSwap.inferToImd`, `minSplitRate = amountOut * 1e18 / amountIn * (1 -
+     SPLIT_MARGIN_BPS)` and `minLiquidity = BatchConverted.liquidity * (1 - LIQUIDITY_MARGIN_BPS)` (default 200 =
+     SPLIT + 2 x HOP, so a batch whose swaps land at their own floors is not refused by this one), builds `ConvertParams` with
      `deadline = block time + DEADLINE_SECONDS` (60: short, 0x quotes are short-lived), and **simulates the exact call
      at the latest block** (`eth_simulateV1`, else `eth_call`) from the keeper, then `estimateGas`. If a call carrying
      0x calldata reverts in either simulation, the batch is **re-planned once with zRouter only**;
@@ -103,16 +106,25 @@ MEV Blocker (like any private RPC) may hold a tx and **never include it**. That 
 `ConvertParams.deadline` the tx is dead (it would revert `Expired`, and `/noreverts` would not include it anyway), and
 the next send reuses its nonce at bumped fees.
 
-### How `minSplitOut` is derived
+### How the split and liquidity floors are derived
 
-`minSplitOut` floors the **total** output of the vault's balancing swaps in `_balanceAndAdd` (up to three passes of
-swap-then-add, all in the first pass's direction). Pass 1's size is exactly derivable off chain (`VaultSwaps.splitAmount` on
+Three `ConvertParams` fields bound the vault's balancing swaps in `_balanceAndAdd` (up to three passes of swap-then-add,
+all in the first pass's direction) and the batch's add (swarm audit 4884eb75, findings 1 and 5):
+
+- `splitInferToImd`: the direction the swaps must run. A pool move that flips them reverts `SplitDirection` (before,
+  one bare-number floor in the expected output token's wei was cleared by the other token's wei).
+- `minSplitRate`: output wei per 1e18 input wei over every pass. A rate, not a total, so it holds for every unit the
+  vault sells, including the free INFER/IMD it held before the batch (earlier holders' leftovers and strays).
+- `minLiquidity`: the liquidity units the batch adds, checked whether or not a swap runs.
+
+Pass 1's size is exactly derivable off chain (`VaultSwaps.splitAmount` on
 the free INFER/IMD balances and the pool's `sqrtPrice`/liquidity, all readable), and `lib/split.mjs` reproduces it bit
 for bit. Passes 2 and 3 depend on what the first add used, so the keeper uses the **simulation** (eth_simulateV1, which
 publicnode supports) as the source and the off-chain pass 1 as a cross-check (the simulated total covers every pass, so
 it is never under pass 1 alone: if it is, nothing is sent that tick; `SPLIT_CHECK_TOLERANCE_BPS`, default 0) and as the
-fallback on nodes without eth_simulateV1. Pass 1's output is a lower bound of the total, so the fallback floor is safe (a little
-looser).
+fallback on nodes without eth_simulateV1. In the fallback the rate floor is pass 1's rate (later passes run at a
+slightly worse price, so the exact-call check may refuse: it fails closed) and the liquidity floor is a lower bound of
+pass 1's add (`estimateLiquidity`: full range, the range edges dropped, at the price the swap leaves).
 
 ### Unknown outcomes
 

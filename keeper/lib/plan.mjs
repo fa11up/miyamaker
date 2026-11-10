@@ -9,7 +9,7 @@ import { applyMargin, quoteV4 } from "./quote.mjs";
 import { DEFAULT_IMD_ETH_POOL, imdAtSpot, imdEthKey, referenceReader } from "./reference.mjs";
 import { sourceSwap } from "./swaps.mjs";
 import { ALLOWANCE_HOLDER, readSettlers } from "./zeroex.mjs";
-import { estimateSplit, freeAlignmentBalances, poolState } from "./split.mjs";
+import { estimateLiquidity, estimateSplit, freeAlignmentBalances, poolState } from "./split.mjs";
 import { simulateV1 } from "./rpc.mjs";
 
 /** The vault's fixed config (set once at initialize), read once per process. `config` = its factory (IVaultConfig). */
@@ -269,10 +269,11 @@ const swapCall = (w, tokenOut, minOut = w.minOut) => ({ target: getAddress(w.tar
 
 /**
  * ConvertParams for the included tokens (in the batch's order): each converts exactly the amount read through its own
- * SwapCall (empty for ETH/IMD/INFER); `ethLeg` is the batch's one ETH -> IMD swap (empty without one). `floor1`: every
- * minOut set to 1 (the simulation probe; the vault refuses 0 with ZeroFloor).
+ * SwapCall (empty for ETH/IMD/INFER); `ethLeg` is the batch's one ETH -> IMD swap (empty without one). `split`: the
+ * balancing swap's { splitInferToImd, minSplitRate, minLiquidity } (sizeSplit). `floor1`: every minOut, the split rate
+ * and the liquidity floor set to 1 (the simulation probe; the vault refuses 0 with ZeroFloor); the direction is kept.
  */
-export function buildParams(quoted, minSplitOut, deadline, { floor1 = false } = {}) {
+export function buildParams(quoted, split, deadline, { floor1 = false } = {}) {
   const inc = quoted.included;
   if (inc.length === 0) throw new Error("nothing to convert: every token was skipped");
   const seen = new Set();
@@ -290,7 +291,9 @@ export function buildParams(quoted, minSplitOut, deadline, { floor1 = false } = 
     amounts: inc.map((x) => x.amount),
     swaps: inc.map((x) => (x.kind === "swap" ? swapCall(x.swap, x.tokenOut, floor1 ? 1n : x.swap.minOut) : EMPTY_SWAP)),
     ethLeg: quoted.leg ? swapCall(quoted.leg.swap, quoted.imd, floor1 ? 1n : quoted.leg.swap.minOut) : EMPTY_SWAP,
-    minSplitOut,
+    splitInferToImd: Boolean(split?.splitInferToImd),
+    minSplitRate: floor1 ? 1n : (split?.minSplitRate ?? 0n),
+    minLiquidity: floor1 ? 1n : (split?.minLiquidity ?? 0n),
     deadline,
   };
 }
@@ -354,17 +357,21 @@ export function readSimLogs(logs, vault) {
   return out;
 }
 
+/** The rate the vault checks: output wei per 1e18 input wei (UniAlignmentVault._balanceAndAdd, rounded down). */
+export const splitRate = (amountIn, amountOut) => (amountIn === 0n ? 0n : (amountOut * 10n ** 18n) / amountIn);
+
 /**
- * minSplitOut. Primary: simulate the call (the exact swap calldata, every minOut and minSplitOut = 1) with
- * eth_simulateV1 at the planning block and read the SplitSwap event: the vault's own sizing, every pass included.
- * Fallback (node without eth_simulateV1): pass 1 reproduced off chain and quoted, a lower bound of the total. Either
- * way minus SPLIT_MARGIN_BPS.
+ * The balancing swap's direction and floors and the batch's liquidity floor: { splitInferToImd, minSplitRate,
+ * minLiquidity }. Primary: simulate the call (the exact swap calldata, every minOut, the rate and the liquidity floor
+ * at 1) with eth_simulateV1 at the planning block, in the direction pass 1 off chain says (re-simulated the other way
+ * if the vault answers SplitDirection), and read SplitSwap (direction, in, out: every pass included) and
+ * BatchConverted (liquidity). minSplitRate = its rate minus SPLIT_MARGIN_BPS; minLiquidity = its liquidity minus
+ * LIQUIDITY_MARGIN_BPS. Fallback (node without eth_simulateV1): pass 1 reproduced off chain and quoted (its rate) and
+ * a lower bound of pass 1's add (estimateLiquidity), with the same margins.
  */
 export async function sizeSplit(client, cfg, ctx, batch, quoted, { from, deadline }) {
   // The probe runs with every minOut at 1 (the vault refuses 0: ZeroFloor), so it shows what each swap and the ETH leg
   // really yield at this block. The swaps' own calldata (0x minBuyAmount, zRouter amountLimit) still applies.
-  const probe = buildParams(quoted, 1n, deadline, { floor1: true });
-  const data = encodeFunctionData({ abi: vaultAbi, functionName: "convertAndAddLiquidity", args: [probe] });
   const free = await freeAlignmentBalances(client, ctx.vault, ctx, batch.blockNumber);
   // IMD/INFER that stays pending (left out, or not part of this call) is not free for the vault's balancing.
   const staying = (token) => {
@@ -376,21 +383,37 @@ export async function sizeSplit(client, cfg, ctx, batch, quoted, { from, deadlin
   const sub = (a, b) => (a > b ? a - b : 0n);
   free.freeInfer = sub(free.freeInfer, staying(ctx.infer));
   free.freeImd = sub(free.freeImd, staying(ctx.imd));
+  const state = await poolState(client, cfg.POOL_MANAGER, ctx.key, batch.blockNumber);
   const offchain = await estimateSplit(client, cfg, {
-    key: ctx.key, inferIsCurrency0: ctx.inferIsCurrency0, ...free, routedImd: quoted.routedImd, blockNumber: batch.blockNumber,
+    key: ctx.key, inferIsCurrency0: ctx.inferIsCurrency0, ...free, routedImd: quoted.routedImd, blockNumber: batch.blockNumber, state,
   });
-  const sim = await simulateV1(client, { from, to: ctx.vault, data }, batch.blockNumber);
+  const simulate = (dir) => {
+    const probe = buildParams(quoted, { splitInferToImd: dir }, deadline, { floor1: true });
+    const data = encodeFunctionData({ abi: vaultAbi, functionName: "convertAndAddLiquidity", args: [probe] });
+    return simulateV1(client, { from, to: ctx.vault, data }, batch.blockNumber);
+  };
+  const simErr = (sim) => revertName({ data: sim.error?.data, message: sim.error?.message });
+  let guess = offchain ? offchain.inferToImd : false;
+  let sim = await simulate(guess);
+  if (sim && !sim.ok && simErr(sim) === "SplitDirection") {
+    guess = !guess; // pass 1 off chain and the vault disagree on the direction: the vault's own answer decides
+    sim = await simulate(guess);
+  }
   let source;
   let splitOut;
+  let splitIn = 0n;
+  let splitInferToImd = guess;
+  let liquidity;
   let simLogs = null;
   if (sim) {
-    if (!sim.ok) {
-      const err = revertName({ data: sim.error?.data, message: sim.error?.message });
-      return { error: err, sim };
-    }
+    if (!sim.ok) return { error: simErr(sim), sim };
     simLogs = readSimLogs(sim.logs, ctx.vault);
     source = "simulation";
     splitOut = simLogs.split ? simLogs.split.amountOut : 0n;
+    splitIn = simLogs.split ? simLogs.split.amountIn : 0n;
+    if (simLogs.split) splitInferToImd = simLogs.split.inferToImd;
+    if (!simLogs.batch) return { refuse: "the simulation emitted no BatchConverted (cannot size the liquidity floor)", source, simLogs, sim };
+    liquidity = simLogs.batch.liquidity;
     // Cross-check against pass 1 reproduced off chain (pool state + quoter): the simulated total covers every pass, so
     // it is never under pass 1 alone unless the simulating node and the quotes disagree. Then trust neither.
     if (offchain) {
@@ -408,8 +431,22 @@ export async function sizeSplit(client, cfg, ctx, batch, quoted, { from, deadlin
   } else {
     source = "offchain-pass1";
     splitOut = offchain ? offchain.amountOut : 0n;
+    splitIn = offchain ? offchain.swapAmount : 0n;
+    splitInferToImd = offchain ? offchain.inferToImd : false;
+    liquidity = estimateLiquidity({
+      amtInfer: free.freeInfer, amtImd: free.freeImd + quoted.routedImd, sqrtP: state.sqrtP, liquidity: state.liquidity,
+      inferIsCurrency0: ctx.inferIsCurrency0, fee: ctx.key.fee, split: offchain,
+    });
   }
-  let minSplitOut = splitOut === 0n ? 0n : applyMargin(splitOut, cfg.SPLIT_MARGIN_BPS);
-  if (splitOut !== 0n && minSplitOut === 0n) minSplitOut = 1n; // a swap needs a non-zero floor (ZeroFloor)
-  return { source, splitOut, minSplitOut, offchain, simLogs, simGas: sim?.gasUsed ?? null };
+  const rate = splitRate(splitIn, splitOut);
+  let minSplitRate = rate === 0n ? 0n : applyMargin(rate, cfg.SPLIT_MARGIN_BPS);
+  if (splitIn !== 0n && minSplitRate === 0n) minSplitRate = 1n; // a swap needs a non-zero floor (ZeroFloor)
+  const liqMargin = cfg.LIQUIDITY_MARGIN_BPS ?? (cfg.SPLIT_MARGIN_BPS ?? 0) + 2 * (cfg.HOP_MARGIN_BPS ?? 0);
+  if (!(liquidity > 0n)) return { refuse: `the batch would add no liquidity (${source})`, source, offchain, simLogs, sim };
+  let minLiquidity = applyMargin(liquidity, liqMargin);
+  if (minLiquidity === 0n) minLiquidity = 1n; // the vault refuses 0 (ZeroFloor)
+  return {
+    source, splitOut, splitIn, splitRate: rate, splitInferToImd, minSplitRate, liquidity, minLiquidity, offchain, simLogs,
+    simGas: sim?.gasUsed ?? null,
+  };
 }

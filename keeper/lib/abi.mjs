@@ -4,7 +4,7 @@ import { parseAbi } from "viem";
 
 export const SWAP_CALL = "(address target, address tokenOut, bytes data, uint256 minOut)";
 const POOL_KEY = "(address currency0, address currency1, uint24 fee, int24 tickSpacing, address hooks)";
-const CONVERT_PARAMS = `(address[] tokens, uint256[] amounts, ${SWAP_CALL}[] swaps, ${SWAP_CALL} ethLeg, uint256 minSplitOut, uint256 deadline)`;
+const CONVERT_PARAMS = `(address[] tokens, uint256[] amounts, ${SWAP_CALL}[] swaps, ${SWAP_CALL} ethLeg, bool splitInferToImd, uint256 minSplitRate, uint256 minLiquidity, uint256 deadline)`;
 
 export const vaultAbi = parseAbi([
   "function openBatchTokens() view returns (address[])",
@@ -23,7 +23,7 @@ export const vaultAbi = parseAbi([
   "event TokenConverted(uint256 indexed batchId, address indexed token, uint256 amountIn, uint256 imdValue)",
   "event EthLegSwapped(uint256 indexed batchId, uint256 ethIn, uint256 imdOut)",
   "event SplitSwap(bool inferToImd, uint256 amountIn, uint256 amountOut)",
-  "event BatchConverted(uint256 indexed batchId, uint256 sharesIssued, uint256 inferAdded, uint256 imdAdded, uint256 callerReward)",
+  "event BatchConverted(uint256 indexed batchId, uint256 sharesIssued, uint256 liquidity, uint256 inferAdded, uint256 imdAdded, uint256 callerReward)",
   "error BadParams()",
   "error Expired()",
   "error NothingPending()",
@@ -34,6 +34,7 @@ export const vaultAbi = parseAbi([
   "error InsufficientOutput()",
   "error InsufficientLiquidity()",
   "error ZeroFloor()",
+  "error SplitDirection()",
   "error PoolNotInitialized()",
   "error Insolvent(address token)",
   "error Reentrancy()",

@@ -55,7 +55,8 @@ export default {
   // --- price protection ---
   HOP_MARGIN_BPS: 50, // minOut = expected * (1 - margin) (the ETH leg, fed by swaps: (1 - margin)^2); 0x: the stricter
   //                      of that and its own minBuyAmount (asked with slippageBps = the same margin)
-  SPLIT_MARGIN_BPS: 100, // minSplitOut = the balancing swap's simulated output * (1 - this)
+  SPLIT_MARGIN_BPS: 100, // minSplitRate = the balancing swap's simulated rate (out per 1e18 in, all passes) * (1 - this)
+  LIQUIDITY_MARGIN_BPS: 200, // minLiquidity = the batch's simulated liquidity * (1 - this); default SPLIT + 2 x HOP
   DEADLINE_SECONDS: 60, // ConvertParams.deadline = latest block time + this; short: 0x quotes are short-lived, and an
   //                       unmined tx is dead after it (then replaced at the same nonce)
   MAX_IMPACT_BPS: 300, // a zRouter fallback whose pool would move more than this is not used (impact = how much worse

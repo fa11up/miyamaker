@@ -59,7 +59,7 @@ export async function planVault(client, cfg, ctx, { from, hooks = {}, crossClien
     if (sim.refuse.length) {
       return { action: "refused", why: `REFUSED, nothing sent this tick: the simulation is under the floors or far under the quotes: ${sim.refuse.join("; ")}`, batch, quoted, split, attempts };
     }
-    const params = buildParams(quoted, split.minSplitOut, deadline);
+    const params = buildParams(quoted, split, deadline);
     // The exact call, at the latest state, from the keeper: the last check before anything is signed.
     const data = encodeFunctionData({ abi: vaultAbi, functionName: "convertAndAddLiquidity", args: [params] });
     let name = null;
@@ -125,7 +125,9 @@ export function describePlan(ctx, p) {
     const s = p.split;
     const dir = s.simLogs?.split ? (s.simLogs.split.inferToImd ? "INFER->IMD" : "IMD->INFER") : s.offchain ? (s.offchain.inferToImd ? "INFER->IMD" : "IMD->INFER") : "none";
     const outTok = dir === "INFER->IMD" ? ctx.imd : ctx.infer;
-    lines.push(`  split ${dir} via ${s.source}: out ${fmt(outTok, s.splitOut)}, minSplitOut ${fmt(outTok, s.minSplitOut)}${s.offchain ? ` (off-chain pass 1: in ${s.offchain.swapAmount}, out ${s.offchain.amountOut})` : ""}`);
+    const inTok = dir === "INFER->IMD" ? ctx.infer : ctx.imd;
+    const swapPart = s.splitIn ? `in ${fmt(inTok, s.splitIn)}, out ${fmt(outTok, s.splitOut)}, rate ${formatEther(s.splitRate)} (floor ${formatEther(s.minSplitRate)}) ${symbolOf(outTok)} per ${symbolOf(inTok)}` : "no swap";
+    lines.push(`  split ${dir} via ${s.source}: ${swapPart}; liquidity ${s.liquidity} (floor ${s.minLiquidity})${s.offchain ? ` (off-chain pass 1: in ${s.offchain.swapAmount}, out ${s.offchain.amountOut})` : ""}`);
   }
   if (p.gasCheck) lines.push(`  gas ${p.gas} (limit ${p.gasLimit}) at ${formatGwei(p.gasCheck.price)} gwei = ${formatEther(p.gasCheck.cost)} ETH, ${p.gasCheck.shareBps} bps of the batch`);
   for (const a of p.attempts ?? []) lines.push(`  attempt ${a.attempt}: ${a.error}; re-read and re-quoted`);

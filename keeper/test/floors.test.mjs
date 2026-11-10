@@ -32,26 +32,27 @@ const quoted = () => ({
 });
 
 test("buildParams: one SwapCall per token (empty for ETH), the leg, exact amounts; floor1 = every minOut 1 (never 0)", () => {
-  const p = buildParams(quoted(), 7n, 99n);
+  const p = buildParams(quoted(), { splitInferToImd: true, minSplitRate: 7n, minLiquidity: 11n }, 99n);
   assert.deepEqual(p.tokens, [ETH, IMDUSD, USDC]);
   assert.deepEqual(p.amounts, [10n, 5n, 7n]);
   assert.deepEqual(p.swaps[0], EMPTY_SWAP);
   assert.deepEqual(p.swaps[1], { target: ALLOWANCE_HOLDER, tokenOut: IMD, data: "0xab", minOut: 1_990_000n });
   assert.deepEqual(p.swaps[2], { target: ZROUTER, tokenOut: ETH, data: "0xcd", minOut: 995n });
   assert.deepEqual(p.ethLeg, { target: ZROUTER, tokenOut: IMD, data: "0xef", minOut: 19_800n });
-  assert.equal(p.minSplitOut, 7n);
-  const probe = buildParams(quoted(), 1n, 99n, { floor1: true });
+  assert.deepEqual([p.splitInferToImd, p.minSplitRate, p.minLiquidity], [true, 7n, 11n]);
+  const probe = buildParams(quoted(), { splitInferToImd: true }, 99n, { floor1: true });
   assert.deepEqual([...probe.swaps.slice(1).map((s) => s.minOut), probe.ethLeg.minOut], [1n, 1n, 1n]);
+  assert.deepEqual([probe.splitInferToImd, probe.minSplitRate, probe.minLiquidity], [true, 1n, 1n], "the probe keeps the direction, floors 1");
   assert.equal(probe.swaps[1].data, "0xab", "the swap's own calldata is unchanged in the probe");
 });
 
 test("buildParams refuses a swap without a minimum, and ETH without a leg", () => {
   const q = quoted();
   q.included[1].swap.minOut = 0n;
-  assert.throws(() => buildParams(q, 1n, 1n), /non-zero minOut/);
+  assert.throws(() => buildParams(q, {}, 1n), /non-zero minOut/);
   const r = quoted();
   r.leg = null;
-  assert.throws(() => buildParams(r, 1n, 1n), /no ETH leg/);
+  assert.throws(() => buildParams(r, {}, 1n), /no ETH leg/);
 });
 
 test("checkSim: a simulated output under minOut, or > 2 x margin under the quote, refuses; within it passes", () => {

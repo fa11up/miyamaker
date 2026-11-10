@@ -160,7 +160,8 @@ async function convertOnce(label, hooks) {
   if (r.receipt !== "success") throw new Error(`send: ${JSON.stringify(r, (_, v) => (typeof v === "bigint" ? `${v}` : v))}`);
   const rc = await pub.getTransactionReceipt({ hash: r.hash });
   const logs = (await import("../lib/plan.mjs")).readSimLogs(rc.logs, vaultAddr);
-  console.log(`  landed: shares ${logs.batch.sharesIssued}, split out ${logs.split?.amountOut} vs floor ${plan.params.minSplitOut}, gas used ${rc.gasUsed} (estimate ${plan.gas})`);
+  const landedRate = logs.split ? (logs.split.amountOut * 10n ** 18n) / logs.split.amountIn : null;
+  console.log(`  landed: shares ${logs.batch.sharesIssued}, liquidity ${logs.batch.liquidity} vs floor ${plan.params.minLiquidity}, split ${logs.split ? `${logs.split.inferToImd ? "INFER->IMD" : "IMD->INFER"} (sent ${plan.params.splitInferToImd ? "INFER->IMD" : "IMD->INFER"}) rate ${landedRate} vs floor ${plan.params.minSplitRate}` : "none"}, gas used ${rc.gasUsed} (estimate ${plan.gas})`);
   if (plan.split.offchain && logs.split) {
     const d = Number(plan.split.offchain.swapAmount - logs.split.amountIn) / Number(logs.split.amountIn);
     console.log(`  off-chain pass-1 split size vs realized: ${(d * 100).toFixed(4)}%`);

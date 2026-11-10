@@ -6,7 +6,7 @@ import { DEFAULT_LOG_CHUNK } from "./keeper.mjs";
 import { fallbackRoutes } from "./zrouter.mjs";
 
 const NUMBERS = [
-  "CHAIN_ID", "MIN_BATCH_ETH", "MAX_GAS_SHARE_BPS", "MAX_GAS_GWEI", "HOP_MARGIN_BPS", "SPLIT_MARGIN_BPS",
+  "CHAIN_ID", "MIN_BATCH_ETH", "MAX_GAS_SHARE_BPS", "MAX_GAS_GWEI", "HOP_MARGIN_BPS", "SPLIT_MARGIN_BPS", "LIQUIDITY_MARGIN_BPS",
   "DEADLINE_SECONDS", "MAX_REQUOTES", "MAX_IMPACT_BPS", "MAX_REFERENCE_DEVIATION_BPS", "MIN_ETH", "MAX_ETH_PER_DAY", "TIP_GWEI", "GAS_MARGIN_BPS", "TX_WAIT_SECONDS",
   "INTERVAL_SECONDS", "DISCOVER_FROM_BLOCK", "LOG_CHUNK", "MAX_FEED_DEVIATION_BPS", "IMD_FEED_MAX_AGE_SECONDS",
   "CROSS_RPC_MAX_BPS", "SPLIT_CHECK_TOLERANCE_BPS", "RECEIPT_POLL_MS", "QUOTE_MAX_AGE_SECONDS", "ZEROEX_MAX_WORSE_BPS",
@@ -39,6 +39,9 @@ export function applyEnv(base, env = process.env) {
   cfg.MAX_FEED_DEVIATION_BPS ??= 300;
   cfg.CROSS_RPC_MAX_BPS ??= 0;
   cfg.SPLIT_CHECK_TOLERANCE_BPS ??= 0;
+  // The batch's liquidity floor: every route at its HOP_MARGIN floor (the ETH leg compounds it) plus the split at its
+  // own, so a batch the per-swap floors accept is not refused by the liquidity floor alone.
+  cfg.LIQUIDITY_MARGIN_BPS ??= (cfg.SPLIT_MARGIN_BPS ?? 0) + 2 * (cfg.HOP_MARGIN_BPS ?? 0);
   cfg.LOG_CHUNK ??= DEFAULT_LOG_CHUNK;
   cfg.IMD_PRICE_FEED = getAddress(cfg.IMD_PRICE_FEED ?? DEFAULT_IMD_PRICE_FEED);
   cfg.CHAINLINK = { ...DEFAULT_CHAINLINK, ...(cfg.CHAINLINK ?? {}) };
@@ -49,7 +52,7 @@ export function applyEnv(base, env = process.env) {
     if (cfg[k] != null && !Number.isFinite(cfg[k])) throw new Error(`config ${k} is not a number`);
   }
   if (!(Number.isInteger(cfg.LOG_CHUNK) && cfg.LOG_CHUNK >= 1)) throw new Error("config LOG_CHUNK must be a positive integer");
-  for (const k of ["HOP_MARGIN_BPS", "SPLIT_MARGIN_BPS", "MAX_GAS_SHARE_BPS", "MAX_IMPACT_BPS", "MAX_REFERENCE_DEVIATION_BPS", "MAX_FEED_DEVIATION_BPS", "CROSS_RPC_MAX_BPS", "SPLIT_CHECK_TOLERANCE_BPS", "ZEROEX_MAX_WORSE_BPS"]) {
+  for (const k of ["HOP_MARGIN_BPS", "SPLIT_MARGIN_BPS", "LIQUIDITY_MARGIN_BPS", "MAX_GAS_SHARE_BPS", "MAX_IMPACT_BPS", "MAX_REFERENCE_DEVIATION_BPS", "MAX_FEED_DEVIATION_BPS", "CROSS_RPC_MAX_BPS", "SPLIT_CHECK_TOLERANCE_BPS", "ZEROEX_MAX_WORSE_BPS"]) {
     if (!(cfg[k] >= 0 && cfg[k] < 10_000)) throw new Error(`config ${k} must be in [0, 10000)`);
   }
   if (!(cfg.QUOTE_MAX_AGE_SECONDS > 0 && cfg.QUOTE_MAX_AGE_SECONDS <= 30)) throw new Error("config QUOTE_MAX_AGE_SECONDS must be in (0, 30]: 0x quotes expire after ~30 s");

@@ -41,7 +41,7 @@ test("planVault: the probe and the exact call are simulated (the exact one at la
   const plan = await planVault(c, base, fakeCtx());
   assert.equal(plan.action, "convert", plan.why);
   assert.ok(c.state.calls.includes("eth_simulateV1@latest"), "the exact calldata simulated at latest");
-  const probe = buildParams(plan.quoted, 1n, plan.params.deadline, { floor1: true });
+  const probe = buildParams(plan.quoted, plan.split, plan.params.deadline, { floor1: true });
   assert.ok([...probe.swaps, probe.ethLeg].filter((s) => s.data !== "0x").every((s) => s.minOut === 1n));
 });
 

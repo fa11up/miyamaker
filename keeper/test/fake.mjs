@@ -1,6 +1,6 @@
 // A fake viem client: just enough chain for the keeper's reads, quotes and simulations, all in memory. And a fake 0x
 // Swap API (fakeZeroEx): real lib/zeroex.mjs client, fake fetch answering from the same rates.
-import { encodeAbiParameters, encodeEventTopics, encodeFunctionData, getAddress, hexToBigInt, keccak256, toHex, zeroAddress, zeroHash } from "viem";
+import { encodeAbiParameters, encodeErrorResult, encodeEventTopics, encodeFunctionData, getAddress, hexToBigInt, keccak256, toHex, zeroAddress, zeroHash } from "viem";
 import { vaultAbi } from "../lib/abi.mjs";
 import { DEFAULT_CHAINLINK, DEFAULT_IMD_PRICE_FEED, imdEthKey } from "../lib/reference.mjs";
 import { poolId } from "../lib/split.mjs";
@@ -144,6 +144,9 @@ export function fakeChain(over = {}) {
   const [e0, e1] = slotsOf(imdEthKey(IMD));
   const slots = () => ({ [a0]: state.sqrtP, [a1]: state.liquidity, [e0]: state.imdEthSqrtP, [e1]: 10n ** 24n });
   const SPLIT_OUT = 100_000_000n * 10n ** 18n; // above any off-chain pass-1 quote the fake pool gives (passes 2-3 add to it)
+  const SPLIT_IN = 400n * 10n ** 18n;
+  const simDir = () => state.simDir ?? false;
+  const simLiquidity = () => state.simLiquidity ?? 1_000n * 10n ** 18n;
   const uses0x = (p) => [...p.swaps, p.ethLeg].some((w) => getAddress(w.target) === ALLOWANCE_HOLDER);
   const client = {
     state,
@@ -229,9 +232,19 @@ export function fakeChain(over = {}) {
       if (params[1] === "latest") state.calls.push("eth_simulateV1@latest");
       if (!ok(args[0])) return [{ calls: [{ status: "0x0", logs: [], gasUsed: "0x0", error: { message: "execution reverted", data: "0x019af637" } }] }];
       if (state.revert0x && uses0x(args[0])) return [{ calls: [{ status: "0x0", logs: [], gasUsed: "0x0", error: { message: "execution reverted", data: "0xbb2875c3" } }] }];
+      // The vault's balancing swap runs in state.simDir (default IMD -> INFER): a probe expecting the other way reverts.
+      state.simProbes = [...(state.simProbes ?? []), args[0].splitInferToImd];
+      if (args[0].splitInferToImd !== simDir()) return [{ calls: [{ status: "0x0", logs: [], gasUsed: "0x0", error: { message: "execution reverted", data: encodeErrorResult({ abi: vaultAbi, errorName: "SplitDirection" }) } }] }];
       const topics = encodeEventTopics({ abi: vaultAbi, eventName: "SplitSwap" });
-      const data = encodeAbiParameters([{ type: "bool" }, { type: "uint256" }, { type: "uint256" }], [false, 400n * 10n ** 18n, state.simSplitOut ?? SPLIT_OUT]);
+      const data = encodeAbiParameters([{ type: "bool" }, { type: "uint256" }, { type: "uint256" }], [simDir(), SPLIT_IN, state.simSplitOut ?? SPLIT_OUT]);
       const logs = [{ address: call.to, topics, data }];
+      if (!state.noBatchLog) {
+        logs.push({
+          address: call.to,
+          topics: encodeEventTopics({ abi: vaultAbi, eventName: "BatchConverted", args: { batchId: 1n } }),
+          data: encodeAbiParameters(Array(5).fill({ type: "uint256" }), [1n, simLiquidity(), 0n, 0n, 0n]),
+        });
+      }
       // state.simLegOut: an EthLegSwapped(ethIn, imdOut) event too (what the leg "really" yields in the simulation).
       if (state.simLegOut != null) {
         logs.push({
@@ -254,11 +267,15 @@ export function fakeChain(over = {}) {
         e.cause = { data: { errorName: "BadParams" } };
         throw e;
       }
-      if (args[0].minSplitOut > SPLIT_OUT) {
+      const fail = (errorName) => {
         const e = new Error("reverted");
-        e.cause = { data: { errorName: "InsufficientOutput" } };
+        e.cause = { data: { errorName } };
         throw e;
-      }
+      };
+      if (args[0].minLiquidity === 0n || args[0].minSplitRate === 0n) fail("ZeroFloor");
+      if (args[0].splitInferToImd !== simDir()) fail("SplitDirection");
+      if (args[0].minSplitRate > ((state.simSplitOut ?? SPLIT_OUT) * 10n ** 18n) / SPLIT_IN) fail("InsufficientOutput");
+      if (args[0].minLiquidity > simLiquidity()) fail("InsufficientLiquidity");
       return { result: 1n };
     },
     async estimateContractGas() {

@@ -56,7 +56,7 @@ if (zx.enabled) {
 const qc = await verifyQuoters(client, cfg);
 console.log(`quoters OK: V4Quoter.poolManager ${qc.poolManager}; QuoterV2.factory ${qc.v3Factory}, WETH9 ${qc.weth}`);
 const probe = await simulateV1(client, { from: "0x0000000000000000000000000000000000000001", to: "0x0000000000000000000000000000000000000002", data: "0x" }, blockNumber);
-console.log(`eth_simulateV1: ${probe ? "supported (minSplitOut from the vault's own SplitSwap event)" : "NOT supported (off-chain pass-1 fallback)"}`);
+console.log(`eth_simulateV1: ${probe ? "supported (split direction, rate floor and liquidity floor from the vault's own SplitSwap and BatchConverted events)" : "NOT supported (off-chain pass-1 fallback)"}`);
 console.log("\nreferences (lib/reference.mjs):");
 for (const line of await describeReferences(client, cfg)) console.log(`  ${line}`);
 console.log(`  IMD/ETH spot cross-check RPC: ${crossClient ? new URL(crossUrl).host : "none"}`);
@@ -111,7 +111,8 @@ else {
   const outTok = split.inferToImd ? IMD : INFER;
   const inTok = split.inferToImd ? INFER : IMD;
   console.log(`balancing swap (fresh vault, this batch): ${symbolOf(inTok)}->${symbolOf(outTok)} in ${fmt(inTok, split.swapAmount)} of excess ${fmt(inTok, split.excess)}`);
-  console.log(`  pass-1 quote ${fmt(outTok, split.amountOut)}  minSplitOut ${fmt(outTok, applyMargin(split.amountOut, cfg.SPLIT_MARGIN_BPS))}`);
+  const rate = (split.amountOut * 10n ** 18n) / split.swapAmount;
+  console.log(`  pass-1 quote ${fmt(outTok, split.amountOut)}, rate ${formatEther(rate)} ${symbolOf(outTok)} per ${symbolOf(inTok)}, minSplitRate ${formatEther(applyMargin(rate, cfg.SPLIT_MARGIN_BPS))}, splitInferToImd ${split.inferToImd}`);
 }
 // The configured contribution minimums (vault factory setMinContribution): what each is worth at this block.
 console.log("\nminimum contributions (config/1.json minContributions), valued at the references:");
