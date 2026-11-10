@@ -18,7 +18,8 @@ import {IVaultConfig, IzRouter, SwapCall} from "./IVaultConfig.sol";
  *        unspent input reverts); an ETH input is sent as exactly the amount in, as value;
  *      - the output token's balance must rise by at least `minOut`, which must be non-zero;
  *      - the vault is nonReentrant throughout, and receive() books nothing while a swap runs;
- *      - after the batch the vault checks it still holds everything it owes, in every token.
+ *      - after the batch the vault checks it still holds everything it owes in INFER, IMD and ETH, and that no other
+ *        open token's balance fell by more than the batch converted of it (checkHeld).
  */
 library VaultSwaps {
     error SwapTargetNotAllowed(address target);
@@ -26,6 +27,7 @@ library VaultSwaps {
     error InputMismatch();
     error InsufficientOutput();
     error ZeroFloor();
+    error Insolvent(address token);
 
     address internal constant ETH = address(0);
     uint256 private constant Q96 = 1 << 96;
@@ -139,6 +141,58 @@ library VaultSwaps {
         uint256 base = reserve * feeTerm;
         uint256 balanced = root > base ? (root - base) / (2 * afterFee) : 0;
         return balanced < bound ? balanced : bound;
+    }
+
+    /// @dev The vault's balance of each of `tokens` (ETH = address(0)).
+    function balancesOf(address[] memory tokens) external view returns (uint256[] memory bals) {
+        bals = new uint256[](tokens.length);
+        for (uint256 k; k < tokens.length; ++k) bals[k] = _balanceOf(tokens[k]);
+    }
+
+    /// @dev After a batch: no open token other than INFER, IMD and ETH (whose totals _checkSolvent checks) lost more
+    ///      than the batch converted of it (`converted` per `batchTokens`). Per token, from its own balance before, so a
+    ///      shortfall that predates the batch blocks nothing, while any swap that took another token's balance reverts.
+    function checkHeld(
+        address[] memory open,
+        uint256[] memory before,
+        address[] memory batchTokens,
+        uint256[] memory converted,
+        address infer,
+        address imd
+    ) external view {
+        for (uint256 k; k < open.length; ++k) {
+            address t = open[k];
+            if (t == ETH || t == infer || t == imd) continue;
+            uint256 conv;
+            for (uint256 j; j < batchTokens.length; ++j) {
+                if (batchTokens[j] == t) conv = converted[j];
+            }
+            if (_balanceOf(t) + conv < before[k]) revert Insolvent(t);
+        }
+    }
+
+    /// @dev A reinvest's leftover in liquidity units: `l` units were bought with (usedInfer, usedImd), so free INFER/IMD
+    ///      of (leftInfer, leftImd) is worth l * left / used, both valued in IMD at the pool price.
+    function leftoverUnits(
+        uint256 l,
+        uint256 usedInfer,
+        uint256 usedImd,
+        uint256 leftInfer,
+        uint256 leftImd,
+        uint160 sqrtP,
+        bool inferIsCurrency0
+    ) external pure returns (uint256) {
+        uint256 left = leftImd + _inImd(leftInfer, sqrtP, inferIsCurrency0);
+        if (left == 0) return 0;
+        uint256 used = usedImd + _inImd(usedInfer, sqrtP, inferIsCurrency0);
+        return used == 0 ? 0 : FixedPointMathLib.fullMulDiv(l, left, used);
+    }
+
+    /// @dev `amtInfer` in IMD at the pool price.
+    function _inImd(uint256 amtInfer, uint160 sqrtP, bool inferIsCurrency0) private pure returns (uint256) {
+        return inferIsCurrency0
+            ? FixedPointMathLib.fullMulDiv(FixedPointMathLib.fullMulDiv(amtInfer, sqrtP, Q96), sqrtP, Q96)
+            : FixedPointMathLib.fullMulDiv(FixedPointMathLib.fullMulDiv(amtInfer, Q96, sqrtP), Q96, sqrtP);
     }
 
     function _balanceOf(address token) private view returns (uint256) {

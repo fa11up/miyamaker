@@ -77,12 +77,15 @@ contract UniAlignmentVaultFactory is Ownable, IVaultConfig {
     /// @notice Allow or remove a contract the keeper's conversion calldata may call (0x AllowanceHolder
     ///         0x0000000000001fF3684f28c67538d4D072C22734, zRouter). The vault approves it for exactly each swap's amount
     ///         in and resets the approval after, so only a router that can't be told to spend the vault's other balances
-    ///         belongs here: never a token, the PoolManager, the registry, or an EOA (refused).
+    ///         belongs here. Refused: an EOA (no code), INFER, IMD, any registry payment token, any registered vault, the
+    ///         PoolManager, the registry and this factory. Checked when allowed: a token the registry allowlists later
+    ///         is not removed from here by itself (remove it with allowed = false).
     function setSwapTarget(address target, bool allowed) external onlyOwner {
         if (
             allowed
                 && (target.code.length == 0 || target == infer || target == imd || target == address(poolManager)
-                    || target == address(registry) || target == address(this))
+                    || target == address(registry) || target == address(this) || registry.isPaymentToken(target)
+                    || registry.isVault(target))
         ) revert InvalidAddress();
         isSwapTarget[target] = allowed;
         emit SwapTargetSet(target, allowed);

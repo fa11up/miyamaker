@@ -2,6 +2,7 @@
 pragma solidity ^0.8.24;
 
 import {Test} from "forge-std/Test.sol";
+import {Vm} from "forge-std/Vm.sol";
 import {LibClone} from "solady/utils/LibClone.sol";
 import {Currency} from "v4-core/types/Currency.sol";
 import {PoolKey} from "v4-core/types/PoolKey.sol";
@@ -40,6 +41,20 @@ function zSwapCall(address router, address token, uint256 amount, address to) vi
         c.tokenOut = eth;
         c.data = abi.encodeCall(IzRouter.swapV4, (to, false, 500, 10, token, eth, amount, 0, block.timestamp));
     }
+}
+
+Vm constant VM = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+/// @dev Point `p` at the balancing swap's direction as the vault will run it now, the way the keeper reads it from its
+///      simulation: a probe call (as `keeper`) with the liquidity floor out of reach always reverts, with SplitDirection
+///      only when the guess (INFER -> IMD = false) is wrong. Then sets minLiquidity to 1 (permissive).
+function aim(UniAlignmentVault.ConvertParams memory p, address v, address keeper) {
+    p.splitInferToImd = false;
+    p.minLiquidity = type(uint256).max;
+    VM.prank(keeper);
+    (, bytes memory ret) = v.call(abi.encodeCall(UniAlignmentVault.convertAndAddLiquidity, (p)));
+    if (ret.length >= 4 && bytes4(ret) == UniAlignmentVault.SplitDirection.selector) p.splitInferToImd = true;
+    p.minLiquidity = 1;
 }
 
 /// @notice Shared setup for vault v2 unit tests: mainnet-shaped tokens (at their mainnet addresses, so INFER sorts
@@ -183,9 +198,9 @@ abstract contract VaultTestBase is Test {
         _giveToken(who, t, amount, vault);
     }
 
-    /// @dev Keeper params converting everything pending, with permissive floors (1 wei per hop, 1 wei split): unit
-    ///      tests check accounting, not prices.
-    function _params(TestableUniAlignmentVault v) internal view returns (UniAlignmentVault.ConvertParams memory p) {
+    /// @dev Keeper params converting everything pending, with permissive floors (1 wei per hop, split rate 1, liquidity
+    ///      1) and the balancing swap's direction as the vault will run it (_aim): unit tests check accounting, not prices.
+    function _params(TestableUniAlignmentVault v) internal returns (UniAlignmentVault.ConvertParams memory p) {
         address[] memory toks = v.openBatchTokens();
         uint256[] memory amts = new uint256[](toks.length);
         for (uint256 i; i < toks.length; ++i) amts[i] = v.pendingByToken(toks[i]);
@@ -195,7 +210,6 @@ abstract contract VaultTestBase is Test {
     /// @dev Keeper params converting exactly `amts` of `toks` (any subset, any order), permissive floors (1 wei).
     function _paramsFor(address[] memory toks, uint256[] memory amts)
         internal
-        view
         returns (UniAlignmentVault.ConvertParams memory p)
     {
         return _paramsFor(toks, amts, address(vault));
@@ -203,7 +217,6 @@ abstract contract VaultTestBase is Test {
 
     function _paramsFor(address[] memory toks, uint256[] memory amts, address v)
         internal
-        view
         returns (UniAlignmentVault.ConvertParams memory p)
     {
         p.tokens = toks;
@@ -214,8 +227,9 @@ abstract contract VaultTestBase is Test {
             p.swaps[i] = _zSwap(toks[i], i < amts.length ? amts[i] : 0, v);
         }
         p.ethLeg = _zSwap(ETH, 0, v);
-        p.minSplitOut = 1;
+        p.minSplitRate = 1;
         p.deadline = block.timestamp;
+        aim(p, v, keeper);
     }
 
     function _one(address a) internal pure returns (address[] memory r) {

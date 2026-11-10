@@ -127,6 +127,11 @@
   },
   {
     "type": "error",
+    "name": "SplitDirection",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "SwapTargetNotAllowed",
     "inputs": [
       {
@@ -199,6 +204,12 @@
       },
       {
         "name": "sharesIssued",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "liquidity",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -299,6 +310,25 @@
       },
       {
         "name": "rewardAmount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "EthDustKept",
+    "inputs": [
+      {
+        "name": "to",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -998,7 +1028,17 @@
             ]
           },
           {
-            "name": "minSplitOut",
+            "name": "splitInferToImd",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "minSplitRate",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "minLiquidity",
             "type": "uint256",
             "internalType": "uint256"
           },

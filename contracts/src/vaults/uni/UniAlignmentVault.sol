@@ -31,8 +31,10 @@ import {VaultSwaps} from "./VaultSwaps.sol";
  *         the batch's ETH, which then goes to IMD in ONE swap (the ETH leg), its output shared by each token's ETH; a
  *         token swapped to IMD (imdUSD) is valued by its own IMD out. The balanced part of the IMD goes to INFER in the
  *         hooked INFER/IMD pool (vault-side, through PoolManager.unlock), then INFER + IMD as one full-range position.
- *         Shares (= liquidity units) go to each token's benefactors in proportion to the IMD value the converted amount
- *         realized, pro rata to each benefactor's pending balance in it (PendingLedger). The position's INFER and IMD
+ *         Shares go to each token's benefactors in proportion to the IMD value the converted amount realized, pro rata
+ *         to each benefactor's pending balance in it (PendingLedger). The first batch gets one share per liquidity
+ *         unit; later batches and reinvests are priced at the share price once free INFER/IMD already held (leftovers,
+ *         strays, which belong to the holders before them) is counted, so totalShares <= totalLPUnits. The position's INFER and IMD
  *         fees (1% to the protocol) are paid to shares, as tokens, as ETH, or reinvested. Shares are never redeemable
  *         for liquidity. Spec: docs/IMD-INFER-VAULT.md.
  * @dev Clone (EIP-1167), initialized once by the factory, which owns it. Keeps v1's hardening:
@@ -40,9 +42,13 @@ import {VaultSwaps} from "./VaultSwaps.sol";
  *      - per-share fee indexes with checkpoints (each payout rounds down once), fees booked before every share change;
  *      - conversions are keeper-only (registry.conversionKeeper) with the keeper's floors as the price protection; each
  *        swap is guarded in VaultSwaps (allowlisted target, exact approval reset after, input drops by exactly the
- *        amount in, output rises by at least a non-zero floor);
+ *        amount in, output rises by at least a non-zero floor); the balancing swap must run in the keeper's expected
+ *        direction at no worse than its rate, and the batch must add at least the keeper's minimum liquidity;
  *      - the keeper reward comes out of the batch's ETH only (0.0012 ETH, capped at 1% of it);
- *      - receive() ignores ETH the vault pulls in itself (transient flag), everything nonReentrant;
+ *      - receive() ignores ETH the vault pulls in itself (transient flag); every function that moves tokens or changes
+ *        shares is nonReentrant (unlockCallback is PoolManager-only instead; delegateBenefactor, the initializers and
+ *        Solady's Ownable functions carry no guard: requestOwnershipHandover is payable and open to anyone, so ETH can
+ *        arrive unbooked at any time and becomes holders' dust at the next conversion);
  *      - nothing owed is ever spent: conversions work only from balances beyond what is owed, checked at the end.
  */
 contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignmentVault {
@@ -82,6 +88,7 @@ contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignm
     error NotKeeper();
     error Insolvent(address token);
     error UnknownFeeToken();
+    error SplitDirection();
 
     // ========== Constants ==========
 
@@ -177,21 +184,33 @@ contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignm
     /// @param ethLeg The batch's one ETH -> IMD swap (tokenOut IMD), sent all the batch's ETH as value: pending ETH net
     ///        of the keeper reward, plus every swap that output ETH. Required when any ETH reaches it, else ignored.
     ///        Build it to sell its whole msg.value (zRouter: swapAmount 0); ETH it hands back is dust for holders.
-    /// @param minSplitOut Floor on the INFER/IMD balancing swap's total output (non-zero if a swap happens).
+    /// @param splitInferToImd The INFER/IMD balancing swap's expected direction (true = INFER -> IMD), from the keeper's
+    ///        simulation. A balancing swap the other way reverts SplitDirection. Ignored when no balancing swap runs.
+    /// @param minSplitRate Floor on the balancing swap's rate, in output wei per 1e18 input wei, over all its passes:
+    ///        out * 1e18 >= minSplitRate * in. Non-zero if a swap happens. A rate, not a total, so it holds for every
+    ///        unit the swap sells, including free INFER/IMD held before the batch (leftovers, strays).
+    /// @param minLiquidity Floor on the liquidity units the batch adds (non-zero), checked whether or not a swap runs.
     /// @param deadline Last timestamp the call may land.
     struct ConvertParams {
         address[] tokens;
         uint256[] amounts;
         SwapCall[] swaps;
         SwapCall ethLeg;
-        uint256 minSplitOut;
+        bool splitInferToImd;
+        uint256 minSplitRate;
+        uint256 minLiquidity;
         uint256 deadline;
     }
 
     // ========== Events ==========
 
     event BatchConverted(
-        uint256 indexed batchId, uint256 sharesIssued, uint256 inferAdded, uint256 imdAdded, uint256 callerReward
+        uint256 indexed batchId,
+        uint256 sharesIssued,
+        uint256 liquidity,
+        uint256 inferAdded,
+        uint256 imdAdded,
+        uint256 callerReward
     );
     event TokenConverted(uint256 indexed batchId, address indexed token, uint256 amountIn, uint256 imdValue);
     /// @notice The batch's one ETH -> IMD swap: all its ETH in, the IMD out shared by each token's ETH.
@@ -203,6 +222,8 @@ contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignm
     event ProtocolYieldCollected(address indexed token, uint256 amount);
     event ProtocolFeesWithdrawn(address indexed token, uint256 amount);
     event BenefactorDelegateSet(address indexed benefactor, address indexed delegate);
+    /// @notice A TOKENS-mode claim's ETH dust could not be sent to `to`: it stays claimable, the tokens were paid.
+    event EthDustKept(address indexed to, uint256 amount);
 
     modifier onlyKeeper() {
         if (msg.sender != registry.conversionKeeper()) revert NotKeeper();
@@ -338,9 +359,13 @@ contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignm
         returns (uint256 sharesIssued)
     {
         if (block.timestamp > p.deadline) revert Expired();
-        if (_openTokens.length == 0) revert NothingPending();
+        address[] memory open = _openTokens;
+        if (open.length == 0) revert NothingPending();
+        if (p.minLiquidity == 0) revert ZeroFloor();
         uint256 n = p.tokens.length;
         if (n == 0 || p.amounts.length != n || p.swaps.length != n) revert BadParams();
+        // What each open token's balance is now: no swap may take any of it beyond what the batch converts.
+        uint256[] memory held = VaultSwaps.balancesOf(open);
 
         // Yield earned so far belongs to current holders: book it before any share change.
         _collectFees();
@@ -356,27 +381,32 @@ contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignm
         (uint256[] memory values, uint256 inferSlot) = _toImd(p, reward);
 
         (uint256 liquidity, uint256 inferAdded, uint256 imdAdded, uint256 rateImd, uint256 rateInfer) =
-            _balanceAndAdd(p.minSplitOut);
-        if (liquidity == 0) revert InsufficientLiquidity();
+            _balanceAndAdd(p.splitInferToImd, p.minSplitRate);
+        if (liquidity == 0 || liquidity < p.minLiquidity) revert InsufficientLiquidity();
         if (inferSlot != type(uint256).max) {
             values[inferSlot] = FixedPointMathLib.fullMulDiv(p.amounts[inferSlot], rateImd, rateInfer);
         }
 
-        // ETH beyond what is owed (router refunds, strays) is dust for current holders, before the new shares.
+        // ETH beyond what is owed (router refunds, strays) is dust for current holders, before the new shares; on the
+        // first batch there are none yet, so it is the batch's own, credited once its shares exist.
         uint256 ethOwed = _feeOwed(I_ETH) + pendingByToken[ETH] + reward;
-        if (address(this).balance > ethOwed) _distribute(I_ETH, address(this).balance - ethOwed);
+        uint256 dust = address(this).balance > ethOwed ? address(this).balance - ethOwed : 0;
+        if (totalShares != 0) {
+            _distribute(I_ETH, dust);
+            dust = 0;
+        }
 
         sharesIssued = _batchShares(liquidity, values, before, rateImd, rateInfer);
         if (sharesIssued == 0) revert InsufficientLiquidity();
         _closeBatch(p, sharesIssued, values, pendingBefore);
-        emit BatchConverted(closedBatches, sharesIssued, inferAdded, imdAdded, reward);
+        _distribute(I_ETH, dust);
+        emit BatchConverted(closedBatches, sharesIssued, liquidity, inferAdded, imdAdded, reward);
         _payCallerReward(reward);
         _checkSolvent();
-        // Every other token still pending is still held: no swap reached what is owed to others.
-        for (uint256 k; k < _openTokens.length; ++k) {
-            address t = _openTokens[k];
-            if (_balanceOf(t) < pendingByToken[t]) revert Insolvent(t);
-        }
+        // No swap took any other token beyond what the batch converted of it (INFER, IMD, ETH: _checkSolvent). Checked
+        // per token against its own balance before, so a shortfall that predates the batch (an issuer seizure, a
+        // negative rebase) blocks no batch; it stays with that token's pending.
+        VaultSwaps.checkHeld(open, held, p.tokens, p.amounts, infer, imd);
     }
 
     /// @dev Check the listed tokens and amounts and take the amounts out of pending. Returns what was pending before,
@@ -453,9 +483,10 @@ contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignm
 
     /// @dev Balance the free INFER and IMD (everything held beyond fees owed: this batch's IMD and INFER plus earlier
     ///      leftovers) with vault-side swaps in the alignment pool, and add them full range. Swap, add, measure what is
-    ///      left and go again, up to MAX_LP_PASSES, always in the first pass's direction. Returns the liquidity added and
-    ///      the realized IMD-per-INFER rate as (rateImd / rateInfer): the balancing swap's, else the pool price.
-    function _balanceAndAdd(uint256 minSplitOut)
+    ///      left and go again, up to MAX_LP_PASSES, always in the first pass's direction, which must be `expectInferToImd`;
+    ///      the passes together must sell at no less than `minRate` (output wei per 1e18 in). Returns the liquidity added
+    ///      and the realized IMD-per-INFER rate as (rateImd / rateInfer): the balancing swap's, else the pool price.
+    function _balanceAndAdd(bool expectInferToImd, uint256 minRate)
         internal
         returns (uint256 liquidity, uint256 inferAdded, uint256 imdAdded, uint256 rateImd, uint256 rateInfer)
     {
@@ -488,8 +519,9 @@ contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignm
             (sqrtP, poolL) = _poolState();
         }
         if (swapIn != 0) {
-            if (minSplitOut == 0) revert ZeroFloor();
-            if (swapOut < minSplitOut) revert InsufficientOutput();
+            if (inferToImd != expectInferToImd) revert SplitDirection();
+            if (minRate == 0) revert ZeroFloor();
+            if (FixedPointMathLib.fullMulDiv(swapOut, 1e18, swapIn) < minRate) revert InsufficientOutput();
             emit SplitSwap(inferToImd, swapIn, swapOut);
         }
         if (swapIn != 0 && swapOut != 0) {
@@ -550,10 +582,12 @@ contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignm
         _creditYield(I_IMD, fImd);
     }
 
-    /// @dev Split the batch's liquidity across its tokens by realized IMD value; each token's pool pays its part to that
-    ///      token's benefactors pro rata (PendingLedger.convert), from the fee indexes as they stand now.
     /// @dev Shares for this batch: the part of `liquidity` its own value paid for (the rest came from leftovers and
     ///      strays, and lifts the shares of holders before this batch), priced at the share price once that rest is in.
+    ///      Free INFER held before the batch is valued at the same rate as the batch's own INFER (the balancing swap's
+    ///      realized rate, else the pool price). When the batch brings IMD and that INFER is the side swapped, the part
+    ///      of it that is not sold is valued about fee/2 low, so the batch gets that much more of the leftover INFER's
+    ///      value (~0.6% of it at a 1.25% pool fee); in the usual direction it is the earlier holders who gain.
     function _batchShares(
         uint256 liquidity,
         uint256[] memory values,
@@ -577,6 +611,8 @@ contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignm
         return FixedPointMathLib.fullMulDiv(liquidity, totalShares, unitsBefore); // round down
     }
 
+    /// @dev Split the batch's shares across its tokens by realized IMD value; each token's pool pays its part to that
+    ///      token's benefactors pro rata (PendingLedger.convert), from the fee indexes as they stand now.
     function _closeBatch(ConvertParams calldata p, uint256 liquidity, uint256[] memory values, uint256[] memory pendingBefore)
         private
     {
@@ -651,12 +687,10 @@ contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignm
 
     function _distribute(uint256 i, uint256 amount) internal {
         if (amount == 0) return;
-        if (totalShares == 0) {
-            // Nobody to credit (only before the first conversion closes): keep it accounted.
-            _protocolFees[i] += amount;
-            emit ProtocolYieldCollected(_feeToken(i), amount);
-            return;
-        }
+        // Nobody to credit yet (only while the first batch converts): leave it free. INFER/IMD (the first batch's own
+        // pass-2/3 fees) join that batch's next pass or stay as a leftover owned by its holders; ETH dust is credited
+        // to the first batch once its shares exist (convertAndAddLiquidity).
+        if (totalShares == 0) return;
         _accPerShare[i] += FixedPointMathLib.fullMulDiv(amount, ACC_PRECISION, totalShares); // round down
         _distributed[i] += amount;
         emit FeesAccumulated(_feeToken(i), amount);
@@ -760,6 +794,7 @@ contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignm
         address to = benefactorDelegate[b];
         if (to == address(0)) to = b;
         (inferOut, imdOut, ethOut) = _payout(to, a, mode, minEthOut);
+        if (ethOut < a[2]) _unharvest(b, I_ETH, a[2], a[2]); // TOKENS mode, ETH refused: still claimable
         emit FeesClaimed(b, mode, inferOut, imdOut, ethOut);
         _checkSolvent();
     }
@@ -775,19 +810,27 @@ contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignm
         if (mode == ClaimMode.REINVEST) revert BadParams();
         _maybeCollectFees();
         uint256[3] memory total;
+        uint256[] memory dust = new uint256[](benefactors.length);
         for (uint256 k; k < benefactors.length; ++k) {
             address b = benefactors[k];
             if (benefactorDelegate[b] != msg.sender) revert NotDelegate();
             if (benefactorShares(b) == 0) revert NoShares();
             uint256[3] memory a = _harvest(b);
+            dust[k] = a[2];
             emit FeesClaimed(b, mode, a[0], a[1], a[2]);
             for (uint256 i; i < 3; ++i) total[i] += a[i];
         }
         if (total[0] == 0 && total[1] == 0 && total[2] == 0) revert NoFeesToClaim();
         (inferOut, imdOut, ethOut) = _payout(msg.sender, total, mode, minEthOut);
+        if (ethOut < total[2]) {
+            // TOKENS mode, ETH refused: each benefactor's dust stays claimable.
+            for (uint256 k; k < benefactors.length; ++k) _unharvest(benefactors[k], I_ETH, dust[k], dust[k]);
+        }
         _checkSolvent();
     }
 
+    /// @dev Pays `to`. In TOKENS mode the ETH dust never blocks the tokens: if `to` refuses ETH, ethOut is 0 and the
+    ///      caller puts the dust back as claimable (EthDustKept). In ETH mode a refused send reverts.
     // slither-disable-next-line arbitrary-send-eth
     function _payout(address to, uint256[3] memory a, ClaimMode mode, uint256 minEthOut)
         internal
@@ -810,17 +853,24 @@ contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignm
         }
         if (ethOut != 0) {
             (bool ok,) = payable(to).call{value: ethOut}("");
-            if (!ok) revert TransferFailed();
+            if (!ok) {
+                if (mode != ClaimMode.TOKENS) revert TransferFailed();
+                emit EthDustKept(to, ethOut);
+                ethOut = 0;
+            }
         }
     }
 
-    /// @dev Put the caller's INFER + IMD fees back into the position as new shares at the current share price
-    ///      (totalShares / totalLPUnits before the add). Balances the two first with a vault-side swap. What the add can't use, and
-    ///      any ETH dust, stays claimable.
+    /// @dev Put the caller's INFER + IMD fees back into the position as new shares. Balances the two first with a
+    ///      vault-side swap. Priced as a batch is (_batchShares): at totalShares / (units before the add + the liquidity
+    ///      worth of the free INFER/IMD already held, valued at the pool price), since that leftover belongs to the
+    ///      holders before this reinvest and is added later without minting. What the add can't use, and any ETH dust,
+    ///      stays claimable. `minShares` must be non-zero.
     function _reinvest(address b, uint256 minShares)
         internal
         returns (uint256 inferIn, uint256 imdIn, uint256 ethOut)
     {
+        if (minShares == 0) revert ZeroFloor();
         _collectFees(); // a share change: book the yield first
         uint256[3] memory a = _harvest(b);
         if (a[0] == 0 && a[1] == 0) revert NoFeesToClaim();
@@ -830,6 +880,9 @@ contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignm
         uint256 unitsBefore = totalLPUnits;
         (uint160 sqrtP, uint128 poolL) = _poolState();
         if (sqrtP == 0) revert PoolNotInitialized();
+        // Free INFER/IMD beyond what was just harvested: the earlier holders' leftover.
+        (uint256 leftInfer, uint256 leftImd) = _freeAlignmentBalances();
+        (leftInfer, leftImd) = (leftInfer - amtInfer, leftImd - amtImd);
         (bool inferToImd, uint256 s,) = _splitAmount(amtInfer, amtImd, sqrtP, poolL);
         if (s != 0) {
             uint256 out = _alignSwap(inferToImd, s);
@@ -838,7 +891,10 @@ contract UniAlignmentVault is ReentrancyGuard, Ownable, IUnlockCallback, IAlignm
         }
         (uint256 l, uint256 usedInfer, uint256 usedImd) = _addLiquidity(amtInfer, amtImd);
         if (l == 0) revert InsufficientLiquidity();
-        l = _sharesFor(l, unitsBefore); // shares, at the share price before the add
+        // Shares at the share price once the leftover's liquidity is counted in.
+        l = _sharesFor(
+            l, unitsBefore + VaultSwaps.leftoverUnits(l, usedInfer, usedImd, leftInfer, leftImd, sqrtP, _inferIsCurrency0)
+        );
         if (l == 0) revert InsufficientLiquidity();
         if (l < minShares) revert InsufficientOutput();
         // The add booked the position's fees to current holders, b's existing shares included: settle before minting.

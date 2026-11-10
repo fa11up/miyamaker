@@ -286,15 +286,60 @@ contract UniAlignmentVaultTest is VaultTestBase {
     function test_convert_splitFloors() public {
         _contributeEth(alice, 1 ether);
         UniAlignmentVault.ConvertParams memory p = _params(vault);
-        p.minSplitOut = 0;
+        assertFalse(p.splitInferToImd, "an IMD-only batch balances IMD -> INFER");
+        p.minSplitRate = 0;
         vm.prank(keeper);
         vm.expectRevert(UniAlignmentVault.ZeroFloor.selector);
         vault.convertAndAddLiquidity(p);
 
-        p.minSplitOut = 5000e18; // ~4,962 INFER is what ~5,025 IMD buys at 1:1 less 1.25%
+        p.minSplitRate = 0.99e18; // 1:1 less the 1.25% fee is 0.9875 INFER per IMD
         vm.prank(keeper);
         vm.expectRevert(UniAlignmentVault.InsufficientOutput.selector);
         vault.convertAndAddLiquidity(p);
+
+        // The other direction than the vault runs: refused, whatever the rate floor says.
+        p.minSplitRate = 1;
+        p.splitInferToImd = true;
+        vm.prank(keeper);
+        vm.expectRevert(UniAlignmentVault.SplitDirection.selector);
+        vault.convertAndAddLiquidity(p);
+        p.splitInferToImd = false;
+
+        // The liquidity floor is mandatory and binding.
+        p.minLiquidity = 0;
+        vm.prank(keeper);
+        vm.expectRevert(UniAlignmentVault.ZeroFloor.selector);
+        vault.convertAndAddLiquidity(p);
+        uint256 snap = vm.snapshotState();
+        p.minLiquidity = 1;
+        vm.prank(keeper);
+        vault.convertAndAddLiquidity(p);
+        uint256 l = vault.totalLPUnits();
+        vm.revertToState(snap);
+        p.minLiquidity = l + 1;
+        vm.prank(keeper);
+        vm.expectRevert(UniAlignmentVault.InsufficientLiquidity.selector);
+        vault.convertAndAddLiquidity(p);
+        p.minLiquidity = l;
+        p.minSplitRate = 0.9875e18 - 1e12;
+        vm.prank(keeper);
+        vault.convertAndAddLiquidity(p);
+    }
+
+    function test_convert_liquidityFloorWithoutASwap() public {
+        // INFER and IMD already at the pool's ratio: no balancing swap, the liquidity floor still binds.
+        _contribute(alice, infer, 100e18);
+        _contribute(bob, imd, 100e18);
+        UniAlignmentVault.ConvertParams memory p = _params(vault);
+        p.minSplitRate = 0; // not read: no swap runs
+        p.minLiquidity = 101e18;
+        vm.prank(keeper);
+        vm.expectRevert(UniAlignmentVault.InsufficientLiquidity.selector);
+        vault.convertAndAddLiquidity(p);
+        p.minLiquidity = 99e18;
+        vm.prank(keeper);
+        vault.convertAndAddLiquidity(p);
+        assertApproxEqRel(vault.totalLPUnits(), 100e18, 1e15);
     }
 
     function test_convert_poolNotInitialized() public {
@@ -962,7 +1007,11 @@ contract UniAlignmentVaultTest is VaultTestBase {
         uint256 minted = vault.benefactorShares(alice) - sa;
         assertGt(minted, 0);
         assertEq(vault.totalShares(), total + minted);
-        assertEq(vault.totalLPUnits(), lp + minted, "1 share = 1 liquidity unit");
+        // Priced at the share price once the free INFER/IMD left over from the batches is counted in (audit finding 4):
+        // a little under one share per unit added, the rest stays with the holders before the reinvest.
+        uint256 added = vault.totalLPUnits() - lp;
+        assertLe(minted, added, "never more shares than units");
+        assertGe(minted, added * 98 / 100, "the leftover is about 1% of the position here");
         // At 1:1 full range, liquidity ~ each side's amount.
         assertApproxEqRel(minted, (ci + cm) / 2, 0.01e18);
         assertLe(usedI, ci);

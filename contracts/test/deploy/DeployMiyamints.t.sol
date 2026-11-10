@@ -280,7 +280,10 @@ contract DeployMiyamintsForkTest is Test {
             abi.encodeCall(IzRouter.swapV4, (address(v), false, 10000, 200, address(0), IMD, 0, 0, block.timestamp)),
             1
         );
-        p.minSplitOut = 1;
+        // An ETH-only batch is IMD-heavy: the balancing swap runs IMD -> INFER (splitInferToImd false). Floors of 1.
+        p.splitInferToImd = false;
+        p.minSplitRate = 1;
+        p.minLiquidity = 1;
         p.deadline = block.timestamp;
     }
 

@@ -70,21 +70,33 @@ swaps share a pool, which the keeper keeps so). A token swapped to IMD (imdUSD) 
 
 The guards on every keeper swap (`VaultSwaps`), since the calldata is the keeper's:
 
-- the target is on the vault factory's allowlist (`setSwapTarget`, owner = a Safe; EOAs, the tokens, the PoolManager
-  and the registry are refused), checked live on each call; the keeper can't add one;
+- the target is on the vault factory's allowlist (`setSwapTarget`, owner = a Safe; EOAs, INFER, IMD, every registry
+  payment token, every registered vault, the PoolManager, the registry and the factory are refused when added; a token
+  the registry allowlists later is not removed by itself), checked live on each call; the keeper can't add one;
 - the vault approves exactly the amount in to the target, and resets the approval to 0 after the call;
 - an ERC-20 input's balance must drop by exactly the amount in: a partial fill, an over-pull or a refund of unspent
   input reverts (`InputMismatch`); ETH in is sent as exactly the amount, as value;
 - the vault's balance of `tokenOut` (ETH or IMD; the leg's must be IMD) must rise by at least `minOut`, which must be
   non-zero (`ZeroFloor`, `InsufficientOutput`);
-- nonReentrant throughout; ETH arriving during a swap is never booked as a contribution;
-- after the batch, everything owed (fees, protocol cut, every pending token) is still held, or the call reverts.
+- every vault function that moves tokens or changes shares is nonReentrant (the PoolManager callback is
+  PoolManager-only instead); ETH arriving during a swap is never booked as a contribution;
+- after the batch, everything owed in INFER, IMD and ETH (fees, protocol cut, pending) is still held, and no other
+  open token's balance fell by more than the batch converted of it, or the call reverts. That second check is per
+  token against its own balance before the call, so a shortfall that predates the batch (an issuer seizure, a negative
+  rebase) blocks no batch: it stays with that token's pending.
 
 ETH the leg hands back (a refund, a router's stray balance) is ETH beyond what is owed: dust for the holders before the
-batch, as before. The minimum per ERC-20 contribution (`minContribution`, 0 = none; deployed at ~0.001 ETH worth each:
+batch (on a vault's first batch, which has no earlier holders, it is that batch's own, credited once its shares exist).
+ETH can also arrive unbooked through Solady's payable `requestOwnershipHandover` (open to anyone): it becomes dust the
+same way. The minimum per ERC-20 contribution (`minContribution`, 0 = none; deployed at ~0.001 ETH worth each:
 USDC 2, IMD 1, INFER 3,500, imdUSD 3, WBTC/cbBTC 3,000 sats) lives in the vault factory too. The keeper supplies
 `minOut` for every swap and for the leg from live quotes, through a private mempool. No on-chain price reference exists
-for these pools (v4 has no TWAP), so the keeper floors are the protection, as today.
+for these pools (v4 has no TWAP), so the keeper floors are the protection, as today. For the balancing swap (step 3
+below) the keeper sends its expected direction (`splitInferToImd`, a swap the other way reverts `SplitDirection`) and a
+rate floor (`minSplitRate`: output per 1e18 in over every pass). The rate floor covers every unit sold, so free
+INFER/IMD the vault held before the batch (leftovers, strays: the earlier holders') is sold at no worse than the
+keeper's quoted rate too; the keeper's worst case is selling what the vault swaps at its own floors. The batch must
+also add at least `minLiquidity` units (swap or not).
 
 ## Sale flow (collections)
 
@@ -120,11 +132,12 @@ for these pools (v4 has no TWAP), so the keeper floors are the protection, as to
      the reward + those swaps' ETH), floored by its `minOut`; each token's IMD value is the leg's output times its
      share of the ETH in. IMD counts as is; INFER at the realized rate of step 3.
   3. Swap the balanced part of the free IMD/INFER (beyond fees owed and beyond what is still pending) in the INFER/IMD
-     pool (vault-side swap), floor from the keeper.
-  4. Add INFER + IMD full range (spacing 60) to the vault's single INFER/IMD position. Leftover stays for next batch.
-  5. Issue shares: the batch's shares (its own share of the added liquidity, at the share price before the add;
-     INFER/IMD left from earlier batches or sent in is added too but raises every holder's share) are split across its
-     tokens by realized IMD value; each token's part goes to
+     pool (vault-side swap), in the keeper's direction at no less than its rate (`minSplitRate`).
+  4. Add INFER + IMD full range (spacing 60) to the vault's single INFER/IMD position; at least `minLiquidity` units.
+     Leftover stays for next batch.
+  5. Issue shares: the batch's shares (the part of the added liquidity its own value paid for, priced at the share
+     price once the rest is in: INFER/IMD left from earlier batches or sent in is added too and belongs to the holders
+     before the batch) are split across its tokens by realized IMD value; each token's part goes to
      that token's benefactors pro rata to their pending balance in it (each balance converts by amount / pending),
      from the fee indexes as they stand after step 1's fee collection (`PendingLedger`: O(1) per benefactor and token,
      collected lazily). A benefactor with several tokens pending, some converted, gets exactly the shares of what was
@@ -136,10 +149,13 @@ for these pools (v4 has no TWAP), so the keeper floors are the protection, as to
 - The position earns INFER and IMD. Two accumulators (`accInferPerShare`, `accImdPerShare`) with per-benefactor
   checkpoints; 1% of each goes to the protocol (`withdrawProtocolFees(token)`). ETH dust keeps an ETH accumulator.
 - `claimFees(ClaimMode mode, uint256 minEthOut)`, paid to the benefactor or its delegate:
-  - `TOKENS` (default): send INFER and IMD.
+  - `TOKENS` (default): send INFER and IMD, and the ETH dust if the payee takes ETH; if it refuses ETH, the dust stays
+    claimable (`EthDustKept`) and the tokens are paid anyway.
   - `ETH`: swap the claim INFER -> IMD (vault-side) -> ETH (zRouter `swapV4` on the factory's `ethPool`, default
     10000/200, under the same balance guards), check `minEthOut` (non-zero), send ETH.
-  - `REINVEST`: add the claim's INFER + IMD to the position and issue shares at the current share price.
+  - `REINVEST`: add the claim's INFER + IMD to the position and issue shares priced as a batch is: at the share price
+    once the free INFER/IMD already held (the earlier holders' leftover) is counted in. `minEthOut` is the least
+    shares, and must be non-zero (`ZeroFloor`).
 - Collections: `claimVaultFees(mode, minEthOut)` (owner only) forwards whatever the vault pays to `owner()`.
 
 ## Interfaces (fixed for the build)
@@ -165,7 +181,9 @@ struct ConvertParams {
     uint256[] amounts;       // per token: exactly this much converts, 0 < amount <= pendingByToken(token)
     SwapCall[] swaps;        // one per token; ignored (may be empty) for ETH, IMD, INFER
     SwapCall ethLeg;         // the batch's single ETH -> IMD swap (tokenOut IMD); required when any ETH reaches it
-    uint256 minSplitOut;     // the INFER/IMD balancing swap's total output (non-zero if it swaps)
+    bool splitInferToImd;    // the balancing swap's expected direction (true = INFER -> IMD); ignored if none runs
+    uint256 minSplitRate;    // its output wei per 1e18 input wei over every pass (non-zero if it swaps)
+    uint256 minLiquidity;    // liquidity units the batch must add (non-zero), swap or not
     uint256 deadline;
 }
 function convertAndAddLiquidity(ConvertParams calldata p) external returns (uint256 sharesIssued);
@@ -173,11 +191,14 @@ function openBatchTokens() external view returns (address[] memory); // tokens w
 function config() external view returns (address);                  // the vault factory (IVaultConfig)
 event TokenConverted(uint256 indexed batchId, address indexed token, uint256 amountIn, uint256 imdValue);
 event EthLegSwapped(uint256 indexed batchId, uint256 ethIn, uint256 imdOut);
+event BatchConverted(uint256 indexed batchId, uint256 sharesIssued, uint256 liquidity, uint256 inferAdded, uint256 imdAdded, uint256 callerReward);
+event EthDustKept(address indexed to, uint256 amount); // a TOKENS claim's ETH dust the payee refused: still claimable
 error SwapTargetNotAllowed(address target); error BadSwapOutput(); error InputMismatch();
-error InsufficientOutput(); error ZeroFloor(); error Insolvent(address token);
+error InsufficientOutput(); error InsufficientLiquidity(); error ZeroFloor(); error SplitDirection();
+error Insolvent(address token);
 
 // UniAlignmentVaultFactory (IVaultConfig, owner = Safe)
-function setSwapTarget(address target, bool allowed) external;          // refuses EOAs, INFER, IMD, PoolManager, registry
+function setSwapTarget(address target, bool allowed) external;          // refuses EOAs, INFER, IMD, payment tokens, vaults, PoolManager, registry, factory
 function isSwapTarget(address target) external view returns (bool);
 event SwapTargetSet(address indexed target, bool allowed);
 function setEthPool(uint24 fee, int24 tickSpacing) external;            // default 10000 / 200

@@ -227,18 +227,21 @@ deployed); the v1 notes above describe the hardening it keeps. New review surfac
   change). The vault pulls the ERC-20 from msg.sender and reverts unless its balance grew by exactly `amount`, and
   refuses less than the token's `minContribution` in the factory (owner-set, 0 = none; the deploy sets ~0.001 ETH worth
   per token). At most 16 distinct tokens pending, and per benefactor (the registry allows at most 15 ERC-20s).
-- **Conversion** (keeper only, `ConvertParams{tokens, amounts, swaps, ethLeg, minSplitOut, deadline}`, revised twice on
-  2026-11-08: subsets after the keeper build's fork runs, then aggregator calldata; see below): any non-empty subset of
+- **Conversion** (keeper only, `ConvertParams{tokens, amounts, swaps, ethLeg, splitInferToImd, minSplitRate,
+  minLiquidity, deadline}`, revised twice on 2026-11-08: subsets after the keeper build's fork runs, then aggregator
+  calldata; and on 2026-11-09 for audit 4884eb75 (split direction, rate and liquidity floors); see below): any non-empty subset of
   the pending tokens, no duplicates, any order, and exactly `amounts[i]` (0 < amount <= pending) of each. Collect the
   position's fees for current holders; take the amounts out of pending; reward 0.0012 ETH capped at 1% of the ETH
   converted (0 without ETH); each token through its keeper-built `SwapCall` (0x AllowanceHolder or zRouter calldata,
   guarded, see "Aggregator calldata"). A swap outputs IMD (valued on its own) or ETH: all ETH (converted ETH net of the
   reward + every swap's ETH out) goes to IMD in ONE swap (`ethLeg`, `EthLegSwapped`), its IMD attributed pro rata to
   each token's ETH. Then the free INFER/IMD (beyond fees owed AND beyond what is still pending) is balanced and added full range,
-  up to 3 passes. INFER is valued at the balancing swap's realized rate (pool price if no swap). Shares = liquidity
-  units, split per token by realized IMD value. ETH beyond fees, pending and the reward is dust for current holders. A
-  solvency check (`balance >= fees owed + protocol cut + pending`, for INFER, IMD and ETH; and, after a conversion,
-  balance >= pending for every token still open) ends every conversion and claim.
+  up to 3 passes. INFER is valued at the balancing swap's realized rate (pool price if no swap). Shares (one per
+  liquidity unit for the first batch, later priced after leftovers: see "Audit-suite fixes"), split per token by
+  realized IMD value. ETH beyond fees, pending and the reward is dust for current holders (the first batch's own on a
+  first batch). A solvency check (`balance >= fees owed + protocol cut + pending`, for INFER, IMD and ETH) ends every
+  conversion and claim; after a conversion, no other open token's balance may have fallen by more than the batch
+  converted of it (per token, from its own balance before the call: audit 4884eb75 finding 8).
 - **Pending ledger** (`PendingLedger`, linked library): per token a pro-rata pool. Converting `a` of `P` pending
   converts the fraction a/P of every benefactor's balance in it and pays that token's shares pro rata, in O(1) per
   (benefactor, token): Liquity's product-and-sum (product p of remaining/pending with epochs and a scale factor, sum s of
@@ -259,18 +262,18 @@ deployed); the v1 notes above describe the hardening it keeps. New review surfac
   fork), per-token minimums.
 - **Vault config** lives in the vault factory (`IVaultConfig`, owner = Safe), read live by every vault: the swap-target
   allowlist, per-token minimums and the ETH-claim pool. The route table is gone (see "Aggregator calldata").
-- **Code size**: the vault is 23,426 bytes (EIP-170 limit 24,576; margin 1,150), `VaultSwaps` 3,344, the factory 3,673 (runtime). The guarded swap and the balancing math are in a
+- **Code size**: the vault is 23,866 bytes (EIP-170 limit 24,576; margin 710), `VaultSwaps` 4,604, the factory 3,992 (runtime; was 23,426 / 3,344 / 3,673 before audit 4884eb75's fixes). The test build of the vault (`TestableUniAlignmentVault`, with the simulated pool) is 24,570 bytes, 6 under the limit: growing the vault further needs `disable_code_size_limit` for tests or a slimmer harness. The guarded swap and the balancing math are in a
   linked library (`VaultSwaps`, by DELEGATECALL: calls, approvals and the transient "collecting" flag are the vault's
   own) and the ledger in `PendingLedger`. Both are deployed once and linked into the implementation the factory
   deploys (forge links them in tests and scripts; `keeper/scripts/fork-e2e.mjs` links by hand).
 - **Pool key** fixed at deploy; the hook may only hold initialize permissions (no swap, liquidity, donate or delta
   flags) and the fee must be static, checked in `initialize`.
 - **Fees**: INFER and IMD index per share (1% protocol cut each, `withdrawProtocolFees(token)`) and an ETH dust index
-  (rejected rewards, refunds; no cut). `claimFees(mode, minEthOut)`: TOKENS pays INFER + IMD (+ ETH dust); ETH swaps
+  (rejected rewards, refunds; no cut). `claimFees(mode, minEthOut)`: TOKENS pays INFER + IMD (+ ETH dust, kept claimable if the payee refuses ETH); ETH swaps
   INFER -> IMD in the pool and IMD -> ETH through zRouter `swapV4` on the factory's `ethPool` (default 10000/200; the
   same balance guards, but the target is the factory's fixed zRouter, not the allowlist), `minEthOut` must be non-zero and is the
-  claimant's only protection; REINVEST balances and adds the claim to the position (shares at the current share price),
-  `minEthOut` is then the minimum shares, and what the add can't use stays claimable. `claimFeesAsDelegate` takes
+  claimant's only protection; REINVEST balances and adds the claim to the position (shares priced as a batch is: after
+  the leftover's liquidity), `minEthOut` is then the minimum shares (non-zero), and what the add can't use stays claimable. `claimFeesAsDelegate` takes
   TOKENS or ETH. Claims and reinvests are permissionless for one's own fees, so their swaps are sandwichable up to the
   claimant's floor; they cannot touch anyone else's balance.
 - **Removed from v1**: the price validator (no on-chain reference exists for these pools), `pendingFeeTokens` /
@@ -337,7 +340,9 @@ docs/IMD-INFER-VAULT.md. Earlier sections describe the ETH-only collections; whe
 - **Leftovers no longer go to the next batch.** INFER/IMD already free before a conversion (earlier leftovers, strays)
   is still added to the position, but the batch is issued shares only for its own value, priced once the leftover's
   liquidity is in (`_batchShares`, `_sharesFor`), so holders before the batch keep all of it (shares <= liquidity
-  units, as the invariant already allowed). `BatchConverted` reports shares issued. Reinvest also mints at the share price. A first batch (no shares yet) takes everything.
+  units, as the invariant already allowed). `BatchConverted` reports shares issued. A first batch (no shares yet) takes everything.
+  (Reinvest did NOT get the same pricing then: it minted at totalShares / totalLPUnits, ignoring the leftover; fixed in
+  audit 4884eb75 finding 4.)
 - **Fee tokens from the vault.** Collections forward the vault's own `infer()` / `imd()` (read per claim), not mainnet
   constants, so fees forward on any chain.
 - **`withdrawAll` skips a token that can't pay out** (and emits `WithdrawSkipped`) instead of reverting for all.
@@ -385,6 +390,68 @@ Audited at b5bdcc6 (4 low, 5 info, nothing above low). All fixed; each has a reg
   `NoDynamicPricingModule`, and `features()` stops listing dynamic pricing. Leaving it out rather than reverting keeps
   1155 launches open while the owner sets a new module.
 
+## External audit 4884eb75: vault (2026-11-09)
+
+Audited at b5bdcc6 (= 9659cff's `contracts/` + `bytecode_hash = "none"`): 1 medium, 4 low, 4 info. All fixed; each
+has a regression test in `test/vaults/UniAlignmentVaultAuditFixes.t.sol` unless named otherwise. The keeper
+(`keeper/lib/plan.mjs`, `split.mjs`, `keeper.mjs`) sends the new fields.
+
+```solidity
+struct ConvertParams {
+    address[] tokens; uint256[] amounts; SwapCall[] swaps; SwapCall ethLeg;
+    bool splitInferToImd;   // the balancing swap's expected direction (true = INFER -> IMD); ignored if none runs
+    uint256 minSplitRate;   // its output wei per 1e18 input wei over every pass; non-zero if it swaps
+    uint256 minLiquidity;   // liquidity units the batch must add; non-zero; checked swap or not
+    uint256 deadline;
+}
+event BatchConverted(uint256 indexed batchId, uint256 sharesIssued, uint256 liquidity, uint256 inferAdded, uint256 imdAdded, uint256 callerReward);
+event EthDustKept(address indexed to, uint256 amount);
+error SplitDirection();
+```
+
+- **The split floor had no direction** (Medium, `test_splitFloor_hasNoDirection`, the judge's test adapted): one bare
+  `minSplitOut` was compared with the output in whichever token came out, and not read at all when no swap ran. A pool
+  move that flipped an INFER-heavy batch's swap to IMD -> INFER cleared an IMD-wei floor with INFER wei (1 IMD = 3,887
+  INFER) and the batch landed 13% under the keeper's quote. Now the keeper names the direction (a swap the other way
+  reverts `SplitDirection`), the floor is a rate in that direction (`minSplitRate`, mandatory when a swap runs), and
+  `minLiquidity` (mandatory) floors the liquidity the batch adds whether or not a swap runs (`InsufficientLiquidity`).
+  `BatchConverted` now reports the liquidity so the keeper can size it from its simulation
+  (`test_convert_splitFloors`, `test_convert_liquidityFloorWithoutASwap`; on the fork `test_fork_keeperFloors`).
+- **The split floor covered earlier holders' leftovers as one total** (Low, `test_keeperFloor_coversLeftoverPerUnit`):
+  the balancing swap sells all free INFER/IMD, leftovers and strays included, and the only floor was a total over all
+  of it. Fixed by making the floor a rate (above): every unit sold, the batch's or the earlier holders', clears the
+  keeper's quoted rate, and `minLiquidity` (sized from a simulation that includes the leftover) bounds the whole add.
+  Bounding the swap to the batch's own tokens instead was not taken: a one-sided leftover would then never be paired,
+  and `_batchShares` assumes the whole leftover is added. The keeper is still trusted for its floors.
+- **First conversion booked dust and its own fees to the protocol** (Low, `test_firstBatch_keepsEthDustAndOwnFees`):
+  `_distribute` with `totalShares == 0` now leaves the amount free: INFER/IMD (the batch's own pass-2/3 fees, less the
+  1% cut) join its next pass or stay a leftover its holders own; ETH dust is credited to the first batch right after
+  its shares are minted.
+- **ETH dust blocked TOKENS claims** (Low, `test_tokensClaim_notBlockedByEthDust`): a benefactor or delegate that can't
+  take ETH had every TOKENS claim revert. Now a refused ETH send in TOKENS mode pays the tokens, keeps the dust
+  claimable (`_unharvest`, per benefactor for `claimFeesAsDelegate`) and emits `EthDustKept`. ETH mode still reverts
+  `TransferFailed` (the claimant asked for ETH).
+- **REINVEST ignored the leftover** (Low, `test_reinvest_pricesTheLeftover`; `test_claimReinvest_issuesSharesAtLiquidityPrice`
+  updated): it minted at totalShares / totalLPUnits, so a reinvestor took part of the free INFER/IMD that belonged to
+  earlier holders. It now prices like `_batchShares`: the free INFER/IMD beyond what was just harvested is valued at
+  the pool price and counted as liquidity units (`VaultSwaps.leftoverUnits`: l x leftover / used) before the share
+  price is applied.
+- **setSwapTarget docs vs code** (Info, `test_setSwapTarget_refusesPaymentTokensAndVaults`): it now also refuses any
+  registry payment token and any registered vault, as the NatSpec and doc said. A token the registry allowlists after
+  being made a target is not removed by itself (checked when allowed; the Safe removes it).
+- **REINVEST accepted minShares = 0** (Info, `test_reinvest_zeroFloorRefused`): `ZeroFloor`, as ETH mode.
+- **One token's shortfall blocked every conversion** (Info, `test_shortfallInAnotherTokenDoesNotBlock`): the end check
+  is now per token against its own balance before the call (`VaultSwaps.balancesOf` / `checkHeld`: no other open token
+  may lose more than the batch converted of it). INFER, IMD and ETH stay under `_checkSolvent` (their totals); a
+  shortfall in one of those would still block, accepted since none of them can be seized.
+- **Comments** (Info): "everything nonReentrant" now lists what has no guard (unlockCallback is PoolManager-only;
+  delegateBenefactor, the initializers and Solady's Ownable functions; the payable, open `requestOwnershipHandover`
+  lets ETH in unbooked, which becomes holders' dust at the next conversion); "Shares (= liquidity units)" corrected
+  (totalShares <= totalLPUnits); `_closeBatch` has its own NatSpec; "keep it accounted" is gone with finding 2; the
+  leftover INFER valuation at the realized swap rate is documented on `_batchShares` (about fee/2 of the unsold part's
+  value in the batch's favour when the batch brings IMD; kept: the batch's own INFER is valued the same way); the
+  spec's step 5 now says the batch is priced after the leftover's liquidity.
+
 ## Vault v2: aggregator calldata replaces the route table (2026-11-08, not yet reviewed)
 
 Decision (2026-11-08): conversions still happen on chain in the vault, but the swap path comes from the keeper as
@@ -395,7 +462,10 @@ calldata the keeper builds itself. The per-token route table (`setRoute`, `getRo
 
 ```solidity
 struct SwapCall { address target; address tokenOut; bytes data; uint256 minOut; }
-struct ConvertParams { address[] tokens; uint256[] amounts; SwapCall[] swaps; SwapCall ethLeg; uint256 minSplitOut; uint256 deadline; }
+struct ConvertParams {
+    address[] tokens; uint256[] amounts; SwapCall[] swaps; SwapCall ethLeg;
+    bool splitInferToImd; uint256 minSplitRate; uint256 minLiquidity; uint256 deadline; // since audit 4884eb75
+}
 ```
 
 **The calldata is keeper-chosen. What bounds it** (`VaultSwaps.swap` / `_exec`, each with a failing test in
@@ -403,15 +473,15 @@ struct ConvertParams { address[] tokens; uint256[] amounts; SwapCall[] swaps; Sw
 
 | Guard | Failing case (test) |
 |---|---|
-| Target on the vault factory's allowlist (`setSwapTarget`, Safe-owned; refuses EOAs, INFER, IMD, the PoolManager, the registry, the factory), read live per call; the keeper can't add one | `test_guard_targetMustBeAllowlisted` (unlisted contract, a token as target, the leg), `test_targetRemovedAtConversion_reverts`, `test_setSwapTarget_refusesEoasAndVaultInternals`, `test_setSwapTarget_onlyOwner` |
+| Target on the vault factory's allowlist (`setSwapTarget`, Safe-owned; refuses EOAs, INFER, IMD, every registry payment token, every registered vault, the PoolManager, the registry, the factory), read live per call; the keeper can't add one | `test_guard_targetMustBeAllowlisted` (unlisted contract, a token as target, the leg), `test_targetRemovedAtConversion_reverts`, `test_setSwapTarget_refusesEoasAndVaultInternals`, `test_setSwapTarget_refusesPaymentTokensAndVaults`, `test_setSwapTarget_onlyOwner` |
 | Output is ETH or IMD; the leg's is IMD | `test_guard_outputMustBeEthOrImd_legMustBeImd` |
 | `minOut` non-zero (fixes the zero-floor finding for good) | `test_guard_zeroFloorRefused` |
 | Exact approval of the amount in, to the target only | `test_guard_pullBeyondApprovalFails`; on the fork `test_fork_allowanceHolder_operatorCannotTakeMoreThanTheAmount` |
 | Approval reset to 0 after the call | `test_guard_approvalResetAfterTheCall` (a token whose transferFrom keeps the allowance), `test_aggregator_erc20ToEth_andLeg` (expects both approve calls) |
 | ERC-20 input drops by exactly the amount in (partial fills, refunds of unspent input, over-pulls revert `InputMismatch`) | `test_guard_pullLessRefused`, `test_guard_refundOfUnspentInputRefused`, `test_guard_overPullRefused` |
 | Output measured by the vault's own balance change, at least `minOut` | `test_guard_underDeliveryRefused`, `test_guard_outputSentElsewhereRefused`, `test_swapFloorEnforced` |
-| nonReentrant; ETH arriving mid-swap is never a contribution | `test_guard_reentryRefused` (collectFees, claimFees, receiveContribution, a nested conversion), `test_guard_ethSentDuringASwapIsNotAContribution` |
-| Nothing owed to others is usable: after the batch, every fee token covers fees + protocol cut + pending, and every open token covers its pending | `test_guard_cannotTouchOtherPendingTokens` (a target seizing another benefactor's pending token: `Insolvent`) |
+| nonReentrant (every function that moves tokens or changes shares); ETH arriving mid-swap is never a contribution | `test_guard_reentryRefused` (collectFees, claimFees, receiveContribution, a nested conversion), `test_guard_ethSentDuringASwapIsNotAContribution` |
+| Nothing owed to others is usable: after the batch, every fee token covers fees + protocol cut + pending, and no other open token's balance fell by more than the batch converted of it | `test_guard_cannotTouchOtherPendingTokens` (a target seizing another benefactor's pending token: `Insolvent`); `test_shortfallInAnotherTokenDoesNotBlock` (a shortfall that predates the batch blocks nothing) |
 | A target revert bubbles (no silent failure) | `test_guard_targetRevertBubbles` |
 
 The invariant handler also sends misbehaving swaps (under-delivery, partial pull, output elsewhere, refunded input)
@@ -429,13 +499,15 @@ through an allowlisted target and fails the campaign unless each reverts on a gu
   the vault as `msg.sender` too. They can only use the vault's approval (the amount in) and its ETH value (the amount in
   for the leg); the balance checks then apply. The vault never approves Permit2, so `permit2TransferFrom` has nothing.
 - **What a dishonest keeper can still do** is unchanged from M2: sell a batch at its own floors (a low `minOut` and a
-  sandwich, or a route through its own contract), up to the batch being converted. It cannot touch fees, the position,
+  sandwich, or a route through its own contract), up to the batch being converted, and the free INFER/IMD the
+  balancing swap sells with it (earlier holders' leftovers and strays) at its own `minSplitRate` (audit 4884eb75
+  finding 5: the floor is a rate, so it covers every unit; before, one total covered the batch and the leftover). It cannot touch fees, the position,
   other pending balances, or tokens not in the call. The floors are the only price protection; the keeper quotes,
   simulates and sends privately.
 - **The ETH leg** is sent the batch's ETH as value (pending ETH net of the reward + every swap's measured ETH out); the
   keeper builds it to sell all of msg.value (zRouter `swapAmount` 0; a 0x quote for the expected amount). ETH it hands
   back (unspent input, or zRouter's whole stray balance) is ETH beyond what is owed and goes to the holders before the
-  batch as dust, as before; it is never counted as leg input or as a token's output (`test_ethLeg_refundIsDustForHoldersNotLegInput`).
+  batch as dust, as before (on a vault's first batch, to that batch once its shares exist); it is never counted as leg input or as a token's output (`test_ethLeg_refundIsDustForHoldersNotLegInput`).
   A leg target that keeps unspent ETH loses it to the batch, bounded by the leg's `minOut`. A strict
   "spent exactly" check on ETH in would let 1 wei left in zRouter block conversions (the earlier High).
 - **ETH-mode claims** keep `claimFees(ClaimMode, uint256 minEthOut)`: INFER -> IMD vault-side, then IMD -> ETH through
@@ -509,7 +581,9 @@ gas for the multi-pass loop, real zRouter on a fork, on-chain config addresses.
 
 - **RANDOM on Robinhood Chain** (Medium): `MiyaPoolFactory` now refuses it on 4663.
 - **A conversion's own swap fees** (Low): the vault books them after each swap, so they go to holders before the batch closes
-  and the protocol gets its cut. On a first conversion there are no holders, so they stay in the batch.
+  and the protocol gets its cut. On a first conversion there are no holders, so they stay in the batch. (That last
+  sentence was not true until audit 4884eb75 finding 2: `_distribute` booked them 100% to the protocol while
+  `totalShares == 0`.)
 - **Refusing treasury** (Low): all three sale types park the cut in `pendingProtocolCut`, pay it with the next cut, and
   anyone can call `flushPendingProtocolCut`. A sale no longer depends on the treasury.
 - **Vault salts** (Low): `deployVault` and `computeVaultAddress` refuse a salt not bound to the factory.

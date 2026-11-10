@@ -8,7 +8,7 @@ import {UniAlignmentVaultFactory} from "../../src/vaults/uni/UniAlignmentVaultFa
 import {ClaimMode} from "../../src/interfaces/IAlignmentVault.sol";
 import {TestableUniAlignmentVault} from "../helpers/TestableUniAlignmentVault.sol";
 import {MockToken, MockAggregator} from "./mocks/VaultMocks.sol";
-import {VaultTestBase, zSwapCall} from "./VaultTestBase.sol";
+import {VaultTestBase, zSwapCall, aim} from "./VaultTestBase.sol";
 import {SwapCall} from "../../src/vaults/uni/IVaultConfig.sol";
 
 contract VaultHandler is Test {
@@ -112,8 +112,9 @@ contract VaultHandler is Test {
             ++k;
         }
         p.ethLeg = zSwapCall(router, address(0), 0, address(vault));
-        p.minSplitOut = 1;
+        p.minSplitRate = 1;
         p.deadline = block.timestamp;
+        aim(p, address(vault), keeper);
         vm.prank(keeper);
         try vault.convertAndAddLiquidity(p) {
             ++conversions;
@@ -170,7 +171,8 @@ contract VaultHandler is Test {
         uint256 fair = amt * agg.rate(t, out) / 1e18;
         p.swaps[0] = SwapCall(address(agg), out, abi.encodeCall(MockAggregator.swap, (t, amt, out)), fair == 0 ? 1 : fair);
         p.ethLeg = zSwapCall(router, address(0), 0, address(vault));
-        p.minSplitOut = 1;
+        p.minSplitRate = 1;
+        p.minLiquidity = 1;
         p.deadline = block.timestamp;
         vm.prank(keeper);
         try vault.convertAndAddLiquidity(p) {

@@ -44,7 +44,6 @@ contract UniAlignmentVaultSwapsTest is VaultTestBase {
 
     function _one(address token, uint256 amount, SwapCall memory s)
         internal
-        view
         returns (UniAlignmentVault.ConvertParams memory p)
     {
         p = _paramsFor(_one(token), _amts(amount));
@@ -170,9 +169,10 @@ contract UniAlignmentVaultSwapsTest is VaultTestBase {
         // The approval is exactly the amount: pulling one more unit fails in the token itself.
         _contribute(alice, usdc, 6000e6); // the vault holds more than the swap's amount
         agg.setMode(MockAggregator.Mode.PullMore);
+        UniAlignmentVault.ConvertParams memory p = _one(USDC_ADDR, 3000e6, _agg(USDC_ADDR, 3000e6, ETH, 1));
         vm.prank(keeper);
         vm.expectRevert(); // MockToken allowance underflow
-        vault.convertAndAddLiquidity(_one(USDC_ADDR, 3000e6, _agg(USDC_ADDR, 3000e6, ETH, 1)));
+        vault.convertAndAddLiquidity(p);
     }
 
     function test_guard_approvalResetAfterTheCall() public {
@@ -251,9 +251,10 @@ contract UniAlignmentVaultSwapsTest is VaultTestBase {
         // A nested conversion: the keeper check passes for nobody but the keeper, and the guard stops it anyway.
         registry.setConversionKeeper(address(agg));
         agg.setReenterCall(abi.encodeCall(UniAlignmentVault.convertAndAddLiquidity, (_params(vault))));
+        UniAlignmentVault.ConvertParams memory p = _one(USDC_ADDR, 3000e6, _agg(USDC_ADDR, 3000e6, ETH, 1));
         vm.prank(address(agg));
         vm.expectRevert(ReentrancyGuard.Reentrancy.selector);
-        vault.convertAndAddLiquidity(_one(USDC_ADDR, 3000e6, _agg(USDC_ADDR, 3000e6, ETH, 1)));
+        vault.convertAndAddLiquidity(p);
     }
 
     function test_guard_ethSentDuringASwapIsNotAContribution() public {

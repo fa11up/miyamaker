@@ -19,6 +19,7 @@ import {SwapCall, IzRouter} from "../../src/vaults/uni/IVaultConfig.sol";
 import {MiyaRegistry} from "../../src/registry/MiyaRegistry.sol";
 import {IMiyaRegistry} from "../../src/registry/interfaces/IMiyaRegistry.sol";
 import {ClaimMode} from "../../src/interfaces/IAlignmentVault.sol";
+import {aim} from "../vaults/VaultTestBase.sol";
 
 interface IERC20F {
     function balanceOf(address) external view returns (uint256);
@@ -184,7 +185,8 @@ contract UniAlignmentVaultForkTest is Test {
 
     /// @dev The keeper's zRouter fallback for `token`, on the spec's pools (docs/IMD-INFER-VAULT.md): exactly `amount`
     ///      to the vault, floor 1 (amount 0 = all of msg.value, the ETH leg). USDC, WBTC -> ETH (v4 500/10), cbBTC ->
-    ///      ETH (v3 cbBTC/WETH 0.3%, zRouter unwraps), imdUSD -> IMD (v4 3000/60), ETH -> IMD (v4 10000/200).
+    ///      ETH (v3 cbBTC/WETH 0.3%, zRouter unwraps), imdUSD -> IMD (v4 3000/10, the pool the Safe re-opened at market on
+    ///      2026-11-09; 3000/60 is stranded), ETH -> IMD (v4 10000/200).
     function _zSwap(address token, uint256 amount) internal view returns (SwapCall memory c) {
         address to = address(vault);
         c.target = ZROUTER;
@@ -197,7 +199,7 @@ contract UniAlignmentVaultForkTest is Test {
             c.data = abi.encodeCall(IzRouter.swapV3, (to, false, 3000, CBBTC, ETH, amount, 0, block.timestamp));
         } else if (token == IMDUSD) {
             c.tokenOut = IMD;
-            c.data = abi.encodeCall(IzRouter.swapV4, (to, false, 3000, 60, IMDUSD, IMD, amount, 0, block.timestamp));
+            c.data = abi.encodeCall(IzRouter.swapV4, (to, false, 3000, 10, IMDUSD, IMD, amount, 0, block.timestamp));
         } else {
             c.tokenOut = ETH;
             c.data = abi.encodeCall(IzRouter.swapV4, (to, false, 500, 10, token, ETH, amount, 0, block.timestamp));
@@ -220,8 +222,8 @@ contract UniAlignmentVaultForkTest is Test {
         }
     }
 
-    /// @dev Everything pending, in openBatchTokens() order, floors of 1.
-    function _loose() internal view returns (UniAlignmentVault.ConvertParams memory p) {
+    /// @dev Everything pending, in openBatchTokens() order, floors of 1, the split's direction as the vault runs it.
+    function _loose() internal returns (UniAlignmentVault.ConvertParams memory p) {
         address[] memory toks = vault.openBatchTokens();
         uint256[] memory amts = new uint256[](toks.length);
         for (uint256 i; i < toks.length; ++i) amts[i] = vault.pendingByToken(toks[i]);
@@ -231,7 +233,6 @@ contract UniAlignmentVaultForkTest is Test {
     /// @dev Exactly `amts` of `toks`, floors of 1.
     function _looseFor(address[] memory toks, uint256[] memory amts)
         internal
-        view
         returns (UniAlignmentVault.ConvertParams memory p)
     {
         p.tokens = toks;
@@ -242,16 +243,17 @@ contract UniAlignmentVaultForkTest is Test {
             p.swaps[i] = _zSwap(toks[i], amts[i]);
         }
         p.ethLeg = _zSwap(ETH, 0);
-        p.minSplitOut = 1;
+        p.minSplitRate = 1;
         p.deadline = block.timestamp;
+        aim(p, address(vault), keeper);
     }
 
     function _quoted(uint256 slipBps) internal returns (UniAlignmentVault.ConvertParams memory) {
         return _quotedFrom(_loose(), slipBps);
     }
 
-    /// @dev The keeper's flow: simulate with loose floors, read each swap's output, the ETH leg's and the split's
-    ///      from the logs, then set floors at (100 - slipBps/100)% of them. A swap to ETH gets its ETH out back from its
+    /// @dev The keeper's flow: simulate with loose floors, read each swap's output, the ETH leg's, the split's
+    ///      direction and rate and the batch's liquidity from the logs, then set floors at (100 - slipBps/100)% of them. A swap to ETH gets its ETH out back from its
     ///      share of the leg (rounded down, so a 0 slip floor still holds).
     function _quotedFrom(UniAlignmentVault.ConvertParams memory p, uint256 slipBps)
         internal
@@ -267,6 +269,7 @@ contract UniAlignmentVaultForkTest is Test {
         if (imdOut != 0) p.ethLeg.minOut = imdOut * (10_000 - slipBps) / 10_000;
         bytes32 tc = keccak256("TokenConverted(uint256,address,uint256,uint256)");
         bytes32 ss = keccak256("SplitSwap(bool,uint256,uint256)");
+        bytes32 bc = keccak256("BatchConverted(uint256,uint256,uint256,uint256,uint256,uint256)");
         for (uint256 j; j < logs.length; ++j) {
             if (logs[j].emitter != address(vault)) continue;
             if (logs[j].topics[0] == tc) {
@@ -278,8 +281,12 @@ contract UniAlignmentVaultForkTest is Test {
                     p.swaps[i].minOut = value * (10_000 - slipBps) / 10_000;
                 }
             } else if (logs[j].topics[0] == ss) {
-                (,, uint256 out) = abi.decode(logs[j].data, (bool, uint256, uint256));
-                p.minSplitOut = out * (10_000 - slipBps) / 10_000;
+                (bool dir, uint256 sin, uint256 out) = abi.decode(logs[j].data, (bool, uint256, uint256));
+                p.splitInferToImd = dir;
+                p.minSplitRate = out * 1e18 / sin * (10_000 - slipBps) / 10_000;
+            } else if (logs[j].topics[0] == bc) {
+                (, uint256 liquidity,,,) = abi.decode(logs[j].data, (uint256, uint256, uint256, uint256, uint256));
+                p.minLiquidity = liquidity * (10_000 - slipBps) / 10_000;
             }
         }
         return p;
@@ -343,8 +350,13 @@ contract UniAlignmentVaultForkTest is Test {
         return imdAmount * (1 << 96) / uint256(s) * (1 << 96) / uint256(s); // INFER = IMD / P
     }
 
+    /// @dev imdUSD for the fork tests: a small fixed amount. The imdUSD/IMD pool (3000/10) is the Treasury's own and thin;
+    ///      by block 26,384,728 buyers had taken most of its IMD ask, so a 0.2 ETH-sized buy no longer fills there
+    ///      (zRouter then reverts CurrencyNotSettled). The keeper sizes imdUSD by price impact instead.
+    uint256 constant IMDUSD_SMALL = 5e18;
+
     function _imdUsdFor(uint256 imdAmount) internal view returns (uint256) {
-        PoolKey memory k = PoolKey(Currency.wrap(IMDUSD), Currency.wrap(IMD), 3000, 60, IHooks(address(0)));
+        PoolKey memory k = PoolKey(Currency.wrap(IMDUSD), Currency.wrap(IMD), 3000, 10, IHooks(address(0)));
         (uint160 s,,,) = StateLibrary.getSlot0(PM, k.toId());
         bool imdUsdIs0 = IMDUSD < IMD;
         // P = currency1 per currency0
@@ -389,7 +401,7 @@ contract UniAlignmentVaultForkTest is Test {
     }
 
     function test_fork_route_imdUsd() public onFork {
-        _singleRoute(IMDUSD, _imdUsdFor(_imdFor(0.2 ether)));
+        _singleRoute(IMDUSD, IMDUSD_SMALL);
     }
 
     function test_fork_route_imd() public onFork {
@@ -407,7 +419,7 @@ contract UniAlignmentVaultForkTest is Test {
         address[7] memory who = [alice, bob, carol, dan, erin, fay, gus];
         address[7] memory tok = [ETH, USDC, WBTC, CBBTC, IMDUSD, IMD, INFER];
         uint256[7] memory amt = [
-            _amount(ETH), _amount(USDC), _amount(WBTC), _amount(CBBTC), _imdUsdFor(imd02), imd02, _inferFor(imd02)
+            _amount(ETH), _amount(USDC), _amount(WBTC), _amount(CBBTC), IMDUSD_SMALL, imd02, _inferFor(imd02)
         ];
         for (uint256 i; i < 7; ++i) _give(who[i], tok[i], amt[i]);
         assertEq(vault.openBatchTokens().length, 7);
@@ -505,7 +517,7 @@ contract UniAlignmentVaultForkTest is Test {
         _give(bob, USDC, _amount(USDC));
         _give(carol, USDC, _amount(USDC));
         _give(dan, CBBTC, _amount(CBBTC));
-        _give(erin, IMDUSD, _imdUsdFor(imd02));
+        _give(erin, IMDUSD, IMDUSD_SMALL);
         _give(fay, IMD, imd02);
         _give(gus, INFER, _inferFor(imd02));
         uint256 imdHeld = IERC20F(IMD).balanceOf(address(vault));
@@ -523,7 +535,7 @@ contract UniAlignmentVaultForkTest is Test {
         assertEq(keeper.balance, 0, "no ETH converted, no reward");
         // Skipped tokens untouched; USDC holders half converted, pro rata.
         assertEq(vault.pendingOf(alice, ETH), _amount(ETH));
-        assertEq(vault.pendingOf(erin, IMDUSD), _imdUsdFor(imd02));
+        assertEq(vault.pendingOf(erin, IMDUSD), IMDUSD_SMALL);
         assertEq(vault.pendingOf(fay, IMD), imd02);
         assertEq(vault.pendingOf(bob, USDC), _amount(USDC) / 2);
         assertEq(vault.pendingOf(carol, USDC), _amount(USDC) / 2);
@@ -566,9 +578,19 @@ contract UniAlignmentVaultForkTest is Test {
         vm.expectRevert(UniAlignmentVault.InsufficientOutput.selector);
         vault.convertAndAddLiquidity(over);
         over = _quoted(0);
-        over.minSplitOut = over.minSplitOut * 1001 / 1000;
+        over.minSplitRate = over.minSplitRate * 1001 / 1000; // the balancing swap's rate
         vm.prank(keeper);
         vm.expectRevert(UniAlignmentVault.InsufficientOutput.selector);
+        vault.convertAndAddLiquidity(over);
+        over = _quoted(0);
+        over.splitInferToImd = !over.splitInferToImd; // the other direction
+        vm.prank(keeper);
+        vm.expectRevert(UniAlignmentVault.SplitDirection.selector);
+        vault.convertAndAddLiquidity(over);
+        over = _quoted(0);
+        over.minLiquidity = over.minLiquidity + over.minLiquidity / 1000 + 1; // liquidity the batch adds
+        vm.prank(keeper);
+        vm.expectRevert(UniAlignmentVault.InsufficientLiquidity.selector);
         vault.convertAndAddLiquidity(over);
         vm.prank(keeper);
         vault.convertAndAddLiquidity(tight);
@@ -649,7 +671,12 @@ contract UniAlignmentVaultForkTest is Test {
         (uint256 ui, uint256 um,) = vault.claimFees(ClaimMode.REINVEST, 1);
         uint256 minted = vault.benefactorShares(alice) - sa;
         assertGt(minted, 0);
-        assertEq(uint256(_positionLiquidity() - posBefore), minted, "minted = liquidity added to the real position");
+        // Shares are priced once earlier holders' leftovers are counted in (audit 4884eb75 #4): a reinvestor gets at most
+        // one share per unit added, and close to it.
+        uint256 added = uint256(_positionLiquidity() - posBefore);
+        assertLe(minted, added, "no more shares than the liquidity added");
+        assertApproxEqRel(minted, added, 0.01e18, "close to the liquidity added");
+        assertLe(vault.totalShares(), vault.totalLPUnits(), "shares never exceed liquidity units");
         assertEq(vault.totalShares(), total + minted);
         assertEq(vault.benefactorShares(bob), sb, "other holders keep their shares");
         (uint256 ib1, uint256 mb1,) = vault.claimable(bob);
