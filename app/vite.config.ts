@@ -20,6 +20,7 @@ import { handleSampleMediaRequest, SAMPLE_MEDIA_PATH, SAMPLE_MEDIA_RATE } from '
 import { kickOnAir, kickReader } from './api/_lib/tvkick'
 import { handleVideoAudioRequest, VIDEO_AUDIO_COST, VIDEO_AUDIO_PATH, VIDEO_AUDIO_RATE } from './api/_lib/videoaudio'
 import { handleTvLiveRequest, TV_LIVE_PATH } from './api/_lib/tvlive'
+import { handleLayersRequest, LAYERS_PROXY_PATH } from './api/_lib/layers'
 import { gatewayContentType, handleStationRequest, memoryStore, STATION_PATH } from './api/_lib/station'
 import { clientKey, createRateLimiter, handleZeroExRequest, PROXY_PREFIX, sameOrigin } from './api/_lib/zeroex'
 
@@ -190,6 +191,29 @@ function marketDevProxy(env: Record<string, string>): Plugin {
 }
 
 /** Dev-only stand-in for the Worker's station route, kept in memory. STATION_ADMINS from the shell. */
+/** Dev stand-in for the layers proxy. koolskull.com serves the pictures and does not send CORS. */
+function layersDevProxy(): Plugin {
+  return {
+    name: 'miya-layers-dev-proxy',
+    configureServer(server) {
+      server.middlewares.use(LAYERS_PROXY_PATH, async (req, res) => {
+        try {
+          const host = req.headers.host || 'localhost'
+          const rest = (req.url || '/').split('?')[0] || '/'
+          const path = rest.startsWith(LAYERS_PROXY_PATH) ? rest : `${LAYERS_PROXY_PATH}${rest.startsWith('/') ? rest : `/${rest}`}`
+          const response = await handleLayersRequest(new Request(`http://${host}${path}`, { method: req.method }))
+          res.statusCode = response.status
+          response.headers.forEach((value, key) => res.setHeader(key, value))
+          res.end(Buffer.from(await response.arrayBuffer()))
+        } catch (error) {
+          res.statusCode = 502
+          res.end(error instanceof Error ? error.message : 'Could not reach the layers.')
+        }
+      })
+    },
+  }
+}
+
 function stationDevProxy(): Plugin {
   const store = memoryStore()
   const limiter = createRateLimiter({ capacity: 200, perSecond: 5 })
@@ -342,6 +366,7 @@ export default defineConfig(({ mode }) => ({
   base: '/',
   plugins: [
     rpcDevProxy(loadEnv(mode, __dirname, ['RPC_URL_', 'ALCHEMY_API_KEY'])),
+    layersDevProxy(),
     zeroExDevProxy(loadEnv(mode, __dirname, ['ZEROX_'])),
     openSeaDevProxy(loadEnv(mode, __dirname, ['OPENSEA_'])),
     stationDevProxy(),
@@ -502,7 +527,7 @@ export default defineConfig(({ mode }) => ({
           },
         ],
         navigateFallback: 'index.html',
-        navigateFallbackDenylist: [/^\/api\//, /^\/surf(\/|$)/],
+        navigateFallbackDenylist: [/^\/api\//, /^\/surf(\/|$)/, /^\/miyamaker-layers(\/|$)/],
         cleanupOutdatedCaches: true,
       },
     }),

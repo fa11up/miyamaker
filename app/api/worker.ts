@@ -4,6 +4,7 @@ import { createPublicClient, http } from 'viem'
 import { mainnet } from 'viem/chains'
 
 import { jsonReply, noSniff, readCappedText } from './_lib/body'
+import { handleLayersRequest, LAYERS_PROXY_PATH } from './_lib/layers'
 import { edgeCache, handleMarketRequest, MARKET_PREFIX, openSeaReader } from './_lib/market'
 import { handleOpenSeaRequest, OPENSEA_PROXY_PATH, quoteBigInts } from './_lib/opensea'
 import { d1TapeStore, handlePublicAccessRequest, PUBLIC_ACCESS_PATH, youtubeLookup } from './_lib/publicaccess'
@@ -87,6 +88,10 @@ export default {
       return Response.redirect(url.toString(), 308)
     }
     if (url.pathname.startsWith('/api/')) return noSniff(await api(request, env, url))
+
+    if (url.pathname === LAYERS_PROXY_PATH || url.pathname.startsWith(`${LAYERS_PROXY_PATH}/`)) {
+      return handleLayersRequest(request)
+    }
 
     if (url.pathname.startsWith('/commercials/')) {
       // Asked for without its range, because the asset store answers those whole anyway.

@@ -5,6 +5,7 @@ import FilesIcon from 'assets/folder.png?preset=icon&resize=true'
 import AuctionIcon from 'assets/icon/auction.png?preset=icon&resize=true'
 import DropMusicIcon from 'assets/icon/drop_music.png?preset=icon&resize=true'
 import MusicIcon from 'assets/icon/music_maker.png?preset=icon&resize=true'
+import TraitIcon from 'assets/create_new.png?preset=icon&resize=true'
 import RadioIcon from 'assets/icon/radio.png?preset=icon&resize=true'
 import MintIcon from 'assets/launchpad_logo.png?preset=icon&resize=true'
 import ManageIcon from 'assets/miya_website_logo_2-removebg-preview.png?preset=icon&resize=true'
@@ -171,6 +172,18 @@ const Pages: Record<string, Page> = {
     // Draws inside a shadow root, which the drag trail's copies leave out, so it moves as one piece.
     noTrail: true,
     fixedSize: true,
+    minSize: {
+      width: 1180,
+      height: 760,
+    },
+  },
+  traits: {
+    id: 'traits',
+    path: '/traits',
+    label: 'MiyaMaker Studio',
+    icon: TraitIcon[0],
+    // The 1024 canvas is too heavy to copy into a drag trail.
+    noTrail: true,
     minSize: {
       width: 1180,
       height: 760,
