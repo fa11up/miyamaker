@@ -140,6 +140,11 @@ async function build() {
     numpadFx = new AudioWorkletNode(c, 'miya-numpad-fx', { outputChannelCount: [2], numberOfInputs: 1, numberOfOutputs: 1 })
     numpadFx.channelCount = 2
     numpadFx.channelCountMode = 'explicit'
+    // A processor that throws outputs silence for good. Route around it so a numpad FX bug never mutes the app.
+    numpadFx.onprocessorerror = (e) => {
+      console.warn('numpad fx worklet failed, bypassing it', e)
+      dropNumpadFx()
+    }
   } catch (err) {
     console.warn('numpad fx worklet failed', err)
     numpadFx = null
@@ -538,6 +543,14 @@ function ensureBuses() {
   const n = Math.max(BUS_COUNT, model.buses.length || 0)
   while (busNodes.length < n) busNodes.push(makeBus(ctx, master))
   while (meters.bus.length < n) meters.bus.push(0)
+}
+
+function dropNumpadFx() {
+  if (!numpadFx) return
+  try { numpadFx.disconnect() } catch { /* not connected */ }
+  numpadFx = null
+  routed = null
+  routeMaster()
 }
 
 function routeMaster() {
