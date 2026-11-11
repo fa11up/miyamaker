@@ -20,7 +20,14 @@ import {
 import MyUploads from '@/components/MyUploads'
 import { Eyebrow, Well } from '@/components/Retro'
 import type { FieldErrors, LaunchForm, LaunchType, PhaseForm } from '@/miyamints/launch'
-import { EMPTY_PHASE, MAX_PHASES, parseAlignmentPct, parseWhole, phaseFieldsBad } from '@/miyamints/launch'
+import {
+  EMPTY_PHASE,
+  isRevealLink,
+  MAX_PHASES,
+  parseAlignmentPct,
+  parseWhole,
+  phaseFieldsBad,
+} from '@/miyamints/launch'
 import { pctLabel } from '@/miyamints/split'
 import type { PayToken } from '@/miyamints/tokens'
 import { buildPrices, ETH, MAX_TOKENS, sameToken } from '@/miyamints/tokens'
@@ -789,6 +796,13 @@ export function SaleStep({
             Piece 1 reads &lt;link&gt;/1, piece 2 reads &lt;link&gt;/2. Until you add one, every piece shows your
             artwork. You can add it later in Manager.
           </small>
+          {isRevealLink(form.revealUri) && (
+            <small>
+              This is miyamaker.com&apos;s per-mint reveal: each piece shows your artwork until it is minted and its
+              block is confirmed, then its own art, served by the site. It is not on Arweave yet: lock metadata only
+              once the folder link is an ar:// one.
+            </small>
+          )}
           <Err>{errors.revealUri}</Err>
         </Field>
         <div style={{ marginTop: space[2] }}>

@@ -14,7 +14,7 @@ import { miyamintsAddresses } from '@/constants/contracts'
 import { auctionInstanceAbi, dropInstanceAbi, editionsManageAbi, erc1155InstanceAbi, vaultAbi } from '@/miyamints/abi'
 import type { LaunchKind } from '@/miyamints/collections'
 import { progressLabel } from '@/miyamints/collections'
-import { jsonDataUri, parseLink, parseName, parseWhole, tokenJson } from '@/miyamints/launch'
+import { isRevealLink, jsonDataUri, parseLink, parseName, parseWhole, tokenJson } from '@/miyamints/launch'
 import { pctLabel } from '@/miyamints/split'
 import type { ClaimModeName, PayToken } from '@/miyamints/tokens'
 import {
@@ -217,8 +217,11 @@ function DropMetadata({
           type="button"
           disabled={busy || cur.locked || !cur.baseURI || !isOwner}
           onClick={() => {
+            const served = isRevealLink(cur.baseURI)
+              ? " The folder link is still miyamaker.com's reveal, not Arweave: locked, the art would depend on the site forever."
+              : ''
             // eslint-disable-next-line no-alert
-            if (window.confirm('Lock metadata forever? Nobody can change it after this, not even you.')) {
+            if (window.confirm(`Lock metadata forever? Nobody can change it after this, not even you.${served}`)) {
               run('lock', call('lockMetadata'))
             }
           }}

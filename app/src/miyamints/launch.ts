@@ -184,6 +184,12 @@ export function parseLink(input: string, required = true): Result<{ uri: string 
   return { ok: true, uri: s }
 }
 
+/**
+ * A metadata folder served by miyamaker.com's per-mint reveal (api/_lib/reveal.ts): each piece shows its art once
+ * minted and drawn, from the site, until the pieces are moved to Arweave. Not permanent while it points here.
+ */
+export const isRevealLink = (uri: string) => /^https?:\/\/[^/]+\/reveal\/[a-z0-9-]+\/$/i.test(uri.trim())
+
 /** ETH typed by a person → wei via parseEther. `allowZero` for free mints. */
 export function parseEth(input: string, opts: { allowZero?: boolean; label?: string } = {}): Result<{ wei: bigint }> {
   const label = opts.label || 'Price'
