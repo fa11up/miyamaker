@@ -6,6 +6,7 @@
 //
 //   node scripts/reveal/arweave.mjs --build ~/miyamaker-reveal-build [--site https://www.miyamaker.com] [--slug miyamaker]
 //   REVEAL_ADMIN_KEY=… REVEAL_IRYS_KEY=… node scripts/reveal/arweave.mjs --build … --execute
+//   … --provenance [--execute]                         at launch: provenance.json itself (it reveals nothing)
 //   … --manifest [--rpc <Ethereum RPC>] [--execute]   at sell-out: the folder manifest (paths 1..supply = token ids)
 //                                                        and the setMetadata + lockMetadata calls for the owner to send
 //
@@ -28,6 +29,7 @@ const flags = parseArgs(process.argv.slice(2), {
   slug: 'value',
   execute: 'flag',
   manifest: 'flag',
+  provenance: 'flag',
   rpc: 'value',
   limit: 'value',
 })
@@ -54,6 +56,7 @@ run(async () => {
   const journalPath = join(build, 'arweave-journal.jsonl')
   const journal = await readJournal(journalPath)
   if (flags.manifest) return manifest({ list, journal, journalPath, base })
+  if (flags.provenance) return publishProvenance(build, journal, journalPath)
 
   const todo = list.assignments.filter((a) => !a.arImage || !a.arMetadata).slice(0, Number(flags.limit ?? Infinity))
   const bytes = todo.reduce((n, a) => n + fileSize(join(build, 'piece', `${a.piece}.jpg`)) + 2048, 0)
@@ -170,6 +173,30 @@ async function manifest({ list, journal, journalPath, base }) {
   log(`     calldata ${encodeFunctionData({ abi: DROP_ABI, functionName: 'lockMetadata' })}`)
   log(`  Or in Manager: Metadata folder link = ${baseURI}, Save folder link, then Lock metadata forever.`)
   log(`  Before 2, run verify.mjs --site ${base} --content all against the site once more.`)
+  return 0
+}
+
+/** provenance.json to Arweave, so the hash in the collection description points at a file nobody can change. */
+async function publishProvenance(build, journal, journalPath) {
+  const body = await readFile(join(build, 'provenance.json'))
+  const done = journal.get('provenance')?.manifest
+  if (done) {
+    log(`provenance.json is ar://${done} (per the journal)`)
+    return 0
+  }
+  log(
+    `provenance.json: ${body.length} bytes; Irys price ${await irysPrice(body.length).catch(
+      (e) => `unknown (${e.message})`
+    )}`
+  )
+  if (!EXECUTE) {
+    log('report only: run with --provenance --execute to upload it')
+    return 0
+  }
+  const irys = await irysClient()
+  const r = await irys.upload(body, { tags: [{ name: 'Content-Type', value: 'application/json' }] })
+  await appendFile(journalPath, `${JSON.stringify({ piece: 'provenance', manifest: r.id, at: Date.now() })}\n`)
+  log(`provenance.json is ar://${r.id}: put it in the collection description with the provenance hash`)
   return 0
 }
 
