@@ -5,3 +5,4 @@ deployments/*.local.json
 .env
 out-v4real/
 cache-v4real/
+deployments/rehearsal/

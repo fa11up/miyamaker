@@ -152,6 +152,17 @@ before you broadcast, because no check here can know it.
    ```
    Check the printed addresses, owner and treasury. Robinhood: add `TREASURY=0x...` and use
    `--fork-url https://rpc.mainnet.chain.robinhood.com`.
+**Mainnet: use `script/launch.sh go`** (the imdUSD v2 launch pattern). It puts the deployer key on a RAM disk
+(`/Volumes/MIYALAUNCH/launch.env`, filled in with nano, never typed into a shell prompt), checks that the key signs as
+`DEPLOYER`, that the RPC is chain 1, that the Safe has code and the keeper is an EOA, that no override variable is set
+and that the deployer has nothing pending; simulates; prints the plan (transactions, gas, worst-case cost, the 16.7M
+per-transaction cap); waits for you to type SEND; broadcasts through `deploy.sh` with `--slow` and explicit fees (3 x
+base fee + tip); reads every contract, owner, the keeper and the swap targets back from the chain; and ejects the RAM
+disk. OWNER and KEEPER default to the 2026-11-10 decisions (imdUSD governance Safe, keeper `0x4aC8…bE1c`). Use a fresh
+deployer EOA. Rehearse with `FORK=1 LAUNCH_ENV=<file with an anvil key> MAINNET_RPC_URL=http://127.0.0.1:<port>`
+against `anvil --fork-url https://eth.drpc.org` (rehearsed 2026-11-10: 38 transactions, every check passed).
+Steps 4 below are the same broadcast by hand.
+
 4. **Broadcast + verify, Ethereum:**
    ```sh
    OWNER=0xSafe KEEPER=0xKeeper script/deploy.sh --rpc-url https://ethereum-rpc.publicnode.com \
