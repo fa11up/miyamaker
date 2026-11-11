@@ -25,6 +25,7 @@
 # deployments/rehearsal/ (gitignored) so it can never be mistaken for the real one.
 set -euo pipefail
 export FOUNDRY_DISABLE_NIGHTLY_WARNING=1
+SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"   # absolute: the steps below re-run this script after the cd
 cd "$(dirname "$0")/.."            # contracts/
 
 die() { echo "launch: $*" >&2; exit 1; }
@@ -225,16 +226,16 @@ case "${1:-}" in
   wipe) wipe ;;
   go)
     if [ "${FORK:-0}" != 1 ] || [ -z "${LAUNCH_ENV:-}" ]; then
-      [ -d "$RD" ] || "$0" ramdisk
+      [ -d "$RD" ] || "$SELF" ramdisk
       if ! grep -qE '^PRIVATE_KEY=.+' "$ENVF"; then
         echo; echo "Opening the key file. Fill in PRIVATE_KEY, DEPLOYER and MAINNET_RPC_URL, save (ctrl-O, Enter), exit (ctrl-X)."
         read -r -p "Press Enter to open it: " _; ${EDITOR:-nano} "$ENVF"
       fi
     fi
     status
-    echo; "$0" deploy
-    if [ "${FORK:-0}" != 1 ] || [ -z "${LAUNCH_ENV:-}" ]; then echo; "$0" wipe; fi
+    echo; "$SELF" deploy
+    if [ "${FORK:-0}" != 1 ] || [ -z "${LAUNCH_ENV:-}" ]; then echo; "$SELF" wipe; fi
     echo; echo "Done. Next: commit deployments/1.json to main, point the app at it, fund and start the keeper."
     ;;
-  *) sed -n 2,13p "$0"; exit 1 ;;
+  *) sed -n 2,13p "$SELF"; exit 1 ;;
 esac
