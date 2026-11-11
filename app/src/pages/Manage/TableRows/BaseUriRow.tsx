@@ -3,7 +3,7 @@ import type { Address } from 'viem'
 import { mainnet, sepolia } from 'viem/chains'
 import { z } from 'zod'
 
-import { ConnectedButton } from '@/components/Button'
+import { ChainButton } from '@/components/Button'
 import { useWaitForTransaction } from '@/hooks/useWaitForTransaction'
 import { uriValidate } from '@/pages/Launch/validators'
 
@@ -101,7 +101,7 @@ export default function BaseUriRow({
         <td onClick={() => openInput()}>{baseUri}</td>
       )}
       <td style={{ padding: 0 }}>
-        <ConnectedButton
+        <ChainButton
           style={{
             width: '100%',
             display: 'flex',
@@ -114,7 +114,7 @@ export default function BaseUriRow({
           withChain={[mainnet.id, sepolia.id]}
         >
           {active ? (transacting ? 'Updating...' : `Update`) : 'Edit'}
-        </ConnectedButton>
+        </ChainButton>
       </td>
     </tr>
   )

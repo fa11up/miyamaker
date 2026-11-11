@@ -21,7 +21,7 @@ import { bestQuote, collectionUrl, formatAmount, formatPrice, lowerPrice, venues
 import { DEFAULT_PAIR_SYMBOL, pickPair } from './pairs'
 import type { PoolMode } from './pool'
 import { KIND, MODE, MODE_HINT, MODE_LABEL } from './pool'
-import { MAX_SWEEP, pickCheapest, sumPrices, sweepable } from './sweep'
+import { MAX_SWEEP, pickCheapest, sessionStore, sumPrices, sweepable, unconfirmedHashes } from './sweep'
 import SweepReview from './SweepReview'
 import { Action, Card, Chips, Field, Head, Hint, LinkButton, Mono, Prose, PushButton, SwitchNote } from './ui'
 import { useMarketListings, useMarketSales, useOpenSeaCollection, useOpenSeaNftImage } from './useMarkets'
@@ -250,12 +250,22 @@ function ListingTile({
         onClick={onOpen}
         disabled={disabled}
         data-picked={picked || undefined}
-        aria-label={`#${id}, ${formatPrice(listing.price)} on OpenSea${picked ? ', in the sweep' : ''}. Open`}
+        aria-label={`#${id}, ${formatPrice(listing.price)}${
+          listing.total ? ` each, ${listing.remaining} for ${formatPrice(listing.total)}` : ''
+        } on OpenSea${picked ? ', in the sweep' : ''}. Open`}
       >
         <NftImage src={osImage || meta.image} alt="" variant="thumb" />
         <span className="label">
           <span>#{id}</span>
-          <b>{formatPrice(listing.price)}</b>
+          <b>
+            {formatPrice(listing.price)}
+            {listing.total ? ' each' : ''}
+          </b>
+          {listing.total && (
+            <span>
+              {listing.remaining} for {formatPrice(listing.total)}
+            </span>
+          )}
           <span className="buy">Buy →</span>
         </span>
       </TileButton>
@@ -307,7 +317,7 @@ function PoolPriceLine({
     const bid = poolSide(price, 'bid')
     return (
       <>
-        {ask && pool.held > 0n ? (
+        {ask && pool.held !== undefined && pool.held > 0n ? (
           <>
             ≈ {formatPrice(ask)} <span className="where">to buy one</span>
             {bid && <span className="where sub">sell one in ≈ {formatPrice(bid)}</span>}
@@ -388,7 +398,12 @@ export default function CollectionView({
   const [sweepBusy, setSweepBusy] = useState(false)
   const listed = (listings.listings ?? []).filter((l) => l.tokenId)
   const shownListings = listed.slice(0, tileLimit)
-  const canSweep = sweepable(listings.listings ?? [], me)
+  // A buy of it still unconfirmed this session is not swept again: it may yet land.
+  const stillUnconfirmed = unconfirmedHashes(sessionStore())
+  const canSweep = sweepable(
+    (listings.listings ?? []).filter((l) => !stillUnconfirmed.has(l.hash)),
+    me
+  )
   const pickedListings = pickCheapest(canSweep, Math.min(sweepCount, canSweep.length))
   const create = useTx(() => pools.refetch())
   const busy = sweepBusy || create.busy
@@ -411,7 +426,7 @@ export default function CollectionView({
   const poolAddresses = pools.pools.map((p) => p.address)
   const ethPrices = usePoolPrices(chainId, poolAddresses, ethPair)
   const shownPrices = usePoolPrices(chainId, poolAddresses, shownPair)
-  const poolsWithNfts = pools.pools.filter((p) => p.held > 0n)
+  const poolsWithNfts = pools.pools.filter((p) => p.held !== undefined && p.held > 0n)
   const poolVenue = (p: Pool) => `MiyaPool (${MODE_LABEL[p.mode]})`
   // `where` reads after the price: an OpenSea listing or offer is "on OpenSea"; a pool's bid is a sale into it.
 
@@ -468,6 +483,7 @@ export default function CollectionView({
           </PushButton>
         ),
       )}
+      {pools.checkFailed && <Hint>Couldn&apos;t check which pools this collection has. Try again later.</Hint>}
       {pools.freeModes.length > 0 && !isConnected && (
         <PushButton type="button" onClick={() => openConnectModal?.()}>
           Connect to start a pool
@@ -529,7 +545,14 @@ export default function CollectionView({
             <div>
               <dt title="The cheapest one for sale right now">Floor</dt>
               <dd>
-                {floor ? formatPrice(floor) : 'None for sale'}
+                {/* No floor from a listings read that failed is unknown, not "none". */}
+                {floor
+                  ? formatPrice(floor)
+                  : listings.loading
+                  ? '…'
+                  : listings.error && !listings.needsKey
+                  ? 'Prices unavailable'
+                  : 'None for sale'}
                 {floor?.symbol === 'ETH' && <small>{ethInUsd(floor.amount, ethUsd)}</small>}
                 {buyHere && <small>Cheapest to buy here: {formatPrice(buyHere)}</small>}
               </dd>
@@ -603,7 +626,11 @@ export default function CollectionView({
             </Action>
           ) : cheapestListing?.tokenId ? (
             <Action type="button" data-best-buy disabled={busy} onClick={() => onOpenItem(cheapestListing.tokenId!)}>
-              Buy #{cheapestListing.tokenId} for {formatPrice(cheapestListing.price)} on OpenSea
+              {cheapestListing.total
+                ? `Buy ${cheapestListing.remaining} of #${cheapestListing.tokenId} for ${formatPrice(
+                    cheapestListing.total
+                  )} on OpenSea`
+                : `Buy #${cheapestListing.tokenId} for ${formatPrice(cheapestListing.price)} on OpenSea`}
             </Action>
           ) : null)}
       </Card>
@@ -773,7 +800,7 @@ export default function CollectionView({
                   }
                   facts={pools.pools.map((p) => ({
                     label: MODE_LABEL[p.mode],
-                    value: `${p.held.toString()} NFT${p.held === 1n ? '' : 's'} · 1 ${p.symbol} each`,
+                    value: `${p.held === undefined ? '–' : p.held.toString()} NFT${p.held === 1n ? '' : 's'} · 1 ${p.symbol} each`,
                   }))}
                 >
                   {pools.pools.map((p) => (

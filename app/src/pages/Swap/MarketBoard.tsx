@@ -43,7 +43,7 @@ const priceChain = (t: SwapToken) => (isNative(t) || t.chainId === 1 ? 'ethereum
 /** Every pool DexScreener knows for a token, shared with the board's own query. ETH is read from Ethereum's WETH. */
 export function usePairs(token: SwapToken | undefined) {
   return useQuery({
-    queryKey: ['dex-token', token ? priceAddress(token).toLowerCase() : ''],
+    queryKey: ['dex-token', token ? priceChain(token) : '', token ? priceAddress(token).toLowerCase() : ''],
     enabled: !!token,
     staleTime: 60_000,
     refetchInterval: 60_000,
@@ -74,7 +74,7 @@ export function useBoard(chainId: SwapChainId = 1) {
   const tokens = useMemo(() => boardTokens(chainId), [chainId])
   const results = useQueries({
     queries: tokens.map((t) => ({
-      queryKey: ['dex-token', priceAddress(t).toLowerCase()],
+      queryKey: ['dex-token', priceChain(t), priceAddress(t).toLowerCase()],
       staleTime: 60_000,
       refetchInterval: 60_000,
       retry: 1,
@@ -99,7 +99,7 @@ export function useBoard(chainId: SwapChainId = 1) {
 /** ETH in dollars, shared with the board's own query. */
 export function useEthUsd() {
   const q = useQuery({
-    queryKey: ['dex-token', WETH.toLowerCase()],
+    queryKey: ['dex-token', 'ethereum', WETH.toLowerCase()],
     staleTime: 60_000,
     retry: 1,
     queryFn: async ({ signal }) => {
@@ -175,10 +175,12 @@ const TapeBar = styled.div`
   b {
     color: ${color.accent};
   }
+  /* Held still: every price in one place, wrapping onto more lines rather than scrolling sideways. */
   @media (prefers-reduced-motion: reduce) {
-    overflow-x: auto;
     .track {
       animation: none;
+      width: auto;
+      flex-wrap: wrap;
     }
     .copy {
       display: none;
@@ -513,11 +515,14 @@ function CollectionRow({
   /** Each row loads its own numbers, so it tells the table what to sort by. */
   onFigures: (slug: string, figures: CollectionFigures) => void
 }) {
-  const { info, stats, loading } = useCollectionRow(slug)
+  const { info, stats, loading, error } = useCollectionRow(slug)
   const market = useMarketListings(slug)
   const floor = lowerPrice(stats?.floor, market.floor)
   const floorEth = floor ? Number(floor.amount) / 10 ** floor.decimals : undefined
-  const nothingForSale = !loading && !market.loading && !floor
+  const waiting = loading || market.loading
+  // A read that failed says nothing about what is for sale: only two clean answers with no floor mean none.
+  const failed = !!error || !!market.error
+  const nothingForSale = !waiting && !failed && !floor
   useEffect(() => {
     onFigures(slug, { floor: floorEth, sales: stats?.sales7d, volume: stats?.volume7d, nothingForSale })
   }, [slug, floorEth, stats?.sales7d, stats?.volume7d, nothingForSale, onFigures])
@@ -541,7 +546,7 @@ function CollectionRow({
         </button>
       </td>
       <td>
-        {floor ? formatPrice(floor) : loading ? dash : 'None for sale'}
+        {floor ? formatPrice(floor) : waiting ? '…' : failed ? 'Prices unavailable' : 'None for sale'}
         {floor?.symbol === 'ETH' && <span className="usd">{ethInUsd(floor.amount, ethUsd)}</span>}
       </td>
       <td className="opt">{stats?.sales7d ?? dash}</td>

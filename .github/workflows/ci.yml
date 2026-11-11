@@ -1,0 +1,164 @@
+# Type checks and tests for the app, the miyatv chat worker, the vault keeper and the contracts, on every push and pull
+# request. Node comes from .nvmrc (the tests run .mts files through Node's own type stripping: Node >= 22.18).
+# A weekly (and manual) run adds the long `ci` fuzz/invariant profile; the mainnet fork job runs only when the
+# MAINNET_RPC_URL secret is set.
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 4 * * 1' # Mondays 04:17 UTC: the long fuzz/invariant run (contracts-ci-profile)
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  app:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: yarn
+          cache-dependency-path: app/yarn.lock
+      - run: yarn install --frozen-lockfile
+      - name: Type check
+        run: npx tsc --noEmit -p .
+      - name: Type check the tests
+        run: yarn typecheck:tests
+      - name: Tests
+        run: yarn test
+
+  chat:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: chat
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: chat/package-lock.json
+      - run: npm ci
+      - name: Type check
+        run: npm run typecheck
+      - name: Tests
+        run: npm test
+
+  # The vault conversion keeper (plain Node, no build). Its tests also read contracts/abi/*.json and
+  # contracts/script/config/1.json, so the whole repo is checked out.
+  keeper:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: keeper
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: keeper/package-lock.json
+      - run: npm ci
+      - name: Tests
+        run: npm test
+
+  contracts:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: contracts
+    env:
+      # Fork tests need a mainnet RPC; CI runs the local suite only.
+      SKIP_FORK_TESTS: 'true'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.9.0
+          cache: true
+      - name: Cache build
+        uses: actions/cache@v4
+        with:
+          path: |
+            contracts/out
+            contracts/cache
+          key: forge-${{ runner.os }}-${{ hashFiles('contracts/foundry.toml', 'contracts/src/**', 'contracts/test/**', 'contracts/script/**') }}
+          restore-keys: forge-${{ runner.os }}-
+      - name: Build
+        run: forge build
+      # Default profile (256 fuzz runs, default invariant runs): the `ci` profile's 1,000 fuzz / 10,000 invariant runs
+      # are too slow for every push, so they run in contracts-ci-profile (weekly and on demand).
+      - name: Tests
+        run: forge test
+      # contracts/abi/*.json must match the build: app/tests/abi-drift.test.mts checks the app's ABIs against them.
+      # Offline, no secrets; needs jq (preinstalled on ubuntu-latest).
+      - name: ABI snapshots up to date
+        run: bash script/export-abis.sh --check
+
+  # The long fuzz/invariant profile (foundry.toml [profile.ci]): weekly and on demand, not on every push.
+  contracts-ci-profile:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    defaults:
+      run:
+        working-directory: contracts
+    env:
+      SKIP_FORK_TESTS: 'true'
+      FOUNDRY_PROFILE: ci
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.9.0
+          cache: true
+      - name: Tests (ci profile)
+        run: forge test
+
+  # Mainnet fork tests (test/fork, test/deploy) at a pinned block. Needs the repository secret MAINNET_RPC_URL (an
+  # archive-capable mainnet RPC; set it under Settings > Secrets and variables > Actions). Without it (forks, PRs from
+  # forks, or a repo that never set it) every step after the check is skipped and the job passes.
+  contracts-fork:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: contracts
+    env:
+      MAINNET_RPC_URL: ${{ secrets.MAINNET_RPC_URL }}
+      REQUIRE_FORK_TESTS: 'true'
+      FORK_BLOCK: '26384728' # pinned 2026-11-10: after the imdUSD/IMD 3000/10 pool (block 26379044); move it forward when the tests need newer chain state
+    steps:
+      - name: Fork RPC configured?
+        id: rpc
+        run: |
+          if [ -n "$MAINNET_RPC_URL" ]; then echo "ok=true" >> "$GITHUB_OUTPUT"; else echo "ok=false" >> "$GITHUB_OUTPUT"; echo "MAINNET_RPC_URL secret not set: fork tests skipped"; fi
+        working-directory: .
+      - uses: actions/checkout@v4
+        if: steps.rpc.outputs.ok == 'true'
+        with:
+          submodules: recursive
+      - uses: foundry-rs/foundry-toolchain@v1
+        if: steps.rpc.outputs.ok == 'true'
+        with:
+          version: v1.9.0
+          cache: true
+      - name: Fork tests
+        if: steps.rpc.outputs.ok == 'true'
+        run: forge test --match-path "test/{fork,deploy}/*"

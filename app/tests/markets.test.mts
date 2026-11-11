@@ -22,7 +22,9 @@ import {
   parseOrder,
   parseSearch,
   parseStats,
+  payee,
   planFill,
+  accountNftsPage,
   priceFromFloat,
   seaportArgs,
   venuesFor,
@@ -35,6 +37,9 @@ import {
   seaportCallAbi,
 } from '../src/pages/Swap/nft/seaport.ts'
 import { parseTradePath, tradePath } from '../src/pages/Swap/tradePath.ts'
+
+/** A request the proxy built (not refused). */
+type Built = Extract<ReturnType<typeof openSeaGet>, { path: string }>
 
 const MILADY = '0x5af0d9827e0c53e4799bb226655a1de152a425a5'
 const ME = '0x5167d014a056e43883e1bbea5530c3c0dc993281'
@@ -49,10 +54,10 @@ const ZERO32 = `0x${'0'.repeat(64)}`
 /* ---------- proxy ---------- */
 
 test('GET ops: only known ops and params, validated, never a page-chosen path', () => {
-  const ok = openSeaGet(new URLSearchParams({ op: 'stats', slug: 'milady' }))
+  const ok = openSeaGet(new URLSearchParams({ op: 'stats', slug: 'milady' })) as Built
   assert.equal(ok.path, '/api/v2/collections/milady/stats')
   assert.equal(ok.keyless, true)
-  assert.equal(openSeaGet(new URLSearchParams({ op: 'listings', slug: 'milady' })).query?.get('limit'), '6')
+  assert.equal((openSeaGet(new URLSearchParams({ op: 'listings', slug: 'milady' })) as Built).query?.get('limit'), '6')
   assert.equal(
     openSeaGet(new URLSearchParams({ op: 'listings', slug: 'milady', limit: '50' })).error,
     'limit is not valid.',
@@ -71,7 +76,7 @@ test('GET ops: only known ops and params, validated, never a page-chosen path', 
     openSeaGet(new URLSearchParams({ op: 'nft', chain: 'ethereum', address: MILADY, id: '1e5' })).error!,
     /id/,
   )
-  const s = openSeaGet(new URLSearchParams({ op: 'search', query: 'milady', chain: 'robinhood' }))
+  const s = openSeaGet(new URLSearchParams({ op: 'search', query: 'milady', chain: 'robinhood' })) as Built
   assert.equal(s.query?.get('asset_types'), 'collection')
   assert.equal(s.query?.get('chains'), 'robinhood')
   assert.equal(s.keyless, false)
@@ -79,7 +84,7 @@ test('GET ops: only known ops and params, validated, never a page-chosen path', 
 
 test('POST ops: the proxy builds OpenSea body; no recipient, no extra fields, never optional creator fees', () => {
   const base = { chain: 'ethereum', hash: HASH, protocol_address: SEAPORT, fulfiller: ME }
-  const l = openSeaPost('fulfill_listing', base)
+  const l = openSeaPost('fulfill_listing', base) as Built
   assert.equal(l.path, '/api/v2/listings/fulfillment_data')
   assert.deepEqual(JSON.parse(l.body!), {
     listing: { chain: 'ethereum', hash: HASH, protocol_address: SEAPORT },
@@ -95,7 +100,7 @@ test('POST ops: the proxy builds OpenSea body; no recipient, no extra fields, ne
   assert.match(openSeaPost('fulfill_listing', { ...base, hash: '0x12' }).error!, /hash/)
   assert.match(openSeaPost('fulfill_listing', { ...base, fulfiller: `0x${'0'.repeat(40)}` }).error!, /fulfiller/)
   assert.match(openSeaPost('fulfill_listing', [1]).error!, /object/)
-  const o = openSeaPost('fulfill_offer', { ...base, contract: MILADY, token_id: '42' })
+  const o = openSeaPost('fulfill_offer', { ...base, contract: MILADY, token_id: '42' }) as Built
   assert.deepEqual(JSON.parse(o.body!).consideration, { asset_contract_address: MILADY, token_id: '42' })
   assert.match(openSeaPost('fulfill_offer', base).error!, /contract/)
   assert.match(openSeaPost('nope', base).error!, /Unknown/)
@@ -403,7 +408,7 @@ test('best price: cheapest listing / highest offer in one money; ETH and WETH co
     ])!.v,
     'a',
   )
-  assert.equal(bestQuote([{ v: 'none' }]), undefined)
+  assert.equal(bestQuote([{ v: 'none', price: undefined }]), undefined)
 })
 
 /* ---------- Seaport fills ---------- */
@@ -508,7 +513,28 @@ const ctx = (over: Record<string, unknown> = {}) => ({
   seaports: SEAPORT_ADDRESSES,
   abi: seaportAbi,
   aliases: INPUT_ALIASES,
+  creatorFees: [CREATOR],
   ...over,
+})
+
+test('a payee that is not the seller, OpenSea or the collection creator fee is an "Other fee"', () => {
+  const plan = planFill(basicBuy(), ctx({ creatorFees: undefined }))
+  assert.equal(plan.ok, true)
+  if (!plan.ok) return
+  assert.deepEqual(
+    plan.lines.map((l) => l.label),
+    ['To the seller', 'OpenSea fee', 'Other fee (required)'],
+  )
+  assert.equal(plan.total, PRICE, 'the total still counts every required line')
+  assert.equal(payee(CREATOR.toLowerCase(), SELLER.toLowerCase(), [CREATOR.toUpperCase().replace('0X', '0x')]), 'creator')
+  assert.equal(payee(SELLER.toLowerCase(), SELLER.toLowerCase(), []), 'seller')
+})
+
+test('account NFT pages: rows and a sane next cursor', () => {
+  assert.deepEqual(accountNftsPage({ nfts: [1, 2], next: 'abc' }), { nfts: [1, 2], next: 'abc' })
+  assert.deepEqual(accountNftsPage({ nfts: [1], next: '' }), { nfts: [1], next: undefined })
+  assert.deepEqual(accountNftsPage({ next: 'x'.repeat(600) }), { nfts: [], next: undefined })
+  assert.deepEqual(accountNftsPage(null), { nfts: [], next: undefined })
 })
 
 test('buying a listing: who gets what, and calldata that decodes back to the same order', () => {
@@ -687,8 +713,8 @@ test('the plan says what the seller allows: the fees, and which kind of NFT', ()
 
 test('an ERC-1155 offer is told apart, so the screen can say the approval is blanket', () => {
   const offer = offerAccept()
-  offer.fulfillment_data.orders[0].parameters.consideration[0].itemType = 5
-  offer.fulfillment_data.transaction.input_data.advancedOrder.parameters = offer.fulfillment_data.orders[0].parameters
+  offer.fulfillment_data.orders[0]!.parameters.consideration[0]!.itemType = 5
+  offer.fulfillment_data.transaction.input_data.advancedOrder.parameters = offer.fulfillment_data.orders[0]!.parameters
   const plan = planFill(offer, ctx({ side: 'sell' }))
   assert.equal(plan.ok && plan.nftKind, 'erc1155')
 })

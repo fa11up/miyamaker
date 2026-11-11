@@ -4,7 +4,7 @@ import { formatUnits, parseUnits } from 'viem'
 import { mainnet, sepolia } from 'viem/chains'
 import { z } from 'zod'
 
-import { ConnectedButton } from '@/components/Button'
+import { ChainButton } from '@/components/Button'
 import { useWaitForTransaction } from '@/hooks/useWaitForTransaction'
 
 import { useMaxSupply } from '../useMaxSupply'
@@ -111,7 +111,7 @@ export default function MaxSupplyRow({
         </td>
       )}
       <td style={{ padding: 0 }}>
-        <ConnectedButton
+        <ChainButton
           style={{
             width: '100%',
             display: 'flex',
@@ -124,7 +124,7 @@ export default function MaxSupplyRow({
           withChain={[mainnet.id, sepolia.id]}
         >
           {active ? (transacting ? 'Updating...' : `Update`) : 'Edit'}
-        </ConnectedButton>
+        </ChainButton>
       </td>
     </tr>
   )

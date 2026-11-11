@@ -10,7 +10,7 @@ import { chopRange, nextEmptyPad } from '../src/pages/MusicMaker/audio/slice.js'
 import { startHandleDrag } from '../src/pages/MusicMaker/dragSession.js'
 
 test('the voice cap fades just enough of the oldest sounding notes for one more', () => {
-  const voices = Array.from({ length: 30 }, (_, i) => ({ id: i, startAt: 100 - i }))
+  const voices: any[] = Array.from({ length: 30 }, (_, i) => ({ id: i, startAt: 100 - i }))
   voices[29].dead = true // already ending: not counted, not picked
   voices[28].ended = true
   // 28 still sounding at a cap of 28: one must fade so the new note fits (28 - 28 + 1).
@@ -43,7 +43,7 @@ test('a chop takes the trimmed span, at least one sample, inside the sample', ()
 })
 
 test('the chop goes to the next empty pad, wrapping, never onto its own pad', () => {
-  const pads = Array.from({ length: 64 }, () => ({ source: 'sample' }))
+  const pads: any[] = Array.from({ length: 64 }, () => ({ source: 'sample' }))
   assert.equal(nextEmptyPad(pads, 5), -1)
   pads[3].source = 'empty'
   assert.equal(nextEmptyPad(pads, 5), 3, 'wraps past 63')

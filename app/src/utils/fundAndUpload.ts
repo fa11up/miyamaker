@@ -1,12 +1,12 @@
 import type { WebIrys } from '@irys/sdk'
 import type { Chain } from 'viem'
 
-import getIrys from './getIrys'
+import getIrys, { paymentTxState } from './getIrys'
 import { pathInFolder } from './myUploads'
 import type { UploadStage } from './uploadError'
 import { uploadErrorWords } from './uploadError'
-import type { IrysPayment } from './irysPayment'
-import { uncounted } from './irysPayment'
+import type { FundingIrys, PaymentStore } from './irysPayment'
+import { ensureFunded as ensureFundedWith } from './irysPayment'
 
 type Tag = {
   name: string
@@ -19,12 +19,7 @@ const GATEWAY_BASE = (import.meta.env.VITE_IRYS_GATEWAY || 'https://gateway.irys
 
 export type UploadStatus = (words: string) => void
 
-/** Pay a little over the price, so a small price move between paying and uploading does not fail the upload. */
-export const PRICE_MARGIN = 1.1
-/** Irys stores files up to 100 KiB free; leave room for the signature and tags. */
-export const FREE_BYTES = 90 * 1024
-const CREDIT_POLL_MS = 10_000
-const CREDIT_WAIT_MS = 15 * 60_000
+export { FREE_BYTES, PRICE_MARGIN } from './irysPayment'
 
 /** Plain words for what went wrong; the raw error stays in the console. */
 function uploadError(e: unknown, stage: UploadStage): Error {
@@ -34,64 +29,34 @@ function uploadError(e: unknown, stage: UploadStage): Error {
 
 const paymentKey = (irys: WebIrys) => `miya.irys-payment:${irys.token}:${irys.address}`
 
-function readPayment(irys: WebIrys): IrysPayment | undefined {
-  try {
-    return JSON.parse(window.localStorage.getItem(paymentKey(irys)) ?? 'null') ?? undefined
-  } catch {
-    return undefined
+/** The same storage and key the payment has always been remembered under, so a payment made before this still counts. */
+function paymentStore(irys: WebIrys): PaymentStore {
+  return {
+    read() {
+      try {
+        return JSON.parse(window.localStorage.getItem(paymentKey(irys)) ?? 'null') ?? undefined
+      } catch {
+        return undefined
+      }
+    },
+    write(payment) {
+      try {
+        if (payment) window.localStorage.setItem(paymentKey(irys), JSON.stringify(payment))
+        else window.localStorage.removeItem(paymentKey(irys))
+      } catch {
+        // Only loses the memory of a payment on its way.
+      }
+    },
   }
 }
 
-function writePayment(irys: WebIrys, payment: IrysPayment | undefined) {
-  try {
-    if (payment) window.localStorage.setItem(paymentKey(irys), JSON.stringify(payment))
-    else window.localStorage.removeItem(paymentKey(irys))
-  } catch {
-    // Only loses the memory of a payment on its way.
-  }
-}
-
-/**
- * Make sure Irys holds enough of this wallet's money for `size` bytes. On Ethereum a payment takes minutes to be
- * credited, so after paying this waits for it rather than uploading into a "not enough funds". A payment still on its way
- * is remembered, across retries and reloads, because the balance doesn't show it: only what it doesn't cover is paid.
- */
-async function ensureFunded(irys: WebIrys, size: number, setStage: (stage: UploadStage) => void, status?: UploadStatus) {
-  if (size <= FREE_BYTES) return
-  const price = await irys.getPrice(size)
-  const balance = await irys.getLoadedBalance()
-  if (balance.isGreaterThan(price)) {
-    writePayment(irys, undefined)
-    setStage('paid')
-    return
-  }
-
-  const onItsWay = uncounted(readPayment(irys), balance.toFixed(0), Date.now())
-  const toPay = price.multipliedBy(PRICE_MARGIN).minus(balance).minus(onItsWay).integerValue()
-  if (toPay.isGreaterThan(0)) {
-    status?.('Pay for storage in your wallet (once, on Ethereum).')
-    setStage('paying')
-    await irys.fund(toPay)
-    writePayment(irys, {
-      amount: toPay.plus(onItsWay).toFixed(0),
-      before: balance.toFixed(0),
-      at: Date.now(),
-    })
-  }
-
-  setStage('paid')
-  status?.('Waiting for the storage service to count your payment. This can take a few minutes.')
-  const deadline = Date.now() + CREDIT_WAIT_MS
-  // eslint-disable-next-line no-await-in-loop
-  while (!(await irys.getLoadedBalance()).isGreaterThanOrEqualTo(price)) {
-    if (Date.now() > deadline) throw new Error('402: not enough funds yet')
-    // eslint-disable-next-line no-await-in-loop
-    await new Promise((resolve) => {
-      setTimeout(resolve, CREDIT_POLL_MS)
-    })
-  }
-
-  writePayment(irys, undefined)
+function ensureFunded(irys: WebIrys, size: number | readonly number[], setStage: (stage: UploadStage) => void, status?: UploadStatus) {
+  return ensureFundedWith(irys as unknown as FundingIrys, size, {
+    store: paymentStore(irys),
+    txState: (txId) => paymentTxState(irys, txId),
+    setStage,
+    status,
+  })
 }
 
 /** Room for what a bundle adds to its files: each item's header and the folder's manifest. */
@@ -178,7 +143,22 @@ async function fundAndUploadSingleFile(
   }
 }
 
+/**
+ * Pays once for every file about to be stored, before the first upload: one Ethereum payment and one wait, not one per
+ * file. Each upload after it finds its price covered and pays nothing more. Keeps the same memory of a payment on its
+ * way, so a retry never pays twice. Throws an Error with plain words when it cannot finish.
+ */
+async function fundStorage(sizes: readonly number[], url?: string, token?: string, chain?: Chain, status?: UploadStatus) {
+  let stage: UploadStage = 'free'
+  try {
+    const irys = await getIrys(url, token, chain)
+    await ensureFunded(irys, sizes, (next) => (stage = next), status)
+  } catch (e) {
+    throw uploadError(e, stage)
+  }
+}
+
 /** Pays Irys if needed, then uploads. Throws an Error with plain words when it cannot finish. */
 const fundAndUpload = fundAndUploadSingleFile
 
-export { fundAndUpload, fundAndUploadFolder }
+export { fundAndUpload, fundAndUploadFolder, fundStorage }

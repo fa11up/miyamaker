@@ -5,14 +5,18 @@
  * Kick's official API needs app credentials, so these are the public endpoints its own site uses. They can change or
  * refuse without notice: a check that gets no real answer keeps the last good list for a while (KICK_STALE_LIMIT_MS, from
  * when that list was really checked) and says it could not check, so the page never mistakes that for nobody being on.
+ *
+ * Like the YouTube ids (./tvlive.ts), the list is kept for every data centre when the cache given is the D1-backed one
+ * (./sharedstate.ts), with one check at a time anywhere; otherwise per data centre, one check at a time per isolate.
  */
-import type { MarketCache } from './market'
+import type { SharedCache } from './sharedstate'
 
 const CACHE_KEY = 'tv-kick:v2'
 export const KICK_RECHECK_MS = 3 * 60_000
 /** How long a list may stand without Kick confirming it. Dead streams must not be offered for longer. */
 export const KICK_STALE_LIMIT_MS = 15 * 60_000
 export const KICK_STREAMS = 3
+const LOCK_MS = 30_000
 const TOP_URL = 'https://kick.com/stream/livestreams/en?page=1&limit=48&subcategory=&sort=desc'
 const SLUG = /^[A-Za-z0-9_-]{1,64}$/
 /** Not what a TV in a desktop should tune to by itself. */
@@ -115,19 +119,39 @@ function settle(found: Lookup, last: Saved | undefined, now: number): Saved {
 }
 
 /** The streams to offer: cached for everyone, and whether Kick really answered for them. */
-export async function kickOnAir(deps: { read?: KickReader; cache: MarketCache; now: number }): Promise<KickAnswer> {
+const checking = new WeakMap<object, Promise<Saved | undefined>>()
+
+export async function kickOnAir(deps: { read?: KickReader; cache: SharedCache; now: number }): Promise<KickAnswer> {
   if (!deps.read) return { streams: [], checked: false }
+  const read = deps.read
   const cached = (await deps.cache.get(CACHE_KEY).catch(() => null)) as { at: number; body: Saved } | undefined | null
   // With no cache every viewer's request would become four calls to Kick, so say we could not check instead.
   if (cached === null) return { streams: [], checked: false }
   if (cached && deps.now - cached.at < KICK_RECHECK_MS)
     return { streams: cached.body.streams, checked: cached.body.checked }
-  const found = await lookUp(deps.read).catch((e: Error) => {
-    console.warn(`tv kick: ${e.message}`)
-    return NO_ANSWER
-  })
-  const saved = settle(found, cached?.body, deps.now)
-  if (!saved.checked) console.warn('tv kick: no full answer')
-  await deps.cache.put(CACHE_KEY, { at: deps.now, body: saved }, KICK_STALE_LIMIT_MS / 1000).catch(() => undefined)
-  return { streams: saved.streams, checked: saved.checked }
+
+  // One check at a time: in this isolate, and anywhere when the cache can lock.
+  let running = checking.get(deps.cache)
+  if (!running) {
+    running = (async () => {
+      const mine = deps.cache.claim
+        ? await deps.cache.claim(CACHE_KEY, deps.now, LOCK_MS, deps.now - KICK_RECHECK_MS + 1).catch(() => true)
+        : true
+      if (!mine) return undefined
+      const found = await lookUp(read).catch((e: Error) => {
+        console.warn(`tv kick: ${e.message}`)
+        return NO_ANSWER
+      })
+      const next = settle(found, cached?.body, deps.now)
+      if (!next.checked) console.warn('tv kick: no full answer')
+      await deps.cache.put(CACHE_KEY, { at: deps.now, body: next }, KICK_STALE_LIMIT_MS / 1000).catch(() => undefined)
+      return next
+    })().finally(() => checking.delete(deps.cache))
+    checking.set(deps.cache, running)
+  }
+  const saved = await running
+  if (saved) return { streams: saved.streams, checked: saved.checked }
+  // Someone else is checking: the last list while it is young enough, and not as checked.
+  const young = cached && deps.now - cached.body.goodAt < KICK_STALE_LIMIT_MS ? cached.body.streams : []
+  return { streams: young, checked: false }
 }

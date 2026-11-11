@@ -5,7 +5,7 @@ import { parseEventLogs, zeroAddress, zeroHash } from 'viem'
 import { wagmiConfig } from '@/config/wagmi'
 import { settle, type TxReplaced } from '@/miyamints/txOutcome'
 import { erc1155FactoryAbi, erc1155InstanceAbi } from '@/music/abi'
-import { editionArgs, GATING_SCOPE_BOTH, makeSalt } from '@/music/drop'
+import { collectionParams, editionArgs, makeSalt } from '@/music/drop'
 import { addKnownCollection } from '@/music/known'
 import { isBatchForgotten, isUnconfirmed, tryBatch, UnconfirmedError, waitForBatch } from '@/utils/batch'
 import { instanceAddressAbi } from '@/utils/batchCalls'
@@ -75,16 +75,13 @@ function createCall(
     functionName: 'createInstance' as const,
     args: [
       salt,
-      {
+      collectionParams({
         name: input.name,
         metadataURI: input.metadataURI,
         creator: input.account,
         vault: input.vault,
         alignmentBps: input.alignmentBps,
-        styleUri: '',
-        gatingModule: zeroAddress,
-        freeMint: { allocation: 0n, scope: GATING_SCOPE_BOTH },
-      },
+      }),
     ],
   }
 }
@@ -493,7 +490,7 @@ export async function launchEdition(
       address: instance,
       abi: erc1155InstanceAbi,
       functionName: 'mint',
-      args: [editionId, 1n, zeroHash, '', input.priceWei],
+      args: [editionId, 1n, zeroHash, '', zeroAddress, input.priceWei],
       value: input.priceWei,
     })
     await ask('mint')

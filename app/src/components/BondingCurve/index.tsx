@@ -76,7 +76,8 @@ export default function BondingCurvePick({
   const copies = supply && supply > 0n && supply <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(supply) : 0
   const shown = copies > 1 ? Math.min(copies, CURVE_WINDOW) : 24
   const marks = [0, Math.floor((shown - 1) / 2), shown - 1]
-  const base = priceWei && priceWei > 0n ? priceWei : undefined
+  const base = priceWei !== undefined && priceWei > 0n ? priceWei : undefined
+  const rising = bps != null && bps > 0
   return (
     <Box>
       <Name>Bonding curve</Name>
@@ -109,12 +110,12 @@ export default function BondingCurvePick({
         />
         {error ? <Err>{error}</Err> : <Note>{curveCaption(rise)}</Note>}
       </Field>
-      {bps != null && bps > 0 && (
+      {rising && (
         <Chart viewBox="0 0 280 88" aria-hidden="true">
           <path d={pathOf(bps, copies)} fill="none" stroke="#fe9ca1" strokeWidth="2" />
         </Chart>
       )}
-      {bps != null && bps > 0 && base && (
+      {rising && base !== undefined && (
         <Stops>
           {marks.map((at, i) => (
             <span key={at}>
@@ -125,8 +126,8 @@ export default function BondingCurvePick({
           {copies > CURVE_WINDOW ? ` · keeps rising through copy ${copies}` : ''}
         </Stops>
       )}
-      {bps != null && bps > 0 && !base && <Note>Set a starting price to read this curve in ETH.</Note>}
-      {bps != null && bps > 0 && !copies && <Note>Set how many copies exist. A rising curve needs a limit. Flat can stay open.</Note>}
+      {rising && base === undefined && <Note>Set a starting price to read this curve in ETH.</Note>}
+      {rising && !copies && <Note>Set how many copies exist. A rising curve needs a limit. Flat can stay open.</Note>}
     </Box>
   )
 }

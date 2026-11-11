@@ -16,7 +16,7 @@ import {
   compactPatterns,
   duplicateSongCell,
   loadFactoryKit,
-  model,
+  model as musicModel,
   normalizeEvent,
   normalizePad,
   normalizePatch,
@@ -42,6 +42,9 @@ import { createKnee } from '../src/pages/MusicMaker/audio/knee.js'
 import { createFx, factoryFxSlots, normalizeFxPresets, normalizeSlot, repeatAmount } from '../src/pages/MusicMaker/audio/numpadFx.js'
 import { parseXm } from '../src/pages/MusicMaker/audio/module.js'
 import { bounceOrder } from '../src/pages/MusicMaker/audio/engine.js'
+
+// The sampler's state is plain JS; the tests poke at it freely, so it is typed loosely here.
+const model = musicModel as unknown as { pads: any[]; buses: any[]; [key: string]: any }
 
 const g = globalThis as any
 
@@ -115,7 +118,7 @@ test('normalizePad keeps a good pad and a synth pad without a usable patch goes 
 })
 
 test('normalizePatch drops non-finite numbers and wrong types so defaults fill in', () => {
-  const p = normalizePatch({ freq: NaN, aA: 'x', aD: 0.3, filterType: 7, oscs: [{ type: 'saw', level: NaN, ratio: 2 }], partials: ['x', 0.5] })
+  const p: any = normalizePatch({ freq: NaN, aA: 'x', aD: 0.3, filterType: 7, oscs: [{ type: 'saw', level: NaN, ratio: 2 }], partials: ['x', 0.5] })
   assert.ok(p)
   assert.equal('freq' in p, false)
   assert.equal('aA' in p, false)
@@ -132,7 +135,7 @@ test('normalizePatch drops non-finite numbers and wrong types so defaults fill i
 test('normalizeEvent turns junk pitch, velocity and pad into playable values', () => {
   const ev = normalizeEvent({ pad: 'x', vel: NaN, pitch: 'x', nudge: Infinity })
   assert.deepEqual(ev, { pad: 0, vel: 0.9, pitch: 0, nudge: 0 })
-  const big = normalizeEvent({ pad: 400, vel: 7, pitch: -500, nudge: -99, sl: 12, len: 4, move: 2 })
+  const big: any = normalizeEvent({ pad: 400, vel: 7, pitch: -500, nudge: -99, sl: 12, len: 4, move: 2 })
   assert.equal(big.pad, 63)
   assert.equal(big.vel, 1)
   assert.equal(big.pitch, -96)
@@ -229,13 +232,13 @@ test('locateStep anchors live hits to the last fired step, so a tempo change doe
 })
 
 test('liveVoices drops ended and long-quiet voices and keeps sounding ones', () => {
-  const list = [
+  const list: any[] = [
     { id: 1, quietAt: null },
     { id: 2, quietAt: 4.9 },
     { id: 3, quietAt: 5.2 },
     { id: 4, quietAt: null, ended: true },
   ]
-  assert.deepEqual(liveVoices(list, 5).map((v) => v.id), [1, 3])
+  assert.deepEqual(liveVoices(list, 5).map((v: any) => v.id), [1, 3])
 })
 
 test('the buffer cache builds once per entry and direction, and again for a new rev', () => {
@@ -352,7 +355,7 @@ function renderFx(fx: ReturnType<typeof createFx>, slot: object, bpm: number, to
 }
 
 test('repeat locks to a bpm note and plays that slice again', () => {
-  for (let div = 0; div <= 6; div++) assert.equal((repeatAmount(div) * 7 / 256) | 0, div)
+  for (let div = 0; div <= 6; div++) assert.equal((repeatAmount(div)! * 7 / 256) | 0, div)
   const saved = normalizeSlot({ type: 'repeat', a: 0xa0, b: 255 }, 0)
   assert.equal(saved.div, 4)
   assert.equal(normalizeSlot({ type: 'grain', div: 2, a: 3, b: 4, mix: 5 }, 1).type, 'grain')
@@ -399,7 +402,7 @@ test('slice rearranges notes and grain does not retrigger the beat', () => {
   const repeat = renderFx(fx, { type: 'repeat', div: 1, a: 0, b: 255, mix: 255 }, 120, n, (t) => Math.sin(t / 9) * 0.5)
   assert.ok(grain.some((v, i) => v !== repeat[i]), 'a grain spray is not a beat repeat')
   fx.reset()
-  const waited = renderFx(fx, { type: 'repeat', div: 1, a: 0, b: 255, mix: 255 }, 120, 22050 + 3000, (t) => (t === 0 ? 1 : 0), 0.05, 0)
+  const waited: any = renderFx(fx, { type: 'repeat', div: 1, a: 0, b: 255, mix: 255 }, 120, 22050 + 3000, (t) => (t === 0 ? 1 : 0), 0.05, 0)
   const peaks = []
   for (let i = 0; i < waited.length; i++) if (waited[i] > 0.5) peaks.push(i)
   assert.deepEqual(peaks, [0], 'a press between beats waits for the next note instead of chopping a grain')
@@ -459,14 +462,15 @@ test('undo re-renders only synth pads whose patch changed', async () => {
   const before = model.pads.map((_, i) => audioBank.get(i))
   const synthPads = model.pads.map((p, i) => (p.source === 'synth' ? i : -1)).filter((i) => i >= 0)
   assert.ok(synthPads.length > 2)
-  const target = synthPads[1]
+  const target = synthPads[1]!
+  const first = synthPads[0]!
   model.pads[target].patch = { ...model.pads[target].patch, freq: 333 }
   touch(true)
-  model.pads[synthPads[0]].volume = 0.3
+  model.pads[first].volume = 0.3
   touch(true)
   assert.equal(await undo(), true, 'both quick edits are one step')
   assert.notEqual(model.pads[target].patch.freq, 333)
-  assert.notEqual(model.pads[synthPads[0]].volume, 0.3)
+  assert.notEqual(model.pads[first].volume, 0.3)
   const after = model.pads.map((_, i) => audioBank.get(i))
   const redone = after.map((entry, i) => (entry !== before[i] ? i : -1)).filter((i) => i >= 0)
   assert.deepEqual(redone, [target])
@@ -619,7 +623,7 @@ function xmWithRows(rows: number) {
 }
 
 test('an XM pattern longer than 256 rows loads, cut to the 256-step limit', () => {
-  const parsed = parseXm(xmWithRows(300))
+  const parsed: any = parseXm(xmWithRows(300))
   assert.equal(parsed.patterns.length, 1)
   assert.equal(parsed.patterns[0].steps.length, 256)
   assert.ok(parsed.patterns[0].steps[255][0])

@@ -23,13 +23,14 @@ export interface TokenDoc {
   /** undefined for native ETH */
   address?: Address
   balance?: bigint
-  decimals: number
+  /** undefined when the token's decimals couldn't be read: no amount is shown rather than a guess. */
+  decimals?: number
   formatted?: string
   loading: boolean
 }
 
-export function formatAmount(value: bigint | undefined, decimals: number): string | undefined {
-  if (value === undefined) return undefined
+export function formatAmount(value: bigint | undefined, decimals: number | undefined): string | undefined {
+  if (value === undefined || decimals === undefined) return undefined
   const n = Number(formatUnits(value, decimals))
   if (n === 0) return '0'
   if (n < 0.0001) return '<0.0001'
@@ -63,7 +64,8 @@ export function useTokenDocs(owner: Address | undefined): { docs: TokenDoc[]; re
   FILE_TOKENS.forEach((t, i) => {
     const bal = reads.data?.[i * 2]
     const dec = reads.data?.[i * 2 + 1]
-    const decimals = dec?.status === 'success' ? Number(dec.result) : 18
+    // A failed decimals read is unknown, not 18: guessing would show a wrong amount.
+    const decimals = dec?.status === 'success' ? Number(dec.result) : undefined
     const balance = bal?.status === 'success' ? (bal.result as bigint) : undefined
     docs.push({
       kind: 'token',

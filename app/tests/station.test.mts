@@ -48,16 +48,19 @@ function setup() {
   }
   const list = async () =>
     (await (await handleStationRequest({ method: 'GET', url: `${ORIGIN}/api/station`, headers: new Headers() }, deps)).json()) as any
+  // Every signature is used once, so each one is made at its own millisecond, just before now.
+  let signed = 0
+  const at = () => now - (signed += 1)
   const add = async (who = uploader, txId = AUDIO, extra: Record<string, unknown> = {}) => {
-    const fields = { txId, title: 'Night Tone', artist: 'miya', wallet: who.address, at: now }
-    return post('/add', { ...fields, signature: await who.signMessage({ message: addMessage(fields) }), ...extra })
+    const fields = { txId, title: 'Night Tone', artist: 'miya', wallet: who.address, at: at(), ...extra }
+    return post('/add', { ...fields, signature: await who.signMessage({ message: addMessage(fields as any) }) })
   }
   const remove = async (who: typeof uploader, txId = AUDIO) => {
-    const fields = { txId, wallet: who.address, at: now }
+    const fields = { txId, wallet: who.address, at: at() }
     return post('/remove', { ...fields, signature: await who.signMessage({ message: removeMessage(fields) }) })
   }
   const restore = async (who: typeof uploader, txId = AUDIO) => {
-    const fields = { txId, wallet: who.address, at: now }
+    const fields = { txId, wallet: who.address, at: at() }
     return post('/restore', { ...fields, signature: await who.signMessage({ message: restoreMessage(fields) }) })
   }
   return { post, list, add, remove, restore, deps, advance: (ms: number) => { now += ms } }

@@ -123,9 +123,11 @@ export function useAuctionData({
 
   // A failed multicall entry arrives inside a successful query, so each answer is checked. The minimum needs both.
   const answered = latest?.[0]?.status === 'success' && latest[1]?.status === 'success'
-  const lastGood = useRef<{ tokenId: number | undefined; data: NonNullable<typeof latest>; at: number }>()
-  if (answered) lastGood.current = { tokenId, data: latest, at: dataUpdatedAt }
-  const good = lastGood.current?.tokenId === tokenId ? lastGood.current : undefined
+  // Keyed by the whole lot: token #3 of one collection must never stand in for #3 of another.
+  const lot = `${address}:${nft}:${tokenId}`.toLowerCase()
+  const lastGood = useRef<{ lot: string; data: NonNullable<typeof latest>; at: number }>()
+  if (answered) lastGood.current = { lot, data: latest, at: dataUpdatedAt }
+  const good = lastGood.current?.lot === lot ? lastGood.current : undefined
   const data = good?.data
   const auction = data?.[0]?.result as unknown as Auction
   const bidIncrement = data?.[1]?.result as bigint

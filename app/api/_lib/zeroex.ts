@@ -118,21 +118,31 @@ export function sameOrigin(headers: Headers | undefined, url: URL) {
 export type RateLimiter = (key: string, now?: number) => boolean
 
 /**
- * In-memory token bucket per client key (IP): `capacity` requests in a burst, refilled at `perSecond`.
- * NOTE: state lives in this process only. On Cloudflare every Worker isolate has its own buckets, so this
- * is a first layer against a single noisy client, not a global quota; put a shared store (KV) or the
- * platform firewall in front for a hard limit.
+ * In-memory token bucket per client key (IP, see clientKey): `capacity` requests in a burst, refilled at `perSecond`.
+ * At `maxKeys` the least recently seen key is dropped, one at a time, so a flood of new keys only pushes out idle
+ * clients rather than resetting everyone (a Map iterates in insertion order, and every hit re-inserts its key).
+ *
+ * NOTE: state lives in this process only. On Cloudflare every Worker isolate has its own buckets, so this is a first
+ * layer against a single noisy client, not a global quota. The real global limit is a Cloudflare WAF rate-limiting rule
+ * on the zone (dashboard: Security > WAF > Rate limiting rules), recommended:
+ *
+ *   If incoming requests match:  (http.host eq "www.miyamaker.com" and starts_with(http.request.uri.path, "/api/"))
+ *   With the same characteristics: IP  (Cloudflare counts IPv6 per /64)
+ *   When rate exceeds: 300 requests per 1 minute (POSTs: a second rule, 30 per 1 minute)
+ *   Then: Block for 1 minute, response 429
+ *
+ * It is not created from this repo; set it up in the dashboard.
  */
 export function createRateLimiter({ capacity = 60, perSecond = 1, maxKeys = 10_000 } = {}): RateLimiter {
   const buckets = new Map<string, { tokens: number; at: number }>()
   return (key, now = Date.now()) => {
     const prev = buckets.get(key)
     const tokens = prev ? Math.min(capacity, prev.tokens + ((now - prev.at) / 1000) * perSecond) : capacity
-    if (!prev && buckets.size >= maxKeys) {
-      // Bound memory: drop the oldest half (a Map iterates in insertion order).
-      Array.from(buckets.keys())
-        .slice(0, Math.ceil(maxKeys / 2))
-        .forEach((k) => buckets.delete(k))
+    if (prev) buckets.delete(key)
+    else if (buckets.size >= maxKeys) {
+      // Bound memory: drop the least recently seen key.
+      const oldest = buckets.keys().next()
+      if (!oldest.done) buckets.delete(oldest.value)
     }
 
     if (tokens < 1) {
@@ -148,12 +158,50 @@ export function createRateLimiter({ capacity = 60, perSecond = 1, maxKeys = 10_0
 const defaultLimiter = createRateLimiter()
 
 /**
- * Client IP as Cloudflare reports it. cf-connecting-ip is the only one Cloudflare sets itself: a client can
- * send its own x-real-ip / x-forwarded-for, so those are only a fallback for the Vite dev server.
+ * One client's key for an address: an IPv4 address as it is, an IPv6 address by its /64 (one home or one server is
+ * usually handed a whole /64, so per-address keys would let it take any number of buckets). IPv4-mapped IPv6 counts as
+ * the IPv4 address. Anything that does not parse is kept as it is.
+ */
+export function ipBucket(raw: string): string {
+  const ip = raw.trim().toLowerCase().replace(/^\[|\]$/g, '').replace(/%.*$/, '')
+  if (!ip.includes(':')) return ip
+  const halves = ip.split('::')
+  if (halves.length > 2) return ip
+  const part = (s: string | undefined): string[] | undefined => {
+    if (!s) return []
+    const groups = s.split(':')
+    const last = groups[groups.length - 1]!
+    if (!last.includes('.')) return groups
+    // An embedded IPv4 tail is the last two groups.
+    const o = last.split('.').map((n) => (/^\d{1,3}$/.test(n) ? Number(n) : NaN))
+    if (o.length !== 4 || o.some((n) => !(n >= 0 && n <= 255))) return undefined
+    return [...groups.slice(0, -1), ((o[0]! << 8) | o[1]!).toString(16), ((o[2]! << 8) | o[3]!).toString(16)]
+  }
+  const head = part(halves[0])
+  const tail = part(halves[1])
+  if (!head || !tail) return ip
+  const fill = halves.length === 2 ? 8 - head.length - tail.length : 0
+  if (halves.length === 2 ? fill < 1 : head.length !== 8) return ip
+  const groups = [...head, ...Array<string>(fill).fill('0'), ...tail]
+  if (groups.some((g) => !/^[0-9a-f]{1,4}$/.test(g))) return ip
+  const n = groups.map((g) => parseInt(g, 16))
+  if (n.slice(0, 5).every((g) => g === 0) && n[5] === 0xffff)
+    return [n[6]! >> 8, n[6]! & 255, n[7]! >> 8, n[7]! & 255].join('.')
+  return `${n
+    .slice(0, 4)
+    .map((g) => g.toString(16))
+    .join(':')}::/64`
+}
+
+/**
+ * Client key as Cloudflare reports it, IPv6 by /64 (ipBucket). cf-connecting-ip is the only one Cloudflare sets
+ * itself: a client can send its own x-real-ip / x-forwarded-for, so those are only a fallback for the Vite dev server
+ * (which replaces them with the socket's address, vite.config.ts).
  */
 export function clientKey(headers: Headers | undefined) {
   const forwarded = headers?.get('x-forwarded-for')?.split(',')[0]?.trim()
-  return headers?.get('cf-connecting-ip')?.trim() || headers?.get('x-real-ip')?.trim() || forwarded || 'unknown'
+  const ip = headers?.get('cf-connecting-ip')?.trim() || headers?.get('x-real-ip')?.trim() || forwarded
+  return ip ? ipBucket(ip) : 'unknown'
 }
 
 /**

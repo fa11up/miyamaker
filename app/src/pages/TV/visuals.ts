@@ -337,6 +337,8 @@ export function runVisuals(
   const frame = (now: number) => {
     raf = requestAnimationFrame(frame)
     if (now - last < (reduced ? 1000 : 33)) return
+    // Nothing to draw into while the window is minimised (display: none) or the tab is hidden.
+    if (!canvas.offsetWidth || document.visibilityState !== 'visible') return
     const dt = Math.min(0.1, (now - last) / 1000)
     last = now
     const { mode, seed, analyser, playing } = read()

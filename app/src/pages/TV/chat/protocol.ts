@@ -68,15 +68,35 @@ export const freshSocket = (state: RoomState): RoomState => ({
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null
 
-function isMessage(v: unknown): v is ChatMessage {
-  return (
-    isObj(v) &&
-    typeof v.id === 'string' &&
-    typeof v.at === 'number' &&
-    typeof v.from === 'string' &&
-    typeof v.text === 'string' &&
-    Array.isArray(v.badges)
+/** Badges as the screen can draw them: strings only, each once, a handful at most. Anything else is dropped. */
+export function cleanBadges(v: unknown): Badge[] {
+  if (!Array.isArray(v)) return []
+  const out: Badge[] = []
+  for (const b of v) {
+    if (typeof b === 'string' && b.length > 0 && b.length <= 32 && !out.includes(b as Badge)) out.push(b as Badge)
+    if (out.length >= 8) break
+  }
+  return out
+}
+
+/** A message in the shape the chat draws, or undefined. Only the shape is checked here, never what it says. */
+function toMessage(v: unknown): ChatMessage | undefined {
+  if (
+    !isObj(v) ||
+    typeof v.id !== 'string' ||
+    typeof v.at !== 'number' ||
+    !Number.isFinite(v.at) ||
+    typeof v.from !== 'string' ||
+    typeof v.text !== 'string' ||
+    !Array.isArray(v.badges)
   )
+    return undefined
+  return { id: v.id, at: v.at, from: v.from, text: v.text, badges: cleanBadges(v.badges) }
+}
+
+function toMe(v: unknown): Me | undefined {
+  if (!isObj(v) || typeof v.address !== 'string') return undefined
+  return { address: v.address, badges: cleanBadges(v.badges), mod: v.mod === true }
 }
 
 /** Parse one frame from the server; anything malformed is dropped (undefined). */
@@ -98,19 +118,23 @@ export function parseFrame(raw: unknown): ServerFrame | undefined {
             room: v.room,
             slowMode: Number(v.slowMode) || 0,
             viewers: Number(v.viewers) || 0,
-            history: v.history.filter(isMessage),
+            history: v.history.map(toMessage).filter((m): m is ChatMessage => !!m),
           }
         : undefined
-    case 'me':
-      return isObj(v.me) && typeof v.me.address === 'string' ? (v as ServerFrame) : undefined
-    case 'msg':
-      return isMessage(v.msg) ? { t: 'msg', msg: v.msg } : undefined
+    case 'me': {
+      const me = toMe(v.me)
+      return me ? { t: 'me', me } : undefined
+    }
+    case 'msg': {
+      const msg = toMessage(v.msg)
+      return msg ? { t: 'msg', msg } : undefined
+    }
     case 'del':
       return typeof v.id === 'string' ? { t: 'del', id: v.id } : undefined
     case 'slow':
-      return { t: 'slow', seconds: Number(v.seconds) || 0 }
+      return { t: 'slow', seconds: Math.max(0, Number(v.seconds) || 0) }
     case 'viewers':
-      return { t: 'viewers', count: Number(v.count) || 0 }
+      return { t: 'viewers', count: Math.max(0, Number(v.count) || 0) }
     case 'err':
       return typeof v.code === 'string'
         ? {

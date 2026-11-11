@@ -10,7 +10,8 @@
   },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["ChatRoom"] }],
   "vars": {
-    "ALLOWED_ORIGINS": "https://miyamaker.com,https://www.miyamaker.com,http://localhost:5331,http://localhost:5173",
+    // Production only. Local dev adds the localhost origins in .dev.vars (see .dev.vars.example).
+    "ALLOWED_ORIGINS": "https://miyamaker.com,https://www.miyamaker.com",
     "MOD_ADDRESSES": "0x5167D014a056E43883e1BBEa5530c3c0dC993281"
   },
   // Secrets (not in this file): SESSION_SECRET  ->  npx wrangler secret put SESSION_SECRET

@@ -1,2 +1,4 @@
 # Copy to .dev.vars for `npx wrangler dev` (never commit .dev.vars).
 SESSION_SECRET=dev-only-change-me-0123456789abcdef
+# Local origins for the app's dev server (yarn start on 5331, vite on 5173); overrides ALLOWED_ORIGINS in wrangler.jsonc.
+ALLOWED_ORIGINS=https://miyamaker.com,https://www.miyamaker.com,http://localhost:5331,http://localhost:5173

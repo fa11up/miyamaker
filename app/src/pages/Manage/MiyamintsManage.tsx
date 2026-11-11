@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import styled from 'styled-components/macro'
 import type { Address } from 'viem'
 import { isAddress } from 'viem'
-import { useBalance, useReadContract, useReadContracts } from 'wagmi'
+import { useReadContract, useReadContracts } from 'wagmi'
 
 import BondingCurvePick from '@/components/BondingCurve'
 import { Err, Field, Row2, SmallButton, SplitMeter } from '@/components/LaunchKit'
@@ -11,15 +11,47 @@ import Tabs from '@/components/Tabs'
 import type { SupportedChainId } from '@/config/wagmi'
 import { explorerUrl } from '@/config/wagmi'
 import { miyamintsAddresses } from '@/constants/contracts'
-import { auctionInstanceAbi, dropInstanceAbi, editionsManageAbi, erc1155InstanceAbi } from '@/miyamints/abi'
+import { auctionInstanceAbi, dropInstanceAbi, editionsManageAbi, erc1155InstanceAbi, vaultAbi } from '@/miyamints/abi'
 import type { LaunchKind } from '@/miyamints/collections'
 import { progressLabel } from '@/miyamints/collections'
-import { jsonDataUri, parseEth, parseLink, parseName, parseWhole, tokenJson } from '@/miyamints/launch'
+import { jsonDataUri, parseLink, parseName, parseWhole, tokenJson } from '@/miyamints/launch'
+import { pctLabel } from '@/miyamints/split'
+import type { ClaimModeName, PayToken } from '@/miyamints/tokens'
+import {
+  approveWords,
+  buildPrices,
+  claimArgs,
+  ETH,
+  feesWords,
+  hasFeesFor,
+  isEth,
+  parseTokenAmount,
+  pricesWords,
+  tokenExact,
+  tokenLabel,
+} from '@/miyamints/tokens'
+import { readTokenGate, usePay, useTokenInfoState } from '@/miyamints/usePay'
 import { parseEdition } from '@/music/drop'
-import { ethLabel } from '@/miyamints/split'
 import { useVaultInfo } from '@/miyamints/useMiyamints'
-import { txWords, useTx } from '@/miyamints/useTx'
+import { txWords } from '@/miyamints/useTx'
 import { color, font, space, text } from '@/theme/tokens'
+
+import type { TokenMoney } from './payout'
+import { anyPayout, cappedNote, editionTotals, tokenPayout, TOTALS_CAP } from './payout'
+
+type Tokens = Record<string, PayToken | undefined>
+type Price = { token: Address; price: bigint }
+
+/** "0.01 ETH or 25 USDC"; a token whose decimals couldn't be read shows as "…", never at a guessed scale. */
+function priceListWords(prices: readonly Price[] | undefined, info: Tokens): string {
+  if (!prices) return '…'
+  const known = prices.map((p) => ({ price: p.price, token: info[p.token.toLowerCase()] }))
+  if (known.some((k) => !k.token)) return '…'
+  return pricesWords(known as { price: bigint; token: PayToken }[])
+}
+
+/** Rows read per page in the Editions and Pieces tabs. */
+const PAGE = 50
 
 const Stack = styled.div`
   display: flex;
@@ -68,14 +100,51 @@ const Table = styled.table`
   tbody tr:nth-child(odd) {
     background: rgba(255, 255, 255, 0.5);
   }
+  /* Phone: a table marked data-stack shows each row as label / value pairs (each cell's data-label), and a cell
+     without a label (a button) on its own line, so nothing scrolls sideways. */
+  @media only screen and (max-width: 480px) {
+    &[data-stack] thead {
+      display: none;
+    }
+    &[data-stack] tr {
+      display: block;
+      padding: 4px 0;
+    }
+    &[data-stack] td {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: ${space[2]};
+      text-align: right;
+      overflow-wrap: anywhere;
+    }
+    &[data-stack] td::before {
+      content: attr(data-label);
+      flex: 0 0 auto;
+      text-align: left;
+      font-size: ${text.xs};
+      color: ${color.inkMuted};
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+    &[data-stack] td:not([data-label]) {
+      display: block;
+      text-align: left;
+    }
+    &[data-stack] td:not([data-label])::before {
+      content: none;
+    }
+  }
 `
 
-function TxNote({ tx, id, explorer }: { tx: ReturnType<typeof useTx>['tx']; id: string; explorer: string }) {
-  if (tx.id !== id || tx.phase === 'idle') return null
+/** A step's state. An ERC-20 payment's approval (`<id>:approve`) shows under the same note. */
+function TxNote({ tx, id, explorer }: { tx: ReturnType<typeof usePay>['tx']; id: string; explorer: string }) {
+  if (!id || (tx.id !== id && tx.id !== `${id}:approve`) || tx.phase === 'idle') return null
   const tone = tx.phase === 'error' ? 'error' : tx.phase === 'done' ? 'ok' : 'info'
   return (
     <StatusBox tone={tone} role={tone === 'error' ? 'alert' : 'status'}>
       <span>
+        {tx.id === `${id}:approve` && tx.phase !== 'error' ? 'Step 1 of 2, the approval: ' : ''}
         {txWords(tx)}{' '}
         {tx.hash && (
           <a href={`${explorer}/tx/${tx.hash}`} target="_blank" rel="noreferrer">
@@ -88,9 +157,9 @@ function TxNote({ tx, id, explorer }: { tx: ReturnType<typeof useTx>['tx']; id: 
 }
 
 type Common = {
-  run: ReturnType<typeof useTx>['run']
+  run: ReturnType<typeof usePay>['run']
   busy: boolean
-  tx: ReturnType<typeof useTx>['tx']
+  tx: ReturnType<typeof usePay>['tx']
   explorer: string
   isOwner: boolean
 }
@@ -184,7 +253,8 @@ function DropActions({
   call,
   isOwner,
   dropReads,
-}: Common & { call: CallFn; dropReads: { data?: readonly { result?: unknown }[] } }) {
+  info,
+}: Common & { call: CallFn; dropReads: { data?: readonly { result?: unknown }[] }; info: Tokens }) {
   const [to, setTo] = useState('')
   const [qty, setQty] = useState('1')
   useEffect(() => {
@@ -194,7 +264,7 @@ function DropActions({
     }
   }, [tx.phase, tx.id])
   const q = parseWhole(qty, { min: 1, max: 500, label: 'Amount' })
-  type Ph = { start: bigint; end: bigint; price: bigint; maxPerWallet: number; supplyCap: number }
+  type Ph = { start: bigint; end: bigint; maxPerWallet: number; supplyCap: number; prices: readonly Price[] }
   const phases = (dropReads.data?.[9]?.result as Ph[] | undefined) || []
   const reserve = Number((dropReads.data?.[10]?.result as number | undefined) ?? 0)
   const reserveUsed = Number((dropReads.data?.[11]?.result as bigint | undefined) ?? 0n)
@@ -202,7 +272,7 @@ function DropActions({
   return (
     <Stack>
       <Eyebrow>Sale phases</Eyebrow>
-      <Table>
+      <Table data-stack>
         <thead>
           <tr>
             <th>#</th>
@@ -217,12 +287,12 @@ function DropActions({
           {phases.map((p, i) => (
             // eslint-disable-next-line react/no-array-index-key
             <tr key={i}>
-              <td>{i + 1}</td>
-              <td>{p.price === 0n ? 'Free' : ethLabel(p.price)}</td>
-              <td>{new Date(Number(p.start) * 1000).toLocaleString()}</td>
-              <td>{p.end === 0n ? 'No end' : new Date(Number(p.end) * 1000).toLocaleString()}</td>
-              <td>{p.maxPerWallet || 'No limit'}</td>
-              <td>{p.supplyCap || 'No limit'}</td>
+              <td data-label="#">{i + 1}</td>
+              <td data-label="Price">{priceListWords(p.prices, info)}</td>
+              <td data-label="Starts">{new Date(Number(p.start) * 1000).toLocaleString()}</td>
+              <td data-label="Ends">{p.end === 0n ? 'No end' : new Date(Number(p.end) * 1000).toLocaleString()}</td>
+              <td data-label="Per wallet">{p.maxPerWallet || 'No limit'}</td>
+              <td data-label="For sale">{p.supplyCap || 'No limit'}</td>
             </tr>
           ))}
         </tbody>
@@ -265,10 +335,22 @@ function AuctionPieces({
   explorer,
   call,
   isOwner,
+  more,
+  currency,
+  pay,
+  address,
+  chainId,
 }: Common & {
   call: CallFn
   ps: { tokenId: number; minBid: bigint; highBid: bigint; highBidder: Address; endTime: number; settled: boolean }[]
+  more: { note?: string; onMore: () => void }
+  /** The house's one currency; undefined until read (then no amount is shown). */
+  currency?: PayToken
+  pay: ReturnType<typeof usePay>['pay']
+  address: Address
+  chainId: SupportedChainId
 }) {
+  const money = (amount: bigint) => (currency ? tokenLabel(amount, currency) : '…')
   const [img, setImg] = useState('')
   const [name, setName] = useState('')
   const [reserve, setReserve] = useState('')
@@ -288,10 +370,11 @@ function AuctionPieces({
   }, [tx.phase, tx.id])
   const l = parseLink(img)
   const n = parseName(name)
-  const p = parseEth(reserve, { label: 'Starting bid' })
+  const p = currency ? parseTokenAmount(reserve, currency, { label: 'Starting bid' }) : undefined
+  const erc20 = !!currency && !isEth(currency.address)
   return (
     <Stack>
-      <Table>
+      <Table data-stack>
         <thead>
           <tr>
             <th>#</th>
@@ -314,9 +397,9 @@ function AuctionPieces({
               : `Live until ${new Date(x.endTime * 1000).toLocaleString()}`
             return (
               <tr key={x.tokenId}>
-                <td>{x.tokenId}</td>
-                <td>{status}</td>
-                <td>{x.highBid > 0n ? ethLabel(x.highBid) : `from ${ethLabel(x.minBid)}`}</td>
+                <td data-label="#">{x.tokenId}</td>
+                <td data-label="Status">{status}</td>
+                <td data-label="Top bid">{x.highBid > 0n ? money(x.highBid) : `from ${money(x.minBid)}`}</td>
                 <td>
                   {!x.settled && ended && x.highBid > 0n && (
                     <SmallButton
@@ -342,6 +425,14 @@ function AuctionPieces({
           })}
         </tbody>
       </Table>
+      {more.note && (
+        <p>
+          {more.note}{' '}
+          <SmallButton type="button" onClick={more.onMore}>
+            Show more
+          </SmallButton>
+        </p>
+      )}
       {ps.map((x) => (
         <TxNote
           key={x.tokenId}
@@ -357,9 +448,14 @@ function AuctionPieces({
           <input value={name} onChange={(e) => setName(e.target.value)} maxLength={64} />
         </Field>
         <Field>
-          Starting bid (ETH)
+          Starting bid ({currency?.symbol ?? '…'})
           <input value={reserve} inputMode="decimal" placeholder="0.1" onChange={(e) => setReserve(e.target.value)} />
-          <small>Paid now as a deposit; back to you when it sells.</small>
+          <small>
+            Paid now as a deposit. You get it back when the piece sells. If nobody bids, the deposit is lost: it goes
+            to the protocol when the piece is closed.
+            {erc20 && p?.ok && currency ? ` ${approveWords(p.amount, currency, 'this auction house')}` : ''}
+          </small>
+          <Err>{reserve && p && !p.ok ? p.error : undefined}</Err>
         </Field>
       </Row2>
       <Field>
@@ -370,24 +466,31 @@ function AuctionPieces({
       <div>
         <SmallButton
           type="button"
-          disabled={busy || !isOwner || !l.ok || !n.ok || !p.ok}
+          disabled={busy || !isOwner || !l.ok || !n.ok || !p?.ok || !currency}
           onClick={() =>
             l.ok &&
             n.ok &&
-            p.ok &&
-            run(
-              'queue',
-              call(
+            p?.ok &&
+            currency &&
+            pay('queue', {
+              chainId,
+              token: currency.address,
+              spender: address,
+              amount: p.amount,
+              call: call(
                 'queuePiece',
-                [jsonDataUri(tokenJson({ name: n.name, description: '', image: l.uri, website: '' }))],
-                {
-                  value: p.wei,
-                }
-              )
-            )
+                [jsonDataUri(tokenJson({ name: n.name, description: '', image: l.uri, website: '' })), p.amount],
+                { value: isEth(currency.address) ? p.amount : 0n }
+              ),
+              // queuePiece refuses a currency the registry has since dropped: checked before any approval.
+              prepare: async () => {
+                const stop = await readTokenGate(chainId, address, currency.address, currency.symbol)
+                return stop ? { ok: false, error: stop } : { ok: true }
+              },
+            })
           }
         >
-          Put it up ({p.ok ? ethLabel(p.wei) : 'set a starting bid'})
+          Put it up ({p?.ok && currency ? tokenExact(p.amount, currency) : 'set a starting bid'})
         </SmallButton>
       </div>
       <TxNote tx={tx} id="queue" explorer={explorer} />
@@ -404,33 +507,43 @@ function EditionsTab({
   address,
   chainId,
   isOwner,
+  more,
+  accepted,
+  info,
 }: Common & {
-  eds: { id: bigint; pieceTitle: string; basePrice: bigint; supply: bigint; minted: bigint }[]
+  eds: Ed[]
   address: Address
   chainId: SupportedChainId
+  more: { note?: string; onMore: () => void }
+  /** The tokens the collection accepts now (acceptedTokens), with what we know of each. */
+  accepted: readonly PayToken[] | undefined
+  info: Tokens
 }) {
   const [title, setTitle] = useState('')
   const [img, setImg] = useState('')
-  const [price, setPrice] = useState('')
+  const [prices, setPrices] = useState<Record<string, string>>({})
   const [copies, setCopies] = useState('')
   const [rise, setRise] = useState('1')
   useEffect(() => {
     if (tx.phase === 'done' && tx.id === 'edition') {
       setTitle('')
       setImg('')
-      setPrice('')
+      setPrices({})
       setCopies('')
       setRise('1')
     }
   }, [tx.phase, tx.id])
   const n = parseName(title)
   const l = parseLink(img)
-  const p = parseEth(price)
+  const p = accepted
+    ? buildPrices(prices, accepted, { required: true, allowZero: false, label: 'Price per copy' })
+    : ({ ok: false, error: '' } as const)
+  const typed = Object.values(prices).some((v) => !!v.trim())
   const c = parseWhole(copies, { min: 1, max: 1_000_000, label: 'Copies', blank: 0 })
   const edition = c.ok ? parseEdition(c.n ? String(c.n) : '', rise) : { ok: false as const, error: c.error }
   return (
     <Stack>
-      <Table>
+      <Table data-stack>
         <thead>
           <tr>
             <th>#</th>
@@ -442,14 +555,22 @@ function EditionsTab({
         <tbody>
           {eds.map((e) => (
             <tr key={e.id.toString()}>
-              <td>{e.id.toString()}</td>
-              <td>{e.pieceTitle}</td>
-              <td>{ethLabel(e.basePrice)}</td>
-              <td>{e.supply === 0n ? `${e.minted} (open)` : `${e.minted} / ${e.supply}`}</td>
+              <td data-label="#">{e.id.toString()}</td>
+              <td data-label="Title">{e.pieceTitle}</td>
+              <td data-label="Price">{priceListWords(e.prices, info)}</td>
+              <td data-label="Sold">{e.supply === 0n ? `${e.minted} (open)` : `${e.minted} / ${e.supply}`}</td>
             </tr>
           ))}
         </tbody>
       </Table>
+      {more.note && (
+        <p>
+          {more.note}{' '}
+          <SmallButton type="button" onClick={more.onMore}>
+            Show more
+          </SmallButton>
+        </p>
+      )}
       <Eyebrow>Add an edition</Eyebrow>
       <Row2>
         <Field>
@@ -463,11 +584,16 @@ function EditionsTab({
         </Field>
       </Row2>
       <Row2>
-        <Field>
-          Price per copy (ETH)
-          <input value={price} inputMode="decimal" onChange={(e) => setPrice(e.target.value)} />
-          <Err>{price && !p.ok ? p.error : undefined}</Err>
-        </Field>
+        {(accepted || []).map((t) => (
+          <Field key={t.address}>
+            Price per copy ({t.symbol})
+            <input
+              value={prices[t.address.toLowerCase()] || ''}
+              inputMode="decimal"
+              onChange={(e) => setPrices((x) => ({ ...x, [t.address.toLowerCase()]: e.target.value }))}
+            />
+          </Field>
+        ))}
         <Field>
           Number of copies
           <input
@@ -479,10 +605,11 @@ function EditionsTab({
           <Err>{!c.ok ? c.error : undefined}</Err>
         </Field>
       </Row2>
+      <Err>{typed && !p.ok ? p.error : !accepted ? "Couldn't read which tokens this collection takes." : undefined}</Err>
       <BondingCurvePick
         rise={rise}
         onRise={setRise}
-        priceWei={p.ok ? p.wei : undefined}
+        priceWei={p.ok ? p.prices.find((x) => x.token === ETH)?.price : undefined}
         supply={edition.ok ? edition.supply : undefined}
         error={!edition.ok && copies.trim() ? edition.error : undefined}
       />
@@ -502,7 +629,7 @@ function EditionsTab({
               functionName: 'addEdition',
               args: [
                 n.name,
-                p.wei,
+                p.prices,
                 edition.supply,
                 jsonDataUri(tokenJson({ name: n.name, description: '', image: l.uri, website: '' })),
                 edition.model,
@@ -523,6 +650,278 @@ function EditionsTab({
   )
 }
 
+type Ed = { id: bigint; pieceTitle: string; supply: bigint; minted: bigint; prices: readonly Price[] }
+
+const ROW_STYLE = { display: 'flex', gap: space[2], flexWrap: 'wrap', alignItems: 'center' } as const
+
+const CLAIM_MODES: { mode: ClaimModeName; label: string; words: string }[] = [
+  { mode: 'TOKENS', label: 'Take INFER and IMD', words: 'Both tokens go to your wallet as they are.' },
+  {
+    mode: 'REINVEST',
+    label: 'Reinvest',
+    words: 'Not available yet: it needs a live price quote to set a safe minimum.',
+  },
+  { mode: 'ETH', label: 'Take as ETH', words: 'Not available yet: it needs a live price quote to set a safe minimum.' },
+]
+
+/** Modes that need a quoted floor (claimArgs): off until the app can quote the vault's pool. */
+const NEEDS_QUOTE: readonly ClaimModeName[] = ['REINVEST', 'ETH']
+
+/**
+ * Money on a collection, per token (contracts/src/libraries/PaymentLib.sol): what withdraw(token) pays now, cuts
+ * parked because the vault or treasury refused them (anyone may send them on), and the vault's fees for this
+ * collection with the claim modes. Every read that fails shows "Couldn't check", never 0.
+ */
+function MoneyPanel({
+  kind,
+  address,
+  chainId,
+  tokens,
+  tokensFailed,
+  info,
+  infoLoading,
+  split,
+  vault,
+  isOwner,
+  pay,
+  explorer,
+}: {
+  kind: Exclude<LaunchKind, 'legacy' | 'unknown'>
+  address: Address
+  chainId: SupportedChainId
+  /** knownTokens (drop, editions) or [currency] (auction); undefined while read. */
+  tokens: readonly Address[] | undefined
+  tokensFailed: boolean
+  info: Tokens
+  /** The tokens' symbols and decimals are still being read: an unknown one is "…", not "Couldn't check". */
+  infoLoading: boolean
+  split: { p?: number; a?: number; vault?: Address }
+  vault: { symbol?: string }
+  isOwner: boolean
+  pay: ReturnType<typeof usePay>
+  explorer: string
+}) {
+  const { tx, run } = pay
+  const busy = pay.busy || pay.unconfirmed
+  const abi = kind === 'drop' ? dropInstanceAbi : kind === 'auction' ? auctionInstanceAbi : editionsManageAbi
+  const list = tokens || []
+  const perToken = ['ownerBalance', 'pendingVaultCut', 'pendingProtocolCut', ...(kind === 'auction' ? [] : ['unsplitProceeds'])]
+  const reads = useReadContracts({
+    allowFailure: true,
+    contracts: list.flatMap((token) =>
+      perToken.map((functionName) => ({ address, abi, functionName, args: [token], chainId }) as never)
+    ),
+    query: { enabled: list.length > 0 },
+  })
+  const fees = useReadContracts({
+    allowFailure: true,
+    contracts: [
+      { address: split.vault, abi: vaultAbi, functionName: 'claimable', args: [address], chainId },
+      ...list.map((token) => ({
+        address: split.vault,
+        abi: vaultAbi,
+        functionName: 'pendingOf' as const,
+        args: [address, token] as const,
+        chainId,
+      })),
+    ],
+    query: { enabled: !!split.vault },
+  })
+  const [mode, setMode] = useState<ClaimModeName>('TOKENS')
+  useEffect(() => {
+    if (tx.phase === 'done') {
+      reads.refetch()
+      fees.refetch()
+    }
+  }, [tx.phase])
+
+  const n = perToken.length
+  const val = (i: number) => {
+    const r = reads.data?.[i]
+    return r?.status === 'success' ? (r.result as bigint) : undefined
+  }
+  const rows: TokenMoney[] = list.map((token, t) => ({
+    token,
+    payout: tokenPayout(val(t * n), kind === 'auction' ? 0n : val(t * n + 3), split.p, split.a),
+    parkedVault: val(t * n + 1),
+    parkedProtocol: val(t * n + 2),
+  }))
+  const any = anyPayout(rows)
+  const loading = (!tokens && !tokensFailed) || reads.isLoading
+  const amount = (v: bigint | undefined, token: Address) => {
+    const unit = info[token.toLowerCase()]
+    if (v === undefined) return loading ? '…' : "Couldn't check"
+    if (!unit) return infoLoading ? '…' : "Couldn't check"
+    return tokenLabel(v, unit)
+  }
+  const parked = rows.filter((r) => (r.parkedVault ?? 0n) > 0n || (r.parkedProtocol ?? 0n) > 0n)
+  const ethAuction = kind === 'auction' && list.length === 1 && isEth(list[0] as Address)
+
+  const claim = fees.data?.[0]
+  const claimable =
+    claim?.status === 'success'
+      ? (() => {
+          const [infer, imd, eth] = claim.result as readonly [bigint, bigint, bigint]
+          return { infer, imd, eth }
+        })()
+      : undefined
+  const queued = list
+    .map((token, i) => ({ token, v: fees.data?.[i + 1]?.status === 'success' ? (fees.data[i + 1]!.result as bigint) : undefined }))
+    .filter((q) => q.v !== undefined && q.v > 0n)
+  const claimCall = claimArgs(mode)
+
+  const call = (functionName: string, args: unknown[] = []) => ({ address, chainId, abi, functionName, args })
+
+  return (
+    <>
+      <Eyebrow>Your money, per token</Eyebrow>
+      <p>
+        You collect each token exactly as buyers paid it. Nothing is converted.
+        {kind !== 'auction' && split.p !== undefined && split.a !== undefined
+          ? ` Withdraw first splits sales not split yet: ${pctLabel(split.a)} to the vault, ${pctLabel(
+              split.p
+            )} to miya, the rest to you.`
+          : ''}
+      </p>
+      {ethAuction ? (
+        <p>Each ETH sale pays out by itself when its auction is settled.</p>
+      ) : tokensFailed ? (
+        <p>Couldn&apos;t read which tokens this collection takes. Try again later.</p>
+      ) : (
+        <Table data-stack>
+          <thead>
+            <tr>
+              <th>Token</th>
+              <th>Ready to withdraw</th>
+              <th />
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => {
+              const unit = info[r.token.toLowerCase()]
+              return (
+                <tr key={r.token}>
+                  <td data-label="Token" title={unit?.fromChain ? 'Name read from the token contract' : undefined}>
+                    {unit?.symbol ?? `${r.token.slice(0, 6)}…`}
+                  </td>
+                  <td data-label="Ready to withdraw">{amount(r.payout, r.token)}</td>
+                  <td>
+                    <SmallButton
+                      type="button"
+                      disabled={busy || !isOwner || !r.payout}
+                      onClick={() => run(`withdraw-${r.token}`, call('withdraw', [r.token]))}
+                    >
+                      {r.payout && unit ? `Withdraw ${tokenLabel(r.payout, unit)}` : 'Withdraw'}
+                    </SmallButton>
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </Table>
+      )}
+      {!ethAuction && list.length > 1 && (
+        <div>
+          <BigButton
+            type="button"
+            disabled={busy || !isOwner || !any}
+            onClick={() => run('withdraw-all', call('withdrawAll'))}
+          >
+            {any === undefined ? (loading ? 'Checking sales…' : "Couldn't check sales") : any ? 'Withdraw all' : 'Nothing to withdraw yet'}
+          </BigButton>
+        </div>
+      )}
+      {rows.map((r) => (
+        <TxNote key={r.token} tx={tx} id={tx.id === `withdraw-${r.token}` ? tx.id : ''} explorer={explorer} />
+      ))}
+      <TxNote tx={tx} id="withdraw-all" explorer={explorer} />
+
+      {parked.length > 0 && (
+        <Well style={{ padding: space[3], display: 'flex', flexDirection: 'column', gap: space[2] }}>
+          <Eyebrow>Cuts waiting to be sent</Eyebrow>
+          <p>
+            The vault or miya&apos;s treasury turned these down (for example a vault cut below its minimum). They are
+            held apart from your money and go along with the next sale in that token. Anyone can send them now; if the
+            vault still turns a cut down, it stays here.
+          </p>
+          {parked.map((r) => (
+            <div key={r.token} style={ROW_STYLE}>
+              {(r.parkedVault ?? 0n) > 0n && (
+                <SmallButton
+                  type="button"
+                  disabled={busy}
+                  onClick={() => run(`flush-vault-${r.token}`, call('flushPendingVaultCut', [r.token, 0n]))}
+                >
+                  Send {amount(r.parkedVault, r.token)} to the vault
+                </SmallButton>
+              )}
+              {(r.parkedProtocol ?? 0n) > 0n && (
+                <SmallButton
+                  type="button"
+                  disabled={busy}
+                  onClick={() => run(`flush-protocol-${r.token}`, call('flushPendingProtocolCut', [r.token]))}
+                >
+                  Send {amount(r.parkedProtocol, r.token)} to miya
+                </SmallButton>
+              )}
+              <TxNote tx={tx} id={tx.id?.endsWith(r.token) && tx.id.startsWith('flush') ? tx.id : ''} explorer={explorer} />
+            </div>
+          ))}
+        </Well>
+      )}
+
+      <Eyebrow>Vault fees</Eyebrow>
+      <p>
+        {vault.symbol
+          ? `Your vault share goes in when sales are split (a withdrawal, a Distribute anyone can run, or an auction settling) and becomes ${vault.symbol} liquidity, in batches. It stays in the pool for good. The pool's trading fees are paid in INFER and IMD.`
+          : 'The vault pays its trading fees to collections that sent it a share.'}
+      </p>
+      {queued.length > 0 && (
+        <p>
+          Waiting for the vault&apos;s next batch:{' '}
+          {queued.map((q) => amount(q.v, q.token)).join(', ')}.
+        </p>
+      )}
+      <Stats>
+        <dt>Fees ready</dt>
+        <dd>
+          {claimable ? feesWords(claimable) : fees.isLoading || !split.vault ? '…' : "Couldn't check"}
+        </dd>
+      </Stats>
+      <div role="radiogroup" aria-label="How to take the fees" style={{ display: 'grid', gap: space[1] }}>
+        {CLAIM_MODES.map((m) => (
+          <label key={m.mode} style={{ display: 'flex', gap: space[2], alignItems: 'baseline' }}>
+            <input
+              type="radio"
+              name={`claim-${address}`}
+              checked={mode === m.mode}
+              disabled={NEEDS_QUOTE.includes(m.mode)}
+              onChange={() => setMode(m.mode)}
+            />
+            <span>
+              <b>{m.label}</b>. <span style={{ color: color.inkMuted }}>{m.words}</span>
+            </span>
+          </label>
+        ))}
+      </div>
+      <div>
+        <SmallButton
+          type="button"
+          disabled={busy || !isOwner || !claimCall.ok || !claimable || !hasFeesFor(mode, claimable)}
+          onClick={() => claimCall.ok && run('fees', call('claimVaultFees', [...claimCall.args]))}
+        >
+          {claimable && !hasFeesFor(mode, claimable)
+            ? 'No fees to claim yet'
+            : mode === 'REINVEST'
+            ? 'Reinvest my vault fees'
+            : 'Claim my vault fees'}
+        </SmallButton>
+      </div>
+      <TxNote tx={tx} id="fees" explorer={explorer} />
+    </>
+  )
+}
+
 /** Manage a collection made by the miyamints factories: overview + payouts, then per-kind tabs. */
 export default function MiyamintsManage({
   chainId,
@@ -536,6 +935,7 @@ export default function MiyamintsManage({
   isOwner: boolean
 }) {
   const [tab, setTab] = useState('overview')
+  const [limit, setLimit] = useState(PAGE)
   const explorer = explorerUrl(chainId)
   const a = miyamintsAddresses(chainId)
 
@@ -562,17 +962,29 @@ export default function MiyamintsManage({
   })
   const auctionReads = useReadContracts({
     allowFailure: true,
-    contracts: (['nextTokenId', 'protocolFeeBps', 'alignmentBps', 'vault', 'baseDuration'] as const).map(
+    contracts: (['nextTokenId', 'protocolFeeBps', 'alignmentBps', 'vault', 'baseDuration', 'currency'] as const).map(
       (functionName) => ({ address, abi: auctionInstanceAbi, functionName, chainId })
     ),
     query: { enabled: kind === 'auction' },
   })
   const editionReads = useReadContracts({
     allowFailure: true,
-    contracts: (['protocolFeeBps', 'alignmentBps', 'vault', 'totalProceeds', 'totalWithdrawn'] as const).map(
-      (functionName) => ({ address, abi: editionsManageAbi, functionName, chainId })
-    ),
+    contracts: (['protocolFeeBps', 'alignmentBps', 'vault'] as const).map((functionName) => ({
+      address,
+      abi: editionsManageAbi,
+      functionName,
+      chainId,
+    })),
     query: { enabled: kind === 'editions' },
+  })
+  // Every token ever accepted (a delisted one stays withdrawable), and the ones on sale now.
+  const tokenReads = useReadContracts({
+    allowFailure: true,
+    contracts: [
+      { address, abi: kind === 'drop' ? dropInstanceAbi : editionsManageAbi, functionName: 'knownTokens', chainId },
+      { address, abi: kind === 'drop' ? dropInstanceAbi : editionsManageAbi, functionName: 'acceptedTokens', chainId },
+    ],
+    query: { enabled: kind !== 'auction' },
   })
   const editionIds = useReadContract({
     address,
@@ -583,7 +995,19 @@ export default function MiyamintsManage({
   })
   const editions = useReadContracts({
     allowFailure: true,
-    contracts: ((editionIds.data as readonly bigint[] | undefined) || []).slice(0, 50).map((id) => ({
+    contracts: ((editionIds.data as readonly bigint[] | undefined) || []).slice(0, limit).map((id) => ({
+      address,
+      abi: erc1155InstanceAbi,
+      functionName: 'getEdition' as const,
+      args: [id] as const,
+      chainId,
+    })),
+    query: { enabled: kind === 'editions' && !!editionIds.data },
+  })
+  // Every edition (up to TOTALS_CAP) for the overview's totals: the table's page is not the whole collection.
+  const allEditions = useReadContracts({
+    allowFailure: true,
+    contracts: ((editionIds.data as readonly bigint[] | undefined) || []).slice(0, TOTALS_CAP).map((id) => ({
       address,
       abi: erc1155InstanceAbi,
       functionName: 'getEdition' as const,
@@ -595,7 +1019,7 @@ export default function MiyamintsManage({
   const pieceCount = kind === 'auction' ? Number((auctionReads.data?.[0]?.result as number | undefined) ?? 1) - 1 : 0
   const pieces = useReadContracts({
     allowFailure: true,
-    contracts: Array.from({ length: Math.min(pieceCount, 50) }, (_, i) => ({
+    contracts: Array.from({ length: Math.min(pieceCount, limit) }, (_, i) => ({
       address,
       abi: auctionInstanceAbi,
       functionName: 'getAuction' as const,
@@ -604,23 +1028,24 @@ export default function MiyamintsManage({
     })),
     query: { enabled: kind === 'auction' && pieceCount > 0 },
   })
-  const balance = useBalance({ address, chainId })
 
   const refetchAll = () => {
     dropReads.refetch()
     auctionReads.refetch()
     editionReads.refetch()
+    tokenReads.refetch()
     editionIds.refetch()
     editions.refetch()
+    allEditions.refetch()
     pieces.refetch()
-    balance.refetch()
   }
 
-  const { tx, run, busy: sending, unconfirmed, reset } = useTx(() => refetchAll())
+  const payer = usePay(() => refetchAll())
+  const { tx, run, busy: sending, unconfirmed, reset } = payer
   // Sent, but unread: it may still land, so nothing is pressed twice until someone says to start over.
   const busy = sending || unconfirmed
   const r = <T,>(q: typeof dropReads | typeof auctionReads | typeof editionReads, i: number) =>
-    q.data?.[i]?.result as T | undefined
+    q.data?.[i]?.status === 'success' ? (q.data[i]!.result as T) : undefined
 
   const split =
     kind === 'drop'
@@ -630,8 +1055,32 @@ export default function MiyamintsManage({
       : { p: r<number>(editionReads, 0), a: r<number>(editionReads, 1), vault: r<Address>(editionReads, 2) }
   const vault = useVaultInfo(chainId, a.registry, split.vault)
 
-  type Ed = { id: bigint; pieceTitle: string; basePrice: bigint; supply: bigint; minted: bigint }
+  const currencyAddr = kind === 'auction' ? r<Address>(auctionReads, 5) : undefined
+  const read = (i: number) =>
+    tokenReads.data?.[i]?.status === 'success' ? (tokenReads.data[i]!.result as readonly Address[]) : undefined
+  const known = kind === 'auction' ? (currencyAddr ? [currencyAddr] : undefined) : read(0)
+  const acceptedAddrs = kind === 'auction' ? known : read(1)
+  const tokensFailed =
+    kind === 'auction'
+      ? !auctionReads.isLoading && !currencyAddr
+      : !tokenReads.isLoading && (tokenReads.isError || (!!tokenReads.data && !known))
   const eds = (editions.data || []).map((e) => e.result as Ed | undefined).filter(Boolean) as Ed[]
+  const allPriced = Array.from(
+    new Set([
+      ...(known || []),
+      ...(acceptedAddrs || []),
+      ...eds.flatMap((e) => e.prices.map((p) => p.token)),
+      ...(((dropReads.data?.[9]?.result as { prices: readonly Price[] }[] | undefined) || []).flatMap((ph) =>
+        ph.prices.map((p) => p.token)
+      )),
+    ])
+  )
+  const { info, loading: infoLoading } = useTokenInfoState(chainId, allPriced)
+  const accepted = acceptedAddrs?.every((t) => info[t.toLowerCase()])
+    ? (acceptedAddrs.map((t) => info[t.toLowerCase()]) as PayToken[])
+    : undefined
+  const currency = currencyAddr ? info[currencyAddr.toLowerCase()] : undefined
+
   type Piece = {
     tokenId: number
     minBid: bigint
@@ -643,25 +1092,24 @@ export default function MiyamintsManage({
   }
   const ps = (pieces.data || []).map((p) => p.result as Piece | undefined).filter(Boolean) as Piece[]
 
+  const edTotals = editionTotals(
+    allEditions.data?.map((e) => (e.status === 'success' ? (e.result as Ed) : undefined)),
+    (editionIds.data as readonly bigint[] | undefined)?.length
+  )
   const minted =
-    kind === 'drop'
-      ? r<bigint>(dropReads, 0)
-      : kind === 'auction'
-      ? BigInt(pieceCount)
-      : eds.reduce((s, e) => s + e.minted, 0n)
-  const supply =
-    kind === 'drop'
-      ? BigInt(r<number>(dropReads, 1) ?? 0)
-      : kind === 'editions' && eds.length && !eds.some((e) => e.supply === 0n)
-      ? eds.reduce((s, e) => s + e.supply, 0n)
-      : undefined
+    kind === 'drop' ? r<bigint>(dropReads, 0) : kind === 'auction' ? BigInt(pieceCount) : edTotals.minted
+  const supply = kind === 'drop' ? BigInt(r<number>(dropReads, 1) ?? 0) : kind === 'editions' ? edTotals.supply : undefined
+  const soldFailed = kind === 'editions' && (!!editionIds.error || (!!allEditions.data && minted === undefined))
 
-  const waiting =
-    kind === 'editions'
-      ? (r<bigint>(editionReads, 3) ?? 0n) - (r<bigint>(editionReads, 4) ?? 0n)
-      : kind === 'drop'
-      ? balance.data?.value ?? 0n
-      : 0n
+  const totalEditions = (editionIds.data as readonly bigint[] | undefined)?.length
+  const editionsMore = {
+    note: cappedNote(Math.min(limit, totalEditions ?? 0), totalEditions, 'editions'),
+    onMore: () => setLimit((n) => n + PAGE),
+  }
+  const piecesMore = {
+    note: cappedNote(Math.min(limit, pieceCount), pieceCount, 'pieces'),
+    onMore: () => setLimit((n) => n + PAGE),
+  }
 
   const call = (fn: string, args: unknown[] = [], extra: Record<string, unknown> = {}) => ({
     address,
@@ -676,16 +1124,24 @@ export default function MiyamintsManage({
     <Stack>
       <Stats>
         <dt>Sold</dt>
-        <dd>{progressLabel(kind, minted, supply) || '…'}</dd>
-        {kind !== 'auction' && (
-          <>
-            <dt>Sales waiting</dt>
-            <dd>{ethLabel(waiting)}</dd>
-          </>
-        )}
+        <dd>
+          {soldFailed
+            ? "Couldn't check"
+            : progressLabel(kind, minted, supply)
+            ? `${progressLabel(kind, minted, supply)}${kind === 'editions' && edTotals.scope ? ` (${edTotals.scope})` : ''}`
+            : '…'}
+        </dd>
+        <dt>{kind === 'auction' ? 'Bids in' : 'Buyers pay in'}</dt>
+        <dd>
+          {acceptedAddrs
+            ? acceptedAddrs.map((t) => info[t.toLowerCase()]?.symbol ?? `${t.slice(0, 6)}…`).join(', ')
+            : tokensFailed
+            ? "Couldn't check"
+            : '…'}
+        </dd>
         <dt>Vault</dt>
         <dd>
-          {vault.symbol ? `Buys ${vault.symbol}` : 'Alignment vault'}{' '}
+          {vault.symbol ? `${vault.symbol} liquidity` : 'Alignment vault'}{' '}
           {split.vault && (
             <a
               href={`${explorer}/address/${split.vault}`}
@@ -704,26 +1160,20 @@ export default function MiyamintsManage({
           <SplitMeter protocolBps={split.p} alignmentBps={split.a} vaultName={vault.symbol} />
         </Well>
       )}
-      {kind !== 'auction' && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: space[1] }}>
-          <BigButton
-            type="button"
-            disabled={busy || waiting === 0n || (kind === 'editions' && !isOwner)}
-            onClick={() => run('withdraw', call('withdraw', kind === 'editions' ? [waiting] : []))}
-          >
-            {waiting === 0n ? 'Nothing to pay out yet' : `Pay out ${ethLabel(waiting)}`}
-          </BigButton>
-          <small style={{ color: color.inkMuted }}>Splits the sales as shown above and sends your part to you.</small>
-          <TxNote tx={tx} id="withdraw" explorer={explorer} />
-        </div>
-      )}
-      {kind === 'auction' && <p>Each sale pays out by itself when its auction is settled.</p>}
-      <div>
-        <SmallButton type="button" disabled={busy || !isOwner} onClick={() => run('fees', call('claimVaultFees'))}>
-          Claim my vault trading fees
-        </SmallButton>
-      </div>
-      <TxNote tx={tx} id="fees" explorer={explorer} />
+      <MoneyPanel
+        kind={kind}
+        address={address}
+        chainId={chainId}
+        tokens={known}
+        tokensFailed={tokensFailed}
+        info={info}
+        infoLoading={infoLoading}
+        split={split}
+        vault={vault}
+        isOwner={isOwner}
+        pay={payer}
+        explorer={explorer}
+      />
     </Stack>
   )
 
@@ -751,7 +1201,7 @@ export default function MiyamintsManage({
               {
                 title: 'Actions',
                 id: 'actions',
-                children: <DropActions {...{ run, busy, tx, explorer, call, isOwner, dropReads }} />,
+                children: <DropActions {...{ run, busy, tx, explorer, call, isOwner, dropReads, info }} />,
               },
             ]
           : []),
@@ -760,7 +1210,13 @@ export default function MiyamintsManage({
               {
                 title: 'Pieces',
                 id: 'pieces',
-                children: <AuctionPieces {...{ ps, run, busy, tx, explorer, call, isOwner }} />,
+                children: (
+                  <AuctionPieces
+                    {...{ ps, run, busy, tx, explorer, call, isOwner, currency, address, chainId }}
+                    pay={payer.pay}
+                    more={piecesMore}
+                  />
+                ),
               },
             ]
           : []),
@@ -769,7 +1225,12 @@ export default function MiyamintsManage({
               {
                 title: 'Editions',
                 id: 'editions',
-                children: <EditionsTab {...{ eds, run, busy, tx, explorer, address, chainId, isOwner }} />,
+                children: (
+                  <EditionsTab
+                    {...{ eds, run, busy, tx, explorer, address, chainId, isOwner, accepted, info }}
+                    more={editionsMore}
+                  />
+                ),
               },
             ]
           : []),

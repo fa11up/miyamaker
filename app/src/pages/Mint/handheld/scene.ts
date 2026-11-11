@@ -11,6 +11,7 @@ import {
   InstancedMesh,
   LatheGeometry,
   Matrix4,
+  Material,
   Mesh,
   MeshBasicMaterial,
   MeshPhysicalMaterial,
@@ -29,6 +30,7 @@ import {
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
 
 import { rightEdge } from './look'
+import { release } from './release'
 
 /**
  * The handheld as a real 3D object, lazily loaded so only Mint pays for three.js. One unit is one CSS pixel, and the
@@ -428,6 +430,9 @@ export function createDeviceScene(canvas: HTMLCanvasElement, cheap: boolean) {
     envMapIntensity: 0.25,
   })
 
+  /** Made once and reused by every build, so a rebuild must leave them be. */
+  const shared = new Set<Material>([shellMat, backMat, sidePlastic, rubber, dark, well, badgeMat])
+
   let path = ''
   let tintHex = '#9a6cf0'
   let inkHex = '#ffffff'
@@ -436,10 +441,7 @@ export function createDeviceScene(canvas: HTMLCanvasElement, cheap: boolean) {
   const build = (layout: Layout) => {
     if (!path) return
     device.remove(built)
-    built.traverse((o) => {
-      const m = o as Mesh
-      if (m.geometry) m.geometry.dispose()
-    })
+    release(built, shared)
     built = new Group()
     built.position.z = -FRONT
     device.add(built)
@@ -842,13 +844,17 @@ export function createDeviceScene(canvas: HTMLCanvasElement, cheap: boolean) {
       renderer.render(scene, camera)
     },
     dispose() {
-      built.traverse((o) => {
-        const m = o as Mesh
-        if (m.geometry) m.geometry.dispose()
-      })
+      logoImage.onload = null
+      release(built)
+      shared.forEach((mat) => mat.dispose())
+      printMap.dispose()
+      reliefMap.dispose()
+      scene.environment = null
       env.dispose()
       pmrem.dispose()
       renderer.dispose()
+      // Hand the context back now, rather than whenever the canvas is collected.
+      renderer.forceContextLoss()
     },
   }
 }

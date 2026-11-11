@@ -14,8 +14,19 @@ import { LAND_PATH } from './earth'
 import type { FocusTimer } from './focusTimer'
 import { focusLength, mmss } from './focusTimer'
 import { fetchTapes, reviewTape, submitTape } from './publicAccess'
-import type { Point } from './issMath'
-import { bearing, compass, destination, headingLabel, mapSegments, nightSide, viewFan, viewRing } from './issMath'
+import type { IssPosition, Point } from './issMath'
+import {
+  bearing,
+  compass,
+  destination,
+  headingLabel,
+  mapSegments,
+  nightSide,
+  readIssPosition,
+  readIssPositions,
+  viewFan,
+  viewRing,
+} from './issMath'
 import { formatDistance, parseLifetimeMetres, parseVitals, SQUEEK_API } from './squeek'
 
 /* Each channel's own sidebar, in the same dark walnut and cream as its chat. */
@@ -361,22 +372,10 @@ const Map = styled.svg`
 `
 
 const ISS_API = 'https://api.wheretheiss.at/v1'
-type IssPosition = {
-  latitude: number
-  longitude: number
-  altitude: number
-  velocity: number
-  visibility: string
-  footprint: number
-  timestamp: number
-  solar_lat: number
-  solar_lon: number
-}
-
 const positionsAt = async (timestamps: number[]) => {
   const res = await fetch(`${ISS_API}/satellites/25544/positions?timestamps=${timestamps.join(',')}`)
   if (!res.ok) throw new Error('No position')
-  return (await res.json()) as IssPosition[]
+  return readIssPositions(await res.json())
 }
 
 const ORBIT_STEP = 180
@@ -388,7 +387,10 @@ export function IssPanel() {
     queryFn: async () => {
       const res = await fetch(`${ISS_API}/satellites/25544`)
       if (!res.ok) throw new Error('No position')
-      return (await res.json()) as IssPosition
+      // Checked here, so a broken answer reads as no position rather than a crash on toFixed.
+      const position = readIssPosition(await res.json())
+      if (!position) throw new Error('No position')
+      return position
     },
     refetchInterval: 5000,
   })
@@ -425,7 +427,8 @@ export function IssPanel() {
     queryFn: async () => {
       const res = await fetch(`${ISS_API}/coordinates/${d!.latitude.toFixed(2)},${d!.longitude.toFixed(2)}`)
       if (!res.ok) throw new Error('No place')
-      return ((await res.json()) as { country_code?: string }).country_code
+      const code = ((await res.json()) as { country_code?: unknown } | null)?.country_code
+      return typeof code === 'string' ? code : undefined
     },
   })
 

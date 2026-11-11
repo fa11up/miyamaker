@@ -2,8 +2,11 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
+import { encodeFunctionData } from 'viem'
+
+import { erc1155FactoryAbi } from '../src/music/abi.ts'
 import { curveId, curvePrice } from '../src/music/bonding.ts'
-import { editionArgs, makeSalt, parseAlignmentPct, parseEdition, parsePriceEth, parseSupply, PRICING_MODEL } from '../src/music/drop.ts'
+import { collectionParams, editionArgs, makeSalt, MUSIC_TOKENS, parseAlignmentPct, parseEdition, parsePriceEth, parseSupply, PRICING_MODEL } from '../src/music/drop.ts'
 
 test('prices are parsed exactly with parseEther (no float rounding) and must be > 0', () => {
   assert.deepEqual(parsePriceEth('0.1'), { ok: true, wei: 100000000000000000n })
@@ -33,9 +36,26 @@ test('alignment percent → bps respects the registry minimum and the 100% cap',
   assert.equal(parseAlignmentPct('ten', 1000).ok, false)
 })
 
-test('editionArgs matches ERC1155Instance.addEdition and opens immediately', () => {
+test('editionArgs matches ERC1155Instance.addEdition(title, TokenPrice[], …) and opens immediately', () => {
+  const eth = '0x0000000000000000000000000000000000000000'
   const args = editionArgs({ title: 'Song', priceWei: 10n, supply: 0n, model: 0, metadataURI: 'ar://m' })
-  assert.deepEqual(args, ['Song', 10n, 0n, 'ar://m', 0, 0n, 0n])
+  assert.deepEqual(args, ['Song', [{ token: eth, price: 10n }], 0n, 'ar://m', 0, 0n, 0n])
+  const usdc = '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'
+  const two = editionArgs({
+    title: 'Song',
+    prices: [
+      { token: eth, price: 10n },
+      { token: usdc, price: 5_000_000n },
+    ],
+    supply: 5n,
+    model: 1,
+    metadataURI: 'ar://m',
+  })
+  assert.deepEqual(two[1], [
+    { token: eth, price: 10n },
+    { token: usdc, price: 5_000_000n },
+  ])
+  assert.deepEqual(MUSIC_TOKENS, [eth], 'Drop Music releases accept ETH')
   const curved = editionArgs({
     title: 'Song',
     priceWei: 10n,
@@ -44,7 +64,7 @@ test('editionArgs matches ERC1155Instance.addEdition and opens immediately', () 
     metadataURI: 'ar://m',
     priceIncreaseRate: 100n,
   })
-  assert.deepEqual(curved, ['Song', 10n, 100n, 'ar://m', PRICING_MODEL.LIMITED_DYNAMIC, 100n, 0n])
+  assert.deepEqual(curved, ['Song', [{ token: eth, price: 10n }], 100n, 'ar://m', PRICING_MODEL.LIMITED_DYNAMIC, 100n, 0n])
 })
 
 test('a rise percent turns a limited edition into the on-chain curve', () => {
@@ -84,4 +104,21 @@ test('makeSalt is a CreateX permissioned salt: factory ‖ 0x00 ‖ 11 random by
   assert.equal(salt, '0x00000000000000000000000000000000000000aa00ffffffffffffffffffffff')
   assert.equal(salt.length, 66)
   assert.throws(() => makeSalt('0x1234', new Uint8Array(11)))
+})
+
+test('collectionParams encodes as ERC1155Factory.createInstance and accepts ETH', () => {
+  const params = collectionParams({
+    name: 'Tape',
+    metadataURI: 'ar://m',
+    creator: '0x00000000000000000000000000000000000000c1',
+    vault: '0x00000000000000000000000000000000000000f1',
+    alignmentBps: 1000,
+  })
+  assert.deepEqual(params.acceptedTokens, [...MUSIC_TOKENS])
+  const data = encodeFunctionData({
+    abi: erc1155FactoryAbi,
+    functionName: 'createInstance',
+    args: [`0x${'00'.repeat(32)}`, params],
+  })
+  assert.match(data, /^0x[0-9a-f]+$/)
 })

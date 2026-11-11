@@ -317,8 +317,9 @@ function Line({ msg, canDelete, onDelete }: { msg: ChatMessage; canDelete: boole
     <li>
       <span className="time">{timeFmt(msg.at)}</span>
       {msg.badges.map((b) => (
-        <BadgeTag key={b} kind={b} title={BADGE_TITLE[b]}>
-          {BADGE_LABEL[b] ?? b}
+        // Own keys only: a badge named "constructor" must not pull a function out of the prototype.
+        <BadgeTag key={b} kind={b} title={Object.hasOwn(BADGE_TITLE, b) ? BADGE_TITLE[b] : undefined}>
+          {Object.hasOwn(BADGE_LABEL, b) ? BADGE_LABEL[b] : b}
         </BadgeTag>
       ))}
       <span className="from" title={msg.from}>

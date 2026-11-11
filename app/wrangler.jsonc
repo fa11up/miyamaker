@@ -15,9 +15,19 @@
   // Secrets (not in this file): npx wrangler secret put ZEROX_API_KEY
   //                             npx wrangler secret put OPENSEA_API_KEY
   //                             npx wrangler secret put YOUTUBE_API_KEY
+  //                             npx wrangler secret put ETHERSCAN_API_KEY
+  //   Keyed RPC (api/_lib/rpc.ts), each optional (unset = public RPCs):
+  //                             npx wrangler secret put RPC_URL_1
+  //                             npx wrangler secret put RPC_URL_4663
+  //                             npx wrangler secret put RPC_URL_11155111
+  //                             npx wrangler secret put ALCHEMY_API_KEY
+  //   VITE_RPC_URL_* and VITE_ALCHEMY_KEY are no longer read: remove them from .env.production.local.
+  // The API's rate limits in the Worker are per isolate; the global one is a Cloudflare WAF rate-limiting rule on /api/*
+  // (dashboard, not this file): see createRateLimiter in api/_lib/zeroex.ts for the recommended rule.
   // Wallets that can remove any track from the radio's community station, comma-separated. miyagod.eth.
   "vars": { "STATION_ADMINS": "0x5167D014a056E43883e1BBEa5530c3c0dC993281" },
-  // The radio's community station (api/_lib/station.ts). Schema: migrations/, npx wrangler d1 migrations apply miyamaker-station --remote
+  // The radio's community station (api/_lib/station.ts), public access, used signatures and miyatv's shared lookups
+  // (api/_lib/sharedstate.ts). Schema: migrations/, npx wrangler d1 migrations apply miyamaker-station --remote
   "d1_databases": [
     {
       "binding": "DB",

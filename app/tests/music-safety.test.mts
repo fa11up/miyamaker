@@ -13,7 +13,7 @@ import {
   clearUnreadPads,
   idbSet,
   loadFactoryKit,
-  model,
+  model as musicModel,
   normalizeBuses,
   normalizeComp,
   normalizePad,
@@ -43,6 +43,9 @@ import { fetchCapped, readCapped } from '../src/pages/MusicMaker/media/capped.js
 import { heldBytes, trimStack } from '../src/pages/MusicMaker/history.js'
 import { bounceSeconds, BOUNCE_MAX_SECONDS, looksLikeVideo } from '../src/pages/MusicMaker/audio/engine.js'
 import { imageSize } from '../src/pages/MusicMaker/audio/imageSpectrum.js'
+
+// The sampler's state is plain JS; the tests poke at it freely, so it is typed loosely here.
+const model = musicModel as unknown as { pads: any[]; buses: any[]; [key: string]: any }
 
 const g = globalThis as any
 
@@ -137,7 +140,7 @@ test('a sample pad that could not be read is unread, and Save, Save as, kit save
 
 test('normalizers drop prototype keys, junk oscillators, and cap render work', () => {
   const hostile = JSON.parse('{"__proto__":{"polluted":1},"constructor":{"x":1},"freq":220,"bogus":5,"unison":99,"fmFrom":"x","oscs":[{"__proto__":{"p":1},"type":"evil","ratio":1e9},"junk",null],"partials":' + JSON.stringify(Array(500).fill(0.1)) + '}')
-  const p = normalizePatch(hostile)!
+  const p = normalizePatch(hostile) as any
   assert.equal(({} as any).polluted, undefined)
   assert.equal(Object.getPrototypeOf(p), Object.prototype)
   assert.equal('bogus' in p, false)
@@ -159,7 +162,7 @@ test('normalizers drop prototype keys, junk oscillators, and cap render work', (
 })
 
 test('comp, bus and LFO normalizers turn NaN and junk into the defaults, and keep justice as it is', () => {
-  const comp = normalizeComp({ threshold: NaN, ratio: 'x', knee: Infinity, attack: null, makeup: {}, kKnee: NaN, kPitch: NaN, justice: true, lfo: { kPolice: { rate: NaN, depth: 'x', on: 1 }, kFold: 7 } })
+  const comp: any = normalizeComp({ threshold: NaN, ratio: 'x', knee: Infinity, attack: null, makeup: {}, kKnee: NaN, kPitch: NaN, justice: true, lfo: { kPolice: { rate: NaN, depth: 'x', on: 1 }, kFold: 7 } })
   for (const key of ['threshold', 'ratio', 'knee', 'attack', 'release', 'makeup', 'kKnee', 'kPolice', 'kFold', 'kPitch']) {
     assert.ok(Number.isFinite(comp[key]), `${key} is ${comp[key]}`)
   }
@@ -170,7 +173,7 @@ test('comp, bus and LFO normalizers turn NaN and junk into the defaults, and kee
   assert.equal(comp.lfo.kPolice.depth, 0.5)
   assert.equal(comp.lfo.kPolice.on, true)
   assert.equal(normalizeComp({ justice: false }).justice, false)
-  const buses = normalizeBuses([{ volume: NaN, pan: 'x', name: { a: 1 }, fx: [{ type: 'delay', amount: NaN }, 'junk'] }])
+  const buses: any[] = normalizeBuses([{ volume: NaN, pan: 'x', name: { a: 1 }, fx: [{ type: 'delay', amount: NaN }, 'junk'] }])
   assert.equal(buses[0].volume, 0.82)
   assert.equal(buses[0].pan, 0)
   assert.equal(buses[0].name, '01')
@@ -238,7 +241,7 @@ test('patterns from a file are capped, deduped, and lose unknown keys', () => {
     { i: 300 },
     ...Array.from({ length: 400 }, (_, n) => ({ i: n % 256, name: String(n) })),
   ]
-  const out = normalizePatterns(list)
+  const out = normalizePatterns(list) as any[]
   assert.equal(out.length, 256)
   assert.equal(out[0].name.length, 48)
   assert.equal(out[0].bars, 1)
@@ -323,7 +326,7 @@ test('removing a song deletes its wallet copy, and a wallet sync never stores a 
   await withIdb(idb, async () => {
     model.library = null
     model.wallet = who
-    const library = ensureLibrary()
+    const library = ensureLibrary() as any
     const doc = { type: 'm1ya', v: 2, name: 'Gone', patterns: [], pads: [], samples: [] }
     await idbSet('song:g1', doc)
     await idbSet(`profile:${who}:g1`, doc)
@@ -338,7 +341,7 @@ test('removing a song deletes its wallet copy, and a wallet sync never stores a 
     await idbSet(`profile:${who}:k2`, { ...doc, name: 'Kept' })
     const keys = idb.data.size
     assert.equal(await syncProfileSongs(who), 1)
-    assert.equal(ensureLibrary().files.find((f: any) => f.id === 'k2')?.name, 'Kept')
+    assert.equal((ensureLibrary() as any).files.find((f: any) => f.id === 'k2')?.name, 'Kept')
     assert.equal(idb.data.size, keys + 1, 'only song:k2 was written')
     assert.equal(await syncProfileSongs(who), 0)
     model.wallet = ''

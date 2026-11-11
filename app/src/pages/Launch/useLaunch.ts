@@ -1,13 +1,12 @@
 import { useQueryClient } from '@tanstack/react-query'
-import { getAccount, readContract, simulateContract, writeContract } from '@wagmi/core'
+import { getAccount, getPublicClient, simulateContract } from '@wagmi/core'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { Address, Hash } from 'viem'
-import { parseEventLogs } from 'viem'
+import type { Address, Hash, Log } from 'viem'
+import { getAbiItem, parseEventLogs } from 'viem'
 import { useAccount } from 'wagmi'
 
 import { TxEndError } from '@/miyamints/txOutcome'
 import { latestOnly } from '@/pages/Swap/swapLogic'
-import { waitForTx } from '@/miyamints/useTxOutcome'
 import type { TxStepState } from '@/components/LaunchKit'
 import type { SupportedChainId } from '@/config/wagmi'
 import { wagmiConfig } from '@/config/wagmi'
@@ -21,13 +20,32 @@ import {
 } from '@/miyamints/abi'
 import { describeError, plainTxError, TX_CHECK_WORDS } from '@/miyamints/errors'
 import type { LaunchForm, LaunchType, Resolved } from '@/miyamints/launch'
-import { buildAuctionArgs, buildDropArgs, buildEditionArgs, makeSalt } from '@/miyamints/launch'
+import { buildAuctionArgs, buildDropArgs, buildEditionArgs, makeSalt, upgradeForm } from '@/miyamints/launch'
 import { rememberLaunch } from '@/miyamints/local'
 import { addKnownCollection } from '@/music/known'
-import { tryBatch, waitForBatch } from '@/utils/batch'
-import { instanceAddressAbi } from '@/utils/batchCalls'
-import { fundAndUpload } from '@/utils/fundAndUpload'
+import { FREE_BYTES, fundAndUpload, fundStorage } from '@/utils/fundAndUpload'
 import getIrysToken from '@/utils/getIrysToken'
+
+import { findAuctionPiece, findFirstEdition, launchOnChain, SaidError } from './launchChain'
+import type { SavedLaunch } from './resume'
+import {
+  browserStore,
+  bumpLaunchRound,
+  clearLaunch,
+  contentKey,
+  discardChoice,
+  draftId,
+  draftSalt,
+  findLaunches,
+  fundingPlan,
+  knownUpload,
+  launchCommitted,
+  launchRound,
+  launchUnsettled,
+  loadLaunch,
+  rememberUpload,
+  saveLaunch,
+} from './resume'
 
 export type PipeStep = 'image' | 'audio' | 'deploy' | 'first'
 export type PipeState = Record<PipeStep, TxStepState>
@@ -46,22 +64,52 @@ export type LaunchResult = {
   firstHash?: Hash
 }
 
+/** What a saved launch is built from, so a reload can finish it without the form or the files. */
+export type LaunchSaved = {
+  form: LaunchForm
+  resolved: Omit<Resolved, 'image' | 'audio' | 'audioMime'>
+  audioMime?: string
+  /** The picked files' content keys, so the same draft is recognised after a reload without them. */
+  imageKey?: string
+  audioKey?: string
+}
+
+/** Only for the dry run: the real create always uses the draft's own salt. */
 const randomSalt = (factory: Address) => makeSalt(factory, crypto.getRandomValues(new Uint8Array(11)))
+
+const NOT_SAVED_WORDS =
+  "This browser would not keep the launch's progress, so nothing more was sent. Allow this site to store data, then try again."
+
+/** The steps as a saved launch left them. */
+function stepsOf(saved: SavedLaunch<LaunchSaved>): PipeState {
+  const p = saved.progress
+  const { form } = saved.input
+  const music = form.type === 'editions' && form.editionKind === 'music'
+  return {
+    image: saved.uploads.image ? (form.imageMode === 'link' ? 'skipped' : 'done') : 'idle',
+    audio: music && saved.uploads.audio ? (form.audioMode === 'link' ? 'skipped' : 'done') : 'idle',
+    deploy: p.instance ? 'done' : p.batchId || p.deployHash || p.asking ? 'error' : 'idle',
+    first: p.firstDone ? 'done' : p.firstHash ? 'error' : 'idle',
+  }
+}
 
 /**
  * The launch pipeline: upload artwork (and audio) through Irys unless a link was given, simulate, deploy, then
- * the type's first action (auction: queue the piece; editions: add the edition). Finished steps are kept, so a
- * failed or cancelled step can be retried without uploading or deploying twice.
+ * the type's first action (auction: queue the piece; editions: add the edition). Every step is saved in the browser
+ * as it lands (resume.ts), so a failed or cancelled step, or a reload, carries on without uploading, paying the
+ * deposit or deploying twice.
  */
 export function useLaunch() {
   const { address, chain } = useAccount()
   const qc = useQueryClient()
   const [steps, setSteps] = useState<PipeState>(IDLE)
   const [uploaded, setUploaded] = useState<{ image?: string; audio?: string }>({})
-  const [instance, setInstance] = useState<Address>()
-  const [hashes, setHashes] = useState<{ deploy?: Hash; first?: Hash }>({})
-  /** A create-and-first-piece batch the wallet has, until it says how it ended. */
-  const [sentBatch, setSentBatch] = useState<{ id: string; predicted: Address }>()
+  /** The launch being worked on, saved after every change. Mutated in place, so `bump` re-renders. */
+  const record = useRef<SavedLaunch<LaunchSaved>>()
+  const [, setVersion] = useState(0)
+  const bump = () => setVersion((v) => v + 1)
+  /** A launch from an earlier visit, still open, offered on the screen. */
+  const [saved, setSaved] = useState<SavedLaunch<LaunchSaved>>()
   const [result, setResult] = useState<LaunchResult>()
   const [error, setError] = useState('')
   const [running, setRunning] = useState(false)
@@ -90,7 +138,39 @@ export function useLaunch() {
     setNote(words)
   }
 
+  // A launch left open on this wallet and chain is offered again. One made under another wallet or chain is not
+  // this one's to carry on.
+  useEffect(() => {
+    const active = record.current
+    if (active && (active.account.toLowerCase() !== address?.toLowerCase() || active.chainId !== chain?.id)) {
+      record.current = undefined
+      setSteps(IDLE)
+      setUploaded({})
+      setResult(undefined)
+      setError('')
+      bump()
+    }
+    setSaved(address && chain ? findLaunches<LaunchSaved>(browserStore(), 'launch', address, chain.id)[0] : undefined)
+  }, [address, chain?.id])
+
   const mark = (id: PipeStep, state: TxStepState) => setSteps((s) => ({ ...s, [id]: state }))
+
+  const adopt = (r: SavedLaunch<LaunchSaved>) => {
+    record.current = r
+    setUploaded({ image: r.uploads.image, audio: r.uploads.audio })
+    setSteps(stepsOf(r))
+    setSaved((s) => (s?.draft === r.draft ? undefined : s))
+    bump()
+  }
+
+  const save = () => {
+    const r = record.current
+    if (!r) return
+    r.savedAt = Date.now()
+    const ok = saveLaunch(browserStore(), r)
+    bump()
+    if (!ok) throw new SaidError(NOT_SAVED_WORDS)
+  }
 
   const upload = async (id: 'image' | 'audio', file: File) => {
     stopIfClosed()
@@ -105,7 +185,7 @@ export function useLaunch() {
       undefined,
       getIrysToken(chain?.id || 1),
       chain,
-      uploadNote,
+      uploadNote
     )
       .catch((e) => {
         mark(id, 'error')
@@ -118,20 +198,28 @@ export function useLaunch() {
   }
 
   /** Builds the deploy call (with placeholder media when not uploaded yet). */
-  const deployCall = (form: LaunchForm, r: Resolved, a: MiyamintsAddresses, now: bigint) => {
+  const deployCall = (
+    form: LaunchForm,
+    r: Resolved,
+    a: MiyamintsAddresses,
+    now: bigint,
+    chainId: number,
+    salt?: `0x${string}`
+  ) => {
     if (form.type === 'drop') {
       return {
         address: a.erc721DropFactory as Address,
         abi: dropFactoryAbi,
         functionName: 'createDrop' as const,
-        args: buildDropArgs(form, r, now),
+        args: buildDropArgs(form, r, now, chainId),
       }
     }
 
     if (form.type === 'auction') {
-      const built = buildAuctionArgs(form, r, randomSalt(a.erc721AuctionFactory as Address))
+      const factory = a.erc721AuctionFactory as Address
+      const built = buildAuctionArgs(form, r, salt ?? randomSalt(factory), chainId)
       return {
-        address: a.erc721AuctionFactory as Address,
+        address: factory,
         abi: auctionFactoryAbi,
         functionName: 'createInstance' as const,
         args: built.create,
@@ -139,9 +227,10 @@ export function useLaunch() {
       }
     }
 
-    const built = buildEditionArgs(form, r, randomSalt(a.erc1155Factory as Address))
+    const factory = a.erc1155Factory as Address
+    const built = buildEditionArgs(form, r, salt ?? randomSalt(factory), chainId)
     return {
-      address: a.erc1155Factory as Address,
+      address: factory,
       abi: erc1155FactoryAbi,
       functionName: 'createInstance' as const,
       args: built.create,
@@ -155,7 +244,7 @@ export function useLaunch() {
       form: LaunchForm,
       r: Omit<Resolved, 'image'> & { image?: string },
       a: MiyamintsAddresses,
-      chainId: SupportedChainId,
+      chainId: SupportedChainId
     ) => {
       if (!address) return
       // Only the newest check counts: an older one landing late would speak for settings no longer on the screen.
@@ -163,7 +252,13 @@ export function useLaunch() {
       setCheck({ state: 'checking' })
       try {
         const now = BigInt(Math.floor(Date.now() / 1000))
-        const call = deployCall(form, { ...r, image: r.image || 'ar://placeholder-artwork' }, a, now)
+        const call = deployCall(
+          upgradeForm(form),
+          { ...r, image: r.image || 'ar://placeholder-artwork' },
+          a,
+          now,
+          chainId
+        )
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         await simulateContract(wagmiConfig, { account: address, chainId, ...(call as any) })
         if (checks.isCurrent(ticket)) setCheck({ state: 'ok' })
@@ -172,7 +267,7 @@ export function useLaunch() {
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [address],
+    [address]
   )
 
   const run = useCallback(
@@ -184,31 +279,108 @@ export function useLaunch() {
       addresses: MiyamintsAddresses
       chainId: SupportedChainId
     }) => {
-      const { form, addresses: a, chainId } = input
+      const { addresses: a, chainId } = input
       setError('')
       setRunning(true)
       try {
         if (!address) throw new Error('Connect a wallet first.')
         if (chain?.id !== chainId) throw new Error('Switch your wallet to the network shown at the top.')
-        if (!form.type) throw new Error('Pick what you are launching.')
+        if (!input.form.type) throw new Error('Pick what you are launching.')
+        const store = browserStore()
 
-        let { image, audio } = uploaded
-        if (!image) {
-          if (input.image.uri) {
-            image = input.image.uri
-            mark('image', 'skipped')
-          } else if (input.image.file) image = await upload('image', input.image.file)
-          else throw new Error('Add your artwork.')
-          setUploaded((u) => ({ ...u, image }))
+        // The draft is fixed once anything may be on the chain: then it carries on as saved, whatever the form says.
+        let r = record.current
+        if (!r || !launchCommitted(r.progress)) {
+          const imageKey = input.image.file ? await contentKey('image', input.image.file) : r?.input.imageKey
+          const audioKey = input.audio?.file ? await contentKey('audio', input.audio.file) : r?.input.audioKey
+          const resolved = { creator: input.resolved.creator, vault: input.resolved.vault, alignmentBps: input.resolved.alignmentBps }
+          const draft = draftId({
+            app: 'launch',
+            form: input.form,
+            resolved,
+            image: imageKey ?? input.image.uri,
+            audio: input.audio ? audioKey ?? input.audio.uri : undefined,
+          })
+          if (!r || r.draft !== draft) {
+            // The old draft never reached the chain, so nothing of it needs keeping but its uploads (kept by content).
+            if (r) clearLaunch(store, r)
+            const round = launchRound(store, 'launch', address, chainId, draft)
+            const factory = input.form.type === 'auction' ? a.erc721AuctionFactory : a.erc1155Factory
+            r = loadLaunch<LaunchSaved>(store, 'launch', address, chainId, draft) ?? {
+              app: 'launch',
+              account: address,
+              chainId,
+              draft,
+              round,
+              label: input.form.name.trim(),
+              input: { form: input.form, resolved, audioMime: input.audio?.mime, imageKey, audioKey },
+              uploads: {},
+              // Fixed by the draft: a reload, or the same draft sent again, can only ever make the one collection.
+              progress: {
+                salt:
+                  input.form.type !== 'drop' && factory
+                    ? draftSalt(factory, address, chainId, 'launch', draft, round)
+                    : undefined,
+              },
+              savedAt: Date.now(),
+            }
+            adopt(r)
+          }
+          // Written before the first upload is paid for, so a reload finds it.
+          save()
         }
 
-        if (input.audio && !audio) {
-          if (input.audio.uri) {
-            audio = input.audio.uri
-            mark('audio', 'skipped')
-          } else if (input.audio.file) audio = await upload('audio', input.audio.file)
-          else throw new Error('Add your track.')
+        const rec = r
+        // A launch saved before multi-token sales carries on with its ETH prices.
+        const form = upgradeForm(rec.input.form)
+        if (!form.type) throw new Error('Pick what you are launching.')
+
+        // Already stored (this launch, or the same bytes before), or a link given: nothing to pay for.
+        let image =
+          rec.uploads.image || input.image.uri?.trim() || (rec.input.imageKey && knownUpload(store, rec.input.imageKey)) || undefined
+        const wantsAudio = form.type === 'editions' && form.editionKind === 'music'
+        let audio =
+          rec.uploads.audio ||
+          (wantsAudio ? input.audio?.uri?.trim() || (rec.input.audioKey && knownUpload(store, rec.input.audioKey)) : undefined) ||
+          undefined
+        if (!image && !input.image.file) throw new Error('Add your artwork.')
+        if (wantsAudio && !audio && !input.audio?.file) throw new Error('Add your track.')
+
+        // Pay once for every file still to store: one Ethereum payment and one wait, before the first upload.
+        const toPay = fundingPlan(
+          [
+            ...(input.image.file ? [{ size: input.image.file.size, stored: !!image }] : []),
+            ...(wantsAudio && input.audio?.file ? [{ size: input.audio.file.size, stored: !!audio }] : []),
+          ],
+          FREE_BYTES
+        )
+        if (toPay.length) {
+          const firstUp: PipeStep = image ? 'audio' : 'image'
+          mark(firstUp, 'active')
+          await fundStorage(toPay, undefined, getIrysToken(chain?.id || 1), chain, uploadNote)
+            .catch((e) => {
+              mark(firstUp, 'error')
+              throw e
+            })
+            .finally(() => setNote(''))
+        }
+
+        if (!image) {
+          image = await upload('image', input.image.file as File)
+          if (rec.input.imageKey) rememberUpload(store, rec.input.imageKey, image)
+        } else mark('image', form.imageMode === 'link' ? 'skipped' : 'done')
+        rec.uploads.image = image
+        setUploaded((u) => ({ ...u, image }))
+        save()
+
+        if (wantsAudio) {
+          if (!audio) {
+            audio = await upload('audio', input.audio?.file as File)
+            if (rec.input.audioKey) rememberUpload(store, rec.input.audioKey, audio)
+          } else mark('audio', form.audioMode === 'link' ? 'skipped' : 'done')
+          rec.uploads.audio = audio
           setUploaded((u) => ({ ...u, audio }))
+          save()
         }
 
         // Paying for storage takes the wallet to Ethereum and back. If it didn't come back, nothing goes to the wrong place.
@@ -216,160 +388,89 @@ export function useLaunch() {
           throw new Error('Your wallet is on another network. Switch it back, then try again. Your uploads are kept.')
         }
 
-        const r: Resolved = { ...input.resolved, image, audio, audioMime: input.audio?.mime }
+        const resolved: Resolved = { ...rec.input.resolved, image, audio, audioMime: rec.input.audioMime }
         const now = BigInt(Math.floor(Date.now() / 1000))
-        const call = deployCall(form, r, a, now)
+        const call = deployCall(form, resolved, a, now, chainId, rec.progress.salt)
+        const type = form.type
 
-        let inst = instance
-        let deployHash = hashes.deploy
-        let firstHash: Hash | undefined
-        const firstCall = (target: Address) =>
-          form.type === 'auction'
-            ? {
-                address: target,
-                abi: auctionInstanceAbi,
-                functionName: 'queuePiece' as const,
-                args: [(call as { queue: { tokenURI: string } }).queue.tokenURI],
-                value: (call as { queue: { value: bigint } }).queue.value,
-              }
-            : {
-                address: target,
-                abi: erc1155InstanceAbi,
-                functionName: 'addEdition' as const,
-                args: (call as { edition: readonly unknown[] }).edition,
-              }
-
-        // Create it and add the first piece as one signature. Its address is fixed by the salt, so the second call
-        // can name it in advance; if anything is off, the whole batch reverts and nothing was created.
-        if (!inst && form.type !== 'drop') {
-          const {
-            address: factory,
-            abi,
-            functionName,
-            args,
-          } = call as {
-            address: Address
-            abi: readonly unknown[]
-            functionName: string
-            args: readonly [`0x${string}`, unknown]
-          }
-          const predicted =
-            sentBatch?.predicted ??
-            (await readContract(wagmiConfig, {
-              address: factory,
-              abi: instanceAddressAbi,
-              functionName: 'computeInstanceAddress',
-              args: [args[0], address],
-              chainId,
-            }).catch(() => undefined))
-          stopIfClosed()
-          // A batch already out is waited on, never sent again. Only the wallet saying it failed frees it.
-          const sent = await Promise.resolve(
-            sentBatch
-              ? waitForBatch(sentBatch.id)
-              : predicted &&
-                  tryBatch([{ address: factory, abi, functionName, args }, firstCall(predicted)], {
-                    account: address,
-                    chainId,
-                    onAsk: () => mark('deploy', 'active'),
-                    onSent: (id) => {
-                      setSentBatch({ id, predicted })
-                      mark('first', 'active')
-                    },
+        const done = await launchOnChain({
+          chainId,
+          account: address,
+          progress: rec.progress,
+          save,
+          stopIfClosed,
+          create: { address: call.address, abi: call.abi, functionName: call.functionName, args: call.args },
+          salted: type !== 'drop',
+          createdFrom: (logs: Log[]) =>
+            type === 'drop'
+              ? parseEventLogs({ abi: dropFactoryAbi, eventName: 'DropCreated', logs: logs as never })[0]?.args.drop
+              : type === 'auction'
+              ? parseEventLogs({ abi: auctionFactoryAbi, eventName: 'InstanceCreated', logs: logs as never })[0]?.args
+                  .instance
+              : parseEventLogs({ abi: erc1155FactoryAbi, eventName: 'InstanceCreated', logs: logs as never })[0]?.args
+                  .instance,
+          findCreated:
+            type === 'drop'
+              ? async (fromBlock) => {
+                  const client = getPublicClient(wagmiConfig, { chainId })
+                  if (!client) throw new Error('no client')
+                  const logs = await client.getLogs({
+                    address: call.address,
+                    event: getAbiItem({ abi: dropFactoryAbi, name: 'DropCreated' }),
+                    args: { creator: address },
+                    fromBlock,
+                  })
+                  return logs[0]?.args.drop
+                }
+              : undefined,
+          first:
+            type === 'auction'
+              ? {
+                  call: (target) => {
+                    const { queue } = call as unknown as { queue: { tokenURI: string; deposit: bigint; value: bigint } }
+                    return {
+                      address: target,
+                      abi: auctionInstanceAbi,
+                      functionName: 'queuePiece',
+                      args: [queue.tokenURI, queue.deposit],
+                      value: queue.value,
+                    }
+                  },
+                  // An ERC-20 deposit: the new house may take exactly the deposit, approved just before queuePiece.
+                  approve: (call as unknown as { queue: { approve?: { token: Address; amount: bigint } } }).queue.approve,
+                  find: (inst) => findAuctionPiece(chainId, inst),
+                  idFromLogs: (logs) => {
+                    const [queued] = parseEventLogs({ abi: auctionInstanceAbi, eventName: 'PieceQueued', logs: logs as never })
+                    return queued ? BigInt(queued.args.tokenId) : undefined
+                  },
+                  name: 'your piece',
+                }
+              : type === 'editions'
+              ? {
+                  call: (target) => ({
+                    address: target,
+                    abi: erc1155InstanceAbi,
+                    functionName: 'addEdition',
+                    args: (call as { edition: readonly unknown[] }).edition,
                   }),
-          ).catch((e) => {
-            if (!(e as TxEndError).unconfirmed) setSentBatch(undefined)
-            throw e
-          })
-          if (sent) {
-            setSentBatch(undefined)
-            const logs = sent.receipts.flatMap((receipt) => receipt.logs ?? [])
-            inst = (
-              form.type === 'auction'
-                ? parseEventLogs({ abi: auctionFactoryAbi, eventName: 'InstanceCreated', logs: logs as never })
-                : parseEventLogs({ abi: erc1155FactoryAbi, eventName: 'InstanceCreated', logs: logs as never })
-            )[0]?.args.instance
-            if (!inst) throw new Error('Created, but the new address was not in the receipt. Check the explorer.')
-            deployHash = sent.hash
-            setHashes((h) => ({ ...h, deploy: sent.hash }))
-            rememberLaunch(chainId, inst, form.type)
-            if (form.type === 'editions') addKnownCollection(chainId, inst)
-            setInstance(inst)
-            mark('deploy', 'done')
-            // Same address as named means the first piece went in with it. Otherwise it goes in as its own step below.
-            if (inst.toLowerCase() === predicted?.toLowerCase()) {
-              firstHash = sent.hash
-              setHashes((h) => ({ ...h, first: sent.hash }))
-              mark('first', 'done')
-            }
-          }
-        }
+                  find: (inst) => findFirstEdition(chainId, inst),
+                  idFromLogs: (logs) =>
+                    parseEventLogs({ abi: erc1155InstanceAbi, eventName: 'EditionAdded', logs: logs as never })[0]?.args
+                      .editionId,
+                  name: 'the first edition',
+                }
+              : undefined,
+          mark,
+          onDeployed: (inst) => {
+            rememberLaunch(chainId, inst, type)
+            if (type === 'editions') addKnownCollection(chainId, inst)
+          },
+        })
 
-        if (!inst) {
-          mark('deploy', 'active')
-          // One already sent is waited on, not sent again: a failed lookup says nothing about how it ended.
-          if (!deployHash) {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const { request } = await simulateContract(wagmiConfig, { account: address, chainId, ...(call as any) })
-            stopIfClosed()
-            const hash = await writeContract(wagmiConfig, request)
-            deployHash = hash
-            setHashes((h) => ({ ...h, deploy: hash }))
-          }
-
-          const receipt = await waitForTx(chainId, deployHash).catch((e) => {
-            if ((e as TxEndError).reverted || (e as TxEndError).cancelled) {
-              setHashes((h) => ({ ...h, deploy: undefined }))
-            }
-
-            throw e
-          })
-
-          if (form.type === 'drop') {
-            inst = parseEventLogs({ abi: dropFactoryAbi, eventName: 'DropCreated', logs: receipt.logs })[0]?.args.drop
-          } else if (form.type === 'auction') {
-            inst = parseEventLogs({ abi: auctionFactoryAbi, eventName: 'InstanceCreated', logs: receipt.logs })[0]?.args
-              .instance
-          } else {
-            inst = parseEventLogs({ abi: erc1155FactoryAbi, eventName: 'InstanceCreated', logs: receipt.logs })[0]?.args
-              .instance
-          }
-
-          if (!inst) throw new Error('Created, but the new address was not in the receipt. Check the explorer.')
-          rememberLaunch(chainId, inst, form.type)
-          if (form.type === 'editions') addKnownCollection(chainId, inst)
-          setInstance(inst)
-          mark('deploy', 'done')
-        }
-
-        if (form.type !== 'drop' && !firstHash) {
-          mark('first', 'active')
-          // Sending this one twice would pay the auction's deposit twice, so one already out is only waited on.
-          let sending = hashes.first
-          if (!sending) {
-            const { request } = await simulateContract(wagmiConfig, {
-              account: address,
-              chainId,
-              ...firstCall(inst),
-            } as never)
-            stopIfClosed()
-            const hash: Hash = await writeContract(wagmiConfig, request as never)
-            sending = hash
-            setHashes((h) => ({ ...h, first: hash }))
-          }
-
-          await waitForTx(chainId, sending).catch((e) => {
-            if ((e as TxEndError).reverted || (e as TxEndError).cancelled) {
-              setHashes((h) => ({ ...h, first: undefined }))
-            }
-
-            throw e
-          })
-          firstHash = sending
-          mark('first', 'done')
-        }
-
-        setResult({ chainId, instance: inst, type: form.type, deployHash, firstHash })
+        setResult({ chainId, instance: done.instance, type, deployHash: done.deployHash, firstHash: done.firstHash })
+        // Finished: the same draft made again on purpose gets its own address.
+        bumpLaunchRound(store, rec)
+        clearLaunch(store, rec)
         qc.invalidateQueries({ queryKey: ['my-launches'] })
       } catch (e) {
         setSteps((s) => {
@@ -379,57 +480,97 @@ export function useLaunch() {
           })
           return next
         })
-        setError(e instanceof TxEndError ? e.message : plainTxError(e))
+        setError(e instanceof TxEndError || (e as SaidError).plain ? (e as Error).message : plainTxError(e))
       } finally {
         setRunning(false)
+        bump()
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [address, chain, uploaded, instance, hashes, sentBatch],
+    [address, chain]
   )
 
+  const p = record.current?.progress
+  const unsettled = !!p && launchUnsettled(p)
+  /** Whether this launch can be dropped: never while something sent may still land. */
+  const discard = p ? discardChoice(p, Date.now()) : 'free'
+
+  /** Drops the launch on the screen (and its saved record). Refused while something sent may still land. */
   const reset = () => {
+    const r = record.current
+    if (r && !result) {
+      if (discardChoice(r.progress, Date.now()) === 'no') return
+      const store = browserStore()
+      // Its collection is live: making this draft again gets a new address rather than finding this one.
+      if (r.progress.instance) bumpLaunchRound(store, r)
+      clearLaunch(store, r)
+    }
+    record.current = undefined
     setSteps(IDLE)
     setUploaded({})
-    setInstance(undefined)
-    setHashes({})
-    setSentBatch(undefined)
     setResult(undefined)
     setError('')
     checks.cancel()
     setCheck({ state: 'idle' })
+    bump()
+  }
+
+  /** Carry on with a launch from an earlier visit. Returns what it was built from, for the form. */
+  const resume = (s: SavedLaunch<LaunchSaved>) => {
+    adopt(s)
+    setResult(undefined)
+    setError('')
+    return { ...s.input, form: upgradeForm(s.input.form) }
+  }
+
+  /** Drops a launch from an earlier visit, when nothing it sent may still land (or, with a warning, long after). */
+  const discardSaved = (s: SavedLaunch<LaunchSaved>) => {
+    if (discardChoice(s.progress, Date.now()) === 'no') return
+    const store = browserStore()
+    if (s.progress.instance) bumpLaunchRound(store, s)
+    clearLaunch(store, s)
+    setSaved(address && chain ? findLaunches<LaunchSaved>(store, 'launch', address, chain.id)[0] : undefined)
   }
 
   /** The form changed, so the last try's error is about what's no longer on the screen. Not once it's on the chain. */
   const clearError = () => {
-    if (!instance && !hashes.deploy && !sentBatch) setError('')
+    if (!p || !launchCommitted(p)) setError('')
   }
 
-  /** Media changed: forget its upload (only before deploying). */
+  /** Media changed: forget its upload (only before anything went to the chain). */
   const invalidate = (what: 'image' | 'audio') => {
     clearError()
-    if (instance) return
+    if (p && launchCommitted(p)) return
+    if (record.current) delete record.current.uploads[what]
     setUploaded((u) => ({ ...u, [what]: undefined }))
     mark(what, 'idle')
   }
 
-  /** Something has gone to the chain, so what it was built from can't change any more. */
-  const committed = !!instance || !!hashes.deploy || !!sentBatch
+  /** Something has gone to the chain, or may have, so what it was built from can't change any more. */
+  const committed = !!p && launchCommitted(p)
 
   return {
     committed,
+    /** Something sent may still land: nothing is sent again, and nothing may be paid for, until it is known. */
+    unsettled,
+    /** A prompt was open, or what was sent did not run: after looking on the chain, it may be sent again. */
+    mayResend: !!p?.asking,
+    discard,
     steps,
     uploaded,
-    instance,
-    hashes,
+    instance: p?.instance as Address | undefined,
+    hashes: { deploy: p?.deployHash as Hash | undefined, first: p?.firstHash as Hash | undefined },
     result,
     error,
     running,
     note,
     check,
+    saved,
     simulate,
     run,
     reset,
+    resume,
+    discardSaved,
     invalidate,
     clearError,
   }

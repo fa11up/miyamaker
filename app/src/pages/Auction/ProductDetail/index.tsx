@@ -1,24 +1,24 @@
 import { useEffect, useRef, useState } from 'react'
 import styled from 'styled-components/macro'
-import type { Address, Hash } from 'viem'
+import type { Address } from 'viem'
 import { formatEther } from 'viem'
-import { useAccount, useBalance, useEnsName, usePublicClient } from 'wagmi'
+import { useAccount, useBalance, useEnsName } from 'wagmi'
 
 import ArtViewer from '@/components/ArtViewer'
 import { NormalButton } from '@/components/Button/NormalButton'
 import { Skeleton } from '@/components/Retro'
+import { explorerUrl } from '@/config/wagmi'
 import { AUCTION_CHAIN_ID } from '@/constants/contracts'
 import { shortAddress } from '@/desktop/mints/dedupe'
-import { useWaitForTransaction } from '@/hooks/useWaitForTransaction'
+import { useTx } from '@/miyamints/useTx'
 import {
-  BID_REVERTED,
-  BID_UNCONFIRMED,
-  bidErrorWords,
+  bidEnding,
   bidStanding,
   checkBid,
   lotFacts,
   lotPhase,
   minimumBid,
+  parseBidAmount,
 } from '@/pages/Auction/bidding'
 import BidContainer from '@/pages/Auction/ProductDetail/BidContainer'
 import ImagesList from '@/pages/Auction/ProductDetail/ImagesList'
@@ -26,7 +26,7 @@ import { useAllTokenIds } from '@/pages/Auction/useAllTokenIds'
 import { useAuctionData } from '@/pages/Auction/useAuctionData'
 import { useFitText } from '@/pages/Auction/useFitText'
 import { useLotGallery } from '@/pages/Auction/useLots'
-import { usePlaceBid } from '@/pages/Auction/usePlaceBid'
+import { abi as auctionAbi } from '@/pages/Auction/constants'
 import { useToken } from '@/pages/Auction/useToken'
 import { setCurrentToken } from '@/store/collections/actions'
 import { NO_LOT } from '@/store/collections/reducer'
@@ -193,7 +193,6 @@ export default function ProductDetail({
     query: { enabled: !!account, refetchInterval: 30_000 },
   })
   const balance = wallet?.value
-  const client = usePublicClient({ chainId: AUCTION_CHAIN_ID })
 
   const nft = useAppSelector((state) => state.collections.currentNFT)
   const currentAuctionToken = useAppSelector((state) => state.collections.currentToken)
@@ -205,10 +204,14 @@ export default function ProductDetail({
   const tokenId = chosenTokenId === NO_LOT ? tokenIds[0] : chosenTokenId
   const lotList = useAllTokenIds({ nft: nftContract, address: auctionContract })
 
-  const [busy, setBusy] = useState<'wallet' | 'mining'>()
-  useEffect(() => onBusy?.(!!busy), [busy])
+  // One bid at a time, through useTx: a dry run first, then the wallet, then a wait that gives up after its time limit.
+  const bid = useTx()
+  const ending = bidEnding(bid.tx)
+  const busy = bid.tx.phase === 'wallet' ? 'wallet' : bid.tx.phase === 'pending' ? 'mining' : undefined
+  // Sent, but its ending is unknown: the bid may still land, so the lot stays and nothing is offered until Start over.
+  const stuck = ending?.kind === 'unconfirmed'
+  useEffect(() => onBusy?.(!!busy || stuck), [busy, stuck])
   useEffect(() => () => onBusy?.(false), [])
-  const [txHash, setTxHash] = useState('')
   const [bidAmount, setBidAmount] = useState('')
   const [viewing, setViewing] = useState(false)
   const [confirmedLot, setConfirmedLot] = useState<string>()
@@ -227,7 +230,6 @@ export default function ProductDetail({
       address: auctionContract,
       live: true,
     })
-  const { placeBid } = usePlaceBid({ address: auctionContract, bidAmount })
   const lotIndex = Math.max(0, tokenIds.indexOf(tokenId as number))
   const { name, description, image, attributes } = useToken({
     tokenURI: tokenURIs[lotIndex] || '',
@@ -270,7 +272,7 @@ export default function ProductDetail({
   const openLot = (index: number, lot: typeof nextLot) => {
     const id = tokenIds[index]
     // Its picture may not be in yet: the lot opens anyway, and the panel fills in from its own metadata.
-    if (id === undefined || busy) return
+    if (id === undefined || busy || stuck) return
     dispatch(
       setCurrentToken({
         tokenId: id,
@@ -298,40 +300,19 @@ export default function ProductDetail({
 
   // The lot a bid went to, for its ending: not whichever is on show by then.
   const bidLot = useRef<string>()
-  const bidSettled = () => {
-    setBusy(undefined)
-    setTxHash('')
-    refetch()
-  }
-
-  useWaitForTransaction({
-    hash: (txHash as Address) || '0x',
-    enabled: !!txHash,
-    onSuccess: (receipt) => {
-      bidSettled()
-      if (receipt.status === 'reverted') {
-        setErrorMessage(BID_REVERTED)
-        return
-      }
+  // A known ending is reported once and the bid re-arms. An unconfirmed one stays, hash and all, until Start over.
+  useEffect(() => {
+    if (!ending || ending.kind === 'unconfirmed') return
+    if (bid.tx.phase === 'error') console.error('Bid failed', bid.tx.error)
+    if (ending.kind === 'placed') {
       setBidAmount('')
       setConfirmedLot(bidLot.current)
-    },
-    // wagmi turns a reverted receipt into an error, so a failure here may be a real answer or only a failed wait.
-    onError: async (error) => {
-      console.error('Waiting for bid failed', error)
-      const receipt = await client?.getTransactionReceipt({ hash: txHash as Hash }).catch(() => undefined)
-      bidSettled()
-      setErrorMessage(receipt?.status === 'reverted' ? BID_REVERTED : BID_UNCONFIRMED)
-    },
-    // A sped-up bid is still the same bid, and its own receipt arrives through this wait. A cancelled one is over.
-    onReplaced: (reason) => {
-      if (reason === 'repriced') return
-      bidSettled()
-      setErrorMessage(
-        reason === 'cancelled' ? 'You cancelled in your wallet. No bid was placed.' : BID_UNCONFIRMED
-      )
-    },
-  })
+    } else {
+      setErrorMessage(ending.words)
+    }
+    refetch()
+    bid.reset()
+  }, [bid.tx.phase])
 
   // The input is controlled by bidAmount, so the value sent is always exactly what is shown. '' is allowed (clearing
   // the field); edits that are not a decimal number are rejected and leave the field unchanged.
@@ -341,20 +322,19 @@ export default function ProductDetail({
     setBidAmount(value)
   }
 
-  const handleBid = async () => {
-    if (!canSend || !check.valid || busy || phase !== 'live' || tokenId === undefined) return
-    setBusy('wallet')
+  const handleBid = () => {
+    const value = parseBidAmount(bidAmount)
+    if (!canSend || !check.valid || busy || stuck || phase !== 'live' || tokenId === undefined || !value) return
     bidLot.current = lotKey
-    try {
-      const result = await placeBid(nftContract, tokenId)
-      setTxHash(result.hash)
-      setBusy('mining')
-    } catch (e) {
-      console.error('Bid failed', e)
-      setBusy(undefined)
-      setErrorMessage(bidErrorWords(e))
-      refetch()
-    }
+    // Pinned to the auction's chain, so a wallet on another network can never send ETH to this address there.
+    bid.run('bid', {
+      address: auctionContract,
+      abi: auctionAbi,
+      functionName: 'placeBid',
+      args: [nftContract, BigInt(tokenId)],
+      value,
+      chainId: AUCTION_CHAIN_ID,
+    })
   }
 
   useEffect(() => {
@@ -389,7 +369,7 @@ export default function ProductDetail({
   return (
     <DetailColumn>
       <BackRow>
-        <NormalButton type="button" disabled={!!busy} onClick={onBack}>
+        <NormalButton type="button" disabled={!!busy || stuck} onClick={onBack}>
           ← Collections
         </NormalButton>
       </BackRow>
@@ -401,7 +381,7 @@ export default function ProductDetail({
             total={lotCount}
             onPrevious={() => openLot(previousIndex, previousLot)}
             onNext={() => openLot(nextIndex, nextLot)}
-            locked={!!busy}
+            locked={!!busy || stuck}
             onView={() => setViewing(true)}
           />
           {viewing && gallery.items.length > 0 && (
@@ -489,6 +469,15 @@ export default function ProductDetail({
               minimum={minimum}
               check={check}
               busy={busy}
+              stuck={
+                stuck
+                  ? {
+                      words: ending?.words || '',
+                      href: bid.tx.hash ? `${explorerUrl(AUCTION_CHAIN_ID)}/tx/${bid.tx.hash}` : undefined,
+                      onStartOver: bid.reset,
+                    }
+                  : undefined
+              }
               canSend={canSend}
               balance={balance}
               standing={standingNote}

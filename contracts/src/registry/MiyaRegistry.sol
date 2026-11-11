@@ -7,17 +7,33 @@ import { IMiyaRegistry } from "./interfaces/IMiyaRegistry.sol";
 /**
  * @title MiyaRegistry
  * @notice Slim, non-upgradeable protocol registry. The owner (a multisig) can only:
- *         - set the treasury, the protocol fee (capped) and the minimum alignment share for FUTURE launches;
+ *         - set the treasury, the protocol fee (capped) and the minimum alignment share. Collections snapshot the
+ *           treasury and fee at launch, so for them these apply to FUTURE launches only; every deployed vault reads
+ *           `treasury` live, so a new treasury receives every vault's protocol cut of LP fees from then on,
+ *           including cuts already accrued and not yet withdrawn;
+ *         - set the conversion keeper, read live by every deployed vault: the new keeper runs all their conversions
+ *           of pending balances at once (unset pauses them);
  *         - add and deactivate alignment targets;
  *         - approve and revoke add-on components;
- *         - register and unregister factories and vault factories.
- *         It cannot touch deployed collections, their fee terms, their vaults, or any pool. Collections snapshot
- *         their fee terms at launch.
+ *         - register and unregister factories and vault factories;
+ *         - allow and drop payment tokens (ERC-20s collections may price in; ETH is always allowed), also live for
+ *           every deployed collection and vault. Dropping a token stops new sales in it and new vault contributions
+ *           in it (deployed vaults refuse it). Balances already held stay withdrawable: a collection's vault cut
+ *           parked in a dropped token is released to the artist by its `flushPendingVaultCut`, and a vault keeps
+ *           converting what it already holds pending in it.
+ *         It cannot change deployed collections' fee terms (protocol and alignment bps, split treasury, vault: all
+ *         snapshotted at launch), move funds out of collections or vaults, or touch any pool.
  */
 contract MiyaRegistry is Ownable, IMiyaRegistry {
     uint16 public constant BPS = 10_000;
     /// @dev Hard ceiling on the protocol fee, whatever the owner sets.
     uint16 public constant MAX_PROTOCOL_FEE_BPS = 500;
+    /// @notice Most ERC-20s allowed at once. A vault holds at most 16 distinct tokens pending (in all, and per
+    ///         benefactor), ETH included, so 15 ERC-20s + ETH fit. Not a guarantee: a token dropped while still
+    ///         pending in a vault keeps its place there until the keeper converts it, so with a replacement allowed
+    ///         a vault can be asked for a 17th token and refuse it (TooManyTokens). The collection then parks that
+    ///         cut and retries it with its next split or `flushPendingVaultCut` once the dropped token converts.
+    uint256 public constant MAX_PAYMENT_TOKENS = 15;
 
     struct Target {
         string name;
@@ -43,6 +59,9 @@ contract MiyaRegistry is Ownable, IMiyaRegistry {
     mapping(address instance => address) public factoryOf;
     address[] public instances;
 
+    mapping(address token => bool) internal _paymentToken;
+    address[] internal _paymentTokens;
+
     event TreasuryUpdated(address treasury);
     event ConversionKeeperUpdated(address keeper);
     event FeesUpdated(uint16 protocolFeeBps, uint16 minAlignmentBps);
@@ -52,6 +71,7 @@ contract MiyaRegistry is Ownable, IMiyaRegistry {
     event FactorySet(address indexed factory, bool registered);
     event VaultFactorySet(address indexed factory, bool registered);
     event VaultRegistered(address indexed vault, address indexed factory);
+    event PaymentTokenSet(address indexed token, bool allowed);
     event InstanceRegistered(address indexed instance, address indexed factory, address indexed vault, address creator);
 
     error InvalidAddress();
@@ -61,6 +81,7 @@ contract MiyaRegistry is Ownable, IMiyaRegistry {
     error NotFactory();
     error NotVaultFactory();
     error AlreadyRegistered();
+    error TooManyPaymentTokens();
 
     constructor(address owner_, address treasury_, uint16 protocolFeeBps_, uint16 minAlignmentBps_) {
         _initializeOwner(owner_);
@@ -149,6 +170,41 @@ contract MiyaRegistry is Ownable, IMiyaRegistry {
         if (factory == address(0)) revert InvalidAddress();
         isVaultFactoryRegistered[factory] = registered;
         emit VaultFactorySet(factory, registered);
+    }
+
+    // ── payment tokens ──────────────────────────────────────────────────────
+
+    /// @notice True for ETH (address(0)) and for allowlisted ERC-20s.
+    function isPaymentToken(address token) external view returns (bool) {
+        return token == address(0) || _paymentToken[token];
+    }
+
+    /// @notice Allow or drop an ERC-20 as a payment token. ETH is always allowed and can't be set.
+    /// @dev Fee-on-transfer or rebasing tokens must never be allowed: collections and the vault check balance deltas
+    ///      and revert on a short transfer.
+    function setPaymentToken(address token, bool allowed) external onlyOwner {
+        if (token == address(0) || token.code.length == 0) revert InvalidAddress();
+        if (_paymentToken[token] == allowed) return;
+        _paymentToken[token] = allowed;
+        if (allowed) {
+            if (_paymentTokens.length >= MAX_PAYMENT_TOKENS) revert TooManyPaymentTokens();
+            _paymentTokens.push(token);
+        } else {
+            uint256 n = _paymentTokens.length;
+            for (uint256 i; i < n; ++i) {
+                if (_paymentTokens[i] == token) {
+                    _paymentTokens[i] = _paymentTokens[n - 1];
+                    _paymentTokens.pop();
+                    break;
+                }
+            }
+        }
+        emit PaymentTokenSet(token, allowed);
+    }
+
+    /// @notice The allowlisted ERC-20s (ETH, always allowed, is not listed).
+    function paymentTokens() external view returns (address[] memory) {
+        return _paymentTokens;
     }
 
     // ── vaults ──────────────────────────────────────────────────────────────

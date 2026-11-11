@@ -1,6 +1,6 @@
 import { useConnectModal } from '@rainbow-me/rainbowkit'
 import { useQuery } from '@tanstack/react-query'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import styled from 'styled-components/macro'
 import type { Address } from 'viem'
 import { erc20Abi, zeroAddress } from 'viem'
@@ -28,10 +28,10 @@ import {
   seaportAbi,
   seaportCallAbi,
 } from './seaport'
-import { markGone, sessionStore } from './sweep'
+import { markGone, noteBuyOutcome, sessionStore, UNCONFIRMED_BUY_WORDS, unconfirmedHashes } from './sweep'
 import { Action, Card, ConfirmCheck, Head, Hint, LinkButton, Mono, Prose, Stat, SwitchNote } from './ui'
 import { useFillFee } from './useFillFee'
-import { fetchFulfillment } from './useMarkets'
+import { fetchFulfillment, useOpenSeaCollection } from './useMarkets'
 
 const Lines = styled.dl`
   margin: 0;
@@ -118,10 +118,15 @@ export default function FillReview({
   const chain = chains.find((c) => c.id === chainId) || mainnet
   const wrongChain = isConnected && walletChain !== chainId
   const osChain = OPENSEA_CHAIN[chainId]
+  // The collection's own creator fee payees (cached): any other payee in the order is shown as "Other fee".
+  const creatorFees = useOpenSeaCollection(chainId, contract).info?.fees.map((f) => f.recipient)
+
+  // A buy of this listing sent earlier this session that we couldn't see land: offering it again could pay twice.
+  const [heldBack] = useState(() => side === 'buy' && unconfirmedHashes(sessionStore()).has(order.hash))
 
   const data = useQuery({
     queryKey: ['os-fill', side, order.hash, me?.toLowerCase()],
-    enabled: !!me && !!osChain,
+    enabled: !!me && !!osChain && !heldBack,
     staleTime: 60_000,
     gcTime: 0,
     retry: false,
@@ -163,6 +168,7 @@ export default function FillReview({
         seaports: SEAPORT_ADDRESSES,
         abi: seaportAbi,
         aliases: INPUT_ALIASES,
+        creatorFees,
       })
     : undefined
   const ok = plan?.ok ? (plan as FillPlan) : undefined
@@ -304,6 +310,22 @@ export default function FillReview({
   const unconfirmed = tx.tx.phase === 'error' && failure === 'unconfirmed'
   const openSeaHref = itemUrl('opensea', chainId, contract, tokenId)
 
+  // A sent buy is remembered until its outcome is known, so closing and reopening can't offer it again meanwhile.
+  const sentBuy = useRef(false)
+  useEffect(() => {
+    if (side !== 'buy' || tx.tx.id !== 'fill') return
+    if (tx.tx.phase === 'wallet') sentBuy.current = false
+    else if (tx.tx.phase === 'pending') {
+      sentBuy.current = true
+      noteBuyOutcome(sessionStore(), order.hash, 'pending')
+    } else if (tx.tx.phase === 'done') noteBuyOutcome(sessionStore(), order.hash, 'bought')
+    else if (tx.tx.phase === 'error') {
+      // Never sent, failed on chain or cancelled: settled. Anything else may still land.
+      const settled = !sentBuy.current || failure === 'failed-onchain' || failure === 'cancelled'
+      noteBuyOutcome(sessionStore(), order.hash, settled ? 'failed' : 'unconfirmed')
+    }
+  }, [tx.tx.phase, tx.tx.id, failure])
+
   // A sold listing leaves this visitor's list at once: the shared list can lag it by a minute.
   useEffect(() => {
     if (failure !== 'gone') return
@@ -337,6 +359,7 @@ export default function FillReview({
     if (!isConnected) return { label: 'Connect wallet', onClick: () => openConnectModal?.() }
     if (wrongChain)
       return { label: switching ? 'Switching…' : `Switch to ${chain.name}`, onClick: () => switchChain({ chainId }) }
+    if (heldBack) return { label: 'Still unconfirmed', step: UNCONFIRMED_BUY_WORDS, disabled: true }
     if (failure === 'gone') return { label: 'Close', onClick: onClose }
     // It may yet land, so it is not offered again until the person has looked.
     if (unconfirmed) return { label: 'Could not confirm yet', disabled: true }

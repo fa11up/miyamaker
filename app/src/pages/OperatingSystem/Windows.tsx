@@ -127,20 +127,53 @@ const DraggableWrapper = ({
   )
 }
 
+/** At most this many canvases are copied as pictures, each scaled down to fit this box; the rest are left blank. */
+const TRAIL_CANVASES = 4
+const TRAIL_SNAPSHOT_PX = 360
+/** A canvas whose backing store is bigger than this (about 1600 x 1000) isn't read at all: reading it stalls the drag. */
+const TRAIL_CANVAS_MAX_AREA = 1_600_000
+/** How many copies a trail can grow to, and fewer for a window with a lot inside it. */
+const TRAIL_MAX = 30
+const TRAIL_MAX_HEAVY = 8
+const HEAVY_NODES = 1500
+
+/** A small picture of a canvas, or '' when it is too big to read quickly or drawn from another site. */
+function snapshot(canvas: HTMLCanvasElement): string {
+  const { width, height } = canvas
+  if (!width || !height || width * height > TRAIL_CANVAS_MAX_AREA) return ''
+  const scale = Math.min(1, TRAIL_SNAPSHOT_PX / Math.max(width, height))
+  try {
+    if (scale === 1) return canvas.toDataURL()
+    const small = document.createElement('canvas')
+    small.width = Math.max(1, Math.round(width * scale))
+    small.height = Math.max(1, Math.round(height * scale))
+    small.getContext('2d')?.drawImage(canvas, 0, 0, small.width, small.height)
+    return small.toDataURL()
+  } catch {
+    // Drawn from another site: stays blank for the moment of a drag.
+    return ''
+  }
+}
+
 /** A window's contents with nothing running: canvases as pictures, and players, which can't be cloned, left blank. */
 function pictureOf(window: HTMLElement): HTMLElement[] {
   const live = Array.from(window.querySelectorAll('canvas'))
   const copy = window.cloneNode(true) as HTMLElement
   copy.querySelectorAll('[data-resize]').forEach((grip) => grip.remove())
+  let read = 0
   copy.querySelectorAll('canvas').forEach((canvas, i) => {
+    const from = live[i]
     const img = document.createElement('img')
     img.className = canvas.className
-    img.style.cssText = `${live[i]?.style.cssText ?? ''};width:${live[i]?.offsetWidth}px;height:${live[i]?.offsetHeight}px`
-    try {
-      img.src = live[i]?.toDataURL() ?? ''
-    } catch {
-      // Drawn from another site: stays blank for the moment of a drag.
+    img.alt = ''
+    img.style.cssText = `${from?.style.cssText ?? ''};width:${from?.offsetWidth}px;height:${from?.offsetHeight}px`
+    // Hidden canvases (a minimised panel, a closed tab) aren't worth a read.
+    const src = from && from.offsetWidth && read < TRAIL_CANVASES ? snapshot(from) : ''
+    if (src) {
+      read += 1
+      img.src = src
     }
+
     canvas.replaceWith(img)
   })
   copy.querySelectorAll('iframe, video, audio, script').forEach((player) => {
@@ -314,6 +347,8 @@ export default function Windows({
   // The trail is a picture of the window, taken when the drag starts. Real copies would run the whole app again, up to a
   // hundred times over, with its effects, sockets and sound.
   const trailPicture = useRef<HTMLElement[]>()
+  // Counted once per drag: a window with a lot inside it gets a short trail, as each copy is the whole of it.
+  const trailMax = useRef(TRAIL_MAX)
   const fillTrailCopy = useCallback((slot: HTMLDivElement | null) => {
     if (!slot || !ref.current) return
     trailPicture.current ??= pictureOf(ref.current)
@@ -325,8 +360,14 @@ export default function Windows({
     if (noTrail) return
     // A new drag keeps what's left of the last trail and grows it, rather than racing the timer that was clearing it.
     clearInterval(trailTimer.current)
+    if (!trailPicture.current && ref.current) {
+      trailMax.current = ref.current.getElementsByTagName('*').length > HEAVY_NODES ? TRAIL_MAX_HEAVY : TRAIL_MAX
+    }
+
     setdummyWindowsArray((prev) =>
-      prev.length < 100 ? [...prev, { x: x + 5, y: y + 5, i: (prev[prev.length - 1]?.i ?? 0) + 1 }] : prev
+      prev.length < trailMax.current
+        ? [...prev, { x: x + 5, y: y + 5, i: (prev[prev.length - 1]?.i ?? 0) + 1 }]
+        : prev
     )
   }
 

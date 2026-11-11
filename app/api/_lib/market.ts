@@ -4,8 +4,11 @@
  * read, merges them into one list (each NFT once, at its cheapest, tagged with where it is), and everyone reads the
  * same cached copy. If the source is down it serves the last good copy, marked `stale`, rather than nothing.
  *
- *   GET /api/market/listings?slug=<slug>   { at, stale, count, sources, floor, listings }
- *   GET /api/market/sales?slug=<slug>      { at, stale, day: { count, volume }, sales }
+ *   GET /api/market/listings?slug=<slug>   { at, stale, partial, count, sources, floor, listings }
+ *   GET /api/market/sales?slug=<slug>      { at, stale, partial, day: { count, volume }, sales }
+ *
+ * OpenSea answers in pages; the server follows `next` up to LISTING_PAGES / SALES_PAGES. `partial` true means there was
+ * more than that (or a later page failed): the lists, the count and the day's figures then cover only what was read.
  *
  * Only OpenSea today. MiyaPool joins as a second source when pools are live.
  * Upstream, the key and the cache are passed in, so `node --test` runs all of it (tests/market.test.mts).
@@ -17,13 +20,55 @@ const FRESH_MS = 30_000
 export const STALE_LIMIT_MS = 15 * 60_000
 const DAY_S = 86_400
 const WEEK_S = 7 * DAY_S
+/** Pages of 100 listings (500 in all) and of 50 sales (250 in a week) read per refresh, at most. */
+export const LISTING_PAGES = 5
+export const SALES_PAGES = 5
+const CURSOR_MAX = 1024
+
+/**
+ * The rows of `first` and of the pages after it, following OpenSea's `next` cursor up to `maxPages` in all. Partial when a
+ * cursor was left unfollowed or a later page failed (the first page's failure is the caller's). Pure apart from `read`.
+ */
+export async function readPages(
+  first: unknown,
+  field: string,
+  read: (next: string) => Promise<unknown>,
+  maxPages: number
+): Promise<{ rows: unknown[]; partial: boolean }> {
+  const cursor = (page: unknown) => {
+    const next = obj(page)?.next
+    return typeof next === 'string' && next && next.length <= CURSOR_MAX ? next : undefined
+  }
+  const rows = [...arr(obj(first)?.[field])]
+  let next = cursor(first)
+  const seen = new Set<string>()
+  for (let pages = 1; next && pages < maxPages; pages += 1) {
+    // A cursor seen before would only go round again.
+    if (seen.has(next)) return { rows, partial: true }
+    seen.add(next)
+    let page: unknown
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      page = await read(next)
+    } catch {
+      return { rows, partial: true }
+    }
+    rows.push(...arr(obj(page)?.[field]))
+    next = cursor(page)
+  }
+  return { rows, partial: !!next }
+}
 
 export type MarketSource = 'opensea' | 'miyapool'
 
 export type MarketListing = {
   tokenId: string
-  /** Wei, as a string: too big for a JS number. */
+  /** Wei, as a string: too big for a JS number. The whole order: what filling it costs. */
   price: string
+  /** How many of the NFT the order sells (ERC-1155 orders can sell several); 1 for an ERC-721. */
+  quantity: number
+  /** `price` for one of them (rounded down), which is what listings are compared and sorted by. */
+  unitPrice: string
   currency: string
   source: MarketSource
   /** The order to fill, when it can be bought here. */
@@ -66,11 +111,16 @@ export function fromOpenSea(raw: unknown): MarketListing | undefined {
     .find((i) => i?.itemType === 2 || i?.itemType === 3)
   const id = nft?.identifierOrCriteria !== undefined ? String(nft.identifierOrCriteria) : undefined
   if (!id || !/^[0-9]+$/.test(id)) return undefined
+  // Seaport's offer amount is how many the order sells; anything unreadable counts as one.
+  const amount = String(nft?.startAmount ?? '1')
+  const quantity = /^[1-9][0-9]{0,8}$/.test(amount) ? Number(amount) : 1
   const token = arr(params?.consideration).map(obj)[0]?.token
   const currency = str(current?.currency) || CURRENCY[String(token).toLowerCase()] || 'ETH'
   return {
     tokenId: id,
     price: value,
+    quantity,
+    unitPrice: (BigInt(value) / BigInt(quantity)).toString(),
     currency,
     source: 'opensea',
     hash,
@@ -80,8 +130,11 @@ export function fromOpenSea(raw: unknown): MarketListing | undefined {
   }
 }
 
+/** Per-unit price of a row; older rows without one (cached before it existed) count their whole price. */
+const unit = (l: MarketListing) => BigInt(l.unitPrice ?? l.price)
+
 /**
- * Each NFT once, at its cheapest, cheapest first. Only same-currency prices can be compared, so ETH rows win over a
+ * Each NFT once, at its cheapest per unit, cheapest first (an order selling five at 5 ETH is 1 ETH each). Only same-currency prices can be compared, so ETH rows win over a
  * token-priced row for the same NFT, and a token-priced row is listed after every ETH one.
  */
 export function mergeListings(rows: readonly MarketListing[], nowSeconds: number) {
@@ -90,14 +143,14 @@ export function mergeListings(rows: readonly MarketListing[], nowSeconds: number
   for (const l of rows) {
     if (!l.expiry || l.expiry > nowSeconds) {
       const held = best.get(l.tokenId)
-      if (!held || (eth(l) && !eth(held)) || (eth(l) === eth(held) && BigInt(l.price) < BigInt(held.price)))
+      if (!held || (eth(l) && !eth(held)) || (eth(l) === eth(held) && unit(l) < unit(held)))
         best.set(l.tokenId, l)
     }
   }
 
   const listings = [...best.values()].sort((a, b) => {
     if (eth(a) !== eth(b)) return eth(a) ? -1 : 1
-    const [x, y] = [BigInt(a.price), BigInt(b.price)]
+    const [x, y] = [unit(a), unit(b)]
     return x < y ? -1 : x > y ? 1 : 0
   })
   const sources: Record<string, number> = {}
@@ -106,8 +159,17 @@ export function mergeListings(rows: readonly MarketListing[], nowSeconds: number
   return {
     count: listings.length,
     sources,
+    // `price` stays the floor order's whole price, as before. When that order sells several, `unitPrice` is the floor
+    // for one and `quantity` how many: read the floor as `unitPrice ?? price`.
     floor:
-      cheapest && eth(cheapest) ? { price: cheapest.price, tokenId: cheapest.tokenId, source: cheapest.source } : null,
+      cheapest && eth(cheapest)
+        ? {
+            price: cheapest.price,
+            tokenId: cheapest.tokenId,
+            source: cheapest.source,
+            ...((cheapest.quantity ?? 1) > 1 ? { unitPrice: unit(cheapest).toString(), quantity: cheapest.quantity } : {}),
+          }
+        : null,
     listings,
   }
 }
@@ -189,24 +251,26 @@ export async function handleMarketRequest(
     let body: object
     if (kind === 'listings') {
       const path = `/api/v2/listings/collection/${encodeURIComponent(slug)}/best`
-      // As many as OpenSea gives in one call; the proxy's known-good 20 if it turns the larger page down.
-      const j = obj(await deps.openSea(path, { limit: '100' }).catch(() => deps.openSea(path, { limit: '20' })))
-      const rows = arr(j?.listings)
-        .map(fromOpenSea)
-        .filter((l): l is MarketListing => !!l)
-      body = mergeListings(rows, nowS)
+      // As many as OpenSea gives in one call; the proxy's known-good 20 if it turns the larger page down. Only a 400 is
+      // that: after a 429 or a timeout a second call would only spend more of the key's quota.
+      let limit = '100'
+      const first = await deps.openSea(path, { limit }).catch((e: unknown) => {
+        if (e instanceof Error && e.message === 'OpenSea 400') {
+          limit = '20'
+          return deps.openSea(path, { limit })
+        }
+        throw e
+      })
+      const pages = await readPages(first, 'listings', (next) => deps.openSea(path, { limit, next }), LISTING_PAGES)
+      const rows = pages.rows.map(fromOpenSea).filter((l): l is MarketListing => !!l)
+      body = { partial: pages.partial, ...mergeListings(rows, nowS) }
     } else {
-      const j = obj(
-        await deps.openSea(`/api/v2/events/collection/${encodeURIComponent(slug)}`, {
-          event_type: 'sale',
-          limit: '50',
-          after: String(nowS - WEEK_S),
-        })
-      )
-      const rows = arr(j?.asset_events)
-        .map(fromOpenSeaSale)
-        .filter((s): s is MarketSale => !!s)
-      body = summarizeSales(rows, nowS)
+      const path = `/api/v2/events/collection/${encodeURIComponent(slug)}`
+      const query = { event_type: 'sale', limit: '50', after: String(nowS - WEEK_S) }
+      const first = await deps.openSea(path, query)
+      const pages = await readPages(first, 'asset_events', (next) => deps.openSea(path, { ...query, next }), SALES_PAGES)
+      const rows = pages.rows.map(fromOpenSeaSale).filter((s): s is MarketSale => !!s)
+      body = { partial: pages.partial, ...summarizeSales(rows, nowS) }
     }
 
     await deps.cache.put(key, { at: now, body }).catch(() => undefined)

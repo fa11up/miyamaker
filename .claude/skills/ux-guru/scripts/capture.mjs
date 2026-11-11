@@ -1,12 +1,23 @@
 // Walks miyaOS's apps at desktop and phone size: screenshots plus automatic QA checks. See ../SKILL.md.
-// node .claude/skills/ux-guru/scripts/capture.mjs <outdir> [app,app]   (SITE=http://localhost:5199 by default)
+// node .claude/skills/ux-guru/scripts/capture.mjs <outdir> [app,app]   (SITE=http://localhost:5198 by default)
+// Exits 1 when any state had a page error or a step it could not perform, so a broken walk is never mistaken for a clean one.
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
-import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-const require = createRequire(join(homedir(), 'a11/infer-buy-tokens/web/package.json'))
-const { chromium } = require('playwright')
+// Playwright is an app devDependency: load it from this repo's app/, never from somewhere else on the machine.
+const APP = resolve(dirname(fileURLToPath(import.meta.url)), '../../../../app')
+let chromium
+try {
+  ;({ chromium } = createRequire(join(APP, 'package.json'))('playwright'))
+} catch {
+  console.error(
+    `capture.mjs: Playwright is not installed in ${APP}.\n` +
+      '  Run `yarn install` in app/ (playwright is a devDependency), then `npx playwright install chromium`.'
+  )
+  process.exit(2)
+}
 
 const OUT = process.argv[2] || 'ux-captures'
 const ONLY = process.argv[3]?.split(',')
@@ -17,11 +28,23 @@ const SIZES = {
   phone: { viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, hasTouch: true, isMobile: true },
 }
 
-/** A wallet in the page: reads go to a public node, every write is recorded and refused. Nothing can be sent. */
+/**
+ * A wallet in the page: reads go to a public node for the chain it is on, every write is recorded and refused. Nothing
+ * can be sent. It switches chains when asked (wallet_switchEthereumChain), so a Robinhood or Sepolia state is read from
+ * that chain's node rather than falling through to Ethereum's.
+ */
 const wallet = () => {
   const account = '0x28C6c06298d514Db089934071355E5743bf21d60'
+  const NODES = {
+    1: 'https://ethereum-rpc.publicnode.com',
+    11155111: 'https://ethereum-sepolia-rpc.publicnode.com',
+    4663: 'https://rpc.mainnet.chain.robinhood.com',
+  }
+  let chainId = 1
+  const listeners = {}
+  const emit = (event, value) => (listeners[event] || []).forEach((fn) => { try { fn(value) } catch {} })
   const rpc = async (method, params) => {
-    const r = await fetch('https://ethereum-rpc.publicnode.com', {
+    const r = await fetch(NODES[chainId], {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
@@ -32,17 +55,31 @@ const wallet = () => {
   }
   const provider = {
     isMetaMask: true,
-    on() {},
-    removeListener() {},
+    on(event, fn) { (listeners[event] ??= []).push(fn) },
+    removeListener(event, fn) { listeners[event] = (listeners[event] || []).filter((f) => f !== fn) },
     async request({ method, params }) {
       switch (method) {
         case 'eth_requestAccounts':
         case 'eth_accounts':
           return [account]
         case 'eth_chainId':
-          return '0x1'
+          return `0x${chainId.toString(16)}`
         case 'net_version':
-          return '1'
+          return String(chainId)
+        case 'wallet_switchEthereumChain': {
+          const next = Number(params?.[0]?.chainId)
+          if (!NODES[next]) throw Object.assign(new Error('Unrecognized chain ID'), { code: 4902 })
+          if (next !== chainId) {
+            chainId = next
+            emit('chainChanged', `0x${next.toString(16)}`)
+          }
+          return null
+        }
+        case 'wallet_addEthereumChain': {
+          const next = Number(params?.[0]?.chainId)
+          if (!NODES[next]) throw Object.assign(new Error('User rejected the request'), { code: 4001 })
+          return null
+        }
         case 'wallet_requestPermissions':
         case 'wallet_getPermissions':
           return [{ parentCapability: 'eth_accounts' }]
@@ -52,6 +89,7 @@ const wallet = () => {
         case 'eth_sendRawTransaction':
         case 'wallet_sendCalls':
         case 'personal_sign':
+        case 'eth_sign':
         case 'eth_signTypedData_v4':
           throw Object.assign(new Error('User rejected the request'), { code: 4001 })
         default:
@@ -160,6 +198,18 @@ const STATES = {
     { name: 'start', path: '/files', wait: 4000 },
     { name: 'wallet', wallet: true, path: '/files', wait: 12000 },
   ],
+  mint: [
+    { name: 'start', path: '/mint', wait: 6000 },
+    { name: 'wallet', wallet: true, path: '/mint', wait: 7000 },
+  ],
+  miyanet: [
+    { name: 'home', path: '/about', wait: 5000 },
+    { name: 'wallet', wallet: true, path: '/about', wait: 6000 },
+  ],
+  manager: [
+    { name: 'start', path: '/manage', wait: 4000 },
+    { name: 'wallet', wallet: true, path: '/manage', wait: 8000 },
+  ],
 }
 
 /** Everything checked in the page, per state. */
@@ -200,6 +250,27 @@ const inspect = (phone) => {
   }
 }
 
+/** Server routes (app/api/worker.ts) a vite preview doesn't serve: their GETs are read from the live site. */
+const PROXIED = [
+  '**/api/market/**',
+  '**/api/opensea**',
+  '**/api/tv/live',
+  '**/api/public-access*',
+  '**/api/station*',
+  '**/api/contracts/verified*',
+  '**/api/0x/**',
+  '**/api/nft/**',
+  // In the build too, but the Worker serves them with its own range handling (serveRange): read the live copy.
+  '**/commercials/**',
+]
+
+/**
+ * The keyed RPC (/api/rpc/<chainId>) answers as it does with no secret set, so the page uses the public RPCs at once:
+ * a capture never spends the live site's RPC quota.
+ */
+const rpcOff = (route) =>
+  route.fulfill({ status: 503, contentType: 'application/json', headers: { 'x-rpc-proxy': 'off', 'cache-control': 'no-store' }, body: '{"error":"This chain uses public RPCs."}' })
+
 const proxied = async (route) => {
   const req = route.request()
   if (req.method() !== 'GET') return route.fallback()
@@ -230,7 +301,8 @@ const run = async ({ app, state, sizeName }) => {
   p.on('response', (x) => { if (x.status() >= 400 && x.url().startsWith(SITE)) r.failed.push(`${x.status()} ${x.url().replace(SITE, '').slice(0, 90)}`) })
   if (state.wallet) await p.addInitScript(wallet)
   if (state.storage) await p.addInitScript((s) => Object.entries(s).forEach(([k, v]) => localStorage.setItem(k, v)), state.storage)
-  for (const glob of ['**/api/market/**', '**/api/opensea**', '**/api/tv/live', '**/api/public-access*', '**/api/station*']) await p.route(glob, proxied)
+  for (const glob of PROXIED) await p.route(glob, proxied)
+  await p.route('**/api/rpc/**', rpcOff)
   try {
     await p.goto(SITE + state.path, { waitUntil: 'domcontentloaded', timeout: 120000 })
     await p.waitForTimeout(state.wait ?? 4000)
@@ -249,3 +321,12 @@ await browser.close()
 writeFileSync(join(OUT, 'report.json'), JSON.stringify(report, null, 1))
 const rows = Object.entries(report).flatMap(([a, s]) => Object.entries(s).map(([k, r]) => `${a}/${k}: err ${r.errors.length} cons ${r.console.length} fail ${r.failed.length} sideways ${r.sideways?.length ?? '?'} clip ${r.clipped?.length ?? '?'} past ${r.pastScreen?.length ?? '?'} small ${r.smallTargets?.length ?? 0} broken ${r.brokenImages?.length ?? '?'} connect ${r.connectButtons ?? '?'}${r.stepFailed ? ` STEP: ${r.stepFailed}` : ''}`))
 console.log(rows.join('\n'))
+const broken = Object.entries(report).flatMap(([a, s]) =>
+  Object.entries(s)
+    .filter(([, r]) => r.stepFailed || r.errors.length || r.inspectFailed)
+    .map(([k]) => `${a}/${k}`)
+)
+if (broken.length) {
+  console.error(`\n${broken.length} state(s) had a page error or a failed step: ${broken.join(', ')}`)
+  process.exit(1)
+}

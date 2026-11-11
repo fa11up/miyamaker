@@ -1,14 +1,18 @@
 // src/pages/Mint/handheld/status.ts: the lamp, the D-pad's sums and how the device fits a screen. Run: yarn test
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
+import type { BufferGeometry, Material } from 'three'
+import { Group, Mesh, MeshStandardMaterial, PlaneGeometry, Texture } from 'three'
 
 import { HALO } from '../src/pages/Mint/handheld/chimes.ts'
 import { DEFAULT_LOOK, parseLook, pathPoints, rightEdge, SHAPES, TINTS } from '../src/pages/Mint/handheld/look.ts'
 import { fedWords, parsePet, petImage } from '../src/pages/Mint/handheld/petData.ts'
+import { release } from '../src/pages/Mint/handheld/release.ts'
 import {
   deviceZoom,
   MAX_ZOOM,
   panBy,
+  pixelRatio,
   statusLamp,
   stepQuantity,
   wrapIndex,
@@ -104,4 +108,38 @@ test('Fren Pet: a pet reads plainly, a gone pet says so, and only on-chain art i
     ),
   )
   assert.equal(petImage('https://evil.example/x.json'), undefined)
+})
+
+test('the 3D body keeps a phone at 1.5x and a slow machine at 1x, whatever else changes', () => {
+  assert.equal(pixelRatio(3, false, false), 2)
+  assert.equal(pixelRatio(3, true, false), 1.5)
+  assert.equal(pixelRatio(1, true, false), 1)
+  assert.equal(pixelRatio(0, false, false), 1)
+  assert.equal(pixelRatio(3, false, true), 1)
+  assert.equal(pixelRatio(3, true, true), 1)
+})
+
+test('a rebuild frees its own materials and textures but leaves the shared ones for the next build', () => {
+  const freed: string[] = []
+  const watch = <T extends Texture | Material | BufferGeometry>(name: string, it: T) => {
+    it.addEventListener('dispose', () => freed.push(name))
+    return it
+  }
+  const shared = watch('shared', new MeshStandardMaterial())
+  const map = watch('map', new Texture())
+  const bump = watch('bump', new Texture())
+  const own = watch('own', new MeshStandardMaterial({ map, bumpMap: bump }))
+  const group = new Group()
+  const inner = new Group()
+  group.add(new Mesh(watch('geo1', new PlaneGeometry(1, 1)), shared))
+  inner.add(new Mesh(watch('geo2', new PlaneGeometry(1, 1)), own))
+  inner.add(new Mesh(watch('geo3', new PlaneGeometry(1, 1)), own))
+  group.add(inner)
+
+  release(group, new Set([shared]))
+  assert.deepEqual(freed.sort(), ['bump', 'geo1', 'geo2', 'geo3', 'map', 'own'])
+
+  freed.length = 0
+  release(group)
+  assert.ok(freed.includes('shared'))
 })

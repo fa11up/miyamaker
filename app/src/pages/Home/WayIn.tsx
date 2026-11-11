@@ -8,7 +8,7 @@ import { Chip, ProgressMeter, Skeleton } from '@/components/Retro'
 import { useLaunchChain } from '@/miyamints/useMiyamints'
 import { StatusChip } from '@/pages/Mint/Home'
 import type { LiveMintCard } from '@/pages/Mint/liveMints'
-import { formatEthShort } from '@/pages/Mint/liveMints'
+import { cardPrice } from '@/pages/Mint/liveMints'
 import { useContractImage, useLiveMints } from '@/pages/Mint/useLiveMints'
 import { bevel, color, font, space, text } from '@/theme/tokens'
 
@@ -142,18 +142,24 @@ export function NowMinting({ id }: { id?: string }) {
             {featured.blurb && <span style={{ fontSize: text.sm }}>{featured.blurb}</span>}
             <dl>
               <dt>Price</dt>
-              <dd>{isLoading ? '…' : formatEthShort(featured.price)}</dd>
+              <dd>{isLoading ? '…' : cardPrice(featured)}</dd>
               {featured.supply !== undefined && (
                 <>
                   <dt>Minted</dt>
                   <dd>
-                    {(featured.minted ?? 0).toLocaleString('en-US')} / {featured.supply.toLocaleString('en-US')}
+                    {/* No minted count read is unknown, not 0. */}
+                    {isLoading && featured.minted === undefined
+                      ? '…'
+                      : featured.minted === undefined
+                        ? '–'
+                        : featured.minted.toLocaleString('en-US')}{' '}
+                    / {featured.supply.toLocaleString('en-US')}
                   </dd>
                 </>
               )}
             </dl>
-            {featured.supply !== undefined && (
-              <ProgressMeter value={featured.minted ?? 0} max={featured.supply} label={`${featured.name} minted`} />
+            {featured.supply !== undefined && featured.minted !== undefined && (
+              <ProgressMeter value={featured.minted} max={featured.supply} label={`${featured.name} minted`} />
             )}
           </div>
         </Feature>

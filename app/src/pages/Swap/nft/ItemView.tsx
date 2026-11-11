@@ -220,10 +220,26 @@ export default function ItemView({
                   venue={v}
                   facts={facts}
                   note={
-                    item.loading && !item.needsKey && os.slug ? (
+                    (item.loading && !item.needsKey && os.slug) || (os.loading && !os.slug && !os.needsKey) ? (
                       <Skeleton h="16px" w="50%" />
                     ) : item.needsKey || os.needsKey ? (
                       'Buying here is offline right now. Try again later, or buy it on OpenSea.'
+                    ) : os.missing ? (
+                      'Not on OpenSea yet.'
+                    ) : (item.error || (os.error && !os.slug)) && !listing && !item.offer ? (
+                      // A failed read is not "not listed": say so, and offer to ask again.
+                      <span data-item-opensea-failed>
+                        Couldn&apos;t check OpenSea.{' '}
+                        <LinkButton
+                          type="button"
+                          onClick={() => {
+                            os.refetch()
+                            item.refetch()
+                          }}
+                        >
+                          Try again
+                        </LinkButton>
+                      </span>
                     ) : !listing && !item.offer ? (
                       'Not listed and no offers right now.'
                     ) : undefined

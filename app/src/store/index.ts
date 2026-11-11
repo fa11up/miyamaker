@@ -13,7 +13,7 @@ import collections from './collections/reducer'
 
 const PERSISTED_KEYS: string[] = ['experience', 'windows', 'auction', 'collections']
 
-const saved = load({ states: PERSISTED_KEYS, disableWarnings: import.meta.env.NODE_ENV === 'test' })
+const saved = load({ states: PERSISTED_KEYS, disableWarnings: import.meta.env.MODE === 'test' })
 
 // A saved session can still hold a window that no longer exists, and every open window needs its page.
 const savedWindows = (saved as { windows?: Record<string, unknown> }).windows

@@ -52,7 +52,7 @@ test('remote tokens are deduped against the pins and each other, filtered and so
   assert.deepEqual(rest.map((t) => t.symbol), ['AAVE', 'DAI'])
   const lower = merged.map((t) => t.address.toLowerCase())
   assert.equal(new Set(lower).size, lower.length, 'no duplicate addresses')
-  assert.equal(rest[0].logoURI, undefined, 'non-https logo dropped')
+  assert.equal(rest[0]!.logoURI, undefined, 'non-https logo dropped')
   assert.ok(rest.every((t) => !t.miya && !t.blocked && !t.unverified))
 })
 
@@ -60,7 +60,7 @@ test('MIYA stays blocked even when the remote list has it', () => {
   const merged = mergeTokenLists(MAIN, remote, 1)
   const miya = merged.filter((t) => t.address.toLowerCase() === MIYA_ADDRESS.toLowerCase())
   assert.equal(miya.length, 1)
-  assert.match(miya[0].blocked || '', /NFT-gated/)
+  assert.match(miya[0]!.blocked || '', /NFT-gated/)
   assert.ok(!quickPicks(1).some((t) => t.symbol === 'MIYA'), 'blocked tokens are not quick picks')
 })
 
@@ -76,7 +76,7 @@ test('a broken or missing remote list still yields the miya list', () => {
 
 test('curated entries: checksummed-looking addresses, verified decimals, ETH is the native placeholder', () => {
   const m = MAIN
-  assert.equal(m[0].address, NATIVE)
+  assert.equal(m[0]!.address, NATIVE)
   const dec = Object.fromEntries(m.map((t) => [t.symbol, t.decimals]))
   assert.deepEqual(dec, { ETH: 18, INFER: 18, imdUSD: 18, USDC: 6, WBTC: 8, WETH: 18, IMD: 18, CULT: 18, MIYA: 18 })
   for (const t of m) assert.match(t.address, /^0x[0-9a-fA-F]{40}$/)
@@ -88,7 +88,7 @@ test('search ranks exact symbol, then prefix, then contains, keeping list order 
   assert.deepEqual(searchTokens(merged, 'usd').map((t) => t.symbol), ['USDC', 'imdUSD'])
   assert.deepEqual(searchTokens(merged, 'INFER').map((t) => t.symbol), ['INFER'])
   assert.deepEqual(searchTokens(merged, 'ether').map((t) => t.symbol), ['ETH', 'WETH'])
-  assert.deepEqual(searchTokens(merged, 'cult')[0].symbol, 'CULT')
+  assert.deepEqual(searchTokens(merged, 'cult')[0]!.symbol, 'CULT')
   assert.equal(searchTokens(merged, '  ').length, merged.length)
   assert.equal(searchTokens(merged, 'zzzz').length, 0)
 })

@@ -1,0 +1,15 @@
+{
+  "name": "miyamaker-vault-keeper",
+  "private": true,
+  "type": "module",
+  "description": "Conversion keeper for the miyamaker alignment vault (v2). Report-only by default. NOT deployed.",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "start": "node index.mjs",
+    "once": "node index.mjs --once",
+    "test": "node --test test/",
+    "smoke": "node scripts/smoke.mjs",
+    "fork-e2e": "node scripts/fork-e2e.mjs"
+  },
+  "dependencies": { "viem": "2.57.8" }
+}

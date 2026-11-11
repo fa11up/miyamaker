@@ -2,15 +2,18 @@
 /* eslint-disable no-nested-ternary */
 import { createContext, useEffect, useMemo, useState } from 'react'
 import styled from 'styled-components/macro'
-import type { Address } from 'viem'
+import type { Address, Hash } from 'viem'
 import { mainnet, sepolia } from 'viem/chains'
 import { useAccount, useReadContract } from 'wagmi'
 
-import { ConnectedButton, HighlightButton } from '@/components/Button'
+import { ChainButton, HighlightButton } from '@/components/Button'
 import FormInput from '@/components/FormInput'
 import Tabs from '@/components/Tabs'
+import { explorerUrl } from '@/config/wagmi'
 import Pages from '@/constants/pages'
-import { useWaitForTransaction } from '@/hooks/useWaitForTransaction'
+import { plainTxError } from '@/miyamints/errors'
+import { TX_CANCELLED_WORDS, TX_REVERTED_WORDS, TX_UNCONFIRMED_WORDS } from '@/miyamints/txOutcome'
+import { useTxOutcome } from '@/miyamints/useTxOutcome'
 
 import AllocationRow from './TableRows/AllocationRow'
 import BaseUriRow from './TableRows/BaseUriRow'
@@ -83,7 +86,7 @@ export default function LegacyManage({ collection, onChange }: { collection: Add
   const [tab, setTab] = useState('metadata')
 
   // Account
-  const { isConnected, address } = useAccount()
+  const { isConnected, address, chainId: walletChainId } = useAccount()
 
   const { alignedNft, isLoading: alignedLoading } = useAlignedNft({ address: collection })
   const symbol = useSymbol({ address: collection })
@@ -112,7 +115,8 @@ export default function LegacyManage({ collection, onChange }: { collection: Add
 
   const isOwner = useMemo(() => {
     refetchOwner()
-    return owner === address
+    // No wallet, or an owner that couldn't be read, is never "you own it".
+    return !!address && !!owner && owner.toLowerCase() === address.toLowerCase()
   }, [address, owner, refetchOwner])
 
   const metadata = useContractUri({
@@ -144,7 +148,7 @@ export default function LegacyManage({ collection, onChange }: { collection: Add
                 <td>Symbol</td>
                 <td>{symbol}</td>
                 <td style={{ padding: 0 }}>
-                  <ConnectedButton
+                  <HighlightButton
                     style={{
                       width: '100%',
                       display: 'flex',
@@ -152,18 +156,17 @@ export default function LegacyManage({ collection, onChange }: { collection: Add
                       justifyContent: 'center',
                       gap: '8px',
                     }}
-                    disabled={true}
-                    onClick={() => null}
+                    disabled
                   >
                     Locked
-                  </ConnectedButton>
+                  </HighlightButton>
                 </td>
               </tr>
               <tr>
                 <td>Parent</td>
                 <td>{alignedNft}</td>
                 <td style={{ padding: 0 }}>
-                  <ConnectedButton
+                  <HighlightButton
                     style={{
                       width: '100%',
                       display: 'flex',
@@ -171,11 +174,10 @@ export default function LegacyManage({ collection, onChange }: { collection: Add
                       justifyContent: 'center',
                       gap: '8px',
                     }}
-                    disabled={true}
-                    onClick={() => null}
+                    disabled
                   >
                     Locked
-                  </ConnectedButton>
+                  </HighlightButton>
                 </td>
               </tr>
               <BaseUriRow
@@ -207,12 +209,24 @@ export default function LegacyManage({ collection, onChange }: { collection: Add
   }, [alignedNft, collection, openInput, symbol])
 
   const [transacting, setTransacting] = useState('')
-  const [txHash, setTxHash] = useState('')
+  // The change sent and the chain it went to. Its ending is read by useTxOutcome, which gives up after its time limit.
+  const [sent, setSent] = useState<{ chainId: number; hash: Hash }>()
+  // What the last change came to, when that is news: failed, cancelled, or not confirmed (which keeps the buttons off).
+  const [notice, setNotice] = useState<string>()
+  const { outcome } = useTxOutcome(sent?.chainId ?? mainnet.id, sent?.hash)
+  const unconfirmed = !!sent && outcome === 'unknown'
+  const busyWords = (kind: string, idle: string) =>
+    transacting === kind ? (unconfirmed ? 'Not confirmed' : 'Updating...') : idle
 
-  useWaitForTransaction({
-    hash: (txHash as Address) || '0x',
-    enabled: !!txHash,
-    onSuccess: () => {
+  const finish = (words?: string) => {
+    setTransacting('')
+    setSent(undefined)
+    setNotice(words)
+  }
+
+  useEffect(() => {
+    if (!sent || outcome === 'waiting' || outcome === 'none') return
+    if (outcome === 'success') {
       if (transacting === 'lockUri') {
         refetchUriLocked()
       }
@@ -227,42 +241,38 @@ export default function LegacyManage({ collection, onChange }: { collection: Add
         metadata.refetch()
       }
 
-      setTransacting('')
-      setTxHash('')
-    },
-    // A revert or an unreadable receipt: stop showing "Updating...", or the row is stuck.
-    onError: () => {
-      setTransacting('')
-      setTxHash('')
-    },
-    onReplaced: (reason) => {
-      // A sped-up copy is the same change: onSuccess comes with its receipt, and refetches.
-      if (reason === 'repriced') return
-      setTransacting('')
-      setTxHash('')
-    },
-  })
+      finish()
+      return
+    }
+
+    // A sped-up copy is the same change and arrives as success. The rest are said, never cleared in silence.
+    if (outcome === 'reverted') finish(TX_REVERTED_WORDS)
+    else if (outcome === 'cancelled') finish(TX_CANCELLED_WORDS)
+    // Unknown: it may still land, so the change stays "sent" (buttons off) until the person starts over.
+    else setNotice(TX_UNCONFIRMED_WORDS)
+  }, [outcome, sent?.hash])
+
+  /** Sends one change. A failure before it was sent says why; once sent, its ending comes through the effect above. */
+  const send = async (kind: string, write: () => Promise<{ hash: Hash }>) => {
+    setTransacting(kind)
+    setNotice(undefined)
+    try {
+      const res = await write()
+      setSent({ chainId: walletChainId ?? mainnet.id, hash: res.hash })
+    } catch (e) {
+      console.error('Manage change failed', e)
+      finish(plainTxError(e))
+    }
+  }
 
   const handleLockUri = async () => {
     if (uriLocked) return
-    setTransacting('lockUri')
-    try {
-      const res = await lockUri()
-      setTxHash(res.hash)
-    } catch (e) {
-      setTransacting('')
-    }
+    await send('lockUri', lockUri)
   }
 
   const handleOpenMint = async () => {
     if (mintOpen) return
-    setTransacting('openMint')
-    try {
-      const res = await openMint()
-      setTxHash(res.hash)
-    } catch (e) {
-      setTransacting('')
-    }
+    await send('openMint', openMint)
   }
 
   const ActionTab = useMemo(() => {
@@ -272,7 +282,7 @@ export default function LegacyManage({ collection, onChange }: { collection: Add
         <b>Warning: The following actions are permanent!</b>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
           <label>Lock Base URI</label>
-          <ConnectedButton
+          <ChainButton
             style={{
               width: 'fit-content',
               display: 'flex',
@@ -284,14 +294,14 @@ export default function LegacyManage({ collection, onChange }: { collection: Add
             onClick={() => handleLockUri()}
             withChain={[mainnet.id, sepolia.id]}
           >
-            {transacting === 'lockUri' ? 'Updating...' : uriLocked ? 'Locked' : 'Lock'}
-          </ConnectedButton>
+            {busyWords('lockUri', uriLocked ? 'Locked' : 'Lock')}
+          </ChainButton>
           <small>Locks the current images to the nfts permanently.</small>
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
           <label>Open mint</label>
-          <ConnectedButton
+          <ChainButton
             style={{
               width: 'fit-content',
               display: 'flex',
@@ -303,13 +313,13 @@ export default function LegacyManage({ collection, onChange }: { collection: Add
             onClick={() => handleOpenMint()}
             withChain={[mainnet.id, sepolia.id]}
           >
-            {transacting === 'openMint' ? 'Updating...' : mintOpen ? 'Already open' : 'Open'}
-          </ConnectedButton>
+            {busyWords('openMint', mintOpen ? 'Already open' : 'Open')}
+          </ChainButton>
           <small>Starts minting phase.</small>
         </div>
       </div>
     )
-  }, [collection, mintOpen, transacting, uriLocked])
+  }, [collection, mintOpen, transacting, uriLocked, unconfirmed])
 
   const [form, setForm] = useState<{
     name: string
@@ -361,17 +371,8 @@ export default function LegacyManage({ collection, onChange }: { collection: Add
   }
 
   const handleUpdateMetadata = async () => {
-    setTransacting('metadata')
-    try {
-      const contractURI = `data:application/json;utf8,${encodeURIComponent(
-        JSON.stringify({ ...metadata.raw, ...form })
-      )}`
-
-      const result = await metadata.setContractUri(contractURI)
-      setTxHash(result.hash)
-    } catch (e) {
-      setTransacting('')
-    }
+    const contractURI = `data:application/json;utf8,${encodeURIComponent(JSON.stringify({ ...metadata.raw, ...form }))}`
+    await send('metadata', () => metadata.setContractUri(contractURI))
   }
 
   const MetadataTab = useMemo(() => {
@@ -409,7 +410,7 @@ export default function LegacyManage({ collection, onChange }: { collection: Add
           error={undefined}
         />
 
-        <ConnectedButton
+        <ChainButton
           style={{
             width: 'fit-content',
             display: 'flex',
@@ -421,13 +422,17 @@ export default function LegacyManage({ collection, onChange }: { collection: Add
           onClick={() => handleUpdateMetadata()}
           withChain={[mainnet.id, sepolia.id]}
         >
-          {transacting === 'metadata' ? 'Updating...' : 'Update'}
-        </ConnectedButton>
+          {busyWords('metadata', 'Update')}
+        </ChainButton>
       </div>
     )
-  }, [form.description, form.external_link, form.image, form.name, transacting, metadata.loaded])
+  }, [form.description, form.external_link, form.image, form.name, transacting, metadata.loaded, unconfirmed])
 
-  const connectHint = !isConnected && <p>Connect your wallet to manage a collection you own.</p>
+  // The Manage window above holds this view's one Connect wallet. Every change here needs the owner's wallet, so the
+  // buttons appear once it is connected.
+  if (!isConnected) {
+    return <p style={{ margin: 0, padding: '8px' }}>Its settings show here once the wallet that owns it is connected.</p>
+  }
 
   // Not a verdict until the chain has answered.
   if (alignedLoading || ownerLoading) return <div style={{ padding: '8px' }}>Loading…</div>
@@ -437,7 +442,6 @@ export default function LegacyManage({ collection, onChange }: { collection: Add
       <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', padding: '8px' }}>
         <b>Nothing to manage at this address.</b>
         <p style={{ margin: 0 }}>It may be the wrong address or the wrong network, or this wallet may not own it.</p>
-        {connectHint}
         <div>
           <HighlightButton onClick={onChange}>Pick another collection</HighlightButton>
         </div>
@@ -460,6 +464,22 @@ export default function LegacyManage({ collection, onChange }: { collection: Add
           onChange={(t) => setTab(t)}
         />
       </div>
+      {notice && (
+        <div
+          role={unconfirmed ? 'alert' : 'status'}
+          style={{ padding: '8px', display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center' }}
+        >
+          <span>{notice}</span>
+          {unconfirmed && sent && (
+            <>
+              <a href={`${explorerUrl(sent.chainId)}/tx/${sent.hash}`} target="_blank" rel="noreferrer">
+                View transaction
+              </a>
+              <HighlightButton onClick={() => finish()}>Start over</HighlightButton>
+            </>
+          )}
+        </div>
+      )}
     </ManageContext.Provider>
   )
 }

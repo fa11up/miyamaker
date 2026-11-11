@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { GONE_MS, goneHashes, isWalletRefusal, markGone, MAX_SWEEP, pickCheapest, runSweep, sumPrices, sweepable, sweepTotals } from '../src/pages/Swap/nft/sweep.ts'
+import { GONE_MS, goneHashes, isWalletRefusal, markGone, MAX_SWEEP, noteBuyOutcome, pickCheapest, runSweep, sumPrices, sweepable, sweepTotals, UNCONFIRMED_MS, unconfirmedHashes } from '../src/pages/Swap/nft/sweep.ts'
 
 const l = (tokenId: string | undefined, amount: bigint, extra = {}) => ({
   hash: `h${tokenId}`,
@@ -38,6 +38,11 @@ test('pickCheapest never passes the cap', () => {
   assert.equal(sumPrices([l('1', 5n), l('2', 7n)]), 12n)
 })
 
+test('sumPrices counts the whole order when one sells several (ERC-1155), not one item of it', () => {
+  // Five at 1 ETH each is a 5 ETH order: the sweep total must say what filling it costs.
+  assert.equal(sumPrices([l('1', 1n, { total: { amount: 5n, symbol: 'ETH' } }), l('2', 2n)]), 7n)
+})
+
 test('sweepTotals adds the checked plans', () => {
   const t = sweepTotals([
     { total: 100n, lines: [{ label: 'To the seller', amount: 99n }, { label: 'OpenSea fee', amount: 1n }] },
@@ -67,6 +72,24 @@ test('a listing that failed to buy stays hidden for a while, then returns', () =
   assert.equal(goneHashes(store).size, 0)
 })
 
+test('a buy that may still land is held back until its outcome is known', () => {
+  const data = new Map<string, string>()
+  const store = { getItem: (k: string) => data.get(k) ?? null, setItem: (k: string, v: string) => void data.set(k, v) }
+  noteBuyOutcome(store, '0xa', 'wallet', 1000)
+  assert.equal(unconfirmedHashes(store, 1000).size, 0, 'not sent yet')
+  noteBuyOutcome(store, '0xa', 'pending', 1000)
+  noteBuyOutcome(store, '0xb', 'pending', 1000)
+  noteBuyOutcome(store, '0xb', 'unconfirmed', 2000)
+  assert.deepEqual([...unconfirmedHashes(store, 3000)], ['0xa', '0xb'])
+  noteBuyOutcome(store, '0xa', 'bought', 3000)
+  assert.deepEqual([...unconfirmedHashes(store, 3000)], ['0xb'])
+  noteBuyOutcome(store, '0xb', 'failed', 3000)
+  assert.equal(unconfirmedHashes(store, 3000).size, 0)
+  noteBuyOutcome(store, '0xc', 'unconfirmed', 1000)
+  assert.equal(unconfirmedHashes(store, 1000 + UNCONFIRMED_MS).size, 0, 'let go after a long while')
+  assert.equal(goneHashes(store, 3000).size, 0, 'separate from the gone memory')
+})
+
 /** A sweep with a pretend wallet. `script` says what happens to each NFT; the log is every prompt that opened. */
 function pretend(script: Record<string, Partial<{ sim: unknown; send: unknown; status: string; lookup: unknown }>> = {}) {
   const prompts: string[] = []
@@ -74,17 +97,17 @@ function pretend(script: Record<string, Partial<{ sim: unknown; send: unknown; s
   let stopped = false
   const deps = {
     simulate: async (id: string) => {
-      if (script[id]?.sim) throw script[id].sim
+      if (script[id]?.sim) throw script[id]!.sim
       return id
     },
     send: async (id: string) => {
       prompts.push(id)
-      if (script[id]?.send) throw script[id].send
+      if (script[id]?.send) throw script[id]!.send
       return `0x${id}`
     },
     wait: async (hash: string) => {
       const id = hash.slice(2)
-      if (script[id]?.lookup) throw script[id].lookup
+      if (script[id]?.lookup) throw script[id]!.lookup
       return { status: script[id]?.status ?? 'success' }
     },
     isStopped: () => stopped,

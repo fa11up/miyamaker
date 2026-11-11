@@ -604,7 +604,9 @@ export default function PublishDialog({ job, onClose }: { job: PublishJob; onClo
     if (blocked) throw new SaidError(blocked)
     if (!music.ready || !music.cfg.factory || !music.cfg.vault)
       throw new SaidError('Music drops are not open here yet. Nothing was charged.')
-    if (!music.rulesKnown)
+    const minBps = music.minAlignmentBps
+    const feeBps = music.protocolFeeBps
+    if (!music.rulesKnown || minBps === undefined || feeBps === undefined)
       throw new SaidError('The vault share and fee are still being read from the network. Try again in a moment. Nothing was charged.')
     const { factory, vault } = music.cfg
     const chainId = music.cfg.chainId
@@ -612,11 +614,7 @@ export default function PublishDialog({ job, onClose }: { job: PublishJob; onClo
     if (!priced.ok) throw new SaidError(priced.error)
     const edition = parseEdition(supply, rise)
     if (!edition.ok) throw new SaidError(edition.error)
-    const alignment = parseAlignmentPct(
-      String(music.minAlignmentBps / 100),
-      music.minAlignmentBps,
-      music.protocolFeeBps
-    )
+    const alignment = parseAlignmentPct(String(minBps / 100), minBps, feeBps)
     if (!alignment.ok) throw new SaidError(alignment.error)
     if (!artistName) throw new SaidError('Add an artist name.')
 
@@ -945,10 +943,10 @@ export default function PublishDialog({ job, onClose }: { job: PublishJob; onClo
               {firstCopyLabel(sealed ? sealed.priceWei : pricedNow.ok ? pricedNow.wei : undefined, rising)}
             </label>
             <Note>
-              {music.rulesKnown
+              {music.rulesKnown && alignmentBps !== undefined && music.protocolFeeBps !== undefined
                 ? moneyWords(alignmentBps, music.protocolFeeBps)
                 : sealed
-                  ? `Sales stay in the collection until you withdraw them. On each withdrawal ${pctWords(alignmentBps)} goes to the community vault, plus the miya fee (still being read). You keep the rest.`
+                  ? `Sales stay in the collection until you withdraw them. On each withdrawal ${pctWords(sealed.alignmentBps)} goes to the community vault, plus the miya fee (still being read). You keep the rest.`
                   : 'Reading the vault share and fee from the network… Mint waits for them.'}
             </Note>
             <Note>

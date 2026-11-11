@@ -22,10 +22,19 @@ import type { FillPlan, OsOrder } from './markets'
 import { formatAmount, formatPrice, OPENSEA_CHAIN, planFill } from './markets'
 import { INPUT_ALIASES, SEAPORT_ADDRESSES, seaportAbi, seaportCallAbi } from './seaport'
 import type { SweepRun } from './sweep'
-import { isWalletRefusal, markGone, runSweep, sessionStore, SWEEP_STATE_WORDS, sweepTotals } from './sweep'
+import {
+  isWalletRefusal,
+  markGone,
+  noteBuyOutcome,
+  runSweep,
+  sessionStore,
+  SWEEP_STATE_WORDS,
+  SWEEP_WAIT_MS,
+  sweepTotals,
+} from './sweep'
 import { Action, Card, ConfirmCheck, Head, Hint, LinkButton, Mono, Prose, Stat, SwitchNote } from './ui'
 import { useFillFee } from './useFillFee'
-import { fetchFulfillment } from './useMarkets'
+import { fetchFulfillment, useOpenSeaCollection } from './useMarkets'
 
 const Rows = styled.table`
   width: 100%;
@@ -180,10 +189,15 @@ export default function SweepReview({
     setAgreed(false)
   }, [me, running])
 
+  // The collection's own creator fee payees (cached): any other payee in an order is shown as "Other fee".
+  // Plans are made once, so they wait for this lookup to finish (or fail).
+  const coll = useOpenSeaCollection(chainId, contract)
+  const creatorFees = coll.info?.fees.map((f) => f.recipient)
+
   // One at a time: the fulfillment route has its own small rate limit.
   const data = useQuery({
     queryKey: ['os-sweep', listings.map((l) => l.hash).join(), me?.toLowerCase()],
-    enabled: !!me && !!osChain,
+    enabled: !!me && !!osChain && !coll.loading,
     staleTime: 60_000,
     gcTime: 0,
     retry: false,
@@ -208,6 +222,7 @@ export default function SweepReview({
             seaports: SEAPORT_ADDRESSES,
             abi: seaportAbi,
             aliases: INPUT_ALIASES,
+            creatorFees,
           })
           if (!plan.ok) out.push({ listing, error: (plan as { error: string }).error })
           else if (!plan.currency.native) out.push({ listing, error: 'Priced in a token, so it cannot be swept.' })
@@ -238,7 +253,11 @@ export default function SweepReview({
     key: good.map((p) => p.listing.hash).join(),
   })
   const short = good.length > 0 && isShort(balance.data?.value, totals.total, fee, true)
-  const set = (hash: string, run: Run) => setRuns((r) => ({ ...r, [hash]: run }))
+  const set = (hash: string, run: Run) => {
+    // A buy that may still land is remembered, so the same listing isn't offered again while it might.
+    noteBuyOutcome(sessionStore(), hash, run.state)
+    setRuns((r) => ({ ...r, [hash]: run }))
+  }
 
   /** A listing that fails its check: the contract said no, so it has gone. A failed look-up says nothing about it. */
   const simulationFailed = (listing: OsOrder, e: unknown): Run => {
@@ -333,7 +352,8 @@ export default function SweepReview({
         let replaced: string | undefined
         const receipt = await client!.waitForTransactionReceipt({
           hash: hash as Hash,
-          timeout: 0,
+          // A dropped transaction never gets a receipt: past this it is "not confirmed yet", and the sweep moves on.
+          timeout: SWEEP_WAIT_MS,
           onReplaced: (r) => {
             replaced = r.reason
           },
@@ -379,8 +399,15 @@ export default function SweepReview({
     <Card aria-label="Review your sweep" data-sweep-review>
       <Head>
         <h2>Sweep {title}</h2>
-        <LinkButton type="button" onClick={onClose} disabled={running}>
-          {finished ? 'Close' : 'Cancel'}
+        {/* While it runs, closing stops the rest: no new wallet prompt opens once this screen has gone. */}
+        <LinkButton
+          type="button"
+          onClick={() => {
+            if (running) left.current = true
+            onClose()
+          }}
+        >
+          {finished || running ? 'Close' : 'Cancel'}
         </LinkButton>
       </Head>
       <Stat>
@@ -409,8 +436,11 @@ export default function SweepReview({
                 const run = runs[listing.hash]
                 return (
                   <tr key={listing.hash}>
-                    <td>#{listing.tokenId}</td>
-                    <td className="num">{plan ? eth(plan.total) : formatPrice(listing.price)}</td>
+                    <td>
+                      #{listing.tokenId}
+                      {listing.total ? ` × ${listing.remaining}` : ''}
+                    </td>
+                    <td className="num">{plan ? eth(plan.total) : formatPrice(listing.total ?? listing.price)}</td>
                     <td className={run?.state}>
                       {error ? (
                         <span className="failed">Left out: {error}</span>

@@ -10,7 +10,9 @@
  * about the video, and anyone could otherwise block any video for good. When the station removes it, it stays refused until
  * the station restores it ('restore': back where it was, on air or waiting).
  *
- * A write is a wallet signature over the exact words below, fresh within 10 minutes. YouTube's oEmbed check supplies the
+ * A write is a wallet signature over the exact words below, fresh within 10 minutes and used once (the signed words are
+ * remembered, hashed, in the table the station uses too). Sends are capped per wallet, per client (IP, IPv6 by /64; kept
+ * hashed on the row) and in all. The listing is cached for LIST_CACHE_MS and rate limited. YouTube's oEmbed check supplies the
  * title and refuses videos that are missing or cannot be embedded. Storage, signature check and lookup are passed in, so
  * `node --test` can run all of it (tests/public-access.test.mts); the page imports the message builders.
  */
@@ -32,6 +34,11 @@ const MAX_AGE_MS = 10 * 60_000
 const DAY_MS = 86_400_000
 export const MAX_PER_WALLET_PER_DAY = 5
 export const MAX_PER_DAY = 50
+/** Per client (IP): a couple of wallets' worth, well under the day's total. */
+export const MAX_PER_CLIENT_PER_DAY = 10
+export const LIST_CACHE_MS = 10_000
+/** Signed words are remembered for this long: past the 10 minutes either side in which they are accepted. */
+const USED_KEEP_MS = 3 * MAX_AGE_MS
 /** Each list has its own limit, so a flood of new submissions cannot push anything off the air or out of the queue. */
 const AIR_LIMIT = 200
 const QUEUE_LIMIT = 100
@@ -86,14 +93,18 @@ export interface TapeStore {
   listPending(limit: number): Promise<Tape[]>
   /** Removed rows too. */
   get(videoId: string): Promise<Tape | undefined>
-  /** False when the id already exists. */
-  insert(tape: Tape): Promise<boolean>
+  /** False when the id already exists. `client` is the sender's hashed client key, kept for the per-client cap. */
+  insert(tape: Tape, client?: string): Promise<boolean>
   /** Puts `tape`, awaiting review, over a row removed at `removedAt`. False when the row has changed since. */
-  resubmit(tape: Tape, removedAt: number): Promise<boolean>
+  resubmit(tape: Tape, removedAt: number, client?: string): Promise<boolean>
   approve(videoId: string, at: number): Promise<void>
   remove(videoId: string, by: string, at: number): Promise<void>
   restore(videoId: string): Promise<void>
   countSince(since: number, submitter?: string): Promise<number>
+  /** Rows sent since `since` from this hashed client key. */
+  countSinceFrom(since: number, client: string): Promise<number>
+  /** Records signed words (hashed) as used; false when they were used already. */
+  useSignature(hash: string, at: number): Promise<boolean>
 }
 
 export type PublicAccessDeps = {
@@ -105,8 +116,27 @@ export type PublicAccessDeps = {
   sameOrigin: (headers: Headers | undefined, url: URL) => boolean
   clientKey: (headers: Headers | undefined) => string
   limiter: (key: string) => boolean
+  /** For GETs; `limiter` when left out. */
+  readLimiter?: (key: string) => boolean
+  /** Caches GETs for LIST_CACHE_MS (the Worker's edge cache, market.ts); none when left out. */
+  listCache?: {
+    get: (key: string) => Promise<{ at: number; body: unknown } | undefined>
+    put: (key: string, value: { at: number; body: unknown }, ttlSeconds?: number) => Promise<void>
+  }
   now?: () => number
 }
+
+/** The listing takes no query, so one key: made-up query params cannot get around the cache. */
+export const PUBLIC_ACCESS_LIST_KEY = 'public-access-list:v1'
+
+/** Hex SHA-256. The same as the station's (no imports here, so `node --test` loads this file on its own). */
+async function sha256Hex(text: string) {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text))
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('')
+}
+/** Same hashing as station.ts clientTag, so one client counts the same in both. */
+const clientTag = async (key: string) =>
+  key && key !== 'unknown' ? (await sha256Hex(`miya-client:${key}`)).slice(0, 32) : undefined
 
 /** Removed by the station rather than taken back by the wallet that sent it. An unknown remover counts as the station. */
 const isBlocked = (t: Tape, admins: string[]) => {
@@ -171,6 +201,7 @@ const reply = (status: number, body: unknown) =>
     headers: { 'content-type': 'application/json', 'cache-control': 'no-store' },
   })
 const fail = (status: number, message: string) => reply(status, { error: message })
+const USED = 'That signature was already used. Try again.'
 
 export async function handlePublicAccessRequest(
   request: { method: string; url: string; headers: Headers; body?: string },
@@ -183,13 +214,25 @@ export async function handlePublicAccessRequest(
   const { store } = deps
 
   if (url.pathname === PUBLIC_ACCESS_PATH && request.method === 'GET') {
+    if (!(deps.readLimiter ?? deps.limiter)(deps.clientKey(request.headers)))
+      return fail(429, 'Too many requests. Wait a minute.')
+    const hit = await deps.listCache?.get(PUBLIC_ACCESS_LIST_KEY).catch(() => undefined)
+    if (hit && hit.body && now - hit.at >= 0 && now - hit.at < LIST_CACHE_MS) return reply(200, hit.body)
     const [tapes, pending] = await Promise.all([store.listApproved(AIR_LIMIT), store.listPending(QUEUE_LIMIT)])
-    return reply(200, { tapes, pending, admins })
+    const listing = { tapes, pending, admins }
+    await deps.listCache?.put(PUBLIC_ACCESS_LIST_KEY, { at: now, body: listing }, LIST_CACHE_MS / 1000).catch(() => undefined)
+    return reply(200, listing)
   }
 
   if (request.method !== 'POST') return fail(405, NOT_SENT)
   if (!deps.sameOrigin(request.headers, url)) return fail(403, 'Send tapes from miyamaker.com.')
-  if (!deps.limiter(deps.clientKey(request.headers))) return fail(429, 'Too many requests. Wait a minute.')
+  const client = deps.clientKey(request.headers)
+  if (!deps.limiter(client)) return fail(429, 'Too many requests. Wait a minute.')
+  /** A change lands: the listing is read fresh next time, here at least (the cache is per data centre). */
+  const changed = () =>
+    deps.listCache?.put(PUBLIC_ACCESS_LIST_KEY, { at: 0, body: null }, 1).catch(() => undefined)
+  /** Signed words count once: the wallet and the exact words, which hold the time. */
+  const fresh = async (message: string) => store.useSignature(await sha256Hex(`${wallet.toLowerCase()}\n${message}`), now)
 
   let body: Record<string, unknown>
   try {
@@ -210,14 +253,16 @@ export async function handlePublicAccessRequest(
   if (url.pathname === `${PUBLIC_ACCESS_PATH}/review`) {
     const decision = String(body.decision ?? '')
     if (decision !== 'approve' && decision !== 'remove' && decision !== 'restore') return fail(400, NOT_SENT)
-    if (!(await deps.verify(wallet, reviewMessage({ videoId, decision, wallet, at }), signature)))
-      return fail(401, 'The signature does not match the wallet.')
+    const message = reviewMessage({ videoId, decision, wallet, at })
+    if (!(await deps.verify(wallet, message, signature))) return fail(401, 'The signature does not match the wallet.')
+    if (!(await fresh(message))) return fail(409, USED)
     const tape = await store.get(videoId)
     const isAdmin = admins.includes(me)
     if (decision === 'restore') {
       if (!isAdmin) return fail(403, 'Only the station can restore a video.')
       if (!tape || !isBlocked(tape, admins)) return fail(404, 'That video has not been blocked.')
       await store.restore(videoId)
+      await changed()
       return reply(200, { ok: true })
     }
     if (!tape || tape.removedAt) return fail(404, 'That video is not on public access.')
@@ -226,20 +271,26 @@ export async function handlePublicAccessRequest(
       return fail(403, 'Only whoever sent it or the station can remove this video.')
     if (decision === 'approve') await store.approve(videoId, now)
     else await store.remove(videoId, me, now)
+    await changed()
     return reply(200, { ok: true })
   }
 
   if (url.pathname !== `${PUBLIC_ACCESS_PATH}/submit`) return fail(404, NOT_SENT)
-  if (!(await deps.verify(wallet, submitMessage({ videoId, wallet, at }), signature)))
-    return fail(401, 'The signature does not match the wallet.')
+  const message = submitMessage({ videoId, wallet, at })
+  if (!(await deps.verify(wallet, message, signature))) return fail(401, 'The signature does not match the wallet.')
+  if (!(await fresh(message))) return fail(409, USED)
 
   if (HOUSE_TAPES.some((t) => t.videoId === videoId)) return fail(409, 'This video is already on the air.')
   const existing = await store.get(videoId)
   if (existing && isBlocked(existing, admins)) return fail(409, 'This video was removed and cannot be sent in again.')
   if (existing && !existing.removedAt) return fail(409, 'This video has already been sent in.')
-  if ((await store.countSince(now - DAY_MS, me)) >= MAX_PER_WALLET_PER_DAY)
+  const tag = await clientTag(client)
+  const since = now - DAY_MS
+  if ((await store.countSince(since, me)) >= MAX_PER_WALLET_PER_DAY)
     return fail(429, `A wallet can send ${MAX_PER_WALLET_PER_DAY} videos a day. Come back tomorrow.`)
-  if ((await store.countSince(now - DAY_MS)) >= MAX_PER_DAY)
+  if (tag && (await store.countSinceFrom(since, tag)) >= MAX_PER_CLIENT_PER_DAY)
+    return fail(429, `${MAX_PER_CLIENT_PER_DAY} videos a day can be sent from one place. Come back tomorrow.`)
+  if ((await store.countSince(since)) >= MAX_PER_DAY)
     return fail(429, 'Public access has taken all it can today. Come back tomorrow.')
 
   const found = await deps.lookup(videoId)
@@ -252,15 +303,17 @@ export async function handlePublicAccessRequest(
     // Sending your own back keeps its place, so taking back and resending is no way up the queue.
     submittedAt: existing?.submitter === me ? existing.submittedAt : now,
   }
-  const saved = existing?.removedAt ? await store.resubmit(tape, existing.removedAt) : await store.insert(tape)
+  const saved = existing?.removedAt ? await store.resubmit(tape, existing.removedAt, tag) : await store.insert(tape, tag)
   if (!saved) return fail(409, 'This video has already been sent in.')
+  await changed()
   return reply(200, { tape })
 }
 
 /** YouTube's public oEmbed: 200 for a public video that may be embedded, 401 or 404 otherwise. Needs no key. */
 export async function youtubeLookup(videoId: string) {
   const res = await fetch(
-    `https://www.youtube.com/oembed?format=json&url=${encodeURIComponent(`https://www.youtube.com/watch?v=${videoId}`)}`
+    `https://www.youtube.com/oembed?format=json&url=${encodeURIComponent(`https://www.youtube.com/watch?v=${videoId}`)}`,
+    { signal: AbortSignal.timeout(8_000) }
   ).catch(() => undefined)
   if (!res?.ok) return undefined
   const json = (await res.json().catch(() => undefined)) as { title?: string; author_name?: string } | undefined
@@ -279,6 +332,23 @@ const fromDb = (r: Record<string, unknown>): Tape => ({
   removedAt: r.removed_at ? Number(r.removed_at) : undefined,
   removedBy: r.removed_by ? String(r.removed_by) : undefined,
 })
+
+/** D1's words for a table or column that is not there yet: a deploy before migrations/0003_hardening.sql. */
+const missingSchema = (e: unknown) => /no such (table|column)|has no column/i.test(String((e as Error)?.message ?? e))
+let toldSchema = false
+/** Runs `next`, or `before` when the migration has not run yet (said once in the logs). Same as the station's. */
+async function orBeforeMigration<T>(next: () => Promise<T>, before: () => Promise<T> | T): Promise<T> {
+  try {
+    return await next()
+  } catch (e) {
+    if (!missingSchema(e)) throw e
+    if (!toldSchema) {
+      toldSchema = true
+      console.warn('public access: run the D1 migrations (0003_hardening): per-client caps and single-use signatures are off')
+    }
+    return before()
+  }
+}
 
 /** The Worker's store: Cloudflare D1, the `DB` binding (migrations/). */
 export const d1TapeStore = (db: D1Like): TapeStore => ({
@@ -304,24 +374,44 @@ export const d1TapeStore = (db: D1Like): TapeStore => ({
     const r = await db.prepare('SELECT * FROM public_access_tapes WHERE video_id = ?').bind(videoId).first()
     return r ? fromDb(r) : undefined
   },
-  insert: async (t) =>
-    (
-      await db
-        .prepare(
-          'INSERT OR IGNORE INTO public_access_tapes (video_id, title, author, submitter, submitted_at) VALUES (?, ?, ?, ?, ?)'
-        )
-        .bind(t.videoId, t.title, t.author, t.submitter, t.submittedAt)
-        .run()
-    ).meta.changes > 0,
-  resubmit: async (t, removedAt) =>
-    (
-      await db
-        .prepare(
-          'UPDATE public_access_tapes SET title = ?, author = ?, submitter = ?, submitted_at = ?, approved_at = NULL, removed_at = NULL, removed_by = NULL WHERE video_id = ? AND removed_at = ?'
-        )
-        .bind(t.title, t.author, t.submitter, t.submittedAt, t.videoId, removedAt)
-        .run()
-    ).meta.changes > 0,
+  insert: async (t, client) => {
+    const values = [t.videoId, t.title, t.author, t.submitter, t.submittedAt]
+    const r = await orBeforeMigration(
+      () =>
+        db
+          .prepare(
+            'INSERT OR IGNORE INTO public_access_tapes (video_id, title, author, submitter, submitted_at, client_hash) VALUES (?, ?, ?, ?, ?, ?)'
+          )
+          .bind(...values, client ?? null)
+          .run(),
+      () =>
+        db
+          .prepare(
+            'INSERT OR IGNORE INTO public_access_tapes (video_id, title, author, submitter, submitted_at) VALUES (?, ?, ?, ?, ?)'
+          )
+          .bind(...values)
+          .run()
+    )
+    return r.meta.changes > 0
+  },
+  resubmit: async (t, removedAt, client) => {
+    const set =
+      'title = ?, author = ?, submitter = ?, submitted_at = ?, approved_at = NULL, removed_at = NULL, removed_by = NULL'
+    const values = [t.title, t.author, t.submitter, t.submittedAt]
+    const r = await orBeforeMigration(
+      () =>
+        db
+          .prepare(`UPDATE public_access_tapes SET ${set}, client_hash = ? WHERE video_id = ? AND removed_at = ?`)
+          .bind(...values, client ?? null, t.videoId, removedAt)
+          .run(),
+      () =>
+        db
+          .prepare(`UPDATE public_access_tapes SET ${set} WHERE video_id = ? AND removed_at = ?`)
+          .bind(...values, t.videoId, removedAt)
+          .run()
+    )
+    return r.meta.changes > 0
+  },
   approve: async (videoId, at) => {
     await db.prepare('UPDATE public_access_tapes SET approved_at = ? WHERE video_id = ?').bind(at, videoId).run()
   },
@@ -346,11 +436,36 @@ export const d1TapeStore = (db: D1Like): TapeStore => ({
       : await db.prepare('SELECT COUNT(*) AS n FROM public_access_tapes WHERE submitted_at >= ?').bind(since).first()
     return Number(r?.n ?? 0)
   },
+  countSinceFrom: (since, client) =>
+    orBeforeMigration(
+      async () =>
+        Number(
+          (
+            await db
+              .prepare('SELECT COUNT(*) AS n FROM public_access_tapes WHERE submitted_at >= ? AND client_hash = ?')
+              .bind(since, client)
+              .first()
+          )?.n ?? 0
+        ),
+      () => 0
+    ),
+  // The station's table (station.ts d1UseSignature): one list of used words for both.
+  useSignature: (hash, at) =>
+    orBeforeMigration(
+      async () => {
+        await db.prepare('DELETE FROM used_signatures WHERE at < ?').bind(at - USED_KEEP_MS).run()
+        const r = await db.prepare('INSERT OR IGNORE INTO used_signatures (hash, at) VALUES (?, ?)').bind(hash, at).run()
+        return r.meta.changes > 0
+      },
+      () => true
+    ),
 })
 
 /** Tests and the dev server. */
 export function memoryTapeStore(): TapeStore {
   const rows = new Map<string, Tape>()
+  const clients = new Map<string, string | undefined>()
+  const used = new Map<string, number>()
   const newestSent = (a: Tape, b: Tape) => b.submittedAt - a.submittedAt
   return {
     listApproved: async (limit) =>
@@ -366,14 +481,16 @@ export function memoryTapeStore(): TapeStore {
         .slice(0, limit)
         .sort(newestSent),
     get: async (id) => rows.get(id),
-    insert: async (t) => {
+    insert: async (t, client) => {
       if (rows.has(t.videoId)) return false
       rows.set(t.videoId, t)
+      clients.set(t.videoId, client)
       return true
     },
-    resubmit: async (t, removedAt) => {
+    resubmit: async (t, removedAt, client) => {
       if (rows.get(t.videoId)?.removedAt !== removedAt) return false
       rows.set(t.videoId, t)
+      clients.set(t.videoId, client)
       return true
     },
     approve: async (id, at) => {
@@ -390,5 +507,13 @@ export function memoryTapeStore(): TapeStore {
     },
     countSince: async (since, submitter) =>
       [...rows.values()].filter((t) => t.submittedAt >= since && (!submitter || t.submitter === submitter)).length,
+    countSinceFrom: async (since, client) =>
+      [...rows.values()].filter((t) => t.submittedAt >= since && clients.get(t.videoId) === client).length,
+    useSignature: async (hash, at) => {
+      for (const [h, t] of used) if (t < at - USED_KEEP_MS) used.delete(h)
+      if (used.has(hash)) return false
+      used.set(hash, at)
+      return true
+    },
   }
 }

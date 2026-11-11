@@ -42,8 +42,8 @@ export function createKnee(sampleRate) {
   let cw = 0
   let cPhase = 0
   let pPhase = 0
-  const apL = new Float32Array(4)
-  const apR = new Float32Array(4)
+  const allpassL = new Float32Array(4)
+  const allpassR = new Float32Array(4)
   let env = 0
   let pdL = 0
   let pdR = 1.3
@@ -151,8 +151,8 @@ export function createKnee(sampleRate) {
   function reset() {
     cL.fill(0)
     cR.fill(0)
-    apL.fill(0)
-    apR.fill(0)
+    allpassL.fill(0)
+    allpassR.fill(0)
     pL.fill(0)
     pR.fill(0)
     env = 0
@@ -220,14 +220,14 @@ export function createKnee(sampleRate) {
       const fcR = 280 + 2200 * (0.5 + 0.5 * Math.sin(pPhase + 1.9))
       const cApL = apCoeff(fcL)
       const cApR = apCoeff(fcR)
-      chL = allpass(chL, apL, 0, cApL)
-      chL = allpass(chL, apL, 1, cApL * 0.92)
-      chL = allpass(chL, apL, 2, cApL * 0.84)
-      chL = allpass(chL, apL, 3, cApL * 0.76)
-      chR = allpass(chR, apR, 0, cApR)
-      chR = allpass(chR, apR, 1, cApR * 0.9)
-      chR = allpass(chR, apR, 2, cApR * 0.8)
-      chR = allpass(chR, apR, 3, cApR * 0.7)
+      chL = allpass(chL, allpassL, 0, cApL)
+      chL = allpass(chL, allpassL, 1, cApL * 0.92)
+      chL = allpass(chL, allpassL, 2, cApL * 0.84)
+      chL = allpass(chL, allpassL, 3, cApL * 0.76)
+      chR = allpass(chR, allpassR, 0, cApR)
+      chR = allpass(chR, allpassR, 1, cApR * 0.9)
+      chR = allpass(chR, allpassR, 2, cApR * 0.8)
+      chR = allpass(chR, allpassR, 3, cApR * 0.7)
       const drive = 1 + policeHeard * 7
       const tubeL = tube(chL, 0.18, drive)
       const tubeR = tube(chR, 0.84, drive)

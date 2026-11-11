@@ -30,8 +30,16 @@ import {
   unreadPads,
 } from './model.js'
 import PublishDialog, { type PublishJob } from './PublishDialog'
+import { SaidError } from './mintPlan'
 import { subscribeRemoteOpen, takeRemoteOpen } from './remoteOpen.js'
 import css from './styles/miyamaker.css?inline'
+
+/** Our own plain sentences (SaidError) are shown as they are; anything else (a browser or storage error) gets `fallback`. */
+function saidOr(error: unknown, fallback: string): string {
+  if (error instanceof SaidError && error.message) return error.message
+  console.warn('[music]', error)
+  return fallback
+}
 
 const page = Pages.music
 
@@ -210,7 +218,7 @@ export default function MusicMakerPage() {
         if (cancel) return
         await openPackedUrl(job)
       } catch (error) {
-        model.browserNote = (error as Error).message || 'Could not open that file'
+        model.browserNote = saidOr(error, 'Could not open that file.')
         touch(false)
       }
     }
@@ -224,7 +232,7 @@ export default function MusicMakerPage() {
       try {
         await restoreSamples()
       } catch (error) {
-        restoreError = (error as Error)?.message || 'Some samples could not be read from browser storage'
+        restoreError = saidOr(error, 'Some samples could not be read from browser storage.')
       }
       if (cancel) return
       armHistory()
@@ -284,7 +292,7 @@ export default function MusicMakerPage() {
           onRestored={() => {
             // The restored save is a new session: its samples are read back and history starts over.
             restoreSamples().catch((error) => {
-              model.browserNote = (error as Error)?.message || 'Some samples could not be read'
+              model.browserNote = saidOr(error, 'Some samples could not be read.')
             }).finally(() => {
               armHistory()
               touch(false)

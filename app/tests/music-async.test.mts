@@ -156,9 +156,11 @@ const jobs = await import('../src/pages/MusicMaker/jobs.js')
 const modelMod = await import('../src/pages/MusicMaker/model.js')
 const history = await import('../src/pages/MusicMaker/history.js')
 const song = await import('../src/pages/MusicMaker/audio/song.js')
-const library = await import('../src/pages/MusicMaker/media/library.js')
+const library: any = await import('../src/pages/MusicMaker/media/library.js')
 const engine = await import('../src/pages/MusicMaker/audio/engine.js')
-const { model, audioBank, emptyPad, loadFactoryKit, rememberSample, restoreSamples, boot, save, BACKUP_KEY, BACKUP_EXTRA } = modelMod
+const { model: musicModel, audioBank, emptyPad, loadFactoryKit, rememberSample, restoreSamples, boot, save, BACKUP_KEY, BACKUP_EXTRA } = modelMod
+// The sampler's state is plain JS; the tests poke at it freely, so it is typed loosely here.
+const model = musicModel as unknown as { pads: any[]; buses: any[]; [key: string]: any }
 
 // The fake context has no worklets: the engine's fallbacks warn about that, which is expected here.
 const realWarn = console.warn
@@ -179,7 +181,7 @@ function withIdb<T>(idb: ReturnType<typeof memoryIdb>, fn: () => Promise<T>) {
 }
 
 function songDoc(name: string, sampleName: string) {
-  const pads = Array.from({ length: 64 }, (_, i) => emptyPad(i))
+  const pads: any[] = Array.from({ length: 64 }, (_, i) => emptyPad(i))
   pads[0].name = `${name} kick`
   return {
     type: 'm1ya',
@@ -311,7 +313,7 @@ test('a take or import aimed at a song that was replaced does not write into the
     assert.notEqual(model.pads[9].name, 'late take')
     // placePcm keeps it in the library instead
     const files = library.ensureLibrary().files.length
-    await engine.placePcm(9, new Float32Array([0.3]), 44100, 'late import', { song: before })
+    await engine.placePcm(9, new Float32Array([0.3]), 44100, 'late import', { song: before as any })
     assert.notEqual(model.pads[9].name, 'late import')
     assert.equal(library.ensureLibrary().files.length, files + 1)
     assert.match(model.browserNote, /song changed/i)
@@ -404,7 +406,7 @@ test('a second unreadable save never replaces the first backup, and extra backup
     assert.equal(map.get(BACKUP_KEY), '{broken 0', 'the first backup is kept')
     const extra = [...map.keys()].filter((k) => k.startsWith(`${BACKUP_KEY}-`)).sort()
     assert.equal(extra.length, BACKUP_EXTRA)
-    assert.equal(map.get(extra[extra.length - 1]), '{broken 5', 'the newest is kept too')
+    assert.equal(map.get(extra[extra.length - 1]!), '{broken 5', 'the newest is kept too')
     map.set('miya-music-maker-v1', '{broken 5')
     boot()
     assert.equal([...map.keys()].filter((k) => k.startsWith(`${BACKUP_KEY}-`)).length, BACKUP_EXTRA, 'the same bad save is not stored twice')

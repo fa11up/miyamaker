@@ -59,13 +59,13 @@ Songs save as `.m1ya`. Kits save as `.k1t`. From the site, or from a local check
 
 | Path | What |
 | --- | --- |
-| `app/` | miyaOS frontend (Vite + React 18) |
+| `app/` | miyaOS frontend (Vite + React 18), imported from [miyamaker/miyaOS](https://github.com/miyamaker/miyaOS) `main` @ `527d825` |
 | `app/src/pages/` | One folder per program |
 | `app/src/pages/MusicMaker/` | The sampler. Its guide is [the MusicMaker README](app/src/pages/MusicMaker/README.md). |
 | `app/src/pages/OperatingSystem/` | The desktop, the wallpaper, and the window layer |
 | `app/src/desktop/` | Icons, My Files, Display, the pet, and the screen saver |
 | `app/src/miyamints/` | Launch, manage, and the edition math the windows share |
-| `contracts/` | Foundry project: ERC-721 and ERC-1155 factories, Uniswap v4 alignment vaults, and the registries |
+| `contracts/` | Foundry project: the miyamints launchpad (`MiyaRegistry`, ERC721 drop / auction and ERC1155 factories, Uniswap v4 alignment vaults, NFT pools) and prediction markets. The factories and vaults started from [Zodomo/ms2fun-contracts](https://github.com/Zodomo/ms2fun-contracts) @ `ebb1190` |
 
 ## Run the desk
 
@@ -75,7 +75,7 @@ yarn
 yarn dev
 ```
 
-Yarn is the package manager (`app/yarn.lock`). Node 18 or newer is enough. The dev server prints a local URL. Open it, then open MiyaMusicMaker from the desktop or go straight to `/music`.
+Yarn is the package manager (`app/yarn.lock`). The repo’s `.nvmrc` is Node 24, and `app/package.json` asks for Node 22.18 or newer. The dev server prints a local URL. Open it, then open MiyaMusicMaker from the desktop or go straight to `/music`.
 
 ```bash
 cd app
@@ -91,12 +91,22 @@ Chrome, Edge, Brave, Arc, and Opera can see a USB MIDI controller on Mac, Window
 ```bash
 git submodule update --init --recursive
 cd contracts
-forge build
-forge test                         # full via_ir build, ~5 min cold
-FOUNDRY_PROFILE=lite forge test    # faster local iteration
+forge build                                   # solc 0.8.28 (pinned), via_ir
+SKIP_FORK_TESTS=true forge test --offline     # full via_ir build, ~5 min cold; drop the env to run the mainnet fork test
+FOUNDRY_PROFILE=ci forge test                 # long fuzz/invariant runs (CI runs it weekly)
+script/export-abis.sh                         # after an interface change: refresh contracts/abi/*.json for the app's drift test
 ```
 
-Kept from ms2fun: `factories/erc721` (1/1 auctions), `factories/erc1155` (editions), `vaults/uni`, the master / component / alignment / vault / global-message registries, treasury, price validator and password-tier gating. Dropped: ERC404, ZAMM and Cypher vaults and liquidity modules, promotion, featured queue, frontend registry. Registries are owned by our multisig, not a DAO.
+What is in `contracts/src`:
+
+- `registry/MiyaRegistry.sol`: one registry for the protocol. It holds the treasury and fees, the registered factories, vault factories and vaults, approved components (dynamic pricing, gating), alignment targets, the conversion keeper and every collection launched. It replaced ms2fun's master / component / alignment / vault / global-message registries and treasury. Owned by our Safe, not a DAO.
+- `factories/erc721drop`: fixed-price ERC721 drops with phases, allowlists, an owner reserve and ERC-2981 royalties (at most 10%).
+- `factories/erc721`: 1/1 auctions. `factories/erc1155`: editions (music drops) and `DynamicPricingModule`.
+- `vaults/uni`: Uniswap v4 alignment vaults and their factory; `peripherals/UniswapVaultPriceValidator.sol`.
+- `pools`: `MiyaPoolFactory` / `MiyaPool`, zero-fee NFT pools (NFTX v2 style).
+- `gating/PasswordTierGatingModule.sol` (off by default), `markets/` (prediction markets, deployed separately).
+
+Dropped from ms2fun: ERC404, ZAMM and Cypher vaults and liquidity modules, promotion, featured queue, frontend registry, the separate registries. Deploying is documented in [`contracts/DEPLOY.md`](contracts/DEPLOY.md) and runs from `main` through `script/deploy.sh`.
 
 An edition’s price model is already on the ERC-1155: unlimited (flat, supply 0), limited and flat, or limited and dynamic. Dynamic price is `basePrice * ((10000 + rate) / 10000) ^ minted`, with the rate in basis points, computed on chain by integer exponentiation. The desk’s chart and copy prices step that same rise and truncate to wei after each copy, which stays close to the chain and is not always the same wei.
 

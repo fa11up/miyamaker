@@ -1,11 +1,12 @@
-import { formatEther } from 'viem'
+import type { ReactNode } from 'react'
+import { formatUnits } from 'viem'
 import styled from 'styled-components/macro'
 
 import { ConnectedButton } from '@/components/Button'
 import { NormalButton } from '@/components/Button/NormalButton'
 import { AUCTION_CHAIN_ID } from '@/constants/contracts'
-import type { LotPhase } from '@/pages/Auction/bidding'
-import { balanceWords, monthYear, timeLeftWords } from '@/pages/Auction/bidding'
+import type { BidUnit, LotPhase } from '@/pages/Auction/bidding'
+import { balanceWords, ETH_UNIT, monthYear, timeLeftWords } from '@/pages/Auction/bidding'
 
 const BidWrapper = styled.div`
   display: flex;
@@ -108,6 +109,50 @@ const Message = styled.div`
   text-align: center;
 `
 
+const Stuck = styled.div`
+  margin: 0 0 0.4rem;
+  padding: 0.4rem 0.5rem;
+  border-left: 3px solid #a8843a;
+  background: rgba(255, 253, 246, 0.7);
+  font-size: 0.8rem;
+  line-height: 1.3;
+
+  > p {
+    margin: 0 0 0.4rem;
+    font-weight: bolder;
+  }
+
+  a {
+    color: #7a1620;
+  }
+
+  > div {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.75rem;
+  }
+`
+
+/** A bid sent whose ending is unknown: what to check, where, and the one way on. Shared with the miyamints lots. */
+export function StuckBid({ words, href, onStartOver }: { words: string; href?: string; onStartOver: () => void }) {
+  return (
+    <Stuck role="alert">
+      <p>{words}</p>
+      <div>
+        {href && (
+          <a href={href} target="_blank" rel="noreferrer">
+            View transaction
+          </a>
+        )}
+        <NormalButton type="button" onClick={onStartOver}>
+          Start over
+        </NormalButton>
+      </div>
+    </Stuck>
+  )
+}
+
 const Standing = styled.p<{ $good: boolean }>`
   margin: 0 0 0.4rem;
   padding: 0.3rem 0.5rem;
@@ -129,9 +174,17 @@ export default function BidContainer({
   minimum,
   check,
   busy,
+  stuck,
   canSend,
   balance,
   standing,
+  chainId = AUCTION_CHAIN_ID,
+  chainName = 'Ethereum',
+  upcoming,
+  ended,
+  notes = ['If someone outbids you, your ETH comes back automatically.'],
+  unit = ETH_UNIT,
+  payNote,
 }: {
   phase: LotPhase
   startTime: number
@@ -143,17 +196,35 @@ export default function BidContainer({
   onRetry: () => void
   minimum: bigint
   check: { valid: boolean; value?: bigint; label: string }
-  busy: 'wallet' | 'mining' | undefined
+  /** 'checking': the lot is being read again before anything is signed. */
+  busy: 'checking' | 'wallet' | 'mining' | undefined
+  /** A bid went out and its ending is unknown: it replaces the bid button until the person starts over. */
+  stuck?: { words: string; href?: string; onStartOver: () => void }
   /** The wallet is connected and on the auction's chain, so the button places a bid rather than connecting or switching. */
   canSend: boolean
   balance: bigint | undefined
   standing?: { good: boolean; words: string }
+  /** The chain the lot lives on, for the switch button and the words. */
+  chainId?: number
+  chainName?: string
+  /** In place of the opening date, for lots that open on their own terms. */
+  upcoming?: ReactNode
+  /** In place of the "ended" line: what can be done with an ended lot. */
+  ended?: ReactNode
+  /** The lot's rules under the bid, in its contract's words. */
+  notes?: string[]
+  /** The token bids are in (ETH unless the house says otherwise). */
+  unit?: BidUnit
+  /** Said under a valid amount before the wallet opens, e.g. the ERC-20 approval that comes first. */
+  payNote?: string
 }) {
+  // Whatever the lot says now, a bid that may still land comes first.
+  if (stuck) return <StuckBid {...stuck} />
   if (phase === 'loading') return <Message role="status">Checking this lot…</Message>
   if (phase === 'failed') {
     return (
       <Message role="alert">
-        Couldn&apos;t read this lot from Ethereum.
+        Couldn&apos;t read this lot from {chainName}.
         <NormalButton type="button" onClick={onRetry}>
           Try again
         </NormalButton>
@@ -162,12 +233,19 @@ export default function BidContainer({
   }
   if (phase === 'missing') return <Message>This lot isn&apos;t up for auction.</Message>
   if (phase === 'upcoming') {
-    return <Message>Bidding opens {new Date(startTime * 1000).toLocaleString()}.</Message>
+    return <Message>{upcoming || `Bidding opens ${new Date(startTime * 1000).toLocaleString()}.`}</Message>
   }
 
-  if (phase === 'ended') return <Message>This auction ended {monthYear(endTime)}.</Message>
+  if (phase === 'ended') return ended ? <>{ended}</> : <Message>This auction ended {monthYear(endTime)}.</Message>
 
-  const buttonWords = busy === 'wallet' ? 'Confirm in your wallet…' : busy === 'mining' ? 'Waiting for Ethereum…' : check.label
+  const buttonWords =
+    busy === 'checking'
+      ? 'Checking the lot…'
+      : busy === 'wallet'
+      ? 'Confirm in your wallet…'
+      : busy === 'mining'
+      ? `Waiting for ${chainName}…`
+      : check.label
 
   return (
     <>
@@ -178,30 +256,35 @@ export default function BidContainer({
       )}
       <InfoRow>
         <TimeLeft>{timeLeftWords(endTime * 1000 - now)}</TimeLeft>
-        {balance !== undefined && <span>Your balance: {balanceWords(balance)}</span>}
+        {balance !== undefined && <span>Your balance: {balanceWords(balance, unit)}</span>}
       </InfoRow>
       <BidWrapper>
         <InputWrapper>
           <TextInput
             value={bidAmount}
             inputMode="decimal"
-            aria-label="Your bid in ETH"
+            aria-label={`Your bid in ${unit.symbol}`}
             disabled={!!busy}
             onChange={(event) => onBidAmount(event.target.value)}
-            placeholder={`${formatEther(minimum)} or more`}
+            placeholder={`${formatUnits(minimum, unit.decimals)} or more`}
           />
-          <Unit>ETH</Unit>
+          <Unit>{unit.symbol}</Unit>
         </InputWrapper>
         <ActionWrapper>
-          <ConnectedButton withChain={[AUCTION_CHAIN_ID]} disabled={canSend && (!!busy || !check.valid)} onClick={onBid}>
+          <ConnectedButton withChain={[chainId]} disabled={canSend && (!!busy || !check.valid)} onClick={onBid}>
             {buttonWords}
           </ConnectedButton>
         </ActionWrapper>
       </BidWrapper>
       {check.valid && check.value !== undefined && (
-        <Note>You send {formatEther(check.value)} ETH now on Ethereum, plus gas.</Note>
+        <Note>
+          You send {formatUnits(check.value, unit.decimals)} {unit.symbol} now on {chainName}, plus gas.
+          {payNote ? ` ${payNote}` : ''}
+        </Note>
       )}
-      <Note>If someone outbids you, your ETH comes back automatically.</Note>
+      {notes.map((note) => (
+        <Note key={note}>{note}</Note>
+      ))}
     </>
   )
 }

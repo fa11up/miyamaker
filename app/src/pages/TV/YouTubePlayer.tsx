@@ -99,6 +99,7 @@ export default function YouTubePlayer({
   onAutoMuted,
   onEnded,
   onDead,
+  onPlaying,
 }: {
   videoId: string
   /** 0 to 1 */
@@ -109,13 +110,15 @@ export default function YouTubePlayer({
   onEnded?: () => void
   /** Pass it when there is something else to play: it's called a few seconds after a video turns out not to work. */
   onDead?: () => void
+  /** Called each time the video actually starts playing. */
+  onPlaying?: () => void
 }) {
   const slot = useRef<HTMLDivElement>(null)
   const player = useRef<any>()
   const [failed, setFailed] = useState(false)
   const [curtain, setCurtain] = useState(true)
-  const latest = useRef({ volume, muted, paused, onAutoMuted, onEnded, onDead })
-  latest.current = { volume, muted, paused, onAutoMuted, onEnded, onDead }
+  const latest = useRef({ volume, muted, paused, onAutoMuted, onEnded, onDead, onPlaying })
+  latest.current = { volume, muted, paused, onAutoMuted, onEnded, onDead, onPlaying }
 
   useEffect(() => {
     setFailed(false)
@@ -164,7 +167,12 @@ export default function YouTubePlayer({
             }, 2000)
           },
           onStateChange: (e: any) => {
-            setPlaying('tv-youtube', e.data === PLAYING || e.data === BUFFERING)
+            // Told to stay paused (by hand, or because another app has the sound): a stray start from YouTube's own
+            // autoplay doesn't take the sound back.
+            const on = e.data === PLAYING || e.data === BUFFERING
+            if (on && latest.current.paused) e.target.pauseVideo()
+            setPlaying('tv-youtube', on && !latest.current.paused)
+            if (e.data === PLAYING && !latest.current.paused) latest.current.onPlaying?.()
             if (e.data === ENDED) {
               // With nothing to go on to, this beats YouTube's end frame of other people's videos.
               if (latest.current.onEnded) latest.current.onEnded()

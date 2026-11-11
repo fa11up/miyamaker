@@ -16,32 +16,14 @@ import {
   LIVE_MINTS,
   registryEntry,
 } from '@/pages/Mint/liveMints'
+import { knownToken, tokenLabel } from '@/miyamints/tokens'
 import { fetchMetadataJson } from '@/utils/nftMetadata'
 import { parseJsonDataUri, resolveUri } from '@/utils/resolveUri'
 
+import { dropAbi } from './dropAbi'
 import { erc721mAbi } from './Miyamini/abi'
 
-export const dropAbi = parseAbi([
-  'function name() view returns (string)',
-  'function owner() view returns (address)',
-  'function totalSupply() view returns (uint256)',
-  'function maxSupply() view returns (uint32)',
-  'function contractURI() view returns (string)',
-  'function tokenURI(uint256 tokenId) view returns (string)',
-  'struct Phase { uint64 start; uint64 end; uint128 price; uint32 maxPerWallet; bytes32 merkleRoot; uint32 supplyCap; }',
-  'function phases() view returns (Phase[])',
-  'function phasesMinted() view returns (uint256[])',
-  'function publicRemaining() view returns (uint256)',
-  'function mintedInPhase(uint256 phaseId, address minter) view returns (uint256)',
-  'function mint(uint256 phaseId, uint256 quantity, bytes32[] proof) payable',
-  'function mintTo(address to, uint256 phaseId, uint256 quantity, bytes32[] proof) payable',
-  'error PhaseNotActive()',
-  'error NotAllowlisted()',
-  'error WalletLimit()',
-  'error SoldOut()',
-  'error PhaseSoldOut()',
-  'error WrongPayment()',
-])
+export { dropAbi }
 
 const registryAbi = parseAbi([
   'function instanceCount() view returns (uint256)',
@@ -84,7 +66,8 @@ const num = (v: bigint | number | undefined) => (v !== undefined ? Number(v) : u
 /** Turns the raw results for one collection into reads (the order matches erc721mCalls / dropCalls). */
 export function readsFromResults(
   kind: LiveMintEntry['kind'],
-  r: ReadResult[]
+  r: ReadResult[],
+  chainId = 1
 ): LiveMintReads & { phaseId?: number; maxPerWallet?: number } {
   if (kind === 'erc721m') {
     return {
@@ -105,6 +88,8 @@ export function readsFromResults(
     totalSupply: num(ok<bigint>(r[1])),
     maxSupply: num(ok<number>(r[2])),
     price: live?.price,
+    prices: live?.prices,
+    priceLabel: live && live.price === undefined ? priceLabelOf(live.prices, chainId) : undefined,
     // Without the sold counts and public supply we can't say whether a phase still has pieces.
     mintOpen: phases && sold && publicRemaining !== undefined ? !!live : undefined,
     contractURI: ok<string>(r[4]),
@@ -118,6 +103,15 @@ export function readsFromResults(
         ? Math.min(live.left, publicRemaining)
         : publicRemaining,
   }
+}
+
+/** "25 USDC" for a phase that doesn't sell for ETH: the first token we know the decimals of. */
+function priceLabelOf(prices: readonly { token: string; price: bigint }[], chainId: number): string | undefined {
+  for (const p of prices) {
+    const t = knownToken(chainId, p.token)
+    if (t) return p.price === 0n ? 'Free' : tokenLabel(p.price, t)
+  }
+  return undefined
 }
 
 /** Collections registered in MiyaRegistry by the ERC721 drop factory, on every chain where miyamints is deployed. */
@@ -219,7 +213,7 @@ export function useLiveMints() {
     readable.forEach((e) => {
       const next = at + READS_PER_COLLECTION[e.kind]
       byKey[entryKey(e)] = curatedReads.data
-        ? readsFromResults(e.kind, curatedReads.data.slice(at, next) as ReadResult[])
+        ? readsFromResults(e.kind, curatedReads.data.slice(at, next) as ReadResult[], e.chainId)
         : undefined
       at = next
     })
@@ -227,7 +221,7 @@ export function useLiveMints() {
     const registry = discovered.map((d, i) => {
       const n = READS_PER_COLLECTION.drop
       const reads = registryReads.data
-        ? readsFromResults('drop', registryReads.data.slice(i * n, (i + 1) * n) as ReadResult[])
+        ? readsFromResults('drop', registryReads.data.slice(i * n, (i + 1) * n) as ReadResult[], d.chainId)
         : undefined
       return { entry: registryEntry(d.chainId, d.address, reads?.name), reads }
     })

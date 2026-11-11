@@ -3,7 +3,7 @@ import type { Address } from 'viem'
 import { useContractWrite } from '@/hooks/useContractWrite'
 
 /** `value` is the total payment in wei (price * amount), computed in bigint so no float rounding reaches the tx. */
-export function useMintWithFee({ address, value }: { address: Address; value: bigint }) {
+export function useMintWithFee({ address, value, chainId }: { address: Address; value: bigint; chainId?: number }) {
   const { writeAsync } = useContractWrite({
     address,
     functionName: 'mint',
@@ -23,6 +23,7 @@ export function useMintWithFee({ address, value }: { address: Address; value: bi
       },
     ],
     value,
+    chainId,
   })
 
   const mint = async (amount: number) => writeAsync({ args: [amount] })

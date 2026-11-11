@@ -20,7 +20,19 @@ set: those are decided, not up for debate, and breaking one is a finding.
    `VITE_CHAT_URL=https://chat.miyamaker.com npx vite build --outDir <tmp> --emptyOutDir`, then
    `npx vite preview --outDir <tmp> --port 5198 --strictPort`), then from the repo root: `node .claude/skills/ux-guru/scripts/capture.mjs <outdir> [app,app]`. It walks
    every state at 1440x900 and 390x844 and writes `<outdir>/<app>/<state>.<desktop|phone>.png` and `<outdir>/report.json`.
-   Market, OpenSea and stream data is read from the live site. The test wallet records writes and never sends them.
+   Apps walked: trade, tv, radio, auction, launch, dropmusic, upload, files, mint, miyanet (Home, `/about`) and
+   manager, each with and without the test wallet. Market, OpenSea, NFT index and stream data is read from the live
+   site; `/api/rpc/*` answers "off" (as with no RPC secret set), so chain reads go to public RPCs. The test wallet
+   switches chains when asked (`wallet_switchEthereumChain` / `wallet_addEthereumChain`, for Ethereum, Sepolia and
+   Robinhood, reading from that chain's public node), records writes and never sends them.
+   Playwright loads from `app/node_modules` (an app devDependency: `yarn install` in `app/`, then
+   `npx playwright install chromium`). The script exits 1 when any state had a page error or a failed step.
+   **miyatv chat on a preview:** production chat (`chat.miyamaker.com`) only allows the miyamaker.com origins, so
+   it refuses a localhost preview. To capture chat, run the chat worker locally (`cd chat && cp .dev.vars.example
+   .dev.vars && npx wrangler dev`, port 8787), build with `VITE_CHAT_URL=http://127.0.0.1:8787`, and serve the preview
+   on a port `.dev.vars` ALLOWED_ORIGINS lists (`--port 5173 --strictPort`, then `SITE=http://localhost:5173`), or add
+   `http://localhost:5198` to ALLOWED_ORIGINS in your `.dev.vars`. Without that, the chat tab shows as offline:
+   expected, not a finding.
 2. **Read `report.json` first.** It is the QA half: page errors, failed requests, broken images, sideways overflow,
    clipped text, small tap targets, two Connect buttons, and any step the script could not perform. A failed step is a
    finding or a script fix, never something to skip quietly.

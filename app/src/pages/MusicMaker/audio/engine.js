@@ -1333,7 +1333,7 @@ export function playPad(index, velocity = TRACK_VEL, when = 0, opts = {}) {
   makeRoom()
   voices.push(voice)
   if (opts.pattern || opts.trackerNote) patternVoices.push(voice)
-  if (opts.holdId && (looping || gated)) held.set(opts.holdId, voice)
+  if (opts.holdId) held.set(opts.holdId, voice)
   if (src) {
     src.onended = () => {
       voice.dead = true
@@ -1515,8 +1515,10 @@ function sampleRms(pcm, at) {
 }
 
 function flash(index) {
-  if (typeof document === 'undefined') return
-  const root = document.querySelector('[data-miya-music]')?.shadowRoot || document
+  if (typeof document === 'undefined' || typeof document.querySelector !== 'function') return
+  const host = document.querySelector('[data-miya-music]')
+  const root = host?.shadowRoot || document
+  if (!root || typeof root.querySelectorAll !== 'function') return
   root.querySelectorAll(`.pad[data-pad="${index}"]`).forEach((el) => {
     el.style.setProperty('--hit', '1')
     el.style.zIndex = '1'

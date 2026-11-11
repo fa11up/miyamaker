@@ -10,7 +10,7 @@ import { PortalBox, PushButton } from './y2k'
  * the ring; random picks any other site. Every URL here was checked to load (HTTP 200).
  */
 export const RING = [
-  { name: 'miyamaker', url: 'https://miya.wtf/', blurb: 'This site. Make, align, trade.', here: true },
+  { name: 'miyamaker', url: 'https://www.miyamaker.com/', blurb: 'This site. Make, align, trade.', here: true },
   { name: 'imdusd.com', url: 'https://imdusd.com/', blurb: 'imdUSD, the dollar of the miyanet.' },
   { name: 'infer.imdusd.com', url: 'https://infer.imdusd.com/', blurb: 'Trade and stake INFER.' },
   { name: 'box.imdusd.com', url: 'https://box.imdusd.com/', blurb: 'INFER BOX. Ask the swarm to build things.' },

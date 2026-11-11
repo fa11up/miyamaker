@@ -357,7 +357,12 @@ export default function TokenPicker({
           </Note>
         )}
         {custom.notAToken && <Note tone="warn">That address is not a token on this network.</Note>}
-        {!custom.token && !custom.isLoading && !custom.notAToken && (
+        {custom.checkFailed && (
+          <Note tone="warn" role="alert">
+            Couldn&apos;t check that address right now. Try again in a moment.
+          </Note>
+        )}
+        {!custom.token && !custom.isLoading && !custom.notAToken && !custom.checkFailed && (
           <List aria-label="Tokens">
             {miya.length > 0 && (
               <Section aria-hidden>

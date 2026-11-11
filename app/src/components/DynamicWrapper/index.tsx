@@ -37,7 +37,11 @@ function CrashedWindow({ identifier, error, reset }: { identifier: string; error
       <div role="alert" style={{ padding: '1rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
         <b>This app crashed.</b>
         <p style={{ margin: 0 }}>{label} hit an unexpected error. Reload it or close the window.</p>
-        <code style={{ wordBreak: 'break-word', fontSize: '0.75rem', opacity: 0.8 }}>{error.message}</code>
+        {/* The raw text is for whoever reports the bug, so it waits behind a toggle. */}
+        <details style={{ fontSize: '0.75rem' }}>
+          <summary style={{ cursor: 'pointer' }}>Details</summary>
+          <code style={{ wordBreak: 'break-word', opacity: 0.8 }}>{error.message}</code>
+        </details>
         <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
           {/* A failed chunk import stays rejected inside React.lazy, so that case needs a full page reload. */}
           <HighlightButton onClick={() => (isChunkLoadError(error.message) ? window.location.reload() : reset())}>

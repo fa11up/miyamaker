@@ -113,7 +113,7 @@ test('a release is kept by wallet, chain and content', () => {
   saveRelease(store, release({ account: other }))
   saveRelease(store, release({ chainId: 8453 }))
   assert.equal(findReleases(store, account, 1).length, 2)
-  assert.equal(findReleases(store, account.toLowerCase(), 1)[0].content, 'song:application/json:def', 'latest first')
+  assert.equal(findReleases(store, account.toLowerCase(), 1)[0]!.content, 'song:application/json:def', 'latest first')
   assert.equal(findReleases(store, other, 1).length, 1)
   assert.equal(findReleases(store, account, 8453).length, 1)
   assert.equal(findReleases(store, account, 10).length, 0)

@@ -2,11 +2,16 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { parseEther, zeroAddress } from 'viem'
+import { parseEther, parseUnits, zeroAddress } from 'viem'
 
+import './ts-paths.mts'
 import { KIND_LABEL, kindFromFactory, mergeLaunches, progressLabel, scanRange } from '../src/miyamints/collections.ts'
 import type { LaunchForm } from '../src/miyamints/launch.ts'
-import {
+import { describeSplit, ethLabel, pctLabel, splitAmount } from '../src/miyamints/split.ts'
+import * as musicDrop from '../src/music/drop.ts'
+
+// launch.ts imports ./tokens without an extension (as Vite does): loaded after ts-paths.mts has set up the resolver.
+const {
   buildAuctionArgs,
   buildDropArgs,
   buildEditionArgs,
@@ -20,11 +25,15 @@ import {
   parseReserve,
   parseRoyaltyPct,
   parseSymbol,
+  phaseLine,
   txPlan,
+  upgradeForm,
   validateStep,
-} from '../src/miyamints/launch.ts'
-import { describeSplit, ethLabel, pctLabel, splitAmount } from '../src/miyamints/split.ts'
-import * as musicDrop from '../src/music/drop.ts'
+} = await import('../src/miyamints/launch.ts')
+
+const ETH = zeroAddress
+const USDC = '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48' as const
+const WBTC = '0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599' as const
 
 const CREATOR = '0x00000000000000000000000000000000000000C1' as const
 const VAULT = '0x00000000000000000000000000000000000000Fa' as const
@@ -33,6 +42,7 @@ const NOW = 1_800_000_000n
 
 const ctx = {
   now: NOW,
+  chainId: 1,
   minAlignmentBps: 1000,
   protocolFeeBps: 100,
   image: { hasFile: true },
@@ -67,18 +77,18 @@ test('percent and ETH labels are short and exact', () => {
 })
 
 test('describeSplit says the 1% / alignment / artist split in plain words, artist first', () => {
-  const d = describeSplit({ protocolBps: 100, alignmentBps: 1000, vaultName: 'CULT' })
+  const d = describeSplit({ protocolBps: 100, alignmentBps: 1000, vaultName: 'INFER/IMD' })
   assert.deepEqual(
     d.parts.map((p) => [p.key, p.pct, p.words]),
     [
       ['artist', '89%', 'goes to you'],
-      ['vault', '10%', 'buys into the CULT vault'],
+      ['vault', '10%', 'becomes INFER/IMD liquidity'],
       ['protocol', '1%', 'goes to miya'],
     ]
   )
   assert.equal(
     d.sentence,
-    'Of every 1 ETH collected, 0.89 ETH goes to you, 0.1 ETH buys into the CULT vault and 0.01 ETH goes to miya.'
+    'Of every 1 ETH collected, 0.89 ETH goes to you, 0.1 ETH becomes INFER/IMD liquidity and 0.01 ETH goes to miya. A sale in another token splits the same way, in that token.'
   )
   assert.equal(describeSplit({ protocolBps: 100, alignmentBps: 9950 }).valid, false)
 })
@@ -129,14 +139,58 @@ test('ticker and royalty', () => {
   assert.equal(parseRoyaltyPct('11').ok, false)
 })
 
+const ETH_T = { address: ETH, symbol: 'ETH', decimals: 18 }
+const USDC_T = { address: USDC, symbol: 'USDC', decimals: 6 }
+const WBTC_T = { address: WBTC, symbol: 'WBTC', decimals: 8 }
+const eth = (price: string) => ({ [ETH]: price })
+
 test('phases: blank start = now, end after start, free mints allowed, at most 3', () => {
-  const r = buildPhases([{ start: '', end: '', price: '0', maxPerWallet: '', supplyCap: '' }], NOW)
+  const r = buildPhases([{ start: '', end: '', prices: eth('0'), maxPerWallet: '', supplyCap: '' }], NOW, [ETH_T])
   assert.ok(r.ok)
-  assert.deepEqual(r.phases[0], { start: NOW, end: 0n, price: 0n, maxPerWallet: 0, merkleRoot: `0x${'0'.repeat(64)}`, supplyCap: 0 })
-  const bad = buildPhases([{ start: '2030-01-02T00:00', end: '2030-01-01T00:00', price: '0.1', maxPerWallet: '2', supplyCap: '' }], NOW)
+  assert.deepEqual(r.phases[0], {
+    start: NOW,
+    end: 0n,
+    maxPerWallet: 0,
+    merkleRoot: `0x${'0'.repeat(64)}`,
+    supplyCap: 0,
+    prices: [{ token: ETH, price: 0n }],
+  })
+  const bad = buildPhases(
+    [{ start: '2030-01-02T00:00', end: '2030-01-01T00:00', prices: eth('0.1'), maxPerWallet: '2', supplyCap: '' }],
+    NOW,
+    [ETH_T]
+  )
   assert.equal(bad.ok, false)
-  const four = Array.from({ length: 4 }, () => ({ start: '', end: '', price: '0.1', maxPerWallet: '', supplyCap: '' }))
-  assert.equal(buildPhases(four, NOW).ok, false)
+  const four = Array.from({ length: 4 }, () => ({ start: '', end: '', prices: eth('0.1'), maxPerWallet: '', supplyCap: '' }))
+  assert.equal(buildPhases(four, NOW, [ETH_T]).ok, false)
+})
+
+test('phases price each token at its own decimals; a blank leaves a token out, but one price is needed', () => {
+  const tokens = [ETH_T, USDC_T, WBTC_T]
+  const r = buildPhases(
+    [{ start: '', end: '', prices: { [ETH]: '0.01', [USDC.toLowerCase()]: '25.5', [WBTC.toLowerCase()]: '' }, maxPerWallet: '', supplyCap: '' }],
+    NOW,
+    tokens
+  )
+  assert.ok(r.ok)
+  assert.deepEqual(r.phases[0]?.prices, [
+    { token: ETH, price: parseEther('0.01') },
+    { token: USDC, price: 25_500_000n },
+  ])
+  // USDC has 6 decimals: a seventh is refused, not rounded.
+  const seven = buildPhases(
+    [{ start: '', end: '', prices: { [USDC.toLowerCase()]: '1.0000001' }, maxPerWallet: '', supplyCap: '' }],
+    NOW,
+    tokens
+  )
+  assert.equal(seven.ok, false)
+  assert.match(seven.ok ? '' : seven.error, /USDC has at most 6 decimals/)
+  const none = buildPhases([{ start: '', end: '', prices: {}, maxPerWallet: '', supplyCap: '' }], NOW, tokens)
+  assert.equal(none.ok, false)
+  assert.equal(
+    phaseLine({ start: '', end: '', prices: { [ETH]: '0.02', [USDC.toLowerCase()]: '50' }, maxPerWallet: '2', supplyCap: '' }, tokens),
+    '0.02 ETH or 50 USDC, limit 2 per wallet, starts right away'
+  )
 })
 
 test('validateStep gates each wizard step', () => {
@@ -149,8 +203,32 @@ test('validateStep gates each wizard step', () => {
   assert.deepEqual(Object.keys(music), ['audio'])
   assert.ok(validateStep('art', form({ type: 'drop', name: 'A', symbol: 'A', imageMode: 'link', imageUri: 'javascript:x' }), ctx).image)
   assert.ok(validateStep('sale', form({ type: 'auction', reserve: '0' }), ctx).reserve)
+  // Accepted tokens: at least one; an editions price for every one of them.
+  assert.ok(validateStep('sale', form({ type: 'editions', tokens: [], editionPrices: {} }), ctx).tokens)
+  const twoTokens = form({ type: 'editions', tokens: [ETH, USDC.toLowerCase()], editionPrices: eth('0.01') })
+  assert.match(validateStep('sale', twoTokens, ctx).editionPrices ?? '', /in USDC/)
+  assert.deepEqual(
+    validateStep(
+      'sale',
+      { ...twoTokens, editionRise: '', editionPrices: { ...eth('0.01'), [USDC.toLowerCase()]: '20' } },
+      ctx
+    ),
+    {}
+  )
+  // Off mainnet only ETH exists.
+  assert.ok(validateStep('sale', twoTokens, { ...ctx, chainId: 11155111 }).tokens)
   assert.ok(validateStep('align', form({ alignmentPct: '5' }), ctx).alignmentPct)
   assert.ok(validateStep('align', form({ vaultChoice: 'custom', customVault: '0x123' }), ctx).customVault)
+})
+
+test('the vault share is never passed on a guess: unread registry rules block the align step', () => {
+  const unread = { ...ctx, minAlignmentBps: undefined, protocolFeeBps: undefined }
+  assert.match(validateStep('align', form({ alignmentPct: '20' }), unread).alignmentPct ?? '', /Loading/)
+  assert.match(
+    validateStep('align', form({ alignmentPct: '20' }), { ...unread, rulesFailed: true }).alignmentPct ?? '',
+    /Couldn't read/
+  )
+  assert.equal(validateStep('align', form({ alignmentPct: '20' }), ctx).alignmentPct, undefined)
 })
 
 // ── contract argument builders ───────────────────────────────────────────────
@@ -165,9 +243,9 @@ test('buildDropArgs → ERC721DropFactory.createDrop(InitParams, vault, alignmen
     description: 'hi',
     supply: '100',
     royaltyPct: '5',
-    phases: [{ start: '', end: '', price: '0.01', maxPerWallet: '3', supplyCap: '' }],
+    phases: [{ start: '', end: '', prices: eth('0.01'), maxPerWallet: '3', supplyCap: '' }],
   })
-  const [params, vault, bps] = buildDropArgs(f, resolved, NOW)
+  const [params, vault, bps] = buildDropArgs(f, resolved, NOW, 1)
   assert.equal(vault, VAULT)
   assert.equal(bps, 1500)
   assert.equal(params.name, 'Miya Friends')
@@ -176,25 +254,38 @@ test('buildDropArgs → ERC721DropFactory.createDrop(InitParams, vault, alignmen
   assert.equal(params.baseURI, '')
   assert.equal(params.royaltyReceiver, CREATOR)
   assert.equal(params.royaltyBps, 500n)
+  assert.deepEqual(params.acceptedTokens, [ETH], 'ETH is chosen to start')
   assert.deepEqual(params.phases[0], {
     start: NOW,
     end: 0n,
-    price: parseEther('0.01'),
     maxPerWallet: 3,
     supplyCap: 0,
     merkleRoot: `0x${'0'.repeat(64)}`,
+    prices: [{ token: ETH, price: parseEther('0.01') }],
   })
   assert.ok(params.unrevealedURI.startsWith('data:application/json;utf8,'))
   const token = JSON.parse(decodeURIComponent(params.unrevealedURI.split(',')[1] as string))
   assert.deepEqual(token, { name: 'Miya Friends', description: 'hi', image: 'ar://img' })
   // No royalty → no receiver.
-  assert.equal(buildDropArgs({ ...f, royaltyPct: '0' }, resolved, NOW)[0].royaltyReceiver, zeroAddress)
+  assert.equal(buildDropArgs({ ...f, royaltyPct: '0' }, resolved, NOW, 1)[0].royaltyReceiver, zeroAddress)
+  // A drop that takes USDC as well lists it, checksummed, and prices it at 6 decimals.
+  const both = buildDropArgs(
+    { ...f, tokens: [ETH, USDC.toLowerCase()], phases: [{ ...f.phases[0]!, prices: { ...eth('0.01'), [USDC.toLowerCase()]: '30' } }] },
+    resolved,
+    NOW,
+    1
+  )[0]
+  assert.deepEqual(both.acceptedTokens, [ETH, USDC])
+  assert.deepEqual(both.phases[0]?.prices, [
+    { token: ETH, price: parseEther('0.01') },
+    { token: USDC, price: 30_000_000n },
+  ])
 })
 
-test('buildAuctionArgs → createInstance(salt, CreateParams) + queuePiece with the starting bid as value', () => {
+test('buildAuctionArgs → createInstance(salt, CreateParams) + queuePiece(uri, deposit) with the deposit as value', () => {
   const salt = makeSalt(FACTORY, new Uint8Array(11).fill(1))
   const f = form({ type: 'auction', name: 'One', symbol: 'ONE', reserve: '0.25', durationHours: '48', bidStep: '0.01' })
-  const { create, queue } = buildAuctionArgs(f, resolved, salt)
+  const { create, queue } = buildAuctionArgs(f, resolved, salt, 1)
   assert.equal(create[0], salt)
   assert.deepEqual(
     { ...create[1], metadataURI: undefined },
@@ -209,10 +300,25 @@ test('buildAuctionArgs → createInstance(salt, CreateParams) + queuePiece with 
       baseDuration: 48 * 3600,
       timeBuffer: 300,
       bidIncrement: parseEther('0.01'),
+      currency: ETH,
     }
   )
   assert.equal(queue.value, parseEther('0.25'))
+  assert.equal(queue.deposit, parseEther('0.25'))
+  assert.equal(queue.approve, undefined, 'ETH needs no approval')
   assert.ok(queue.tokenURI.startsWith('data:application/json;utf8,'))
+  // A WBTC house: the deposit and step at 8 decimals, no value, and an approval of exactly the deposit.
+  const btc = buildAuctionArgs({ ...f, currency: WBTC.toLowerCase(), reserve: '0.015', bidStep: '0.001' }, resolved, salt, 1)
+  assert.equal(btc.create[1].currency, WBTC)
+  assert.equal(btc.create[1].bidIncrement, 100_000n)
+  assert.deepEqual(btc.queue, {
+    tokenURI: btc.queue.tokenURI,
+    deposit: 1_500_000n,
+    value: 0n,
+    approve: { token: WBTC, amount: 1_500_000n },
+  })
+  assert.match(txPlan('auction', WBTC_T)[1]!.label, /allow exactly the starting bid in WBTC/)
+  assert.throws(() => buildAuctionArgs({ ...f, currency: WBTC.toLowerCase() }, resolved, salt, 11155111))
 })
 
 test('buildEditionArgs → ERC1155Factory.createInstance + addEdition (open edition, music metadata)', () => {
@@ -222,25 +328,49 @@ test('buildEditionArgs → ERC1155Factory.createInstance + addEdition (open edit
     editionKind: 'music',
     name: 'Night Tone',
     artist: 'Miya',
-    editionPrice: '0.005',
+    editionPrices: eth('0.005'),
     editionRise: '',
   })
-  const { create, edition } = buildEditionArgs(f, { ...resolved, audio: 'ar://song', audioMime: 'audio/mpeg' }, salt)
+  const { create, edition } = buildEditionArgs(f, { ...resolved, audio: 'ar://song', audioMime: 'audio/mpeg' }, salt, 1)
   assert.equal(create[1].gatingModule, zeroAddress)
   assert.equal(create[1].creator, CREATOR)
   assert.deepEqual(create[1].freeMint, { allocation: 0n, scope: 0 })
-  const [title, price, supply, uri, model, rate, open] = edition
-  assert.deepEqual([title, price, supply, model, rate, open], ['Night Tone', parseEther('0.005'), 0n, 0, 0n, 0n])
+  assert.deepEqual(create[1].acceptedTokens, [ETH])
+  const [title, prices, supply, uri, model, rate, open] = edition
+  assert.deepEqual([title, prices, supply, model, rate, open], [
+    'Night Tone',
+    [{ token: ETH, price: parseEther('0.005') }],
+    0n,
+    0,
+    0n,
+    0n,
+  ])
   const meta = JSON.parse(decodeURIComponent(uri.split(',')[1] as string))
   assert.equal(meta.animation_url, 'ar://song')
   assert.equal(meta.mime_type, 'audio/mpeg')
   // Limited edition with a flat curve stays one price.
-  assert.equal(buildEditionArgs({ ...f, editionKind: 'art', editionSupply: '50' }, resolved, salt).edition[4], 1)
-  // The default gentle curve is 1% more each copy.
-  const curved = buildEditionArgs({ ...f, editionSupply: '50', editionRise: '1' }, resolved, salt).edition
+  assert.equal(
+    buildEditionArgs({ ...f, editionKind: 'art', editionSupply: '50', editionRise: '' }, resolved, salt, 1).edition[4],
+    1
+  )
+  // The gentle curve is 1% more each copy, and it needs a supply.
+  const curved = buildEditionArgs({ ...f, editionSupply: '50', editionRise: '1' }, resolved, salt, 1).edition
   assert.equal(curved[4], 2)
   assert.equal(curved[5], 100n)
-  assert.equal(validateStep('sale', form({ type: 'editions', editionPrice: '0.01', editionRise: '1' }), ctx).editionRise?.length > 0, true)
+  assert.equal(
+    (validateStep('sale', form({ type: 'editions', editionPrices: eth('0.01'), editionRise: '1' }), ctx).editionRise?.length ?? 0) > 0,
+    true
+  )
+  // An editions price of 0 is refused (InvalidPrice): validation stops it first.
+  assert.throws(() => buildEditionArgs({ ...f, editionPrices: eth('0') }, resolved, salt, 1))
+  const usdc = buildEditionArgs(
+    { ...f, tokens: [USDC.toLowerCase()], editionPrices: { [USDC.toLowerCase()]: '2.5' }, editionRise: '' },
+    resolved,
+    salt,
+    1
+  )
+  assert.deepEqual(usdc.create[1].acceptedTokens, [USDC])
+  assert.deepEqual(usdc.edition[1], [{ token: USDC, price: parseUnits('2.5', 6) }])
 })
 
 test('makeSalt matches music/drop.ts; data URIs are percent-encoded JSON', () => {
@@ -293,11 +423,29 @@ test('kindFromFactory, scanRange and progress labels', () => {
 })
 
 test('buildPhases: a phase can cap what it sells', () => {
-  const r = buildPhases([{ start: '', end: '', price: '0.1', maxPerWallet: '', supplyCap: '50' }], NOW)
+  const r = buildPhases([{ start: '', end: '', prices: eth('0.1'), maxPerWallet: '', supplyCap: '50' }], NOW, [ETH_T])
   assert.ok(r.ok)
   assert.equal(r.phases[0]?.supplyCap, 50)
-  const zero = buildPhases([{ start: '', end: '', price: '0.1', maxPerWallet: '', supplyCap: '0' }], NOW)
+  const zero = buildPhases([{ start: '', end: '', prices: eth('0.1'), maxPerWallet: '', supplyCap: '0' }], NOW, [ETH_T])
   assert.equal(zero.ok, false)
+})
+
+test('a launch saved before multi-token sales carries on with its ETH prices', () => {
+  const old = {
+    ...EMPTY_FORM,
+    tokens: undefined,
+    currency: undefined,
+    editionPrices: undefined,
+    editionPrice: '0.02',
+    phases: [{ start: '', end: '', price: '0.01', maxPerWallet: '', supplyCap: '' }],
+  } as unknown as LaunchForm
+  const f = upgradeForm(old)
+  assert.deepEqual(f.tokens, [ETH])
+  assert.equal(f.currency, ETH)
+  assert.deepEqual(f.editionPrices, eth('0.02'))
+  assert.deepEqual(f.phases[0]?.prices, eth('0.01'))
+  assert.equal('price' in (f.phases[0] as object), false)
+  assert.equal('editionPrice' in f, false)
 })
 
 test('parseReserve: blank is none, and one piece must stay on sale', () => {
