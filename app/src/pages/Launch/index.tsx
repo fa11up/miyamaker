@@ -24,6 +24,7 @@ import {
   parseRoyaltyPct,
   parseVault,
   phaseLine,
+  phaseList,
   STEP_ORDER,
   txPlan,
   upgradeForm,
@@ -947,7 +948,21 @@ export default function LaunchPage() {
                               // eslint-disable-next-line react/no-array-index-key
                               <Fragment key={i}>
                                 <dt>{form.phases.length > 1 ? `Phase ${i + 1}` : 'Sale'}</dt>
-                                <dd>{phaseLine(p, acceptedTokens.ok ? acceptedTokens.tokens : [])}</dd>
+                                <dd>
+                                  {phaseLine(p, acceptedTokens.ok ? acceptedTokens.tokens : [])}
+                                  {p.access === 'list' &&
+                                    (() => {
+                                      const l = phaseList(p)
+                                      return l.ok ? (
+                                        <>
+                                          {' '}
+                                          <small>
+                                            List root <code title={l.root}>{`${l.root.slice(0, 10)}…${l.root.slice(-6)}`}</code>.
+                                          </small>
+                                        </>
+                                      ) : null
+                                    })()}
+                                </dd>
                               </Fragment>
                             ))}
                             <dt>Kept back</dt>

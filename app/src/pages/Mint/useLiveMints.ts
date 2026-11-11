@@ -7,9 +7,10 @@ import { useReadContracts } from 'wagmi'
 import type { SupportedChainId } from '@/config/wagmi'
 import { chains } from '@/config/wagmi'
 import { miyamintsAddresses } from '@/constants/contracts'
-import type { DropPhase, LiveMintCard, LiveMintEntry, LiveMintReads } from '@/pages/Mint/liveMints'
+import type { DropPhase, LiveMintCard, LiveMintEntry, LiveMintReads, LivePhase } from '@/pages/Mint/liveMints'
 import {
   activePublicPhase,
+  livePhases,
   buildLiveMintList,
   entryKey,
   isLiveAddress,
@@ -68,7 +69,7 @@ export function readsFromResults(
   kind: LiveMintEntry['kind'],
   r: ReadResult[],
   chainId = 1
-): LiveMintReads & { phaseId?: number; maxPerWallet?: number } {
+): LiveMintReads & { phaseId?: number; maxPerWallet?: number; livePhases?: LivePhase[] } {
   if (kind === 'erc721m') {
     return {
       name: ok<string>(r[0]),
@@ -82,16 +83,21 @@ export function readsFromResults(
   const phases = ok<readonly DropPhase[]>(r[3])
   const sold = ok<readonly bigint[]>(r[5])
   const live = activePublicPhase(phases, nowSec(), sold)
+  const all = livePhases(phases, nowSec(), sold)
+  // No public phase on: a list phase with room is what the card shows (its price, and open).
+  const list = live ? undefined : all.find((p) => p.isList && p.left !== 0)
+  const shown = live ?? list
   const publicRemaining = num(ok<bigint>(r[6]))
   return {
     name: ok<string>(r[0]),
     totalSupply: num(ok<bigint>(r[1])),
     maxSupply: num(ok<number>(r[2])),
-    price: live?.price,
-    prices: live?.prices,
-    priceLabel: live && live.price === undefined ? priceLabelOf(live.prices, chainId) : undefined,
+    price: shown?.price,
+    prices: shown?.prices,
+    priceLabel: shown && shown.price === undefined ? priceLabelOf(shown.prices, chainId) : undefined,
     // Without the sold counts and public supply we can't say whether a phase still has pieces.
-    mintOpen: phases && sold && publicRemaining !== undefined ? !!live : undefined,
+    mintOpen: phases && sold && publicRemaining !== undefined ? !!shown : undefined,
+    livePhases: phases ? all : undefined,
     contractURI: ok<string>(r[4]),
     phaseId: live?.phaseId,
     maxPerWallet: live?.maxPerWallet,
@@ -99,8 +105,8 @@ export function readsFromResults(
     owner: ok<`0x${string}`>(r[7]),
     // What the live phase can still sell: its own cap or the public supply, whichever runs out first.
     left:
-      live?.left !== undefined && publicRemaining !== undefined
-        ? Math.min(live.left, publicRemaining)
+      shown?.left !== undefined && publicRemaining !== undefined
+        ? Math.min(shown.left, publicRemaining)
         : publicRemaining,
   }
 }

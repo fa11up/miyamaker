@@ -10,6 +10,10 @@
 import type { Address } from 'viem'
 import { getAddress, isAddress, parseEther, zeroAddress } from 'viem'
 
+import type { ParsedList } from '../../api/_lib/allowlist'
+import { buildTree, MAX_PASTED, parseAddressList } from '../../api/_lib/allowlist'
+import type { Snapshot } from './snapshots'
+import { SNAPSHOTS } from './snapshots'
 import type { PayToken, PriceInputs, TokenPrice } from './tokens'
 import { buildPrices, ETH, knownToken, parseAccepted, parseTokenAmount, pricesWords } from './tokens'
 import { parseEdition } from '../music/drop'
@@ -47,8 +51,23 @@ export type LaunchType = 'drop' | 'auction' | 'editions'
 export type EditionKind = 'art' | 'music'
 export type MediaMode = 'upload' | 'link'
 
-/** `prices`: typed price per token address (lowercase). Blank = this phase doesn't sell for that token. */
-export type PhaseForm = { start: string; end: string; prices: PriceInputs; maxPerWallet: string; supplyCap: string }
+/**
+ * `prices`: typed price per token address (lowercase). Blank = this phase doesn't sell for that token.
+ * `access`: 'public' (anyone) or 'list' (only wallets on an allowlist: a holder snapshot, by its root, or addresses
+ * pasted or uploaded as text). The other list fields are kept when switching back, so nothing typed is lost.
+ */
+export type PhaseForm = {
+  start: string
+  end: string
+  prices: PriceInputs
+  maxPerWallet: string
+  supplyCap: string
+  /** Optional so phases saved before allowlists (and plain test fixtures) still read as public phases. */
+  access?: 'public' | 'list'
+  listSource?: 'snapshot' | 'pasted'
+  snapshotRoot?: string
+  listText?: string
+}
 
 export type LaunchForm = {
   type: LaunchType | ''
@@ -98,7 +117,17 @@ export const MAX_PHASES = 3
 export const AUCTION_TIME_BUFFER_SECONDS = 300
 export const MAX_ROYALTY_BPS = 1000
 
-export const EMPTY_PHASE: PhaseForm = { start: '', end: '', prices: {}, maxPerWallet: '', supplyCap: '' }
+export const EMPTY_PHASE: PhaseForm = {
+  start: '',
+  end: '',
+  prices: {},
+  maxPerWallet: '',
+  supplyCap: '',
+  access: 'public',
+  listSource: 'snapshot',
+  snapshotRoot: '',
+  listText: '',
+}
 
 export const EMPTY_FORM: LaunchForm = {
   type: '',
@@ -269,16 +298,67 @@ export type Phase = {
   prices: TokenPrice[]
 }
 
-const ZERO_ROOT = `0x${'0'.repeat(64)}` as const
+export const ZERO_ROOT = `0x${'0'.repeat(64)}` as const
+
+/** A pasted list read and its tree built, remembered for the last few texts: the form checks it on every key press. */
+const pastedCache = new Map<string, { parsed: ParsedList; root?: `0x${string}` }>()
+export function readPasted(text: string): { parsed: ParsedList; root?: `0x${string}` } {
+  const hit = pastedCache.get(text)
+  if (hit) return hit
+  const parsed = parseAddressList(text)
+  const ok = parsed.addresses.length > 0 && parsed.addresses.length <= MAX_PASTED && !parsed.bad.length
+  const entry = { parsed, root: ok ? buildTree(parsed.addresses).root : undefined }
+  pastedCache.set(text, entry)
+  while (pastedCache.size > 4) pastedCache.delete(pastedCache.keys().next().value as string)
+  return entry
+}
+
+/** The holder snapshot a phase points at, if it is one of the lists this build ships. */
+export const snapshotOf = (root: string, list: readonly Snapshot[] = SNAPSHOTS): Snapshot | undefined =>
+  root ? list.find((s) => s.root.toLowerCase() === root.toLowerCase()) : undefined
 
 /**
- * Sale phases for ERC721DropInstance. Public only (no allowlist). A blank start means "right away" (`now`). Each phase
- * prices some of the accepted `tokens` (0 = free in that token); a blank leaves a token out of that phase.
+ * Who can mint in a phase: the zero root (anyone), or an allowlist's root and how many wallets are on it. A pasted
+ * list must be all addresses (anything else is named, not dropped), at least one and at most MAX_PASTED.
+ */
+export function phaseList(
+  p: Pick<PhaseForm, 'access' | 'listSource' | 'snapshotRoot' | 'listText'>,
+  snapshots: readonly Snapshot[] = SNAPSHOTS
+): Result<{ root: `0x${string}`; count?: number; name?: string; addresses?: readonly string[] }> {
+  if (p.access !== 'list') return { ok: true, root: ZERO_ROOT }
+  if (p.listSource !== 'pasted') {
+    const s = snapshotOf(p.snapshotRoot || '', snapshots)
+    if (!s) return { ok: false, error: 'Pick a holder list, or paste your own.' }
+    return { ok: true, root: s.root as `0x${string}`, count: s.count, name: s.name }
+  }
+  const { parsed, root } = readPasted(p.listText || '')
+  const n = parsed.bad.length
+  if (n) {
+    return {
+      ok: false,
+      error: `${n === 1 ? '1 entry is' : `${n} entries are`} not a wallet address, like "${parsed.bad[0]!.slice(0, 50)}". Fix or remove ${n === 1 ? 'it' : 'them'}: names like x.eth aren't looked up.`,
+    }
+  }
+  if (!parsed.addresses.length) return { ok: false, error: 'Paste the wallet addresses on the list, or upload a .txt or .csv file.' }
+  if (parsed.addresses.length > MAX_PASTED) {
+    return {
+      ok: false,
+      error: `A pasted list can have at most ${MAX_PASTED.toLocaleString('en-US')} addresses. Bigger lists are made with the snapshot script.`,
+    }
+  }
+  return { ok: true, root: root as `0x${string}`, count: parsed.addresses.length, addresses: parsed.addresses }
+}
+
+/**
+ * Sale phases for ERC721DropInstance. A blank start means "right away" (`now`). Each phase prices some of the accepted
+ * `tokens` (0 = free in that token); a blank leaves a token out of that phase. A list phase gets its allowlist's root
+ * (phaseList).
  */
 export function buildPhases(
   phases: PhaseForm[],
   now: bigint,
-  tokens: readonly PayToken[]
+  tokens: readonly PayToken[],
+  snapshots: readonly Snapshot[] = SNAPSHOTS
 ): Result<{ phases: Phase[]; errors: string[] }> {
   const errors: string[] = []
   const out: Phase[] = []
@@ -291,6 +371,7 @@ export function buildPhases(
     const price = buildPrices(p.prices || {}, tokens, { required: false, allowZero: true, label: `Price${n}` })
     const cap = parseWhole(p.maxPerWallet, { min: 1, max: 100_000, label: `Per-wallet limit${n}`, blank: 0 })
     const supplyCap = parseWhole(p.supplyCap, { min: 1, max: 100_000, label: `Pieces for sale${n}`, blank: 0 })
+    const list = phaseList({ ...EMPTY_PHASE, ...p }, snapshots)
     if (!start.ok) errors[i] = `Start${n}: ${start.error}`
     else if (!end.ok) errors[i] = `End${n}: ${end.error}`
     else if (!price.ok) errors[i] = price.error
@@ -298,12 +379,13 @@ export function buildPhases(
     else if (!supplyCap.ok) errors[i] = supplyCap.error
     else if (end.at !== 0n && end.at <= start.at) errors[i] = `The end${n} must be after the start.`
     else if (end.at !== 0n && end.at <= now) errors[i] = `The end${n} is already in the past.`
+    else if (!list.ok) errors[i] = `Allowlist${n}: ${list.error}`
     else {
       out.push({
         start: start.at,
         end: end.at,
         maxPerWallet: cap.n,
-        merkleRoot: ZERO_ROOT,
+        merkleRoot: list.root,
         supplyCap: supplyCap.n,
         prices: price.prices,
       })
@@ -683,24 +765,39 @@ export function phasePriceWords(p: PhaseForm, tokens: readonly PayToken[]): stri
   return pricesWords(built.prices.map((x) => ({ price: x.price, token: tokens.find((t) => t.address === x.token)! })))
 }
 
-/** One sale phase on one line: "0.02 ETH or 50 USDC, limit 2 per wallet, starts 12 Nov 18:00". */
-export function phaseLine(p: PhaseForm, tokens: readonly PayToken[]): string {
+/** Who can mint in a phase, in words: "Anyone", "Milady holders (4,321 wallets)", "Your list (12 wallets)". */
+export function phaseAccessWords(p: PhaseForm, snapshots: readonly Snapshot[] = SNAPSHOTS): string {
+  if (p.access !== 'list') return 'Anyone'
+  const l = phaseList(p, snapshots)
+  if (!l.ok) return 'Allowlist (not ready)'
+  const wallets = `${(l.count ?? 0).toLocaleString('en-US')} wallet${l.count === 1 ? '' : 's'}`
+  return `${l.name ?? 'Your list'} (${wallets})`
+}
+
+/**
+ * One sale phase on one line: "0.02 ETH or 50 USDC, limit 2 per wallet, starts 12 Nov 18:00". A list phase starts
+ * with who is on it: "Milady holders (4,321 wallets) only: Free, limit 1 per wallet, …".
+ */
+export function phaseLine(p: PhaseForm, tokens: readonly PayToken[], snapshots: readonly Snapshot[] = SNAPSHOTS): string {
   const cap = parseWhole(p.maxPerWallet, { min: 1, max: 100_000, label: 'Limit', blank: 0 })
   const sale = parseWhole(p.supplyCap, { min: 1, max: 100_000, label: 'Pieces', blank: 0 })
-  return [
+  const who = p.access === 'list' ? `${phaseAccessWords(p, snapshots)} only: ` : ''
+  return `${who}${[
     phasePriceWords(p, tokens),
     cap.ok && cap.n ? `limit ${cap.n} per wallet` : 'no limit per wallet',
     ...(sale.ok && sale.n ? [`${sale.n.toLocaleString('en-US')} for sale`] : []),
     p.start ? `starts ${whenWords(p.start)}` : 'starts right away',
     ...(p.end ? [`ends ${whenWords(p.end)}`] : []),
-  ].join(', ')
+  ].join(', ')}`
 }
 
 /** Which of a phase's boxes hold something that cannot be used. The step's error names the phase; these mark the box. */
 export function phaseFieldsBad(
   p: PhaseForm,
   tokens: readonly PayToken[]
-): Partial<Record<Exclude<keyof PhaseForm, 'prices'>, boolean>> & { prices: Record<string, boolean> } {
+): Partial<Record<Exclude<keyof PhaseForm, 'prices' | 'access' | 'listSource' | 'snapshotRoot'>, boolean>> & {
+  prices: Record<string, boolean>
+} {
   const start = parseLocalTime(p.start, 0n)
   const end = parseLocalTime(p.end, 0n)
   const prices: Record<string, boolean> = {}
@@ -713,6 +810,7 @@ export function phaseFieldsBad(
   return {
     prices,
     maxPerWallet: !parseWhole(p.maxPerWallet, { min: 1, max: 100_000, label: 'Limit', blank: 0 }).ok,
+    listText: p.access === 'list' && p.listSource === 'pasted' && !phaseList(p).ok,
     supplyCap: !parseWhole(p.supplyCap, { min: 1, max: 100_000, label: 'Pieces', blank: 0 }).ok,
     start: !start.ok,
     end: !end.ok || (end.at !== 0n && start.ok && start.at !== 0n && end.at <= start.at),
@@ -749,6 +847,15 @@ export function draftHasData(f: LaunchForm, hasFiles: boolean): boolean {
   const p = f.phases[0]
   return (
     f.phases.length > 1 ||
-    !!(p && (p.start || p.end || p.maxPerWallet || p.supplyCap || Object.values(p.prices || {}).some((v) => !!v.trim())))
+    !!(
+      p &&
+      (p.start ||
+        p.end ||
+        p.maxPerWallet ||
+        p.supplyCap ||
+        p.listText?.trim() ||
+        p.access === 'list' ||
+        Object.values(p.prices || {}).some((v) => !!v.trim()))
+    )
   )
 }

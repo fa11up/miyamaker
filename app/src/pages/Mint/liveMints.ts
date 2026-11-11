@@ -289,6 +289,113 @@ export function activePublicPhase(phases: readonly DropPhase[] | undefined, nowS
   return undefined
 }
 
+/** One phase that is running now, public or allowlist, with what it can still sell. */
+export type LivePhase = {
+  phaseId: number
+  /** True for an allowlist phase: only wallets with a proof under `root` can mint. */
+  isList: boolean
+  root: string
+  prices: readonly TokenPriceRead[]
+  /** The ETH price, when the phase sells for ETH. */
+  price?: bigint
+  maxPerWallet: number
+  /** What its own cap still allows (undefined with no cap). */
+  left?: number
+}
+
+/**
+ * Every phase running right now (start <= now < end, end 0 = open-ended), public and allowlist alike, in phase order,
+ * with supply left under its own cap. Full phases are kept (left 0), so the screen can say a list's spots are gone.
+ */
+export function livePhases(phases: readonly DropPhase[] | undefined, nowSec: number, sold?: readonly bigint[]): LivePhase[] {
+  if (!phases) return []
+  const out: LivePhase[] = []
+  phases.forEach((p, i) => {
+    const start = Number(p.start)
+    const end = Number(p.end)
+    if (!(start <= nowSec && (end === 0 || nowSec < end))) return
+    const cap = Number(p.supplyCap)
+    const prices = p.prices || []
+    out.push({
+      phaseId: i,
+      isList: !/^0x0*$/.test(p.merkleRoot),
+      root: p.merkleRoot,
+      prices,
+      price: prices.find((x) => ETH_RE.test(x.token))?.price,
+      maxPerWallet: Number(p.maxPerWallet),
+      left: cap ? Math.max(0, cap - Number(sold?.[i] ?? 0n)) : undefined,
+    })
+  })
+  return out
+}
+
+/** Where a wallet stands on one allowlist phase, for the words beside it and the mint button. */
+export type ListStanding =
+  | 'connect'
+  | 'checking'
+  | 'unknown'
+  | 'no-list'
+  | 'not-listed'
+  | 'claimed'
+  | 'full'
+  | 'eligible'
+
+/**
+ * A wallet's standing on a list phase. `proof` is what the allowlist route said (undefined while asking), `minted` its
+ * mintedInPhase (undefined while reading), `left` what the phase can still sell (its cap or the public supply).
+ */
+export function listStanding(opts: {
+  account?: string
+  proof?: { state: 'listed' | 'not-listed' | 'no-list' | 'unknown' }
+  maxPerWallet: number
+  minted?: number
+  left?: number
+}): ListStanding {
+  const { account, proof, maxPerWallet, minted, left } = opts
+  if (!account) return 'connect'
+  if (!proof) return 'checking'
+  if (proof.state === 'unknown') return 'unknown'
+  if (proof.state === 'no-list') return 'no-list'
+  if (proof.state === 'not-listed') return 'not-listed'
+  if (maxPerWallet && minted !== undefined && minted >= maxPerWallet) return 'claimed'
+  if (left === 0) return 'full'
+  if (maxPerWallet && minted === undefined) return 'checking'
+  return 'eligible'
+}
+
+/** The standing in words, beside the phase. */
+export const STANDING_WORDS: Record<ListStanding, string> = {
+  connect: 'Connect a wallet to check the list.',
+  checking: 'Checking the list…',
+  unknown: "Couldn't check the list just now.",
+  'no-list': 'miya does not have this list, so nobody can claim through this page.',
+  'not-listed': 'This wallet is not on the list.',
+  claimed: 'This wallet has claimed its one.',
+  full: 'Every spot on this list has been claimed.',
+  eligible: 'This wallet is on the list.',
+}
+
+/** What the mint button says when this standing stops a claim. */
+export const STANDING_BUTTON: Partial<Record<ListStanding, string>> = {
+  checking: 'Checking the list…',
+  unknown: "Couldn't check the list",
+  'no-list': 'List not available',
+  'not-listed': 'Not on this list',
+  claimed: 'Already claimed',
+  full: 'List spots all claimed',
+}
+
+/**
+ * The phase to show first: a list phase this wallet can claim in, else the first public phase with room, else the
+ * first live phase. `standing` maps phase id → standing for the list phases.
+ */
+export function defaultPhase(phases: readonly LivePhase[], standing: Record<number, ListStanding | undefined>) {
+  const claim = phases.find((p) => p.isList && standing[p.phaseId] === 'eligible')
+  if (claim) return claim.phaseId
+  const open = phases.find((p) => !p.isList && p.left !== 0)
+  return (open ?? phases[0])?.phaseId
+}
+
 /**
  * The most this wallet can mint in one go: the transaction limit, what is left for sale and what is left of its
  * per-wallet limit (`maxPerWallet` 0 = no limit, as in the contract). 0 means this wallet has reached its limit.

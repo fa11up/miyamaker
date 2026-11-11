@@ -3,6 +3,7 @@
 import { createPublicClient, http } from 'viem'
 import { mainnet } from 'viem/chains'
 
+import { ALLOWLIST_BODY_LIMIT, ALLOWLIST_PATH, d1AllowlistStore, handleAllowlistRequest } from './_lib/allowlist'
 import { jsonReply, noSniff, readCappedText } from './_lib/body'
 import { edgeCache, handleMarketRequest, MARKET_PREFIX, openSeaReader } from './_lib/market'
 import { handleOpenSeaRequest, OPENSEA_PROXY_PATH, quoteBigInts } from './_lib/opensea'
@@ -64,6 +65,9 @@ const publicAccessLimiter = createRateLimiter({ capacity: 20, perSecond: 0.2 })
 // The listings' GETs: a page load or two a minute is plenty, and they are cached for 10 seconds anyway.
 const stationReadLimiter = createRateLimiter({ capacity: 60, perSecond: 1 })
 const publicAccessReadLimiter = createRateLimiter({ capacity: 60, perSecond: 1 })
+// Drop allowlists: a wallet asks for its proof once per list phase; saving a list happens once per launch.
+const allowlistLimiter = createRateLimiter({ capacity: 60, perSecond: 1 })
+const allowlistWriteLimiter = createRateLimiter({ capacity: 5, perSecond: 0.05 })
 // These limiters are per isolate. The global limit is the Cloudflare WAF rate-limiting rule on /api/* described at
 // createRateLimiter (api/_lib/zeroex.ts); set it up in the dashboard.
 
@@ -216,6 +220,26 @@ async function api(request: Request, env: Env, url: URL): Promise<Response> {
         limiter: publicAccessLimiter,
         readLimiter: publicAccessReadLimiter,
         listCache: edge(),
+      }
+    )
+  }
+
+  if (url.pathname === ALLOWLIST_PATH || url.pathname.startsWith(`${ALLOWLIST_PATH}/`)) {
+    const body = request.method === 'POST' ? await readCappedText(request, ALLOWLIST_BODY_LIMIT) : undefined
+    if (body === undefined && request.method === 'POST') return jsonReply(413, { error: 'That list is too large.' })
+    return handleAllowlistRequest(
+      { method: request.method, url: request.url, headers: request.headers, body },
+      {
+        // Lists shipped with the build. A missing file is the app's index.html (single-page fallback): not JSON.
+        readStatic: async (root) => {
+          const r = await env.ASSETS.fetch(new Request(new URL(`/allowlists/${root}.json`, url).toString()))
+          return r.ok && (r.headers.get('content-type') || '').includes('json') ? r.json() : undefined
+        },
+        store: env.DB ? d1AllowlistStore(env.DB) : undefined,
+        sameOrigin,
+        clientKey,
+        limiter: allowlistLimiter,
+        writeLimiter: allowlistWriteLimiter,
       }
     )
   }

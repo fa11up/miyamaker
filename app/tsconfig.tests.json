@@ -8,6 +8,6 @@
     "declaration": false,
     "types": ["node"]
   },
-  "include": ["tests", "src/vite-env.d.ts"],
+  "include": ["tests", "scripts/**/*.mts", "src/vite-env.d.ts"],
   "references": []
 }

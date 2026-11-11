@@ -20,7 +20,8 @@ import {
 } from '@/miyamints/abi'
 import { describeError, plainTxError, TX_CHECK_WORDS } from '@/miyamints/errors'
 import type { LaunchForm, LaunchType, Resolved } from '@/miyamints/launch'
-import { buildAuctionArgs, buildDropArgs, buildEditionArgs, makeSalt, upgradeForm } from '@/miyamints/launch'
+import { buildAuctionArgs, buildDropArgs, buildEditionArgs, makeSalt, phaseList, upgradeForm } from '@/miyamints/launch'
+import { saveList } from '@/miyamints/allowlistApi'
 import { rememberLaunch } from '@/miyamints/local'
 import { addKnownCollection } from '@/music/known'
 import { FREE_BYTES, fundAndUpload, fundStorage } from '@/utils/fundAndUpload'
@@ -387,6 +388,19 @@ export function useLaunch() {
         // Paying for storage takes the wallet to Ethereum and back. If it didn't come back, nothing goes to the wrong place.
         if (getAccount(wagmiConfig).chainId !== chainId) {
           throw new Error('Your wallet is on another network. Switch it back, then try again. Your uploads are kept.')
+        }
+
+        // A pasted allowlist is saved with miya before the drop exists, so every wallet on it can get its proof the
+        // moment the sale opens. Saving the same list again is harmless (it is filed under its own root).
+        if (form.type === 'drop' && !launchCommitted(rec.progress)) {
+          for (const [i, p] of form.phases.entries()) {
+            const l = phaseList(p)
+            if (p.access !== 'list' || p.listSource !== 'pasted' || !l.ok || !l.addresses) continue
+            stopIfClosed()
+            await saveList(l.addresses, l.root).catch((e) => {
+              throw new SaidError(form.phases.length > 1 ? `Phase ${i + 1}: ${(e as Error).message}` : (e as Error).message)
+            })
+          }
         }
 
         const resolved: Resolved = { ...rec.input.resolved, image, audio, audioMime: rec.input.audioMime }
