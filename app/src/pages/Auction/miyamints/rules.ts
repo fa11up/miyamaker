@@ -3,17 +3,26 @@
  * ERC721AuctionInstance.sol:
  * - createBid: the first bid must reach `minBid` (the artist's deposit); every later one `highBid + bidIncrement`.
  *   Bids close at `endTime` (a bid at or after it reverts AuctionExpired).
- * - The bidder it beats gets their ETH back in the same transaction (forceSafeTransferETH), nothing to claim.
+ * - Each house has one `currency` (address(0) = ETH). createBid(tokenId, amount, message): ETH sends msg.value ==
+ *   amount; an ERC-20 is pulled (approve first). The bidder it beats: in ETH, refunded in the same transaction
+ *   (forceSafeTransferETH); in an ERC-20, credited to `refundOf(bidder)` and taken with claimRefund(to).
  * - Anti-snipe: a bid with less than `timeBuffer` left moves the end to `timeBuffer` after that bid.
  * - settleAuction (anyone, once ended, with bids): mints the piece to the winner (or holds it for them to claim when
  *   their wallet can't take it), returns the artist's deposit, and splits the winning bid: protocol fee, alignment
- *   vault, the rest to the artist.
+ *   vault, the rest to the artist. ETH is sent to the artist; an ERC-20 waits in the artist's balance to withdraw.
  * - reclaimUnsold (ended, no bids): the owner only for UNSOLD_CLOSE_GRACE after the end, then anyone. The deposit goes
  *   to the protocol treasury whoever calls it, and the line's next piece starts.
  * - A queued piece has no start time until the piece before it on its line is closed.
  * Pure, so `node --test` can load it.
  */
-import { formatEther } from 'viem'
+import { formatUnits } from 'viem'
+
+/** The house's currency, for the words: ETH unless the house says otherwise. */
+export type MmUnit = { symbol: string; decimals: number; eth: boolean }
+export const ETH_MM_UNIT: MmUnit = { symbol: 'ETH', decimals: 18, eth: true }
+
+/** "0.1 ETH", "250 USDC": every decimal kept, as the contract counts it. */
+export const unitAmount = (amount: bigint, unit: MmUnit = ETH_MM_UNIT) => `${formatUnits(amount, unit.decimals)} ${unit.symbol}`
 
 export const UNSOLD_CLOSE_GRACE_S = 7 * 24 * 3600
 
@@ -69,20 +78,26 @@ export const antiSnipeWords = (timeBuffer: number) =>
 
 export const REFUND_WORDS = 'If someone outbids you, your ETH goes back to your wallet in the same transaction.'
 
+/** What happens to an outbid bid in this house's currency. */
+export const refundWords = (unit: MmUnit = ETH_MM_UNIT) =>
+  unit.eth
+    ? REFUND_WORDS
+    : `If someone outbids you, your ${unit.symbol} is kept for you by this auction house. Claim it back here any time.`
+
 /** The money row and the bidder row, in the words for the phase. `bidderValue` is '' when there is a real bidder. */
-export function mmFacts(lot: MmLot, phase: MmPhase) {
+export function mmFacts(lot: MmLot, phase: MmPhase, unit: MmUnit = ETH_MM_UNIT) {
   const over = phase === 'ended' || phase === 'sold' || phase === 'unsold'
   if (!hasBids(lot)) {
     return {
       bidLabel: 'Starting price',
-      bidValue: `${formatEther(lot.minBid)} ETH`,
+      bidValue: unitAmount(lot.minBid, unit),
       bidderLabel: over ? 'Winner' : 'Highest bidder',
       bidderValue: over ? 'No bids' : 'No bids yet',
     }
   }
   return {
     bidLabel: over ? 'Winning bid' : 'Current bid',
-    bidValue: `${formatEther(lot.highBid)} ETH`,
+    bidValue: unitAmount(lot.highBid, unit),
     bidderLabel: over ? 'Winner' : 'Highest bidder',
     bidderValue: '',
   }
@@ -92,11 +107,11 @@ export function mmFacts(lot: MmLot, phase: MmPhase) {
 export const bpsWords = (bps: number) => `${Number((bps / 100).toFixed(2))}%`
 
 /** What settling does with the money, from the shares fixed at launch. */
-export function settleWords(lot: MmLot, protocolFeeBps?: number, alignmentBps?: number): string {
-  const deposit = `The artist gets their ${formatEther(lot.minBid)} ETH deposit back.`
+export function settleWords(lot: MmLot, protocolFeeBps?: number, alignmentBps?: number, unit: MmUnit = ETH_MM_UNIT): string {
+  const deposit = `The artist gets their ${unitAmount(lot.minBid, unit)} deposit back.`
   const split =
     protocolFeeBps !== undefined && alignmentBps !== undefined
-      ? ` Of the ${formatEther(lot.highBid)} ETH winning bid, ${bpsWords(protocolFeeBps)} is the miya fee, ${bpsWords(
+      ? ` Of the ${unitAmount(lot.highBid, unit)} winning bid, ${bpsWords(protocolFeeBps)} is the miya fee, ${bpsWords(
           alignmentBps
         )} goes to the collection's alignment vault, and the rest goes to the artist.`
       : ''
@@ -111,8 +126,8 @@ export function canCloseUnsold(
   return isOwner || nowMs >= (lot.endTime + UNSOLD_CLOSE_GRACE_S) * 1000
 }
 
-export function unsoldWords(lot: MmLot, isOwner: boolean): string {
-  const deposit = `${formatEther(lot.minBid)} ETH`
+export function unsoldWords(lot: MmLot, isOwner: boolean, unit: MmUnit = ETH_MM_UNIT): string {
+  const deposit = unitAmount(lot.minBid, unit)
   return isOwner
     ? `No one bid. Closing it sends your ${deposit} deposit to the miya treasury. A piece queued behind it starts then.`
     : `No one bid. When this is closed, the artist's ${deposit} deposit goes to the miya treasury.`

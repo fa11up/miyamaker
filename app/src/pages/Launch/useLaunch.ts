@@ -20,7 +20,7 @@ import {
 } from '@/miyamints/abi'
 import { describeError, plainTxError, TX_CHECK_WORDS } from '@/miyamints/errors'
 import type { LaunchForm, LaunchType, Resolved } from '@/miyamints/launch'
-import { buildAuctionArgs, buildDropArgs, buildEditionArgs, makeSalt } from '@/miyamints/launch'
+import { buildAuctionArgs, buildDropArgs, buildEditionArgs, makeSalt, upgradeForm } from '@/miyamints/launch'
 import { rememberLaunch } from '@/miyamints/local'
 import { addKnownCollection } from '@/music/known'
 import { FREE_BYTES, fundAndUpload, fundStorage } from '@/utils/fundAndUpload'
@@ -198,19 +198,26 @@ export function useLaunch() {
   }
 
   /** Builds the deploy call (with placeholder media when not uploaded yet). */
-  const deployCall = (form: LaunchForm, r: Resolved, a: MiyamintsAddresses, now: bigint, salt?: `0x${string}`) => {
+  const deployCall = (
+    form: LaunchForm,
+    r: Resolved,
+    a: MiyamintsAddresses,
+    now: bigint,
+    chainId: number,
+    salt?: `0x${string}`
+  ) => {
     if (form.type === 'drop') {
       return {
         address: a.erc721DropFactory as Address,
         abi: dropFactoryAbi,
         functionName: 'createDrop' as const,
-        args: buildDropArgs(form, r, now),
+        args: buildDropArgs(form, r, now, chainId),
       }
     }
 
     if (form.type === 'auction') {
       const factory = a.erc721AuctionFactory as Address
-      const built = buildAuctionArgs(form, r, salt ?? randomSalt(factory))
+      const built = buildAuctionArgs(form, r, salt ?? randomSalt(factory), chainId)
       return {
         address: factory,
         abi: auctionFactoryAbi,
@@ -221,7 +228,7 @@ export function useLaunch() {
     }
 
     const factory = a.erc1155Factory as Address
-    const built = buildEditionArgs(form, r, salt ?? randomSalt(factory))
+    const built = buildEditionArgs(form, r, salt ?? randomSalt(factory), chainId)
     return {
       address: factory,
       abi: erc1155FactoryAbi,
@@ -245,7 +252,13 @@ export function useLaunch() {
       setCheck({ state: 'checking' })
       try {
         const now = BigInt(Math.floor(Date.now() / 1000))
-        const call = deployCall(form, { ...r, image: r.image || 'ar://placeholder-artwork' }, a, now)
+        const call = deployCall(
+          upgradeForm(form),
+          { ...r, image: r.image || 'ar://placeholder-artwork' },
+          a,
+          now,
+          chainId
+        )
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         await simulateContract(wagmiConfig, { account: address, chainId, ...(call as any) })
         if (checks.isCurrent(ticket)) setCheck({ state: 'ok' })
@@ -318,7 +331,8 @@ export function useLaunch() {
         }
 
         const rec = r
-        const { form } = rec.input
+        // A launch saved before multi-token sales carries on with its ETH prices.
+        const form = upgradeForm(rec.input.form)
         if (!form.type) throw new Error('Pick what you are launching.')
 
         // Already stored (this launch, or the same bytes before), or a link given: nothing to pay for.
@@ -376,7 +390,7 @@ export function useLaunch() {
 
         const resolved: Resolved = { ...rec.input.resolved, image, audio, audioMime: rec.input.audioMime }
         const now = BigInt(Math.floor(Date.now() / 1000))
-        const call = deployCall(form, resolved, a, now, rec.progress.salt)
+        const call = deployCall(form, resolved, a, now, chainId, rec.progress.salt)
         const type = form.type
 
         const done = await launchOnChain({
@@ -412,13 +426,18 @@ export function useLaunch() {
           first:
             type === 'auction'
               ? {
-                  call: (target) => ({
-                    address: target,
-                    abi: auctionInstanceAbi,
-                    functionName: 'queuePiece',
-                    args: [(call as { queue: { tokenURI: string } }).queue.tokenURI],
-                    value: (call as { queue: { value: bigint } }).queue.value,
-                  }),
+                  call: (target) => {
+                    const { queue } = call as unknown as { queue: { tokenURI: string; deposit: bigint; value: bigint } }
+                    return {
+                      address: target,
+                      abi: auctionInstanceAbi,
+                      functionName: 'queuePiece',
+                      args: [queue.tokenURI, queue.deposit],
+                      value: queue.value,
+                    }
+                  },
+                  // An ERC-20 deposit: the new house may take exactly the deposit, approved just before queuePiece.
+                  approve: (call as unknown as { queue: { approve?: { token: Address; amount: bigint } } }).queue.approve,
                   find: (inst) => findAuctionPiece(chainId, inst),
                   idFromLogs: (logs) => {
                     const [queued] = parseEventLogs({ abi: auctionInstanceAbi, eventName: 'PieceQueued', logs: logs as never })
@@ -501,7 +520,7 @@ export function useLaunch() {
     adopt(s)
     setResult(undefined)
     setError('')
-    return s.input
+    return { ...s.input, form: upgradeForm(s.input.form) }
   }
 
   /** Drops a launch from an earlier visit, when nothing it sent may still land (or, with a warning, long after). */

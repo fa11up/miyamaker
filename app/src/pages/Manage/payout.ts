@@ -3,21 +3,42 @@
  * "couldn't check" must not look like "nothing to pay out".
  */
 
-/** ERC1155Instance.withdraw(amount) allows at most totalProceeds - totalWithdrawn. */
-export function editionsWaiting(proceeds: bigint | undefined, withdrawn: bigint | undefined): bigint | undefined {
-  if (proceeds === undefined || withdrawn === undefined) return undefined
-  return proceeds > withdrawn ? proceeds - withdrawn : 0n
+const BPS = 10_000n
+
+/**
+ * What `withdraw(token)` would pay the owner now, per contracts/src/libraries/PaymentLib.sol: the owner's balance, plus
+ * the artist's part of any proceeds not split yet (withdraw splits them first: protocol and vault cuts round down, the
+ * artist gets the rest). Auctions have no unsplit proceeds (pass 0n). Undefined when any read behind it failed.
+ */
+export function tokenPayout(
+  ownerBalance: bigint | undefined,
+  unsplit: bigint | undefined,
+  protocolBps: number | undefined,
+  alignmentBps: number | undefined
+): bigint | undefined {
+  if (ownerBalance === undefined || unsplit === undefined) return undefined
+  if (unsplit === 0n) return ownerBalance
+  if (protocolBps === undefined || alignmentBps === undefined) return undefined
+  const protocol = (unsplit * BigInt(protocolBps)) / BPS
+  const vault = (unsplit * BigInt(alignmentBps)) / BPS
+  return ownerBalance + unsplit - protocol - vault
 }
 
-/** ERC721DropInstance.withdraw() splits balance - pendingVaultCut - pendingProtocolCut. */
-export function dropWaiting(
-  balance: bigint | undefined,
-  pendingVaultCut: bigint | undefined,
-  pendingProtocolCut: bigint | undefined
-): bigint | undefined {
-  if (balance === undefined || pendingVaultCut === undefined || pendingProtocolCut === undefined) return undefined
-  const parked = pendingVaultCut + pendingProtocolCut
-  return balance > parked ? balance - parked : 0n
+/** One token's money on a collection, from per-token reads that may have failed (undefined, never 0). */
+export type TokenMoney = {
+  token: `0x${string}`
+  payout?: bigint
+  /** Vault cuts the vault refused (e.g. under its minimum), waiting for flushPendingVaultCut. */
+  parkedVault?: bigint
+  /** Protocol cuts the treasury refused, waiting for flushPendingProtocolCut. */
+  parkedProtocol?: bigint
+}
+
+/** "Withdraw all" pays something only if some token has a payout; undefined while any payout is unknown. */
+export function anyPayout(rows: readonly TokenMoney[]): boolean | undefined {
+  if (rows.some((r) => r.payout !== undefined && r.payout > 0n)) return true
+  if (rows.some((r) => r.payout === undefined)) return undefined
+  return false
 }
 
 /** Reads cap the list; say so instead of showing the first N as if they were all. */

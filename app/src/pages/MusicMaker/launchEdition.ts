@@ -493,7 +493,7 @@ export async function launchEdition(
       address: instance,
       abi: erc1155InstanceAbi,
       functionName: 'mint',
-      args: [editionId, 1n, zeroHash, '', input.priceWei],
+      args: [editionId, 1n, zeroHash, '', zeroAddress, input.priceWei],
       value: input.priceWei,
     })
     await ask('mint')

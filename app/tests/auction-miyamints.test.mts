@@ -17,7 +17,9 @@ import {
   mmPhase,
   phaseTag,
   REFUND_WORDS,
+  refundWords,
   settleWords,
+  unitAmount,
   sortLots,
   spanWords,
   UNSOLD_CLOSE_GRACE_S,
@@ -25,6 +27,7 @@ import {
 } from '../src/pages/Auction/miyamints/rules.ts'
 
 const ZERO = `0x${'0'.repeat(40)}`
+const USDC = { symbol: 'USDC', decimals: 6, eth: false }
 const BOB = `0x${'b'.repeat(40)}`
 const NOW_S = 1_700_000_000
 const NOW = NOW_S * 1000
@@ -55,8 +58,10 @@ test('the first bid must reach the deposit; later ones the high bid plus the inc
   const inc = parseEther('0.01')
   assert.equal(minimumNextBid(lot, inc), parseEther('0.1'))
   assert.equal(minimumNextBid({ ...lot, highBidder: BOB, highBid: parseEther('0.2') }, inc), parseEther('0.21'))
-  assert.match(sol, /if \(msg\.value < auction\.minBid\) revert BidBelowMinimum\(\);/)
-  assert.match(sol, /if \(msg\.value < auction\.highBid \+ bidIncrement\) revert BidTooLow\(\);/)
+  assert.match(sol, /if \(amount < auction\.minBid\) revert BidBelowMinimum\(\);/)
+  assert.match(sol, /if \(amount < auction\.highBid \+ bidIncrement\) revert BidTooLow\(\);/)
+  // ETH bids send exactly the amount; an ERC-20 house pulls it (msg.value 0).
+  assert.match(sol, /if \(currency == PaymentLib\.ETH && msg\.value != amount\) revert WrongPayment\(\);/)
 })
 
 test('anti-snipe: a late bid moves the end to timeBuffer after the bid, an early one leaves it', () => {
@@ -76,10 +81,25 @@ test('spans read as people say them', () => {
   assert.equal(spanWords(7200), '2 hours')
 })
 
-test('the refund is in the same transaction, as the contract does it (no withdraw to call)', () => {
+test('ETH refunds are in the same transaction; ERC-20 refunds wait for the bidder to claim them', () => {
   assert.match(sol, /SafeTransferLib\.forceSafeTransferETH\(previousBidder, previousBid\);/)
-  assert.doesNotMatch(sol, /function withdraw\w*\(/)
   assert.match(REFUND_WORDS, /same transaction/)
+  assert.equal(refundWords(), REFUND_WORDS)
+  // ERC-20: credited to refundOf and pulled with claimRefund(to), so a blocklisted bidder can't stop a higher bid.
+  assert.match(sol, /refundOf\[previousBidder\] \+= previousBid;/)
+  assert.match(sol, /function claimRefund\(address to\)/)
+  const words = refundWords(USDC)
+  assert.match(words, /USDC is kept for you/)
+  assert.match(words, /Claim it back/)
+  assert.doesNotMatch(words, /same transaction/)
+})
+
+test('an ERC-20 house says every amount in its own token, at its decimals', () => {
+  const usdcLot = { ...lot, minBid: 250_000_000n, highBidder: BOB, highBid: 300_500_000n }
+  assert.equal(unitAmount(250_000_000n, USDC), '250 USDC')
+  assert.equal(mmFacts(usdcLot, 'live', USDC).bidValue, '300.5 USDC')
+  assert.match(settleWords(usdcLot, 100, 1000, USDC), /250 USDC deposit back.*300\.5 USDC winning bid/)
+  assert.match(unsoldWords({ ...lot, minBid: 250_000_000n }, true, USDC), /your 250 USDC deposit/)
 })
 
 test('settle words: the deposit comes back and the split is the launch shares', () => {

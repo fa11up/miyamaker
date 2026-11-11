@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import styled from 'styled-components/macro'
 import type { Address } from 'viem'
-import { formatEther } from 'viem'
 import { useAccount, useBalance } from 'wagmi'
 
 import ArtViewer, { toArtwork } from '@/components/ArtViewer'
@@ -11,8 +10,11 @@ import NftImage from '@/components/NftImage'
 import { explorerUrl } from '@/config/wagmi'
 import { shortAddress } from '@/desktop/mints/dedupe'
 import { plainTxError, TX_CHECK_WORDS } from '@/miyamints/errors'
+import { bidGate, COULDNT_CHECK_WORDS } from '@/miyamints/precheck'
+import { approveWords, isEth } from '@/miyamints/tokens'
+import { usePay, useTokenInfo, useWalletToken } from '@/miyamints/usePay'
 import { useTx } from '@/miyamints/useTx'
-import { bidEnding, bidStanding, checkBid } from '@/pages/Auction/bidding'
+import { approvalEnding, bidEnding, bidStanding, checkBid } from '@/pages/Auction/bidding'
 import ImageWrapper from '@/pages/Auction/ImageWrapper'
 import BidContainer, { StuckBid } from '@/pages/Auction/ProductDetail/BidContainer'
 import { useToken } from '@/pages/Auction/useToken'
@@ -28,13 +30,15 @@ import {
   minimumNextBid,
   mmFacts,
   mmPhase,
-  REFUND_WORDS,
+  refundWords,
   settleWords,
+  unitAmount,
   UNSOLD_CLOSE_GRACE_S,
   unsoldWords,
 } from './rules'
+import type { MmUnit } from './rules'
 import type { MmLotRef } from './useMmAuctions'
-import { lotKeyOf, useBidHistory, useMmLot } from './useMmAuctions'
+import { lotKeyOf, useBidHistory, useMmLot, useRefund } from './useMmAuctions'
 
 const Column = styled.div`
   display: flex;
@@ -232,7 +236,9 @@ function EndedPanel({
   now,
   onChanged,
   onStuck,
+  unit,
 }: {
+  unit: MmUnit
   item: MmLotRef
   lot: MmLotRef['lot']
   escrowedTo: Address | undefined
@@ -261,7 +267,7 @@ function EndedPanel({
   let words: string | undefined
   let action: { id: string; label: string; go: () => void } | undefined
   if (phase === 'sold') {
-    summary = `Sold for ${formatEther(lot.highBid)} ETH${won ? ' to you' : ''}.`
+    summary = `Sold for ${unitAmount(lot.highBid, unit)}${won ? ' to you' : ''}.`
     if (held) {
       words = "Your wallet couldn't take the piece when this was settled, so the contract is holding it for you."
       action = {
@@ -272,10 +278,10 @@ function EndedPanel({
     }
   } else if (phase === 'unsold') {
     summary = "This piece didn't sell."
-    words = `No one bid. The artist's ${formatEther(lot.minBid)} ETH deposit went to the miya treasury.`
+    words = `No one bid. The artist's ${unitAmount(lot.minBid, unit)} deposit went to the miya treasury.`
   } else if (hasBids(lot)) {
-    summary = won ? `You won with ${formatEther(lot.highBid)} ETH.` : `Won for ${formatEther(lot.highBid)} ETH.`
-    words = settleWords(lot, house.protocolFeeBps, house.alignmentBps)
+    summary = won ? `You won with ${unitAmount(lot.highBid, unit)}.` : `Won for ${unitAmount(lot.highBid, unit)}.`
+    words = settleWords(lot, house.protocolFeeBps, house.alignmentBps, unit)
     action = {
       id: 'settle',
       label: won ? 'Settle and get the piece' : 'Settle auction',
@@ -283,7 +289,7 @@ function EndedPanel({
     }
   } else {
     summary = 'This auction ended with no bids.'
-    words = unsoldWords(lot, isOwner)
+    words = unsoldWords(lot, isOwner, unit)
     if (canCloseUnsold(lot, { isOwner, nowMs: now })) {
       action = { id: 'close', label: 'Close unsold', go: () => run('close', 'reclaimUnsold', [lot.tokenId]) }
     } else {
@@ -339,12 +345,18 @@ export default function MmLotDetail({
   const { house } = item
   const tokenId = item.lot.tokenId
   const { address: account, chain, isConnected } = useAccount()
+  // Every bid, deposit and refund in this house is in its one currency.
+  const eth = isEth(house.currency)
+  const tokenInfo = useTokenInfo(house.chainId, [house.currency])[house.currency.toLowerCase()]
+  const unit: MmUnit | undefined = tokenInfo ? { symbol: tokenInfo.symbol, decimals: tokenInfo.decimals, eth } : undefined
+  const words = unit ?? { symbol: '…', decimals: 18, eth }
   const { data: wallet } = useBalance({
     address: account,
     chainId: house.chainId as never,
-    query: { enabled: !!account, refetchInterval: 30_000 },
+    query: { enabled: !!account && eth, refetchInterval: 30_000 },
   })
-  const balance = wallet?.value
+  const tokenWallet = useWalletToken(house.chainId, eth ? undefined : house.currency, house.address)
+  const balance = eth ? wallet?.value : tokenWallet.balance
   const read = useMmLot(house, tokenId, account)
   // The list's answer stands until this lot's own read comes in.
   const lot = read.lot || item.lot
@@ -359,16 +371,32 @@ export default function MmLotDetail({
   const [viewing, setViewing] = useState(false)
 
   const phase = mmPhase(lot, now)
-  const facts = mmFacts(lot, phase)
+  const facts = mmFacts(lot, phase, words)
   const minimum = minimumNextBid(lot, house.bidIncrement)
   const [bidAmount, setBidAmount] = useState('')
   const [bidMessage, setBidMessage] = useState('')
-  const check = checkBid(bidAmount, minimum, balance)
+  const check = unit
+    ? checkBid(bidAmount, minimum, balance, unit)
+    : { valid: false, label: 'Reading the token…' }
   const canSend = isConnected && chain?.id === house.chainId
 
-  const bid = useTx()
-  const ending = bidEnding(bid.tx, house.chainName)
-  const busy = bid.tx.phase === 'wallet' ? 'wallet' : bid.tx.phase === 'pending' ? 'mining' : undefined
+  const bid = usePay()
+  // The approval landing is not the bid landing: only the bid's own ending (or a failed approval, in its own words) is
+  // reported.
+  const ending =
+    bid.tx.id === 'bid'
+      ? bidEnding(bid.tx, house.chainName, words.symbol)
+      : bid.tx.id === 'bid:approve'
+        ? approvalEnding(bid.tx, words.symbol)
+        : undefined
+  const busy =
+    bid.step === 'check'
+      ? 'checking'
+      : bid.tx.phase === 'wallet'
+        ? 'wallet'
+        : bid.tx.phase === 'pending'
+          ? 'mining'
+          : undefined
   const stuck = ending?.kind === 'unconfirmed'
   const [actionBusy, setActionBusy] = useState(false)
   useEffect(() => onBusy?.(!!busy || stuck || actionBusy), [busy, stuck, actionBusy])
@@ -381,9 +409,14 @@ export default function MmLotDetail({
   const standing = phase === 'live' ? bidStanding(lot.highBidder, account, led.current.has(lotKey)) : 'none'
   const standingNote =
     standing === 'leading'
-      ? { good: true, words: `You're the highest bidder at ${formatEther(lot.highBid)} ETH.` }
+      ? { good: true, words: `You're the highest bidder at ${unitAmount(lot.highBid, words)}.` }
       : standing === 'outbid'
-        ? { good: false, words: "You've been outbid. Your ETH went back to your wallet." }
+        ? {
+            good: false,
+            words: eth
+              ? "You've been outbid. Your ETH went back to your wallet."
+              : `You've been outbid. Your ${words.symbol} is kept for you: claim it back below.`,
+          }
         : confirmed === lotKey
           ? { good: true, words: 'Your bid went through.' }
           : undefined
@@ -410,15 +443,39 @@ export default function MmLotDetail({
 
   const handleBid = () => {
     if (!canSend || !check.valid || busy || stuck || phase !== 'live' || check.value === undefined) return
-    bid.run('bid', {
-      address: house.address,
-      abi: mmAuctionAbi,
-      functionName: 'createBid',
-      args: [tokenId, cleanBidMessage(bidMessage)],
-      value: check.value,
+    const amount = check.value
+    bid.pay('bid', {
       chainId: house.chainId,
+      token: house.currency,
+      spender: house.address,
+      amount,
+      call: {
+        address: house.address,
+        abi: mmAuctionAbi,
+        functionName: 'createBid',
+        // ETH: msg.value must equal the amount. An ERC-20: the amount is pulled, msg.value is 0.
+        args: [tokenId, amount, cleanBidMessage(bidMessage)],
+        value: eth ? amount : 0n,
+        chainId: house.chainId,
+      },
+      // The lot read again first: someone may have outbid, or it may have ended, since the screen's last read.
+      prepare: async () => {
+        const r = await read.refetch()
+        const fresh = r.data?.lot
+        if (r.isError || !fresh) return { ok: false, error: COULDNT_CHECK_WORDS }
+        const stop = bidGate(fresh, minimumNextBid(fresh, house.bidIncrement), amount, Math.floor(Date.now() / 1000), (v) =>
+          unitAmount(v, words)
+        )
+        return stop ? { ok: false, error: stop } : { ok: true }
+      },
     })
   }
+
+  const refund = useRefund(house, account, lot.highBid.toString())
+  const claim = useTx(() => {
+    refund.refetch()
+    tokenWallet.refetch()
+  })
 
   const history = useBidHistory(house, tokenId, lot.highBid)
   const rows = history.rows?.slice(0, HISTORY_ROWS)
@@ -471,13 +528,13 @@ export default function MmLotDetail({
             {hasBids(lot) && (
               <>
                 <dt>Starting price</dt>
-                <dd>{formatEther(lot.minBid)} ETH (the artist&apos;s deposit)</dd>
+                <dd>{unitAmount(lot.minBid, words)} (the artist&apos;s deposit)</dd>
               </>
             )}
             {phase === 'live' && (
               <>
                 <dt>Next bid</dt>
-                <dd>{formatEther(minimum)} ETH or more</dd>
+                <dd>{unitAmount(minimum, words)} or more</dd>
                 <dt>Ends</dt>
                 <dd>{whenWords(lot.endTime)}</dd>
               </>
@@ -489,7 +546,50 @@ export default function MmLotDetail({
               </>
             )}
           </Facts>
+          {!eth && refund.amount !== undefined && refund.amount > 0n && unit && (
+            <Panel role="status">
+              <strong>Refund waiting: {unitAmount(refund.amount, unit)}</strong>
+              <p>
+                You were outbid in this auction house. Your {unit.symbol} is held for you until you claim it
+                {canSend ? '.' : `. Switch your wallet to ${house.chainName} to claim it.`}
+              </p>
+              {claim.tx.phase === 'error' && <p role="alert">{plainTxError(claim.tx.error, TX_CHECK_WORDS)}</p>}
+              {claim.unconfirmed ? (
+                <StuckBid
+                  words={claim.tx.message || ''}
+                  href={claim.tx.hash ? `${explorerUrl(house.chainId)}/tx/${claim.tx.hash}` : undefined}
+                  onStartOver={claim.reset}
+                />
+              ) : (
+                <div>
+                  <NormalButton
+                    type="button"
+                    disabled={claim.busy || !canSend}
+                    title={canSend ? undefined : `Switch your wallet to ${house.chainName} to claim`}
+                    onClick={() =>
+                      account &&
+                      claim.run('refund', {
+                        address: house.address,
+                        abi: mmAuctionAbi,
+                        functionName: 'claimRefund',
+                        args: [account],
+                        chainId: house.chainId,
+                      })
+                    }
+                  >
+                    {claim.busy ? 'Claiming…' : `Claim ${unitAmount(refund.amount, unit)}`}
+                  </NormalButton>
+                </div>
+              )}
+            </Panel>
+          )}
           <BidContainer
+            unit={words}
+            payNote={
+              !eth && tokenInfo && check.value !== undefined
+                ? approveWords(check.value, tokenInfo, 'this auction house')
+                : undefined
+            }
             phase={phase === 'queued' ? 'upcoming' : phase === 'live' ? 'live' : 'ended'}
             startTime={lot.startTime}
             endTime={lot.endTime}
@@ -528,9 +628,10 @@ export default function MmLotDetail({
                 now={now}
                 onChanged={changed}
                 onStuck={setActionBusy}
+                unit={words}
               />
             }
-            notes={[antiSnipeWords(house.timeBuffer), REFUND_WORDS]}
+            notes={[antiSnipeWords(house.timeBuffer), refundWords(words)]}
           />
           {phase === 'live' && canSend && !stuck && (
             <MessageField>
@@ -569,7 +670,7 @@ export default function MmLotDetail({
                           {row.bidder.toLowerCase() === me ? 'You' : shortAddress(row.bidder)}
                           {row.message && <BidNote>{row.message}</BidNote>}
                         </td>
-                        <td>{formatEther(row.amount)} ETH</td>
+                        <td>{unitAmount(row.amount, words)}</td>
                         <td>
                           <a href={`${explorerUrl(house.chainId)}/tx/${row.hash}`} target="_blank" rel="noreferrer">
                             View

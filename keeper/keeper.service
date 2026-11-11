@@ -1,0 +1,64 @@
+# systemd USER unit template (NOT installed anywhere yet). The keeper never runs as root.
+#
+#   mkdir -p ~/.config/systemd/user
+#   cp keeper.service ~/.config/systemd/user/imd-vault-keeper.service
+#   # edit the paths below (WorkingDirectory, EnvironmentFile, the key file in BindReadOnlyPaths)
+#   loginctl enable-linger $USER
+#   systemctl --user daemon-reload
+#   systemd-analyze --user security imd-vault-keeper   # see what the host really applies (README, "Hardening")
+#   systemctl --user enable --now imd-vault-keeper
+#   journalctl --user -u imd-vault-keeper -f
+#
+# Report-only until you add --execute to ExecStart. Run it without, read a few cycles, then decide.
+#
+# Hardening: the home directory is replaced by an empty tmpfs (ProtectHome=tmpfs) and only three paths are put back:
+# the app (read-only), the key file (read-only) and state/ (read-write). `node` must therefore live outside $HOME
+# (/usr/bin/node, /usr/local/bin/node); a node from nvm under ~/.nvm needs its own BindReadOnlyPaths= line. A user
+# unit gets these through an unprivileged user namespace; where the kernel or systemd does not allow that, some
+# options are silently ignored, which is why `systemd-analyze --user security` must be read on the host itself.
+# MemoryDenyWriteExecute= is deliberately NOT set: V8's JIT needs writable+executable memory.
+[Unit]
+Description=miyamaker alignment vault conversion keeper
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/imd-vault-keeper
+# .env holds KEEPER_KEY_FILE (or KEEPER_PRIVATE_KEY), PRIVATE_RPC_URL, VAULTS; mode 600, never committed. It is read
+# by systemd before the sandbox is set up, so it needs no bind.
+EnvironmentFile=%h/imd-vault-keeper/.env
+ExecStart=/usr/bin/env node index.mjs
+Restart=always
+RestartSec=30
+
+# Files the keeper creates (state/pending.json, spend.json) are private to the user.
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=tmpfs
+# The app, read-only; the key file (KEEPER_KEY_FILE in .env must point at this same path), read-only; state/, read-write.
+BindReadOnlyPaths=%h/imd-vault-keeper
+BindReadOnlyPaths=%h/.config/imd-vault-keeper/keeper.key
+BindPaths=%h/imd-vault-keeper/state
+ReadWritePaths=%h/imd-vault-keeper/state
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+# HTTPS to the RPCs (IPv4/6) and local sockets (DNS via the resolver); nothing else.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+# A syscall outside the filter fails with EPERM instead of killing the process (V8 probes a few optional ones).
+SystemCallErrorNumber=EPERM
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=default.target

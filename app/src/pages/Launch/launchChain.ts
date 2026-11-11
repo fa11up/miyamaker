@@ -1,5 +1,6 @@
 import { getPublicClient, readContract, simulateContract, writeContract } from '@wagmi/core'
 import type { Address, Hash, Log, TransactionReceipt } from 'viem'
+import { erc20Abi } from 'viem'
 
 import { wagmiConfig } from '@/config/wagmi'
 import { TxEndError } from '@/miyamints/txOutcome'
@@ -7,6 +8,7 @@ import { waitForTx } from '@/miyamints/useTxOutcome'
 import { tryBatch, waitForBatch } from '@/utils/batch'
 import { instanceAddressAbi } from '@/utils/batchCalls'
 
+import { auctionFirstAbi, editionIdsAbi } from './launchAbi'
 import type { LaunchAsk, LaunchProgress, NonceRead } from './resume'
 import { batchInstance, leftoverVerdict, nextLaunchStep, sentVerdict } from './resume'
 
@@ -56,6 +58,12 @@ export type ChainLaunch = {
   findCreated?: (fromBlock: bigint) => Promise<Address | undefined>
   first?: {
     call(instance: Address): ContractCall
+    /**
+     * An ERC-20 the first call pays with (an auction's deposit): approved to the collection for exactly `amount` just
+     * before it, unless the allowance already covers it. Approving the same amount again is harmless, so it isn't
+     * tracked like the steps that pay.
+     */
+    approve?: { token: Address; amount: bigint }
     /** The first piece's id if it is on the chain already. Throws when it can't be read. */
     find(instance: Address): Promise<bigint | undefined>
     idFromLogs(logs: Log[]): bigint | undefined
@@ -280,7 +288,8 @@ export async function launchOnChain(l: ChainLaunch): Promise<ChainResult> {
     if (l.first && l.salted && predicted) {
       await ask('batch')
       try {
-        batchSent = await tryBatch([l.create, l.first.call(predicted)], {
+        const approve = l.first.approve ? [approveCall(l.first.approve, predicted)] : []
+        batchSent = await tryBatch([l.create, ...approve, l.first.call(predicted)], {
           account: l.account,
           chainId: l.chainId,
           onAsk: () => l.mark('deploy', 'active'),
@@ -369,6 +378,33 @@ export async function launchOnChain(l: ChainLaunch): Promise<ChainResult> {
         `The collection is live, and ${l.first.name} came with it in the same batch, but it could not be read yet. Try again in a minute: nothing new is sent.`
       )
     } else {
+      if (l.first.approve) {
+        const { token, amount } = l.first.approve
+        const allowance = await readContract(wagmiConfig, {
+          address: token,
+          abi: erc20Abi,
+          functionName: 'allowance',
+          args: [l.account, instance],
+          chainId,
+        }).catch(() => {
+          throw new SaidError(COULD_NOT_READ_WORDS)
+        })
+        if ((allowance as bigint) < amount) {
+          const approval = await simulateContract(wagmiConfig, {
+            account: l.account,
+            chainId,
+            ...approveCall(l.first.approve, instance),
+          } as never)
+          l.stopIfClosed()
+          const hash = (await writeContract(wagmiConfig, approval.request as never)) as Hash
+          const waited = await waitSent(hash, undefined)
+          if (waited.status !== 'success') {
+            throw new SaidError(
+              `The collection is live, but the approval for ${l.first.name} did not go through, so nothing was paid. Try again.`
+            )
+          }
+        }
+      }
       const { request } = await simulateContract(wagmiConfig, {
         account: l.account,
         chainId,
@@ -412,14 +448,12 @@ export async function launchOnChain(l: ChainLaunch): Promise<ChainResult> {
   return { instance, deployHash: p.deployHash, firstHash: p.firstHash, firstId: p.firstId }
 }
 
-/** The auction's first piece is token 1: queued once `nextTokenId` has moved past it. */
-export const auctionFirstAbi = [
-  { type: 'function', name: 'nextTokenId', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint24' }] },
-] as const
+/** approve(spender, amount) on an ERC-20: exactly the amount, never unlimited. */
+function approveCall(a: { token: Address; amount: bigint }, spender: Address): ContractCall {
+  return { address: a.token, abi: erc20Abi, functionName: 'approve', args: [spender, a.amount] }
+}
 
-export const editionIdsAbi = [
-  { type: 'function', name: 'getAllEditionIds', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256[]' }] },
-] as const
+export { auctionFirstAbi, editionIdsAbi }
 
 export async function findAuctionPiece(chainId: number, instance: Address): Promise<bigint | undefined> {
   const next = await readContract(wagmiConfig, {

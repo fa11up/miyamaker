@@ -3,7 +3,7 @@ import { Chip } from '@/components/Retro'
 import Carousel, { Glyph } from '@/pages/Mint/handheld/Carousel'
 import { statusLamp } from '@/pages/Mint/handheld/status'
 import type { LiveMintCard, LiveMintStatus } from '@/pages/Mint/liveMints'
-import { formatEthShort } from '@/pages/Mint/liveMints'
+import { cardPrice } from '@/pages/Mint/liveMints'
 import { useContractImage, useLiveMints } from '@/pages/Mint/useLiveMints'
 
 /** Mint's start menu: every collection, and the music drops, as cards. Soon ones show but do not open. */
@@ -60,7 +60,7 @@ export default function MainMenu({
           return {
             key: c.key,
             name: c.name,
-            line: c.status === 'soon' ? 'Coming soon' : `${lamp.label} · ${formatEthShort(c.price)}`,
+            line: c.status === 'soon' ? 'Coming soon' : `${lamp.label} · ${cardPrice(c)}`,
             action: c.clickable ? `Open ${c.name}` : 'Coming soon',
             open: c.clickable ? () => onOpen(c) : undefined,
             pic: c.status === 'soon' ? <Glyph>?</Glyph> : <Cover card={c} />,

@@ -4,8 +4,8 @@ import styled from 'styled-components/macro'
 import { SplitMeter } from '@/components/LaunchKit'
 import { Chip, Eyebrow } from '@/components/Retro'
 import type { LaunchForm } from '@/miyamints/launch'
-import { parseEth, parseWhole } from '@/miyamints/launch'
-import { ethLabel } from '@/miyamints/split'
+import { auctionCurrency, parseWhole, phasePriceWords } from '@/miyamints/launch'
+import { buildPrices, parseAccepted, parseTokenAmount, pricesWords, tokenLabel } from '@/miyamints/tokens'
 import { bevel, color, font, space, text } from '@/theme/tokens'
 
 export const TYPE_LABEL = { drop: 'Fixed-price drop', auction: 'Auction', editions: 'Editions', '': 'Not picked yet' }
@@ -70,20 +70,25 @@ const Facts = styled.dl`
   }
 `
 
-export function priceLine(form: LaunchForm): string {
+/** The price in words, per accepted token: "0.01 ETH or 25 USDC each". */
+export function priceLine(form: LaunchForm, chainId: number): string {
+  const accepted = parseAccepted(form.tokens, chainId)
+  const tokens = accepted.ok ? accepted.tokens : []
   if (form.type === 'drop') {
-    const p = parseEth(form.phases[0]?.price || '', { allowZero: true })
-    return p.ok ? (p.wei === 0n ? 'Free' : `${ethLabel(p.wei)} each`) : '—'
+    const words = form.phases[0] ? phasePriceWords(form.phases[0], tokens) : '—'
+    return words === '—' || words === 'Free' ? words : `${words} each`
   }
 
   if (form.type === 'auction') {
-    const p = parseEth(form.reserve)
-    return p.ok ? `Bids from ${ethLabel(p.wei)}` : '—'
+    const cur = auctionCurrency(form, chainId)
+    const p = cur ? parseTokenAmount(form.reserve, cur) : undefined
+    return cur && p?.ok ? `Bids from ${tokenLabel(p.amount, cur)}` : '—'
   }
 
   if (form.type === 'editions') {
-    const p = parseEth(form.editionPrice)
-    return p.ok ? `${ethLabel(p.wei)} a copy` : '—'
+    const p = buildPrices(form.editionPrices, tokens, { required: true, allowZero: false })
+    if (!p.ok) return '—'
+    return `${pricesWords(p.prices.map((x) => ({ price: x.price, token: tokens.find((t) => t.address === x.token)! })))} a copy`
   }
 
   return '—'
@@ -111,8 +116,11 @@ export default function Preview({
   alignmentBps,
   vaultName,
   compact,
+  chainId,
 }: {
   form: LaunchForm
+  /** The launch's chain: which tokens the prices are in. */
+  chainId: number
   imageUrl?: string
   /** Undefined until the registry has been read: then no split is shown. */
   protocolBps?: number
@@ -140,7 +148,7 @@ export default function Preview({
           <Eyebrow>{TYPE_LABEL[form.type]}</Eyebrow>
           <div style={{ fontWeight: 700, overflowWrap: 'anywhere' }}>{name}</div>
           <div style={{ fontSize: text.sm, color: color.inkMuted }}>
-            {priceLine(form)} · {supplyLine(form)}
+            {priceLine(form, chainId)} · {supplyLine(form)}
           </div>
         </div>
       </PreviewCard>
@@ -161,7 +169,7 @@ export default function Preview({
       </div>
       <Facts>
         <dt>Price</dt>
-        <dd>{priceLine(form)}</dd>
+        <dd>{priceLine(form, chainId)}</dd>
         <dt>Supply</dt>
         <dd>{supplyLine(form)}</dd>
       </Facts>

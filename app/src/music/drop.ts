@@ -3,7 +3,8 @@
  * contracts (contracts/src/factories/erc1155). Prices are parsed with viem's parseEther — never floats.
  * Tested in tests/music-drop.test.mts.
  */
-import { parseEther } from 'viem'
+import type { Address } from 'viem'
+import { parseEther, zeroAddress } from 'viem'
 
 /** ERC1155Instance.PricingModel */
 export const PRICING_MODEL = { UNLIMITED: 0, LIMITED_FIXED: 1, LIMITED_DYNAMIC: 2 } as const
@@ -74,16 +75,22 @@ export function parseEdition(
   return { ok: true, supply: supply.supply, model: PRICING_MODEL.LIMITED_DYNAMIC, rate: BigInt(bps) }
 }
 
-/** ERC1155Instance.addEdition(pieceTitle, basePrice, supply, metadataURI, pricingModel, priceIncreaseRate, openTime) */
+/** The tokens a Drop Music release accepts: ETH only for now (Launch → Editions offers the other tokens). */
+export const MUSIC_TOKENS: readonly Address[] = [zeroAddress]
+
+/** ERC1155Instance.addEdition(pieceTitle, prices, supply, metadataURI, pricingModel, priceIncreaseRate, openTime) */
 export function editionArgs(p: {
   title: string
-  priceWei: bigint
+  /** One price per accepted token (TokenPrice[]); `priceWei` alone means an ETH price. */
+  prices?: readonly { token: Address; price: bigint }[]
+  priceWei?: bigint
   supply: bigint
   model: number
   metadataURI: string
   priceIncreaseRate?: bigint
 }) {
-  return [p.title, p.priceWei, p.supply, p.metadataURI, p.model, p.priceIncreaseRate ?? 0n, 0n] as const
+  const prices = p.prices ? [...p.prices] : [{ token: zeroAddress as Address, price: p.priceWei ?? 0n }]
+  return [p.title, prices, p.supply, p.metadataURI, p.model, p.priceIncreaseRate ?? 0n, 0n] as const
 }
 
 /**

@@ -11,7 +11,7 @@ import { plainTxError, TX_CHECK_WORDS } from '@/miyamints/errors'
 import { erc1155FactoryAbi, erc1155InstanceAbi, miyaRegistryAbi } from '@/music/abi'
 import type { MusicMetadata } from '@/music/audio'
 import { musicConfig } from '@/music/config'
-import { editionArgs, GATING_SCOPE_BOTH, makeSalt } from '@/music/drop'
+import { editionArgs, GATING_SCOPE_BOTH, makeSalt, MUSIC_TOKENS } from '@/music/drop'
 import { addKnownCollection } from '@/music/known'
 import { findFirstEdition, launchOnChain, SaidError } from '@/pages/Launch/launchChain'
 import type { SavedLaunch } from '@/pages/Launch/resume'
@@ -287,6 +287,7 @@ export function useDropMusic() {
         styleUri: '',
         gatingModule: zeroAddress,
         freeMint: { allocation: 0n, scope: GATING_SCOPE_BOTH },
+        acceptedTokens: MUSIC_TOKENS,
       },
     ] as const,
   })

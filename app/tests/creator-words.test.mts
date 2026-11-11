@@ -5,7 +5,7 @@ import { test } from 'node:test'
 import { BaseError, ContractFunctionRevertedError, encodeErrorResult } from 'viem'
 
 import { plainTxError, TX_CHECK_WORDS, TX_RETRY_WORDS } from '../src/miyamints/errors.ts'
-import { draftHasData, EMPTY_FORM, EMPTY_PHASE, phaseFieldsBad, phaseLine, whenWords } from '../src/miyamints/launch.ts'
+import './ts-paths.mts'
 import {
   addedWords,
   nextStepsWords,
@@ -18,6 +18,14 @@ import {
 } from '../src/music/creatorWords.ts'
 import { countNew, createQueue, enqueue } from '../src/music/queue.ts'
 import type { Track } from '../src/music/types.ts'
+
+// launch.ts imports ./tokens without an extension: loaded once ts-paths.mts has set up the resolver.
+const { draftHasData, EMPTY_FORM, EMPTY_PHASE, phaseFieldsBad, phaseLine, whenWords } = await import(
+  '../src/miyamints/launch.ts'
+)
+const ETH_T = { address: '0x0000000000000000000000000000000000000000', symbol: 'ETH', decimals: 18 } as const
+const T = [ETH_T]
+const eth = (price: string) => ({ [ETH_T.address]: price })
 
 const FREE = 90 * 1024
 
@@ -141,25 +149,28 @@ test('a sale phase reads as one line, with every money setting on it', () => {
   const start = '2026-11-12T18:00'
   assert.equal(whenWords(start), '12 Nov 18:00')
   assert.equal(
-    phaseLine({ ...EMPTY_PHASE, price: '0.02', maxPerWallet: '2', start }),
+    phaseLine({ ...EMPTY_PHASE, prices: eth('0.02'), maxPerWallet: '2', start }, T),
     '0.02 ETH, limit 2 per wallet, starts 12 Nov 18:00',
   )
-  assert.equal(phaseLine({ ...EMPTY_PHASE, price: '0' }), 'Free, no limit per wallet, starts right away')
+  assert.equal(phaseLine({ ...EMPTY_PHASE, prices: eth('0') }, T), 'Free, no limit per wallet, starts right away')
   assert.equal(
-    phaseLine({ ...EMPTY_PHASE, price: '1', supplyCap: '1000', end: start }),
+    phaseLine({ ...EMPTY_PHASE, prices: eth('1'), supplyCap: '1000', end: start }, T),
     '1 ETH, no limit per wallet, 1,000 for sale, starts right away, ends 12 Nov 18:00',
   )
-  assert.match(phaseLine({ ...EMPTY_PHASE, price: 'abc' }), /^—,/)
+  assert.match(phaseLine({ ...EMPTY_PHASE, prices: eth('abc') }, T), /^—,/)
 })
 
 test('phaseFieldsBad marks the box at fault', () => {
-  const good = { ...EMPTY_PHASE, price: '0.01' }
-  assert.deepEqual(Object.values(phaseFieldsBad(good)).filter(Boolean), [])
-  assert.equal(phaseFieldsBad(EMPTY_PHASE).price, true, 'a blank price is what the step refuses')
-  assert.equal(phaseFieldsBad({ ...good, maxPerWallet: 'x' }).maxPerWallet, true)
-  assert.equal(phaseFieldsBad({ ...good, supplyCap: '0' }).supplyCap, true)
-  assert.equal(phaseFieldsBad({ ...good, start: '2026-11-12T18:00', end: '2026-11-12T17:00' }).end, true)
-  assert.equal(phaseFieldsBad({ ...good, start: '2026-11-12T18:00', end: '2026-11-12T19:00' }).end, false)
+  const good = { ...EMPTY_PHASE, prices: eth('0.01') }
+  const { prices, ...rest } = phaseFieldsBad(good, T)
+  assert.deepEqual(Object.values(rest).filter(Boolean), [])
+  assert.deepEqual(prices, { [ETH_T.address]: false })
+  assert.equal(phaseFieldsBad(EMPTY_PHASE, T).prices[ETH_T.address], true, 'a blank price is what the step refuses')
+  assert.equal(phaseFieldsBad({ ...EMPTY_PHASE, prices: eth('1.2.3') }, T).prices[ETH_T.address], true)
+  assert.equal(phaseFieldsBad({ ...good, maxPerWallet: 'x' }, T).maxPerWallet, true)
+  assert.equal(phaseFieldsBad({ ...good, supplyCap: '0' }, T).supplyCap, true)
+  assert.equal(phaseFieldsBad({ ...good, start: '2026-11-12T18:00', end: '2026-11-12T17:00' }, T).end, true)
+  assert.equal(phaseFieldsBad({ ...good, start: '2026-11-12T18:00', end: '2026-11-12T19:00' }, T).end, false)
 })
 
 test('closing only asks when there is something to lose', () => {
@@ -172,6 +183,6 @@ test('closing only asks when there is something to lose', () => {
   assert.equal(draftHasData(EMPTY_FORM, true), true, 'a chosen file')
   assert.equal(draftHasData({ ...EMPTY_FORM, name: 'x' }, false), true)
   assert.equal(draftHasData({ ...EMPTY_FORM, bidStep: '0.5' }, false), true, 'a changed default')
-  assert.equal(draftHasData({ ...EMPTY_FORM, phases: [{ ...EMPTY_PHASE, price: '1' }] }, false), true)
+  assert.equal(draftHasData({ ...EMPTY_FORM, phases: [{ ...EMPTY_PHASE, prices: eth('1') }] }, false), true)
   assert.equal(draftHasData({ ...EMPTY_FORM, phases: [EMPTY_PHASE, EMPTY_PHASE] }, false), true)
 })

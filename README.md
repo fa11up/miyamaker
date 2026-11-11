@@ -19,8 +19,7 @@ git submodule update --init --recursive
 cd contracts
 forge build                                   # solc 0.8.28 (pinned), via_ir
 SKIP_FORK_TESTS=true forge test --offline     # full via_ir build, ~5 min cold; drop the env to run the mainnet fork test
-FOUNDRY_PROFILE=v4real forge test             # the two tests against v4-core's real PoolManager (solc 0.8.26)
-FOUNDRY_PROFILE=lite forge test               # faster local iteration
+FOUNDRY_PROFILE=ci forge test                 # long fuzz/invariant runs (CI runs it weekly)
 script/export-abis.sh                         # after an interface change: refresh contracts/abi/*.json for the app's drift test
 ```
 

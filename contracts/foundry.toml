@@ -3,11 +3,9 @@ src = "src"
 out = "out"
 libs = ["lib"]
 # Production compiler, pinned: src, script and every test in test/ build with solc 0.8.28 (no auto-detect, so an
-# installed 0.8.30 can't sneak in). The two tests that need v4-core's real PoolManager (pinned `=0.8.26`) live in
-# test/v4real/ and run under their own profile: `FOUNDRY_PROFILE=v4real forge test`.
+# installed 0.8.30 can't sneak in).
 solc_version = "0.8.28"
 auto_detect_solc = false
-skip = ["test/v4real/**"]
 optimizer = true
 optimizer_runs = 100
 via_ir = true
@@ -28,19 +26,8 @@ remappings = [
 [profile.deploy]
 fs_permissions = [{ access = "read-write", path = "./deployments/" }, { access = "read", path = "./script/config/" }]
 
-# Fast local iteration: `FOUNDRY_PROFILE=lite forge test`
-[profile.lite]
-via_ir = false
-optimizer = false
-
-# Real v4 PoolManager tests (PoolManager is `pragma solidity 0.8.26`). Builds everything with 0.8.26 into its own
-# out/cache so it never overwrites the 0.8.28 production artifacts.
-[profile.v4real]
-solc_version = "0.8.26"
-skip = []
-test = "test/v4real"
-out = "out-v4real"
-cache_path = "cache-v4real"
+# No `lite` (via_ir = false) profile: without via_ir, UniAlignmentVault does not compile (stack too deep), checked
+# 2026-11-08 with forge 1.9. via_ir stays on in every profile.
 
 # `FOUNDRY_PROFILE=ci forge test` (forge 1.9 ignores the old flat fuzz_runs / invariant_runs keys)
 [profile.ci.fuzz]

@@ -9,7 +9,7 @@
 export type LiveMintKind =
   /** Legacy ERC721M clone from the old MiyaMints factory: price(), mintOpen(), mint(amount). MIYAMINI is one. */
   | 'erc721m'
-  /** miyamints ERC721DropInstance (contracts/src/factories/erc721drop): phases(), mint(phaseId, qty, proof). */
+  /** miyamints ERC721DropInstance (contracts/src/factories/erc721drop): phases(), mint(phaseId, qty, proof, token, maxCost). */
   | 'drop'
 
 export type LiveMintEntry = {
@@ -38,7 +38,12 @@ export type LiveMintReads = {
   name?: string
   /** Drops: who owns the collection, credited when there is no curated artist. */
   owner?: `0x${string}`
+  /** The price in ETH; undefined when the live phase doesn't sell for ETH (see `prices`). */
   price?: bigint
+  /** Drops: every token the live phase sells for, with its price per piece (address(0) = ETH). */
+  prices?: readonly TokenPriceRead[]
+  /** Short price words when there is no ETH price ("25 USDC"), for the cards. */
+  priceLabel?: string
   totalSupply?: number
   maxSupply?: number
   mintOpen?: boolean
@@ -50,6 +55,8 @@ export type LiveMintReads = {
   /** Contract-level metadata (cover image) for collections without a curated image. */
   contractURI?: string
 }
+
+export type TokenPriceRead = { token: `0x${string}`; price: bigint }
 
 export type LiveMintStatus = 'open' | 'closed' | 'soldout' | 'soon' | 'unknown'
 
@@ -72,6 +79,8 @@ export type LiveMintCard = {
   view?: 'miyamini'
   status: LiveMintStatus
   price?: bigint
+  prices?: readonly TokenPriceRead[]
+  priceLabel?: string
   minted?: number
   supply?: number
   /** Drops: what can still be minted right now. */
@@ -181,6 +190,8 @@ export function toCard(
     view: entry.view,
     status,
     price: reads?.price,
+    prices: reads?.prices,
+    priceLabel: reads?.priceLabel,
     minted,
     supply,
     left: finiteOrUndefined(reads?.left),
@@ -243,16 +254,20 @@ export function registryEntry(chainId: number, address: `0x${string}`, name?: st
 export type DropPhase = {
   start: bigint | number
   end: bigint | number
-  price: bigint
   maxPerWallet: number
   merkleRoot: string
   supplyCap: number
+  /** TokenPrice[]: what one piece costs in each token this phase sells for (address(0) = ETH). */
+  prices: readonly TokenPriceRead[]
 }
+
+const ETH_RE = /^0x0{40}$/
 
 /**
  * The phase a public minter can use right now: active (start <= now < end, end 0 = open-ended) and not allowlisted
- * (merkleRoot 0), with supply left under its cap. Returns its index, price and how many it can still sell (undefined
- * with no cap), or undefined when nothing public is live. `sold` is phasesMinted(), in the same order.
+ * (merkleRoot 0), with supply left under its cap. Returns its index, its prices (`price` is the ETH one, if it sells
+ * for ETH) and how many it can still sell (undefined with no cap), or undefined when nothing public is live. `sold` is
+ * phasesMinted(), in the same order.
  */
 export function activePublicPhase(phases: readonly DropPhase[] | undefined, nowSec: number, sold?: readonly bigint[]) {
   if (!phases) return undefined
@@ -265,7 +280,9 @@ export function activePublicPhase(phases: readonly DropPhase[] | undefined, nowS
     const cap = Number(p.supplyCap)
     const left = cap ? cap - Number(sold?.[i] ?? 0n) : undefined
     if (live && isPublic && (left === undefined || left > 0)) {
-      return { phaseId: i, price: p.price, maxPerWallet: p.maxPerWallet, left }
+      const prices = p.prices || []
+      const price = prices.find((x) => ETH_RE.test(x.token))?.price
+      return { phaseId: i, price, prices, maxPerWallet: p.maxPerWallet, left }
     }
   }
 
@@ -291,6 +308,10 @@ export function slugFromPath(pathname: string): string | undefined {
   const m = /^\/mint\/([^/?#]+)\/?$/i.exec(pathname)
   return m ? decodeURIComponent(m[1]!).toLowerCase() : undefined
 }
+
+/** The card's price words: the ETH price, or the other token's when the phase doesn't sell for ETH. */
+export const cardPrice = (c: Pick<LiveMintCard, 'price' | 'priceLabel'>) =>
+  c.price === undefined && c.priceLabel ? c.priceLabel : formatEthShort(c.price)
 
 /** Trims an ether amount to at most 4 decimals without rounding up. Input is wei. */
 export function formatEthShort(wei: bigint | undefined): string {

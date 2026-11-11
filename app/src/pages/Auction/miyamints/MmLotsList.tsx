@@ -2,15 +2,15 @@ import ChevronLeftIcon from 'assets/chevron-left-icon.svg'
 import ChevronRightIcon from 'assets/chevron-right-icon.svg'
 import { useEffect, useState } from 'react'
 import styled from 'styled-components/macro'
-import { formatEther } from 'viem'
 
 import { NormalButton } from '@/components/Button/NormalButton'
 import NftImage from '@/components/NftImage'
 import { Chip } from '@/components/Retro'
 import ImageWrapper from '@/pages/Auction/ImageWrapper'
 import { useToken } from '@/pages/Auction/useToken'
+import { useTokenInfo } from '@/miyamints/usePay'
 
-import { hasBids, mmPhase, phaseTag, sortLots } from './rules'
+import { hasBids, mmPhase, phaseTag, sortLots, unitAmount } from './rules'
 import type { MmLotRef } from './useMmAuctions'
 
 /* One row of lots that fits the panel, paged with arrows (no scroll box). Phones: two columns at natural height. */
@@ -117,9 +117,11 @@ function LotCard({ item, now, onOpen }: { item: MmLotRef; now: number; onOpen: (
   const { name, image } = useToken({ tokenURI: item.lot.tokenURI, isFetch: true })
   const phase = mmPhase(item.lot, now)
   const title = name || `${item.house.name} #${item.lot.tokenId}`
+  const t = useTokenInfo(item.house.chainId, [item.house.currency])[item.house.currency.toLowerCase()]
+  const amount = (v: bigint) => (t ? unitAmount(v, { symbol: t.symbol, decimals: t.decimals, eth: false }) : '…')
   const money = hasBids(item.lot)
-    ? `${phase === 'live' ? 'Bid' : 'Top bid'} ${formatEther(item.lot.highBid)} ETH`
-    : `From ${formatEther(item.lot.minBid)} ETH`
+    ? `${phase === 'live' ? 'Bid' : 'Top bid'} ${amount(item.lot.highBid)}`
+    : `From ${amount(item.lot.minBid)}`
   return (
     <Card>
       <ImageWrapper style={{ padding: '0.5rem' }}>

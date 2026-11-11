@@ -10,13 +10,78 @@ export { erc1155FactoryAbi, erc1155InstanceAbi }
 const view = (name: string, type: string, inputs: { name?: string; type: string }[] = []) =>
   ({ type: 'function', name, stateMutability: 'view', inputs, outputs: [{ type }] } as const)
 
+const tokenArg = [{ name: 'token', type: 'address' }] as const
+
+/** TokenPrice{token, price}[] (contracts/src/factories/interfaces/TokenPrice.sol). */
+export const tokenPrices = {
+  name: 'prices',
+  type: 'tuple[]',
+  internalType: 'struct TokenPrice[]',
+  components: [
+    { name: 'token', type: 'address' },
+    { name: 'price', type: 'uint256' },
+  ],
+} as const
+
 const phaseComponents = [
   { name: 'start', type: 'uint64' },
   { name: 'end', type: 'uint64' },
-  { name: 'price', type: 'uint128' },
   { name: 'maxPerWallet', type: 'uint32' },
   { name: 'merkleRoot', type: 'bytes32' },
   { name: 'supplyCap', type: 'uint32' },
+  tokenPrices,
+] as const
+
+/**
+ * Per-token money on every collection type (PaymentLib): balances, parked cuts, withdraw, flush, vault fees.
+ * `claimVaultFees(mode, minEthOut)`: mode is ClaimMode { TOKENS, ETH, REINVEST }.
+ */
+const paymentAbi = [
+  { type: 'function', name: 'acceptedTokens', stateMutability: 'view', inputs: [], outputs: [{ type: 'address[]' }] },
+  /** The registry whose allowlist (isPaymentToken) the collection checks on every sale. */
+  view('registry', 'address'),
+  view('ownerBalance', 'uint256', [...tokenArg]),
+  view('pendingVaultCut', 'uint256', [...tokenArg]),
+  view('pendingProtocolCut', 'uint256', [...tokenArg]),
+  { type: 'function', name: 'withdraw', stateMutability: 'nonpayable', inputs: tokenArg, outputs: [] },
+  { type: 'function', name: 'withdrawAll', stateMutability: 'nonpayable', inputs: [], outputs: [] },
+  { type: 'function', name: 'flushPendingProtocolCut', stateMutability: 'nonpayable', inputs: tokenArg, outputs: [] },
+  {
+    type: 'function',
+    name: 'flushPendingVaultCut',
+    stateMutability: 'payable',
+    inputs: [...tokenArg, { name: 'topUp', type: 'uint256' }],
+    outputs: [],
+  },
+  {
+    type: 'function',
+    name: 'claimVaultFees',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'mode', type: 'uint8' },
+      { name: 'minEthOut', type: 'uint256' },
+    ],
+    outputs: [
+      { name: 'inferOut', type: 'uint256' },
+      { name: 'imdOut', type: 'uint256' },
+      { name: 'ethOut', type: 'uint256' },
+    ],
+  },
+  { type: 'error', name: 'NothingParked', inputs: [] },
+  { type: 'error', name: 'NoFeesToClaim', inputs: [] },
+  { type: 'error', name: 'TokenNotAccepted', inputs: [{ name: 'token', type: 'address' }] },
+  { type: 'error', name: 'TokenNotAllowed', inputs: [{ name: 'token', type: 'address' }] },
+  { type: 'error', name: 'ShortTransfer', inputs: [] },
+  { type: 'error', name: 'WrongValue', inputs: [] },
+] as const
+
+/** Drops and editions also split proceeds on demand: anyone may call distribute(token). */
+const splitAbi = [
+  /** Every token ever accepted (withdrawAll walks it), so a delisted token's balance still shows. */
+  { type: 'function', name: 'knownTokens', stateMutability: 'view', inputs: [], outputs: [{ type: 'address[]' }] },
+  view('unsplitProceeds', 'uint256', [...tokenArg]),
+  { type: 'function', name: 'distribute', stateMutability: 'nonpayable', inputs: tokenArg, outputs: [] },
+  { type: 'function', name: 'sweepUntracked', stateMutability: 'nonpayable', inputs: tokenArg, outputs: [] },
 ] as const
 
 const phaseTupleArray = {
@@ -46,6 +111,7 @@ export const dropFactoryAbi = [
           { name: 'contractURI', type: 'string' },
           { name: 'royaltyReceiver', type: 'address' },
           { name: 'royaltyBps', type: 'uint96' },
+          { name: 'acceptedTokens', type: 'address[]' },
           phaseTupleArray,
         ],
       },
@@ -89,7 +155,21 @@ export const dropInstanceAbi = [
   view('protocolBps', 'uint16'),
   view('alignmentBps', 'uint16'),
   view('vault', 'address'),
-  view('pendingVaultCut', 'uint256'),
+  ...paymentAbi,
+  ...splitAbi,
+  {
+    type: 'function',
+    name: 'priceOf',
+    stateMutability: 'view',
+    inputs: [
+      { name: 'phaseId', type: 'uint256' },
+      { name: 'token', type: 'address' },
+    ],
+    outputs: [
+      { name: 'priced', type: 'bool' },
+      { name: 'price', type: 'uint256' },
+    ],
+  },
   {
     type: 'function',
     name: 'phases',
@@ -127,14 +207,6 @@ export const dropInstanceAbi = [
     ],
     outputs: [],
   },
-  { type: 'function', name: 'withdraw', stateMutability: 'nonpayable', inputs: [], outputs: [] },
-  {
-    type: 'function',
-    name: 'claimVaultFees',
-    stateMutability: 'nonpayable',
-    inputs: [],
-    outputs: [{ type: 'uint256' }],
-  },
   {
     type: 'function',
     name: 'mint',
@@ -143,6 +215,8 @@ export const dropInstanceAbi = [
       { name: 'phaseId', type: 'uint256' },
       { name: 'quantity', type: 'uint256' },
       { name: 'proof', type: 'bytes32[]' },
+      { name: 'token', type: 'address' },
+      { name: 'maxCost', type: 'uint256' },
     ],
     outputs: [],
   },
@@ -154,6 +228,8 @@ export const dropInstanceAbi = [
   { type: 'error', name: 'PhaseSoldOut', inputs: [] },
   { type: 'error', name: 'ReserveExceeded', inputs: [] },
   { type: 'error', name: 'WrongPayment', inputs: [] },
+  { type: 'error', name: 'ExceedsMaxCost', inputs: [] },
+  { type: 'error', name: 'TokenNotPriced', inputs: [] },
   { type: 'error', name: 'Locked', inputs: [] },
   { type: 'error', name: 'NothingToWithdraw', inputs: [] },
   { type: 'error', name: 'Unauthorized', inputs: [] },
@@ -181,6 +257,7 @@ export const auctionFactoryAbi = [
           { name: 'baseDuration', type: 'uint40' },
           { name: 'timeBuffer', type: 'uint40' },
           { name: 'bidIncrement', type: 'uint256' },
+          { name: 'currency', type: 'address' },
         ],
       },
     ],
@@ -236,6 +313,9 @@ export const auctionInstanceAbi = [
   view('protocolFeeBps', 'uint16'),
   view('alignmentBps', 'uint16'),
   view('vault', 'address'),
+  view('currency', 'address'),
+  view('refundOf', 'uint256', [{ name: 'bidder', type: 'address' }]),
+  ...paymentAbi,
   {
     type: 'function',
     name: 'getAuction',
@@ -247,7 +327,10 @@ export const auctionInstanceAbi = [
     type: 'function',
     name: 'queuePiece',
     stateMutability: 'payable',
-    inputs: [{ name: '_tokenURI', type: 'string' }],
+    inputs: [
+      { name: '_tokenURI', type: 'string' },
+      { name: 'deposit', type: 'uint256' },
+    ],
     outputs: [],
   },
   {
@@ -263,13 +346,6 @@ export const auctionInstanceAbi = [
     stateMutability: 'nonpayable',
     inputs: [{ name: 'tokenId', type: 'uint24' }],
     outputs: [],
-  },
-  {
-    type: 'function',
-    name: 'claimVaultFees',
-    stateMutability: 'nonpayable',
-    inputs: [],
-    outputs: [{ type: 'uint256' }],
   },
   {
     type: 'event',
@@ -288,7 +364,7 @@ export const auctionInstanceAbi = [
   { type: 'error', name: 'AuctionAlreadySettled', inputs: [] },
   { type: 'error', name: 'HasBids', inputs: [] },
   { type: 'error', name: 'NoBids', inputs: [] },
-  { type: 'error', name: 'NoFeesToClaim', inputs: [] },
+  { type: 'error', name: 'WrongPayment', inputs: [] },
 ] as const
 
 /** Extra ERC1155Instance reads/writes used by Manage (the music ABI covers launch + mint). */
@@ -297,23 +373,9 @@ export const editionsManageAbi = [
   view('protocolFeeBps', 'uint16'),
   view('alignmentBps', 'uint16'),
   view('vault', 'address'),
-  view('totalProceeds', 'uint256'),
-  view('totalWithdrawn', 'uint256'),
-  {
-    type: 'function',
-    name: 'withdraw',
-    stateMutability: 'nonpayable',
-    inputs: [{ name: 'amount', type: 'uint256' }],
-    outputs: [],
-  },
-  {
-    type: 'function',
-    name: 'claimVaultFees',
-    stateMutability: 'nonpayable',
-    inputs: [],
-    outputs: [{ type: 'uint256' }],
-  },
-  { type: 'error', name: 'NoFeesToClaim', inputs: [] },
+  view('totalProceeds', 'uint256', [...tokenArg]),
+  ...paymentAbi,
+  ...splitAbi,
   { type: 'error', name: 'InsufficientBalance', inputs: [] },
   { type: 'error', name: 'AmountMustBePositive', inputs: [] },
 ] as const
@@ -327,6 +389,8 @@ export const registryAbi = [
   view('minAlignmentBps', 'uint16'),
   view('protocolFeeBps', 'uint16'),
   view('treasury', 'address'),
+  view('isPaymentToken', 'bool', [{ name: 'token', type: 'address' }]),
+  { type: 'function', name: 'paymentTokens', stateMutability: 'view', inputs: [], outputs: [{ type: 'address[]' }] },
   {
     type: 'function',
     name: 'getTarget',
@@ -340,7 +404,24 @@ export const registryAbi = [
   },
 ] as const
 
-export const vaultAbi = [view('alignmentToken', 'address'), view('alignmentTargetId', 'uint256')] as const
+/** UniAlignmentVault v2: every contribution becomes INFER/IMD liquidity; fees are paid in INFER and IMD (+ ETH dust). */
+export const vaultAbi = [
+  view('infer', 'address'),
+  view('imd', 'address'),
+  view('alignmentTargetId', 'uint256'),
+  {
+    type: 'function',
+    name: 'claimable',
+    stateMutability: 'view',
+    inputs: [{ name: 'benefactor', type: 'address' }],
+    outputs: [{ type: 'uint256' }, { type: 'uint256' }, { type: 'uint256' }],
+  },
+  view('pendingOf', 'uint256', [
+    { name: 'benefactor', type: 'address' },
+    { name: 'token', type: 'address' },
+  ]),
+  view('benefactorShares', 'uint256', [{ name: 'benefactor', type: 'address' }]),
+] as const
 
 export const erc20SymbolAbi = [view('symbol', 'string')] as const
 

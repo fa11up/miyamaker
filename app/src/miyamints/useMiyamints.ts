@@ -52,27 +52,37 @@ export function useRegistryRules(chainId: SupportedChainId, registry?: Address) 
   }
 }
 
-/** What a vault aligns to: whether the registry knows it, its target name and token ticker. */
+/**
+ * What a vault does with its share: whether the registry knows it, its target name, and the pair it builds liquidity
+ * in (`symbol`, e.g. "INFER/IMD", read from the vault's infer() and imd()). A vault without those reads (not a v2
+ * vault) has no `symbol`, and the screens say "community vault" rather than guess.
+ */
 export function useVaultInfo(chainId: SupportedChainId, registry?: Address, vault?: string) {
   const v = vault && isAddress(vault) ? (vault as Address) : undefined
   const base = useReadContracts({
     allowFailure: true,
     contracts: [
       { address: registry, abi: registryAbi, functionName: 'isVault', args: [v || zeroAddress], chainId },
-      { address: v, abi: vaultAbi, functionName: 'alignmentToken', chainId },
+      { address: v, abi: vaultAbi, functionName: 'infer', chainId },
+      { address: v, abi: vaultAbi, functionName: 'imd', chainId },
       { address: v, abi: vaultAbi, functionName: 'alignmentTargetId', chainId },
     ],
     query: { enabled: !!registry && !!v },
   })
-  const [isVault, token, targetId] = base.data || []
-  const tokenAddr = token?.result as Address | undefined
-  const symbol = useReadContract({
-    address: tokenAddr,
-    abi: erc20SymbolAbi,
-    functionName: 'symbol',
-    chainId,
-    query: { enabled: !!tokenAddr },
+  const [isVault, infer, imd, targetId] = base.data || []
+  const inferAddr = infer?.status === 'success' ? (infer.result as Address) : undefined
+  const imdAddr = imd?.status === 'success' ? (imd.result as Address) : undefined
+  const symbols = useReadContracts({
+    allowFailure: true,
+    contracts: [inferAddr, imdAddr].map((address) => ({
+      address,
+      abi: erc20SymbolAbi,
+      functionName: 'symbol' as const,
+      chainId,
+    })),
+    query: { enabled: !!inferAddr && !!imdAddr },
   })
+  const [a, b] = symbols.data || []
   const target = useReadContract({
     address: registry,
     abi: registryAbi,
@@ -81,11 +91,15 @@ export function useVaultInfo(chainId: SupportedChainId, registry?: Address, vaul
     chainId,
     query: { enabled: !!registry && targetId?.result !== undefined },
   })
+  const pair =
+    a?.status === 'success' && b?.status === 'success' ? `${String(a.result)}/${String(b.result)}` : undefined
   return {
     registered: isVault?.result as boolean | undefined,
-    token: tokenAddr,
-    symbol: symbol.data as string | undefined,
+    infer: inferAddr,
+    imd: imdAddr,
+    /** The liquidity pair, e.g. "INFER/IMD". */
+    symbol: pair,
     targetName: (target.data as readonly [string, boolean, readonly Address[]] | undefined)?.[0],
-    loading: base.isLoading || symbol.isLoading || target.isLoading,
+    loading: base.isLoading || symbols.isLoading || target.isLoading,
   }
 }

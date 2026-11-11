@@ -17,6 +17,8 @@ import {
   toCard,
 } from '../src/pages/Mint/liveMints.ts'
 
+const ETH = '0x0000000000000000000000000000000000000000' as const
+
 const A = '0x1111111111111111111111111111111111111111' as const
 const B = '0x2222222222222222222222222222222222222222' as const
 const MIYAMINI = LIVE_MINTS[0]!
@@ -118,25 +120,35 @@ test('paths: mintPath / slugFromPath round trip', () => {
 test('activePublicPhase: skips a phase that sold its cap and reports what is left', () => {
   const zero = `0x${'0'.repeat(64)}`
   const phases = [
-    { start: 0n, end: 0n, price: 1n, maxPerWallet: 0, merkleRoot: zero, supplyCap: 5 },
-    { start: 0n, end: 0n, price: 2n, maxPerWallet: 0, merkleRoot: zero, supplyCap: 0 },
+    { start: 0n, end: 0n, maxPerWallet: 0, merkleRoot: zero, supplyCap: 5, prices: [{ token: ETH, price: 1n }] },
+    { start: 0n, end: 0n, maxPerWallet: 0, merkleRoot: zero, supplyCap: 0, prices: [{ token: ETH, price: 2n }] },
   ]
-  assert.deepEqual(activePublicPhase(phases, 1, [3n, 0n]), { phaseId: 0, price: 1n, maxPerWallet: 0, left: 2 })
+  assert.deepEqual(activePublicPhase(phases, 1, [3n, 0n]), { phaseId: 0, price: 1n, prices: [{ token: ETH, price: 1n }], maxPerWallet: 0, left: 2 })
   assert.equal(activePublicPhase(phases, 1, [5n, 0n])?.phaseId, 1)
   assert.equal(activePublicPhase(phases, 1, [5n, 0n])?.left, undefined)
+  // A phase that sells only for USDC has no ETH price, and says what it does sell for.
+  const usdc = '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48' as const
+  const usdcOnly = [{ start: 0n, end: 0n, maxPerWallet: 0, merkleRoot: zero, supplyCap: 0, prices: [{ token: usdc, price: 25_000_000n }] }]
+  assert.deepEqual(activePublicPhase(usdcOnly, 1), {
+    phaseId: 0,
+    price: undefined,
+    prices: [{ token: usdc, price: 25_000_000n }],
+    maxPerWallet: 0,
+    left: undefined,
+  })
 })
 
 test('activePublicPhase: picks the first live public phase', () => {
   const zero = `0x${'0'.repeat(64)}`
   const root = `0x${'a'.repeat(64)}`
   const phases = [
-    { start: 0n, end: 100n, price: 1n, maxPerWallet: 0, merkleRoot: zero, supplyCap: 0 }, // ended
-    { start: 100n, end: 0n, price: 2n, maxPerWallet: 0, merkleRoot: root, supplyCap: 0 }, // allowlist
-    { start: 150n, end: 0n, price: 3n, maxPerWallet: 2, merkleRoot: zero, supplyCap: 0 }, // public, open-ended
+    { start: 0n, end: 100n, maxPerWallet: 0, merkleRoot: zero, supplyCap: 0, prices: [{ token: ETH, price: 1n }] }, // ended
+    { start: 100n, end: 0n, maxPerWallet: 0, merkleRoot: root, supplyCap: 0, prices: [{ token: ETH, price: 2n }] }, // allowlist
+    { start: 150n, end: 0n, maxPerWallet: 2, merkleRoot: zero, supplyCap: 0, prices: [{ token: ETH, price: 3n }] }, // public, open-ended
   ]
   assert.equal(activePublicPhase(phases, 50)?.phaseId, 0)
   assert.equal(activePublicPhase(phases, 120), undefined)
-  assert.deepEqual(activePublicPhase(phases, 200), { phaseId: 2, price: 3n, maxPerWallet: 2, left: undefined })
+  assert.deepEqual(activePublicPhase(phases, 200), { phaseId: 2, price: 3n, prices: [{ token: ETH, price: 3n }], maxPerWallet: 2, left: undefined })
   assert.equal(activePublicPhase(undefined, 1), undefined)
   assert.equal(activePublicPhase([], 1), undefined)
 })

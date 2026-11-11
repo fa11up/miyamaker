@@ -19,8 +19,10 @@ import {
 import MyUploads from '@/components/MyUploads'
 import { Eyebrow, Well } from '@/components/Retro'
 import type { FieldErrors, LaunchForm, LaunchType, PhaseForm } from '@/miyamints/launch'
-import { EMPTY_PHASE, MAX_PHASES, parseAlignmentPct, parseEth, phaseFieldsBad } from '@/miyamints/launch'
+import { EMPTY_PHASE, MAX_PHASES, parseAlignmentPct, phaseFieldsBad } from '@/miyamints/launch'
 import { pctLabel } from '@/miyamints/split'
+import type { PayToken } from '@/miyamints/tokens'
+import { buildPrices, ETH, MAX_TOKENS, sameToken } from '@/miyamints/tokens'
 import type { FileCheck } from '@/music/audio'
 import { AUDIO_ACCEPT, formatDuration, IMAGE_ACCEPT } from '@/music/audio'
 import { bevel, color, space, text } from '@/theme/tokens'
@@ -462,27 +464,128 @@ const DURATIONS = [
   ['168', '1 week'],
 ] as const
 
-export function SaleStep({ form, set, errors }: StepProps) {
+/**
+ * Which tokens buyers can pay with (drops and editions). ETH is chosen to start; at least one stays chosen. Shown only
+ * where there is more than one token to offer.
+ */
+function TokenChooser({
+  tokens,
+  chosen,
+  onChange,
+  error,
+}: {
+  tokens: readonly PayToken[]
+  chosen: readonly string[]
+  onChange: (next: string[]) => void
+  error?: string
+}) {
+  if (tokens.length < 2) return null
+  const on = (t: PayToken) => chosen.some((c) => sameToken(c, t.address))
+  const toggle = (t: PayToken) => {
+    const next = on(t) ? chosen.filter((c) => !sameToken(c, t.address)) : [...chosen, t.address.toLowerCase()]
+    if (next.length && next.length <= MAX_TOKENS) onChange(next)
+  }
+  return (
+    <Field as="div">
+      <span>Buyers can pay with</span>
+      <Segmented role="group" aria-label="Tokens buyers can pay with">
+        {tokens.map((t) => (
+          <SmallButton key={t.address} type="button" aria-pressed={on(t)} onClick={() => toggle(t)}>
+            {t.symbol}
+          </SmallButton>
+        ))}
+      </Segmented>
+      <small>
+        Set a price in each token you pick. You collect each token exactly as paid: nothing is converted, and there
+        are no exchange rates.
+      </small>
+      <Err>{error}</Err>
+    </Field>
+  )
+}
+
+/** The accepted tokens, in the order offered. */
+const acceptedOf = (form: LaunchForm, tokens: readonly PayToken[]) =>
+  tokens.filter((t) => form.tokens.some((c) => sameToken(c, t.address)))
+
+export function SaleStep({
+  form,
+  set,
+  errors,
+  tokens: offered,
+  note,
+}: StepProps & {
+  tokens: readonly PayToken[]
+  /** Something changed in the draft on its own (a token miya dropped was taken off): said at the top. */
+  note?: string
+}) {
   const [pickingFolder, setPickingFolder] = useState(false)
   const input = (k: keyof LaunchForm) => ({
     value: form[k] as string,
     'aria-invalid': !!errors[k],
     onChange: (e: { target: { value: string } }) => set(k, e.target.value as never),
   })
-  const setPhase = (i: number, k: keyof PhaseForm, v: string) =>
+  const setPhase = (i: number, k: Exclude<keyof PhaseForm, 'prices'>, v: string) =>
     set(
       'phases',
       form.phases.map((p, n) => (n === i ? { ...p, [k]: v } : p)),
     )
+  const setPhasePrice = (i: number, token: string, v: string) =>
+    set(
+      'phases',
+      form.phases.map((p, n) => (n === i ? { ...p, prices: { ...p.prices, [token]: v } } : p)),
+    )
+  const accepted = acceptedOf(form, offered)
+  const noted = note ? (
+    <Well role="status" style={{ padding: space[2] }}>
+      <small>{note}</small>
+    </Well>
+  ) : null
+  const chooser = (
+    <TokenChooser
+      tokens={offered}
+      chosen={form.tokens}
+      onChange={(next) => set('tokens', next)}
+      error={errors.tokens}
+    />
+  )
 
   if (form.type === 'auction') {
+    const cur = offered.find((t) => sameToken(t.address, form.currency || ETH)) || offered[0]
+    const sym = cur?.symbol || 'ETH'
     return (
       <Stack>
         <Lead>Set how the bidding works. The auction starts as soon as you create it.</Lead>
+        {noted}
+        {offered.length > 1 && (
+          <Field>
+            Bids are in
+            <select
+              value={(cur?.address || ETH).toLowerCase()}
+              aria-invalid={!!errors.currency}
+              onChange={(e) => {
+                set('currency', e.target.value)
+                // The ETH-sized default step means nothing in another token: ask for one.
+                if (form.bidStep === '0.01' && e.target.value !== ETH) set('bidStep', '')
+              }}
+            >
+              {offered.map((t) => (
+                <option key={t.address} value={t.address.toLowerCase()}>
+                  {t.symbol}
+                </option>
+              ))}
+            </select>
+            <small>
+              One token for this auction house: the deposit, every bid and every refund are in it, and you are paid in it.
+              It can&apos;t change later.
+            </small>
+            <Err>{errors.currency}</Err>
+          </Field>
+        )}
         <Row2>
           <Field>
-            Starting bid (ETH)
-            <input {...input('reserve')} inputMode="decimal" placeholder="0.1" />
+            Starting bid ({sym})
+            <input {...input('reserve')} inputMode="decimal" placeholder={sym === 'ETH' ? '0.1' : '100'} />
             <small>
               You pay this now as a deposit. You get it back when the piece sells. If nobody bids, miya keeps the
               deposit.
@@ -503,8 +606,8 @@ export function SaleStep({ form, set, errors }: StepProps) {
           </Field>
         </Row2>
         <Field>
-          Bid step (ETH)
-          <input {...input('bidStep')} inputMode="decimal" placeholder="0.01" />
+          Bid step ({sym})
+          <input {...input('bidStep')} inputMode="decimal" placeholder={sym === 'ETH' ? '0.01' : '10'} />
           <small>Each new bid must beat the last one by at least this much.</small>
           <Err>{errors.bidStep}</Err>
         </Field>
@@ -513,15 +616,25 @@ export function SaleStep({ form, set, errors }: StepProps) {
   }
 
   if (form.type === 'editions') {
+    const priced = buildPrices(form.editionPrices, accepted, { required: true, allowZero: false }).ok
     return (
       <Stack>
         <Lead>Set the price and how many copies can be bought.</Lead>
+        {noted}
+        {chooser}
         <Row2>
-          <Field>
-            Price per copy (ETH)
-            <input {...input('editionPrice')} inputMode="decimal" placeholder="0.005" />
-            <Err>{errors.editionPrice}</Err>
-          </Field>
+          {accepted.map((t) => (
+            <Field key={t.address}>
+              Price per copy ({t.symbol})
+              <input
+                value={form.editionPrices[t.address.toLowerCase()] || ''}
+                inputMode="decimal"
+                placeholder={t.symbol === 'ETH' ? '0.005' : t.decimals <= 8 && t.symbol.includes('BTC') ? '0.0002' : '10'}
+                aria-invalid={!!errors.editionPrices}
+                onChange={(e) => set('editionPrices', { ...form.editionPrices, [t.address.toLowerCase()]: e.target.value })}
+              />
+            </Field>
+          ))}
           <Field>
             Number of copies
             <input {...input('editionSupply')} inputMode="numeric" placeholder="No limit" />
@@ -529,7 +642,8 @@ export function SaleStep({ form, set, errors }: StepProps) {
             <Err>{errors.editionSupply}</Err>
           </Field>
         </Row2>
-        {(parseEth(form.editionPrice).ok || form.editionStart) && (
+        <Err>{errors.editionPrices}</Err>
+        {(priced || form.editionStart) && (
           <Field>
             Sale opens (optional)
             <input type="datetime-local" {...input('editionStart')} />
@@ -544,6 +658,8 @@ export function SaleStep({ form, set, errors }: StepProps) {
   return (
     <Stack>
       <Lead>Set how many pieces there are, the price and when the sale runs.</Lead>
+        {noted}
+      {chooser}
       <Row2>
         <Field>
           Number of pieces
@@ -585,22 +701,26 @@ export function SaleStep({ form, set, errors }: StepProps) {
             )}
           </legend>
           <Row2>
-            <Field>
-              Price (ETH)
-              <input
-                value={p.price}
-                aria-invalid={!!errors.phases && !!phaseFieldsBad(p).price}
-                inputMode="decimal"
-                placeholder="0.01"
-                onChange={(e) => setPhase(i, 'price', e.target.value)}
-              />
-              <small>Type 0 for a free mint.</small>
-            </Field>
+            {accepted.map((t) => (
+              <Field key={t.address}>
+                Price ({t.symbol})
+                <input
+                  value={p.prices[t.address.toLowerCase()] || ''}
+                  aria-invalid={!!errors.phases && !!phaseFieldsBad(p, accepted).prices[t.address.toLowerCase()]}
+                  inputMode="decimal"
+                  placeholder={accepted.length > 1 ? 'Not sold in this token' : '0.01'}
+                  onChange={(e) => setPhasePrice(i, t.address.toLowerCase(), e.target.value)}
+                />
+                <small>
+                  {accepted.length > 1 ? 'Type 0 for free. Empty: this phase does not take it.' : 'Type 0 for a free mint.'}
+                </small>
+              </Field>
+            ))}
             <Field>
               Limit per wallet
               <input
                 value={p.maxPerWallet}
-                aria-invalid={!!errors.phases && !!phaseFieldsBad(p).maxPerWallet}
+                aria-invalid={!!errors.phases && !!phaseFieldsBad(p, accepted).maxPerWallet}
                 inputMode="numeric"
                 placeholder="No limit"
                 onChange={(e) => setPhase(i, 'maxPerWallet', e.target.value)}
@@ -610,7 +730,7 @@ export function SaleStep({ form, set, errors }: StepProps) {
               Pieces for sale
               <input
                 value={p.supplyCap}
-                aria-invalid={!!errors.phases && !!phaseFieldsBad(p).supplyCap}
+                aria-invalid={!!errors.phases && !!phaseFieldsBad(p, accepted).supplyCap}
                 inputMode="numeric"
                 placeholder="No limit"
                 onChange={(e) => setPhase(i, 'supplyCap', e.target.value)}
@@ -624,7 +744,7 @@ export function SaleStep({ form, set, errors }: StepProps) {
               <input
                 type="datetime-local"
                 value={p.start}
-                aria-invalid={!!errors.phases && !!phaseFieldsBad(p).start}
+                aria-invalid={!!errors.phases && !!phaseFieldsBad(p, accepted).start}
                 onChange={(e) => setPhase(i, 'start', e.target.value)}
               />
               <small>Empty: right away.</small>
@@ -634,7 +754,7 @@ export function SaleStep({ form, set, errors }: StepProps) {
               <input
                 type="datetime-local"
                 value={p.end}
-                aria-invalid={!!errors.phases && !!phaseFieldsBad(p).end}
+                aria-invalid={!!errors.phases && !!phaseFieldsBad(p, accepted).end}
                 onChange={(e) => setPhase(i, 'end', e.target.value)}
               />
               <small>Empty: runs until sold out.</small>
@@ -643,7 +763,7 @@ export function SaleStep({ form, set, errors }: StepProps) {
         </PhaseBox>
       ))}
       <Err>{errors.phases}</Err>
-      {form.phases.length < MAX_PHASES && (form.phases.length > 1 || !!form.phases[0]?.price.trim()) && (
+      {form.phases.length < MAX_PHASES && (form.phases.length > 1 || Object.values(form.phases[0]?.prices || {}).some((v) => !!v.trim())) && (
         <div>
           <SmallButton type="button" onClick={() => set('phases', [...form.phases, { ...EMPTY_PHASE }])}>
             + Add a phase (for example an early price)
@@ -786,14 +906,18 @@ export function AlignStep({
   return (
     <Stack>
       <Lead>
-        Every sale is split three ways: you, a community vault and miya.{' '}
+        Every sale is split three ways, in the token it was paid in: you, a community vault and miya.{' '}
         {minAlignmentBps !== undefined && protocolFeeBps !== undefined
           ? `At least ${minAlignmentBps / 100}% goes to the vault. `
           : ''}
-        The vault buys a token and adds it to a shared pool. If that pool trades, you can claim a part of its fees in
-        Manager.
+        The default vault turns what it gets into INFER/IMD liquidity in one shared pool, in batches, and it stays
+        there for good. The pool&apos;s trading fees are paid in INFER and IMD, and you can claim your part in Manager.
         {protocolFeeBps !== undefined && minAlignmentBps !== undefined ? ` miya keeps ${protocolFeeBps / 100}%.` : ''}
       </Lead>
+      <small style={{ color: color.inkMuted }}>
+        A vault cut below the vault&apos;s minimum is parked until the next sale, or until it is sent from Manager. ETH
+        payouts arrive as WETH if your wallet can&apos;t take ETH.
+      </small>
       <div role="radiogroup" aria-label="Community vault" style={{ display: 'grid', gap: space[2] }}>
         <VaultCard
           type="button"

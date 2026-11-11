@@ -43,15 +43,16 @@ export function useTx(onDone?: (id: string) => void) {
   const [tx, setTx] = useState<TxState>({ phase: 'idle' })
   const unsettled = useRef(new Set<string>())
 
+  /** Resolves true once the call landed, false when it didn't (the screen shows why from `tx`). */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const run = async (id: string, call: any) => {
+  const run = async (id: string, call: any): Promise<boolean> => {
     if (!address) {
       setTx({ id, phase: 'error', message: 'Connect a wallet first.' })
-      return
+      return false
     }
 
     const key = callKey({ ...call, account: address })
-    if (unsettled.current.has(key)) return
+    if (unsettled.current.has(key)) return false
 
     setTx({ id, phase: 'wallet' })
     let hash: Hash | undefined
@@ -73,11 +74,12 @@ export function useTx(onDone?: (id: string) => void) {
     } catch (e) {
       if ((e as { unconfirmed?: boolean }).unconfirmed) unsettled.current.add(key)
       setTx({ id, phase: 'error', hash, message: describeError(e), error: e, stage })
-      return
+      return false
     }
 
     // Outside the try: a screen's follow-up failing must not report a finished transaction as failed.
     onDone?.(id)
+    return true
   }
 
   /**
@@ -121,6 +123,12 @@ export function useTx(onDone?: (id: string) => void) {
     unconfirmed: tx.phase === 'error' && !!(tx.error as { unconfirmed?: boolean } | undefined)?.unconfirmed,
     /** Replaced by the wallet's cancel: nothing moved, so the same thing may be offered again. */
     cancelled: tx.phase === 'error' && !!(tx.error as { cancelled?: boolean } | undefined)?.cancelled,
+    /**
+     * Stops before the wallet with `message`, as a failed dry run: nothing was sent. For a check a screen makes itself
+     * (the price moved, the sale ended) before it would send anything.
+     */
+    refuse: (id: string, message: string) =>
+      setTx({ id, phase: 'error', message, stage: 'check', error: { precheck: true, message } }),
     /** Starts over: also lets a call that ended unconfirmed be sent again, which only the person should choose. */
     reset: () => {
       unsettled.current.clear()

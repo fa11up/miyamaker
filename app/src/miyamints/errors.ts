@@ -14,10 +14,26 @@ const FRIENDLY: Record<string, string> = {
   PhaseSoldOut: 'This sale phase does not have that many pieces left.',
   ReserveExceeded: 'That is more than the pieces you have left from what you kept back at launch.',
   NotFactory: 'This factory is not registered with miya on this network.',
+  // Multi-token sales (PaymentLib)
+  ExceedsMaxCost: 'The price went up since this screen read it. Look at the new price and try again.',
+  TokenNotPriced: 'This sale does not take that token. Pick another one.',
+  TokenNotAccepted: 'This collection does not take that token. Pick another one.',
+  TokenNotAllowed: 'miya does not accept that token right now. Pick another one.',
+  WrongPayment: 'The amount sent did not match the price. Nothing was charged. Try again.',
+  WrongValue: 'The amount sent did not match. Nothing was charged. Try again.',
+  ShortTransfer: 'Less of the token arrived than was sent, so the contract refused it.',
+  NothingParked: 'There is nothing waiting to be sent for that token.',
+  NothingToWithdraw: 'There is nothing to withdraw yet.',
+  NoFeesToClaim: 'There are no vault fees to claim yet.',
+  NothingToRefund: 'There is no refund waiting for this wallet.',
+  NoTokens: 'Pick at least one token buyers can pay with.',
+  TooManyTokens: 'Too many tokens: a collection can take at most 8.',
+  DuplicateToken: 'The same token is listed twice.',
   // MiyaPool / MiyaPoolFactory (Trade → NFTs)
   NotHeld: 'That NFT is no longer in the pool. Someone may have just taken it. Pick another.',
   InsufficientHeld: 'The pool does not have that many NFTs free right now.',
-  InsufficientBalance: 'Not enough pool tokens in this wallet.',
+  // Raised by MiyaPool (pool tokens) and by ERC1155Instance.withdraw (nothing owed in that token).
+  InsufficientBalance: 'Not enough balance for that: no pool tokens to spend, or nothing to withdraw in that token.',
   TooEarly: 'Too early: wait one more block, then reveal.',
   UnknownCommit: 'That draw was already revealed.',
   NotNextCommit: 'Draws settle in order, and an earlier draw is still open.',
@@ -32,6 +48,13 @@ const FRIENDLY: Record<string, string> = {
   PoolExists: 'A pool for this collection and mode already exists.',
   UnsupportedCollection: 'That address is not an ERC-721 or ERC-1155 collection.',
   RandomRequiresERC721: 'Random pools work only for ERC-721 collections.',
+}
+
+/** The contract's own error name in a viem error (`ExceedsMaxCost`), or undefined. */
+export function revertName(error: unknown): string | undefined {
+  if (!(error instanceof BaseError)) return undefined
+  const revert = error.walk((e) => e instanceof ContractFunctionRevertedError) as ContractFunctionRevertedError | null
+  return revert?.data?.errorName
 }
 
 /**
