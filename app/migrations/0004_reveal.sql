@@ -14,6 +14,8 @@ CREATE TABLE IF NOT EXISTS reveal_collections (
   cover_image TEXT NOT NULL,
   address TEXT,
   deploy_block INTEGER,
+  -- The drop's baseURI when it was attached (…/reveal/<slug>/): drawn tokens' image links are made from it.
+  base_uri TEXT,
   last_scanned_block INTEGER,
   minted INTEGER NOT NULL DEFAULT 0,
   assigned INTEGER NOT NULL DEFAULT 0,

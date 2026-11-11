@@ -132,6 +132,8 @@ export type Collection = {
   coverImage: string
   address?: string
   deployBlock?: number
+  /** The drop's baseURI at attach: …/reveal/<slug>/. */
+  baseUri?: string
   lastScannedBlock?: number
   minted: number
   assigned: number
@@ -149,6 +151,7 @@ const fromRow = (r: Record<string, unknown>): Collection => ({
   coverImage: String(r.cover_image),
   address: r.address ? String(r.address) : undefined,
   deployBlock: num(r.deploy_block),
+  baseUri: r.base_uri ? String(r.base_uri) : undefined,
   lastScannedBlock: num(r.last_scanned_block),
   minted: Number(r.minted),
   assigned: Number(r.assigned),
@@ -230,7 +233,8 @@ async function tokenMetadata(c: Collection, raw: string, origin: string, deps: R
   const obj = await deps.bucket?.get(pieceKey(c.slug, a.piece, 'json'))
   // Drawn but its file is not in R2: say so, never something else in its place.
   if (!obj) return json(503, { error: 'This piece is not loaded yet.' }, 'no-store', { 'retry-after': '60' })
-  const image = a.arImage ? `ar://${a.arImage}` : `${origin}${REVEAL_PREFIX}/${c.slug}/image/${id}`
+  // The image link has the tokenURI's own origin (the baseURI checked at attach), whatever host asked.
+  const image = a.arImage ? `ar://${a.arImage}` : `${c.baseUri ?? `${origin}${REVEAL_PREFIX}/${c.slug}/`}image/${id}`
   return json(200, servedMetadata(await obj.text(), image), a.arImage ? IMMUTABLE : ASSIGNED_CACHE)
 }
 
@@ -482,14 +486,17 @@ async function loadProvenance(request: Request, c: Collection, db: RevealDb, buc
   }
   await db.batch(stmts)
   // Rows that were there already must say the same (they can only, given the same hash; this proves it).
-  const bad = await db
-    .prepare(
-      `SELECT COUNT(*) AS n FROM reveal_pieces p JOIN json_each(?) j ON p.piece = json_extract(j.value, '$.n')
-       WHERE p.slug = ? AND (p.image_sha256 != json_extract(j.value, '$.i') OR p.metadata_sha256 != json_extract(j.value, '$.m'))`
-    )
-    .bind(JSON.stringify(pieces.map((p) => ({ n: p.n, i: p.image, m: p.metadata }))), c.slug)
-    .first()
-  if (Number(bad?.n)) return json(409, { error: 'Stored piece hashes differ from this provenance.' })
+  const { results } = await db
+    .prepare('SELECT piece, image_sha256, metadata_sha256 FROM reveal_pieces WHERE slug = ?')
+    .bind(c.slug)
+    .all()
+  const differs = results.some((r) => {
+    const p = pieces[Number(r.piece) - 1]
+    return !p || p.image !== r.image_sha256 || p.metadata !== r.metadata_sha256
+  })
+  if (differs || results.length !== pieces.length) {
+    return json(409, { error: 'Stored piece hashes differ from this provenance.' })
+  }
   await bucket.put(provenanceKey(c.slug), bytes, {
     httpMetadata: { contentType: 'application/json' },
     sha256: await sha256Hex(bytes),
@@ -560,13 +567,15 @@ async function attach(request: Request, c: Collection, db: RevealDb, chain: Reve
     return json(409, { error: 'Mints of this drop are already stored; it cannot be moved to another address.' })
   }
   if (!chain) return json(503, { error: `No RPC for chain ${c.chainId}.` })
+  let base: string
   try {
-    const [before, at, max, base] = await Promise.all([
+    const [before, at, max, uri] = await Promise.all([
       chain.hasCode(lower, deployBlock - 1),
       chain.hasCode(lower, deployBlock),
       chain.maxSupply(lower),
       chain.baseURI(lower),
     ])
+    base = uri
     if (before || !at) return json(422, { error: `The contract was not created in block ${deployBlock}.` })
     if (max !== c.supply) return json(422, { error: `maxSupply is ${max}, the collection's supply is ${c.supply}.` })
     if (!base.endsWith(`${REVEAL_PREFIX}/${c.slug}/`)) {
@@ -577,10 +586,10 @@ async function attach(request: Request, c: Collection, db: RevealDb, chain: Reve
   }
   await db
     .prepare(
-      `UPDATE reveal_collections SET address = ?, deploy_block = ?, last_scanned_block = ?, updated_at = ?
+      `UPDATE reveal_collections SET address = ?, deploy_block = ?, base_uri = ?, last_scanned_block = ?, updated_at = ?
        WHERE slug = ? AND minted = 0`
     )
-    .bind(lower, deployBlock, deployBlock - 1, now, c.slug)
+    .bind(lower, deployBlock, base, deployBlock - 1, now, c.slug)
     .run()
   if (c.minted > 0) return json(200, { ok: true, collection: c }) // the same address again: nothing to change
   return json(200, { ok: true, collection: await getCollection(db, c.slug) })

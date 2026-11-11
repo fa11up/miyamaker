@@ -12,11 +12,11 @@
 // REVEAL_IRYS_KEY is the Ethereum private key of a funded Irys account (environment only, never logged; this never
 // funds it). Every upload is written to <build>/arweave-journal.jsonl before anything else happens, so a run that stops
 // between an upload and its recording carries on from the journal instead of paying twice.
-import { appendFile, readFile } from 'node:fs/promises'
+import { appendFile, readFile, writeFile } from 'node:fs/promises'
 import { existsSync, statSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { homedir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { createPublicClient, encodeFunctionData, http, parseAbi } from 'viem'
 
 import { servedMetadata, storedFromServed } from '../../api/_lib/revealpiece.mjs'
@@ -128,7 +128,8 @@ async function manifest({ list, journal, journalPath, base }) {
     return 1
   }
   const body = JSON.stringify({ manifest: 'arweave/paths', version: '0.1.0', paths })
-  log(`manifest: ${list.supply} paths, ${body.length} bytes`)
+  await writeFile(join(dirname(journalPath), 'manifest.json'), body)
+  log(`manifest: ${list.supply} paths, ${body.length} bytes, written to ${join(dirname(journalPath), 'manifest.json')}`)
 
   let id = journal.get('manifest')?.manifest
   if (!id && EXECUTE) {
