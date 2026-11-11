@@ -126,7 +126,7 @@ export const EMPTY_FORM: LaunchForm = {
   bidStep: '0.01',
   editionPrices: {},
   editionSupply: '',
-  editionRise: '1',
+  editionRise: '',
   editionStart: '',
   vaultChoice: 'default',
   customVault: '',

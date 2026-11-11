@@ -428,7 +428,7 @@ const EMPTY: Form = {
   collectionName: '',
   price: '',
   supply: '',
-  rise: '1',
+  rise: '',
   alignment: '',
   audioUri: '',
   coverUri: '',

@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { nextSongCursor, samplePlayKind } from '../src/pages/MusicMaker/audio/playKind.js'
+import { nextSongCursor, samplePlayKind as playKindOf } from '../src/pages/MusicMaker/audio/playKind.js'
+
+// The engine also passes `held`, which must not change the kind. The JS signature does not list it.
+const samplePlayKind = playKindOf as (opts: Parameters<typeof playKindOf>[0] & { held?: boolean }) => string
 import { clockBpm, launchStep, normalizeAuto, normalizeLaunch, valueAt, writeAuto } from '../src/pages/MusicMaker/audio/arrange.js'
 import { downsample, parseClock, shapeSample, sliceSpan, urlSampleHint } from '../src/pages/MusicMaker/audio/sampleShape.js'
 
@@ -69,7 +72,7 @@ test('automation keeps an empty lane, drops an unknown one, and writes a mixer v
   assert.equal(live.master, 0.4)
   assert.equal(writeAuto(live, 'master', 0.4), false)
   assert.equal(writeAuto(live, 'pad:0:pitch', 12.4), false)
-  assert.equal(live.pads[0].pitch, 12)
+  assert.equal(live.pads[0]!.pitch, 12)
   assert.equal(writeAuto(live, 'nope', 1), false)
 })
 

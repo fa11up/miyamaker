@@ -18,6 +18,7 @@ import { FREE_BYTES, fundAndUpload } from '@/utils/fundAndUpload'
 import getIrysToken from '@/utils/getIrysToken'
 import { useStorageQuote } from '@/utils/useStorageQuote'
 
+import { BOUNCE_NOTE } from './audio/engine.js'
 import { checkLaunch, type EditionLaunch, type EditionResult, launchEdition } from './launchEdition'
 import {
   contentKey,
@@ -328,7 +329,7 @@ export default function PublishDialog({ job, onClose }: { job: PublishJob; onClo
   const [artist, setArtist] = useState('')
   const [price, setPrice] = useState('0.01')
   const [supply, setSupply] = useState('')
-  const [rise, setRise] = useState('1')
+  const [rise, setRise] = useState('')
   const [cover, setCover] = useState<File | null>(null)
   const [coverName, setCoverName] = useState('')
   const [mintFirst, setMintFirst] = useState(false)
@@ -955,6 +956,8 @@ export default function PublishDialog({ job, onClose }: { job: PublishJob; onClo
                 : `The bounce plays in miya radio. The ${kind} file is stored beside it so it can be opened again. Both are public and permanent on Arweave, and the ${kind} file holds every sample in it, mic recordings too.`}
               {music.wrongChain ? ` Switch to ${music.cfg.name} before releasing.` : ''}
             </Note>
+            {/* The edition is permanent: say what the bounce leaves out before it is minted, not after. */}
+            <Note>{BOUNCE_NOTE}</Note>
             {!committed && !released && <Note>{costLine}</Note>}
           </>
         ) : (

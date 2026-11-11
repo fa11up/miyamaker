@@ -239,7 +239,8 @@ export function createFx(sampleRate) {
   }
 
   function readGrain(start, len, pos, dir) {
-    const offset = dir === 1 ? len - 1 - pos : pos
+    // Stretch crawls by fractions of a sample. A fractional index into a Float32Array reads undefined (NaN).
+    const offset = Math.floor(dir === 1 ? len - 1 - pos : pos)
     const read = wrapRead(start, offset)
     const env = len > 1 ? 1 - Math.abs((2 * pos) / len - 1) : 1
     holdL = repeatL[read] * env

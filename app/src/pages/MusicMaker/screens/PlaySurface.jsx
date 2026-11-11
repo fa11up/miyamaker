@@ -98,10 +98,13 @@ function PhoneKeys() {
                     releaseKeyboardNotes()
                     return
                   }
+                  // Capture so a release off the key still reaches it; a looping note would otherwise stay on.
+                  try { event.currentTarget.setPointerCapture(event.pointerId) } catch { /* already gone */ }
                   noteOn(model.selected, TRACK_VEL, hold, midi - 60, trackExtra())
                 }}
                 onPointerUp={() => noteOff(hold)}
                 onPointerCancel={() => noteOff(hold)}
+                onLostPointerCapture={() => noteOff(hold)}
               >
                 {off ? 'off' : noteName(midi - 60)}
               </button>

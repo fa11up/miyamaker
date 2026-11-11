@@ -564,6 +564,8 @@ function routeMaster() {
   try { makeup.disconnect() } catch { /* not yet connected */ }
   try { kneeNode?.disconnect() } catch { /* not yet connected */ }
   master.connect(masterEq.input)
+  // The bare disconnect above also cut the EQ's own spectrum tap.
+  masterEq.output.connect(masterEq.spec)
   masterEq.output.connect(preComp)
   if (useKnee) {
     masterEq.output.connect(kneeNode)
@@ -1904,7 +1906,8 @@ export function heldNotes() {
 
 export function releaseKeyboardNotes() {
   for (const id of [...held.keys()]) {
-    if (String(id).startsWith('key:')) releaseHeld(id)
+    // key: is the computer keyboard, touch: the on-screen phone keys.
+    if (String(id).startsWith('key:') || String(id).startsWith('touch:')) releaseHeld(id)
   }
 }
 
@@ -1943,7 +1946,7 @@ function scheduleGrains(context, dest, pcm, sr, rate, spec, t0, hold) {
 }
 
 /** What the WAV bounce plays and what it leaves out. Shown after a bounce. */
-export const BOUNCE_NOTE = 'WAV has the song order, swing, volume and pan. Bus FX, pad FX and filters, envelopes, chokes and the master compressor are not in it.'
+export const BOUNCE_NOTE = 'WAV has the song order, tempo changes, swing, volume and pan. Bus FX, pad FX and filters, EQ, other automation, envelopes, chokes and the master compressor are not in it.'
 export const BOUNCE_MAX_SECONDS = 600
 
 /** How long the bounce of `order` runs, in seconds: every pattern's steps at its tempo, plus the tail. */

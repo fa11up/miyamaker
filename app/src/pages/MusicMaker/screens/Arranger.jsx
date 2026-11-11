@@ -174,7 +174,8 @@ function Cell({ index, pat, root, onEdit, onMenu }) {
       node.removeEventListener('pointermove', move)
       node.removeEventListener('pointerup', up)
       node.removeEventListener('pointercancel', up)
-      if (ev.type === 'pointercancel') return
+      node.removeEventListener('lostpointercapture', up)
+      if (ev.type === 'pointercancel' || ev.type === 'lostpointercapture') return
       if (!drag.current) {
         launchSongSection(index)
         return
@@ -187,9 +188,12 @@ function Cell({ index, pat, root, onEdit, onMenu }) {
       }
       moveSongCell(index, to)
     }
+    // Without capture a mouse release lands on the cell under it, so the drop never reached this one.
+    try { node.setPointerCapture(id) } catch { /* already gone */ }
     node.addEventListener('pointermove', move)
     node.addEventListener('pointerup', up)
     node.addEventListener('pointercancel', up)
+    node.addEventListener('lostpointercapture', up)
   }
 
   return (

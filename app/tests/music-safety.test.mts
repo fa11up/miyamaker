@@ -259,11 +259,12 @@ test('a song file keeps a pattern tempo, its automation, and the launch mode', (
     { i: 1, name: 'A', bars: 1, steps: [], bpm: 140.6, auto: [{ id: 'bpm', points: [{ s: 0, v: 100 }, { s: 4, v: 999 }] }, { id: 'gone', points: [{ s: 0, v: 1 }] }] },
     { i: 2, name: 'B', bars: 1, steps: [] },
   ])
-  assert.equal(out[0].bpm, 141)
-  assert.deepEqual(out[0].auto, [{ id: 'bpm', points: [{ s: 0, v: 100 }, { s: 4, v: 240 }] }])
-  assert.equal('bpm' in out[1], false)
-  assert.equal('auto' in out[1], false)
-  assert.equal(packSong({ name: 'T', bpm: 100, launch: 'grid', patterns: [], pads: [], samples: [] }).launch, 'grid')
+  const first = out[0] as { bpm?: number; auto?: unknown }
+  assert.equal(first.bpm, 141)
+  assert.deepEqual(first.auto, [{ id: 'bpm', points: [{ s: 0, v: 100 }, { s: 4, v: 240 }] }])
+  assert.equal('bpm' in out[1]!, false)
+  assert.equal('auto' in out[1]!, false)
+  assert.equal((packSong({ name: 'T', bpm: 100, launch: 'grid', patterns: [], pads: [], samples: [] }) as { launch?: string }).launch, 'grid')
   assert.equal('launch' in packSong({ name: 'T', bpm: 100, patterns: [], pads: [], samples: [] }), false)
   assert.equal('launch' in packSong({ name: 'T', bpm: 100, launch: 'soon', patterns: [], pads: [], samples: [] }), false)
 })

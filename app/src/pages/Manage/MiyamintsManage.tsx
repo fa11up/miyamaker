@@ -523,14 +523,14 @@ function EditionsTab({
   const [img, setImg] = useState('')
   const [prices, setPrices] = useState<Record<string, string>>({})
   const [copies, setCopies] = useState('')
-  const [rise, setRise] = useState('1')
+  const [rise, setRise] = useState('')
   useEffect(() => {
     if (tx.phase === 'done' && tx.id === 'edition') {
       setTitle('')
       setImg('')
       setPrices({})
       setCopies('')
-      setRise('1')
+      setRise('')
     }
   }, [tx.phase, tx.id])
   const n = parseName(title)

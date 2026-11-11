@@ -42,6 +42,10 @@ export function CoachLayer() {
     if (!topicId || !COACH[topicId]) return undefined
     const down = (event) => {
       if (event.key !== 'Escape') return
+      // Only while the music window is the one on top: another app's Escape is not ours.
+      const node = cardRef.current
+      const win = node && (node.getRootNode()?.host || node).closest?.('.react-draggable')
+      if (win && !win.classList.contains('is-focused')) return
       event.preventDefault()
       event.stopPropagation()
       model.coachTopic = ''

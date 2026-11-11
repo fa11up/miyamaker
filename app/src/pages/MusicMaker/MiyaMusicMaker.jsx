@@ -170,7 +170,6 @@ export function MiyaMusicMaker() {
       </div>
       <div
         className={`mmm-body${model.dockOpen === false && !model.arrangeOpen ? ' dock-shut' : ''}`}
-        style={{ '--dock-size': `${Math.max(120, model.dockWidth || 232)}px` }}
       >
         <div className="dock-rail">
           <DockToggles names />
@@ -204,7 +203,8 @@ export function MiyaMusicMaker() {
                 </div>
               )}
             </div>
-            <div className="dock-splitter" onPointerDown={splitDrag} />
+            {/* A set width: a pane's width is not dragged. Shut and open it with the dock buttons. */}
+            <div className="dock-splitter" aria-hidden="true" />
           </>
         )}
         <div className="mmm-main">
@@ -357,7 +357,6 @@ function toggleBrowser() {
   else {
     model.dockOpen = true
     if (narrowWindow()) model.arrangeOpen = false
-    if ((model.dockWidth || 0) < 120) model.dockWidth = 232
   }
   touch(true)
 }
@@ -367,7 +366,6 @@ function toggleArranger() {
   else {
     model.arrangeOpen = true
     if (narrowWindow()) model.dockOpen = false
-    if ((model.dockWidth || 0) < 120) model.dockWidth = 232
   }
   touch(true)
 }
@@ -597,43 +595,6 @@ function nudgePair(event) {
   model.dockSplit = Math.max(0.15, Math.min(0.85, dockSplit() + dir))
   touch(false)
   save()
-}
-
-function splitDrag(event) {
-  if (event.button != null && event.button !== 0) return
-  const splitter = event.currentTarget
-  const body = splitter.parentElement
-  if (!body) return
-  const stacked = getComputedStyle(body).flexDirection === 'column'
-  const start = stacked ? event.clientY : event.clientX
-  const origin = model.dockWidth || 232
-  const id = event.pointerId
-  const move = (ev) => {
-    if (ev.pointerId !== id) return
-    const delta = (stacked ? ev.clientY : ev.clientX) - start
-    const room = (stacked ? body.clientHeight : body.clientWidth) - 200
-    const next = origin + delta
-    if (next < 56) {
-      model.dockOpen = false
-      model.arrangeOpen = false
-      touch(true)
-      end(ev)
-      return
-    }
-    model.dockWidth = Math.max(120, Math.min(Math.max(120, room), next))
-    touch(false)
-  }
-  const end = (ev) => {
-    if (ev && ev.pointerId !== id) return
-    splitter.removeEventListener('pointermove', move)
-    splitter.removeEventListener('pointerup', end)
-    splitter.removeEventListener('pointercancel', end)
-    save()
-  }
-  splitter.setPointerCapture?.(id)
-  splitter.addEventListener('pointermove', move)
-  splitter.addEventListener('pointerup', end)
-  splitter.addEventListener('pointercancel', end)
 }
 
 /**

@@ -453,3 +453,13 @@ test('parseReserve: blank is none, and one piece must stay on sale', () => {
   assert.deepEqual(parseReserve('9', 10), { ok: true, n: 9 })
   assert.equal(parseReserve('10', 10).ok, false, 'a fully reserved drop could never sell')
 })
+
+test('editions start flat: a rising price is the creator\'s choice, and an old draft stays flat', async () => {
+  const { EMPTY_FORM, upgradeForm } = await import('../src/miyamints/launch.ts')
+  assert.equal(EMPTY_FORM.editionRise, '')
+  const old = { ...EMPTY_FORM } as Partial<LaunchForm>
+  delete old.editionRise
+  assert.equal(upgradeForm(old as LaunchForm).editionRise, '')
+  const open = musicDrop.parseEdition('', EMPTY_FORM.editionRise)
+  assert.ok(open.ok, 'an open edition is allowed by default')
+})

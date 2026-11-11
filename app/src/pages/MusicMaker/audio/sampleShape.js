@@ -41,6 +41,7 @@ function slugName(pathname) {
  */
 export function urlSampleHint(raw) {
   const text = String(raw || '').trim()
+  /** @type {number | null} */
   let startSec = null
   let name = ''
   if (/^lbry:\/\//i.test(text)) {
@@ -83,6 +84,9 @@ export function downsample(pcm, from, to) {
 /**
  * Crop to seconds, then downsample. Longer than `cap` seconds is cut and `clipped` is set.
  * The source buffer is left alone.
+ * @param {Float32Array} pcm
+ * @param {number} sr
+ * @param {{ inSec?: number, outSec?: number | null, rate?: number, cap?: number }} [opts]
  */
 export function shapeSample(pcm, sr, { inSec = 0, outSec = null, rate = 0, cap = SAMPLE_SECONDS } = {}) {
   const inputRate = sr || 44100

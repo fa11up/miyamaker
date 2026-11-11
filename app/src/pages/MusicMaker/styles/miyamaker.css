@@ -717,7 +717,7 @@ h1, h2, h3, h4, p { margin: 0; }
   .mmm-body { flex-direction: column; }
   .mmm-main { min-height: 200px; }
   .dock-pane { width: auto; flex-basis: var(--dock-size, 220px); max-height: calc(100% - 200px); }
-  .dock-splitter { width: auto; height: 8px; flex-basis: 8px; cursor: row-resize; }
+  .dock-splitter { width: auto; height: 8px; flex-basis: 8px; }
 }
 
 .transport {
@@ -2767,8 +2767,6 @@ input[type='range']::-webkit-slider-thumb {
 .dock-splitter {
   flex: 0 0 6px;
   width: 6px;
-  cursor: col-resize;
-  touch-action: none;
   background: transparent;
 }
 

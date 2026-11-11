@@ -63,7 +63,6 @@ export const model = {
   browser: false,
   dockOpen: true,
   arrangeOpen: false,
-  dockWidth: 232,
   /** Share of the dock column given to the browser when the arranger is open too. */
   dockSplit: 0.5,
   help: false,
@@ -1301,7 +1300,6 @@ export function save() {
     grainCols: !!model.tracker.grains,
     dockOpen: model.dockOpen !== false,
     arrangeOpen: !!model.arrangeOpen,
-    dockWidth: Math.max(120, Math.min(640, model.dockWidth | 0 || 232)),
     dockSplit: clampDockSplit(model.dockSplit),
     playSurface: ['off', 'pads', 'keys', 'fx'].includes(model.playSurface) ? model.playSurface : 'pads',
     settings: model.settings,
@@ -1613,7 +1611,6 @@ export function boot() {
         ? data.playSurface
         : (data.keyMap === 'renoise' ? 'keys' : 'pads'),
       arrangeOpen: !!data.arrangeOpen,
-      dockWidth: Math.max(120, Math.min(640, Number(data.dockWidth) || 232)),
       dockSplit: clampDockSplit(data.dockSplit),
     })
     model.keyboard = model.playSurface === 'keys' || (model.playSurface === 'off' && model.keyMap === 'renoise')

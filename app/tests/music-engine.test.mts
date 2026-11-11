@@ -427,17 +427,20 @@ test('numpad FX chain follows press order, and move, stretch, and wander change 
   const forward = chain(low, chorus)
   const reverse = chain(chorus, low)
   assert.ok(forward.every(Number.isFinite))
-  assert.ok(forward.some((v, i) => Math.abs(v - reverse[i]) > 0.0001), 'chorus into a filter is not the same chain as a filter into chorus')
+  assert.ok(forward.some((v, i) => Math.abs(v - reverse[i]!) > 0.0001), 'chorus into a filter is not the same chain as a filter into chorus')
 
   const still = renderFx(createFx(sr), { type: 'grain', div: 0, a: 90, b: 40, c: 0, mix: 255 }, 120, n, (t) => Math.sin(t / 9) * 0.5)
   const stretched = renderFx(createFx(sr), { type: 'grain', div: 0, a: 90, b: 40, c: 255, mix: 255 }, 120, n, (t) => Math.sin(t / 9) * 0.5)
   assert.ok(stretched.every(Number.isFinite))
   assert.ok(still.some((v, i) => v !== stretched[i]), 'stretch moves a grain')
+  const dry = (t: number) => Math.sin(t / 9) * 0.5
+  const wet = stretched.filter((v, i) => Math.abs(v - dry(i)) > 1e-4).length
+  assert.ok(wet > n / 2, `stretched grain is heard, not dropped to dry (${wet} of ${n} wet)`)
 
   const fixed = renderFx(createFx(sr), { type: 'filter', a: 80, b: 40, c: 0, div: 2, mix: 255 }, 120, n, (t) => Math.sin(t / 7) * 0.5)
   const wander = renderFx(createFx(sr), { type: 'filter', a: 80, b: 40, c: 255, div: 2, mix: 255 }, 120, n, (t) => Math.sin(t / 7) * 0.5)
   assert.ok(wander.every(Number.isFinite))
-  assert.ok(fixed.some((v, i) => Math.abs(v - wander[i]) > 1e-5), 'wander steps the resonance')
+  assert.ok(fixed.some((v, i) => Math.abs(v - wander[i]!) > 1e-5), 'wander steps the resonance')
 
   const slice = Math.round((sr * 60 / 120) * 2 / 8)
   const window = slice * 8
@@ -450,10 +453,10 @@ test('numpad FX chain follows press order, and move, stretch, and wander change 
   assert.equal(normalizeSlot({ type: 'repeat', a: 10, b: 20 }, 0).c, 0)
   const saved = normalizeFxPresets([{ name: ' Night ', slots: [{ type: 'grain', c: 12 }] }, { name: 'Night', slots: [] }, { name: '', slots: [] }])
   assert.equal(saved.length, 1)
-  assert.equal(saved[0].name, 'Night')
-  assert.equal(saved[0].slots[0].type, 'grain')
-  assert.equal(factoryFxSlots('Slices')[0].type, 'slice')
-  assert.equal(factoryFxSlots('Retrig')[0].type, 'repeat')
+  assert.equal(saved[0]!.name, 'Night')
+  assert.equal(saved[0]!.slots[0]!.type, 'grain')
+  assert.equal(factoryFxSlots('Slices')[0]!.type, 'slice')
+  assert.equal(factoryFxSlots('Retrig')[0]!.type, 'repeat')
 })
 
 test('undo re-renders only synth pads whose patch changed', async () => {
@@ -645,9 +648,9 @@ test('a duplicated section copies into a free slot and keeps tempo and automatio
   assert.notEqual(model.patterns[1].steps, model.patterns[0].steps)
   clearAutoLane(1, 'master')
   assert.equal(model.patterns[1].auto, undefined)
-  const packed = compactPatterns().find((row) => row.i === 0)
+  const packed = compactPatterns().find((row) => row.i === 0) as { bpm?: number; auto: { id: string }[] } | undefined
   assert.equal(packed?.bpm, 140)
-  assert.equal(packed?.auto[0].id, 'master')
+  assert.equal(packed?.auto[0]?.id, 'master')
   for (let i = 1; i < 256; i++) model.patterns[i] = { name: 'x', bars: 1, len: 16, steps: [] }
   model.songOrder = [0]
   duplicateSongCell(0)

@@ -222,7 +222,7 @@ export function Sequencer() {
       try { grid.setPointerCapture(e.pointerId) } catch { /* already gone */ }
       return
     }
-    gesture.current = { kind: 'paint', pointer: e.pointerId, last: at, dirty: false, fx: false, frame: 0 }
+    gesture.current = { kind: 'paint', pointer: e.pointerId, seq: currentPattern(), last: at, dirty: false, fx: false, frame: 0 }
     try { grid.setPointerCapture(e.pointerId) } catch { /* already gone */ }
     paintAt(at, e.clientY)
   }
@@ -244,6 +244,8 @@ export function Sequencer() {
       end: noteEnd,
       cellW: cell?.width || 48,
       cellH: cell?.height || 36,
+      // Song playback can move on to another pattern mid-drag. The drag stays on the one it started in.
+      seq: currentPattern(),
       snap: clonePattern(currentPattern()),
       dirty: false,
       frame: 0,
@@ -273,7 +275,7 @@ export function Sequencer() {
     if (g.frame) return
     g.frame = requestAnimationFrame(() => {
       g.frame = 0
-      const next = applyGesture(currentPattern(), g, g.dx, g.dy)
+      const next = applyGesture(g.seq, g, g.dx, g.dy)
       model.seqHit = { step: next.start, pad: next.pad, end: next.end }
       if (next.start !== g.start || next.end !== g.end || next.pad !== g.pad) g.dirty = true
       touch(false)
@@ -288,7 +290,7 @@ export function Sequencer() {
       cancelAnimationFrame(g.frame)
       g.frame = 0
       if (g.kind !== 'paint' && g.kind !== 'scroll' && (g.dx || g.dy)) {
-        const next = applyGesture(currentPattern(), g, g.dx, g.dy)
+        const next = applyGesture(g.seq, g, g.dx, g.dy)
         model.seqHit = { step: next.start, pad: next.pad, end: next.end }
         if (next.start !== g.start || next.end !== g.end || next.pad !== g.pad) g.dirty = true
       }
@@ -305,7 +307,7 @@ export function Sequencer() {
     const g = gesture.current
     const rect = at.el?.getBoundingClientRect()
     const up = rect ? 1 - Math.max(0, Math.min(1, (clientY - rect.top) / Math.max(1, rect.height))) : 0.75
-    const column = currentPattern().steps[at.step]
+    const column = (g?.seq || currentPattern()).steps[at.step]
     if (!column) return
     if (seqUi.tool === 'erase') {
       const lane = column.findIndex((ev) => ev && ev.pad === at.pad)
