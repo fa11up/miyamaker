@@ -1,4 +1,3 @@
-import type { RefObject } from 'react'
 import { useEffect, useRef } from 'react'
 import styled from 'styled-components/macro'
 
@@ -48,14 +47,13 @@ function band(data: Uint8Array, i: number, n: number) {
  * miya radio's visualizer, drawn from the radio's AnalyserNode: LED-segment spectrum, mirrored "angel wings"
  * spectrum, or a phosphor oscilloscope. Click (or Enter) cycles the mode. The loop only runs while audio is
  * playing, the tab is visible and motion is allowed; otherwise a still frame is drawn. Colours come from the
- * skin's CSS variables. Optionally writes the bass level (0…1) to `--lvl` on `levelTarget` for the mascot.
+ * skin's CSS variables.
  */
 export default function Visualizer({
   mode,
   playing,
   getAnalyser,
   skin,
-  levelTarget,
   compact,
   kind,
   onCycle,
@@ -64,7 +62,6 @@ export default function Visualizer({
   playing: boolean
   getAnalyser: () => AnalyserNode | null
   skin: string
-  levelTarget?: RefObject<HTMLElement>
   compact?: boolean
   kind: VizKind
   onCycle: () => void
@@ -225,23 +222,16 @@ export default function Visualizer({
       return [Math.min(1, (e / (wave.length / 16) / 128) * 3)]
     }
 
-    const target = levelTarget?.current
     let raf = 0
     const frame = () => {
       const { w, h } = fit()
       const analyser = getAnalyser()
-      let vals: number[] | null
       if (kind === 'scope') {
         if (analyser) analyser.getByteTimeDomainData(wave)
-        vals = drawScope(w, h, analyser ? wave : null)
+        drawScope(w, h, analyser ? wave : null)
       } else {
         if (analyser) analyser.getByteFrequencyData(freq)
-        vals = (kind === 'bars' ? drawBars : drawWings)(w, h, analyser ? freq : null)
-      }
-
-      if (target) {
-        const lvl = analyser && vals ? vals.slice(0, 3).reduce((a, b) => a + b, 0) / Math.min(3, vals.length) : 0
-        target.style.setProperty('--lvl', lvl.toFixed(3))
+        ;(kind === 'bars' ? drawBars : drawWings)(w, h, analyser ? freq : null)
       }
     }
 
@@ -264,9 +254,8 @@ export default function Visualizer({
     return () => {
       cancelAnimationFrame(raf)
       ro?.disconnect()
-      target?.style.setProperty('--lvl', '0')
     }
-  }, [mode, playing, kind, getAnalyser, skin, compact, levelTarget])
+  }, [mode, playing, kind, getAnalyser, skin, compact])
 
   const label =
     mode === 'reduced'

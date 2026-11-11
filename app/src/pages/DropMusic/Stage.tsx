@@ -21,7 +21,6 @@ const SIGN: Record<StageStatus, string> = {
 
 /* ── keyframes ─────────────────────────────────────────────────────────── */
 
-const spin = keyframes`to { transform: rotate(360deg); }`
 const sway = keyframes`
   0%, 100% { transform: rotate(var(--from)); }
   50% { transform: rotate(var(--to)); }
@@ -266,24 +265,20 @@ const Speaker = styled.div<{ $side: 'left' | 'right' }>`
   }
 `
 
-/* ── jewel case + disc ─────────────────────────────────────────────────── */
+/* ── jewel case ─────────────────────────────────────────────────── */
 
-const Rig = styled.div<{ $out: boolean }>`
+const Rig = styled.div`
   position: absolute;
   left: 50%;
   bottom: 30px;
   z-index: 8;
   width: 172px;
   height: 172px;
-  transform: translateX(${({ $out }) => ($out ? '-78%' : '-50%')});
-  transition: transform 600ms cubic-bezier(0.34, 1.56, 0.64, 1);
+  transform: translateX(-50%);
   .bob {
     position: absolute;
     inset: 0;
     animation: ${bob} 3.2s ease-in-out infinite;
-  }
-  .still & {
-    transition: none;
   }
   .still & .bob {
     animation: none;
@@ -297,58 +292,6 @@ const Rig = styled.div<{ $out: boolean }>`
     width: 236px;
     height: 236px;
     bottom: 44px;
-  }
-`
-
-const Disc = styled.div<{ $out: boolean; $spin: boolean; $fast: boolean }>`
-  position: absolute;
-  top: 6px;
-  left: 6px;
-  width: calc(100% - 12px);
-  height: calc(100% - 12px);
-  transform: translateX(${({ $out }) => ($out ? '58%' : '8%')});
-  transition: transform 700ms cubic-bezier(0.34, 1.56, 0.64, 1) 120ms;
-  z-index: 0;
-  .still & {
-    transition: none;
-  }
-  .face {
-    width: 100%;
-    height: 100%;
-    border-radius: 50%;
-    position: relative;
-    background: repeating-radial-gradient(circle, rgba(255, 255, 255, 0.08) 0 1px, transparent 1px 3px),
-      conic-gradient(from 20deg, #e9e6f7, #f5c6f6, #9fe3ff, #e9e6f7, #ffe27a, #d97ada, #c4bfe0, #9fe3ff, #e9e6f7);
-    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5), 0 0 calc(8px + var(--lvl) * 22px) rgba(217, 122, 218, 0.55);
-    animation: ${spin} ${({ $fast }) => ($fast ? 0.8 : 1.9)}s linear infinite;
-    animation-play-state: ${({ $spin }) => ($spin ? 'running' : 'paused')};
-  }
-  .label {
-    position: absolute;
-    inset: 24%;
-    border-radius: 50%;
-    overflow: hidden;
-    background: ${color.accent};
-    box-shadow: 0 0 0 2px rgba(20, 16, 31, 0.5);
-    img {
-      width: 100%;
-      height: 100%;
-      object-fit: cover;
-      display: block;
-      border: none;
-      margin: 0;
-      max-width: none;
-    }
-  }
-  .hole {
-    position: absolute;
-    inset: 45%;
-    border-radius: 50%;
-    background: #21153d;
-    box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.55);
-  }
-  .still & .face {
-    animation: none;
   }
 `
 
@@ -702,8 +645,7 @@ export type StageProps = {
 
 /**
  * The Drop Music stage: a little night-club scene where the release takes shape. The cover sits in a jewel case
- * that prints the title and artist as they are typed, the disc slides out once a track is loaded and spins while
- * it plays, and the floor, lights and speakers move to the music. Drop files anywhere on it.
+ * that prints the title and artist as they are typed, and the floor, lights and speakers move to the music. Drop files anywhere on it.
  */
 export default function Stage(p: StageProps) {
   const root = useRef<HTMLDivElement>(null)
@@ -761,14 +703,8 @@ export default function Stage(p: StageProps) {
           </span>
         </Marquee>
 
-        <Rig $out={p.hasTrack}>
+        <Rig>
           <div className="bob">
-            <Disc $out={p.hasTrack} $spin={!p.reduced && (player.playing || p.busy)} $fast={p.busy} aria-hidden>
-              <div className="face">
-                <div className="label">{p.coverUrl && <img src={p.coverUrl} alt="" />}</div>
-                <div className="hole" />
-              </div>
-            </Disc>
             <Case
               type="button"
               onClick={p.onChooseCover}

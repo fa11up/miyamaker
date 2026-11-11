@@ -350,6 +350,11 @@ const Controls = styled.div`
     accent-color: #8a3d0c;
     cursor: pointer;
   }
+  .sound input:disabled,
+  .sound .toggle:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
   .toggle:active {
     transform: translateY(1px);
   }
@@ -688,6 +693,14 @@ export default function TV() {
   const isPublic = channel.kind === 'show' && channel.show === 'public'
   // The radio's sound control comes with something to hear.
   const hasSound = (isRadio && !!radio.current) || isPublic || source?.provider === 'youtube'
+  // The bar is on every channel. Where we cannot turn the sound, it says why instead of pretending to.
+  const soundNote = hasSound
+    ? ''
+    : source?.provider === 'kick'
+      ? "Kick's player sets its own volume: use the controls in the picture."
+      : isRadio
+        ? 'Pick a station to turn it up or down.'
+        : 'This channel has no sound.'
   const tapes = airList(
     useQuery({
       queryKey: ['public-access'],
@@ -973,28 +986,28 @@ export default function TV() {
                   </button>
                 </>
               )}
-              {hasSound && (
-                <span className="sound">
-                  <button
-                    type="button"
-                    className="toggle"
-                    aria-pressed={shownVolume > 0}
-                    title="Sound on or off (M)"
-                    onClick={toggleMute}
-                  >
-                    {shownVolume > 0 ? '♪ On' : '♪ Off'}
-                  </button>
-                  <input
-                    type="range"
-                    min={0}
-                    max={100}
-                    aria-label="Volume"
-                    value={Math.round(shownVolume * 100)}
-                    onChange={(e) => setVolume(Number(e.target.value) / 100)}
-                    onKeyDown={(e) => e.stopPropagation()}
-                  />
-                </span>
-              )}
+              <span className="sound" title={soundNote || undefined}>
+                <button
+                  type="button"
+                  className="toggle"
+                  aria-pressed={hasSound && shownVolume > 0}
+                  title={soundNote || 'Sound on or off (M)'}
+                  disabled={!hasSound}
+                  onClick={toggleMute}
+                >
+                  {hasSound && shownVolume > 0 ? '♪ On' : '♪ Off'}
+                </button>
+                <input
+                  type="range"
+                  min={0}
+                  max={100}
+                  aria-label={soundNote ? `Volume. ${soundNote}` : 'Volume'}
+                  disabled={!hasSound}
+                  value={hasSound ? Math.round(shownVolume * 100) : 0}
+                  onChange={(e) => setVolume(Number(e.target.value) / 100)}
+                  onKeyDown={(e) => e.stopPropagation()}
+                />
+              </span>
               {link && (
                 <a className="open" href={link.href} target="_blank" rel="noopener noreferrer">
                   {link.label}

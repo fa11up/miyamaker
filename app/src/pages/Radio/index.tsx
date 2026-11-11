@@ -53,7 +53,6 @@ const Root = styled.div`
   position: relative;
   height: 100%;
   font-family: ${font.ui};
-  --lvl: 0;
   &:focus {
     outline: none;
   }
@@ -62,12 +61,11 @@ const Root = styled.div`
     color: var(--rk-strip-ink);
   }
 
-  /* No window behind it: only what it paints takes clicks, so the desktop works in the gaps between the feathers. */
+  /* No window behind it: only the heart and its controls take clicks. The wings are scenery: the desktop works through them. */
   &&,
   && * {
     pointer-events: none;
   }
-  && .plume,
   && .heart-body,
   && .console,
   && .console * {
@@ -255,20 +253,7 @@ const Layer = styled.svg`
   height: ${PLAYER.height}px;
   overflow: visible;
 
-  .wing-left,
-  .wing-right {
-    transition: transform 70ms linear;
-  }
-  .wing-left {
-    transform-origin: ${pivot('left').x}px ${pivot('left').y}px;
-    transform: rotate(calc(var(--lvl) * 5deg));
-  }
-  .wing-right {
-    transform-origin: ${pivot('right').x}px ${pivot('right').y}px;
-    transform: rotate(calc(var(--lvl) * -5deg));
-  }
   .plume {
-    cursor: grab;
     stroke: #05060e;
     stroke-width: 1.5;
   }
@@ -434,7 +419,7 @@ function Wing({ side }: { side: 'left' | 'right' }) {
           across={40}
           transform={`translate(${x} ${y}) scale(${side === 'left' ? -1 : 1} 1) rotate(${-f.angle})`}
         />
-        <path className="plume title-bar" fill={`url(#${id})`} d={feather(side, f.angle, f.length, 30).d} />
+        <path className="plume" fill={`url(#${id})`} d={feather(side, f.angle, f.length, 30).d} />
       </g>
     )
   }
@@ -459,7 +444,7 @@ function TailPlume({ angle, length }: { angle: number; length: number }) {
         across={32}
         transform={`matrix(${sin} ${cos} ${cos} ${-Number(sin)} 500 600)`}
       />
-      <path className="plume title-bar" fill={`url(#${id})`} d={tailFeather(angle, length, 28)} />
+      <path className="plume" fill={`url(#${id})`} d={tailFeather(angle, length, 28)} />
     </g>
   )
 }
@@ -900,7 +885,6 @@ export default function RadioWindow() {
                 playing={radio.playing}
                 getAnalyser={radio.getAnalyser}
                 skin={skin.id}
-                levelTarget={rootRef}
               />
             )}
           </Panel>
@@ -1223,7 +1207,6 @@ export default function RadioWindow() {
                   playing={radio.playing}
                   getAnalyser={radio.getAnalyser}
                   skin={skin.id}
-                  levelTarget={rootRef}
                 />
               </span>
 
