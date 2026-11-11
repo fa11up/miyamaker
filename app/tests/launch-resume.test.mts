@@ -202,6 +202,10 @@ test('the banner never offers to pay while something is out', () => {
   assert.match(resumeWords({ batchId: 'b' }, true), /sends nothing new/)
   assert.match(resumeWords({ deployHash: '0x1' }, true), /sends nothing new/)
   assert.match(resumeWords({ asking: 'first', instance: PREDICTED }, true), /checks the chain before sending/)
+  // The create's hash is kept after it lands: a prompt for the first piece (which pays the deposit) is still open.
+  const firstOpen = resumeWords({ asking: 'first', instance: PREDICTED, deployHash: '0x1' }, true, 'your piece')
+  assert.match(firstOpen, /request for your piece was open.*checks the chain before sending/)
+  assert.doesNotMatch(firstOpen, /without your piece yet/)
   assert.match(resumeWords({ instance: PREDICTED, firstHash: '0x2' }, true, 'your piece'), /your piece was sent.*sends nothing new/)
   assert.match(resumeWords({ instance: PREDICTED }, true, 'your piece'), /without your piece yet/)
   assert.doesNotMatch(resumeWords({ batchId: 'b' }, true), /pay/i)
