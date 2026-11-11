@@ -3,7 +3,7 @@
 // ONLY and SENDS NOTHING: it prints a setPhases call for the owner to check and send themselves.
 //
 //   node scripts/refresh-phases.mts --drop 0x… [--block finalized|latest|<n>] [--previous <claimers.json>]
-//        [--keep-passed-on] [--publish]
+//        [--keep-passed-on] [--check-contracts] [--publish]
 //
 // WHO CLAIMED is read from the drop itself, not from event logs (the keyed RPC's plan allows eth_getLogs over 10
 // blocks only): mintedInPhase(phase, wallet) for every wallet on each list phase's list, at the pinned block. The drop
@@ -192,14 +192,15 @@ async function main() {
       say(`    nobody left on the list: phase ${i} is dropped from the plan`)
       continue
     }
-    const contracts = await contractHolders(c, addresses, block.number)
+    // One eth_getCode per wallet is slow for thousands of holders, so it is opt-in: the count is only for the report.
+    const contracts = o['check-contracts'] ? await contractHolders(c, addresses, block.number) : []
     const tree = buildTree(addresses)
     const newSource: AllowlistSource = {
       ...source,
       block: Number(block.number),
       blockTime: Number(block.timestamp),
       tokens: now.owners.size,
-      contracts: contracts.length,
+      contracts: o['check-contracts'] ? contracts.length : source.contracts,
     }
     writeFileSync(`${outDir}/refresh-${drop.slice(0, 8)}-${i}-${block.number}.txt`, `${addresses.map((a) => getAddress(a)).join('\n')}\n`)
     if (o.publish) publishList(tree, newSource)
