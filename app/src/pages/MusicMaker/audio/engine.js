@@ -11,7 +11,7 @@ import { allowedMediaUrl, SAMPLE_MEDIA_LIMIT, SAMPLE_MEDIA_PATH } from '../media
 import { fetchCapped } from '../media/capped.js'
 import { VIDEO_AUDIO_PATH, videoPage } from '../media/videoaudio.js'
 import { nextSongCursor, samplePlayKind } from './playKind.js'
-import { applyAutoStep, clockBpm, launchStep } from './arrange.js'
+import { applyAutoStep, clockBpm, launchStep, playWrite, restorePlayValues, songValue, withSongValues } from './arrange.js'
 import { shapeSample, sliceSpan, urlSampleHint, VIDEO_FETCH_CAP } from './sampleShape.js'
 import { beginUndo, endUndo, stashUndo } from '../history.js'
 import { createBufferCache, finiteOr, heldForPort, liveVoices, locateStep, playFraction, scrubPcm, stepSeconds, stepsBehind, voicesToFade } from './voices.js'
@@ -1621,6 +1621,7 @@ function showPlayhead(step, time) {
 
 function haltClock() {
   model.playing = false
+  restoreSongValues()
   started = false
   window.clearInterval(timer)
   clearPlayheadTimers()
@@ -1628,11 +1629,18 @@ function haltClock() {
 }
 
 function adoptPatternTempo(seq) {
-  if (!seq || !Number.isFinite(seq.bpm)) return
-  const next = Math.round(Math.max(40, Math.min(240, seq.bpm)))
-  if (model.bpm === next) return
-  model.bpm = next
+  // A pattern without its own tempo plays at the song's, not at the last pattern's.
+  const next = seq && Number.isFinite(seq.bpm)
+    ? Math.round(Math.max(40, Math.min(240, seq.bpm)))
+    : songValue(model, 'bpm')
+  if (!Number.isFinite(next) || model.bpm === next) return
+  playWrite(model, 'bpm', next)
   touch(false)
+}
+
+/** Stopped: the song gets back the tempo and levels playback moved. */
+function restoreSongValues() {
+  if (restorePlayValues(model) && ctx) syncMixer()
 }
 
 /** True when play-once has finished and the clock should stop without cutting the last notes. */
@@ -1835,6 +1843,7 @@ export function startTransport(opts = {}) {
 
 export function stopTransport() {
   model.playing = false
+  restoreSongValues()
   window.clearInterval(timer)
   clearPlayheadTimers()
   if (ctx) patternVoices.forEach((v) => silence(v, ctx.currentTime, 0.03))
@@ -1950,7 +1959,7 @@ export const BOUNCE_NOTE = 'WAV has the song order, tempo changes, swing, volume
 export const BOUNCE_MAX_SECONDS = 600
 
 /** How long the bounce of `order` runs, in seconds: every pattern's steps at its tempo, plus the tail. */
-export function bounceSeconds(order = bounceOrder(), bpm = model.bpm) {
+export function bounceSeconds(order = bounceOrder(), bpm = songValue(model, 'bpm')) {
   const song = Number.isFinite(Number(bpm)) ? Number(bpm) : 96
   let seconds = 0
   let steps = 0
@@ -1980,49 +1989,53 @@ export function bounceOrder() {
 
 export async function renderBounce() {
   await resume()
-  const order = bounceOrder()
-  const swing = clamp(finiteOr(model.swing, 0), 0, 0.75)
-  const seconds = bounceSeconds(order, model.bpm)
-  // A bounce cut short would be published or downloaded as if it were the song. Refuse it instead.
-  if (seconds > BOUNCE_MAX_SECONDS) {
-    throw new Error(`The song order runs ${clock(seconds)}; a WAV bounce holds ${clock(BOUNCE_MAX_SECONDS)}. Shorten the order (or play one pattern) and bounce again.`)
-  }
-  const sr = 44100
-  const off = new OfflineAudioContext(2, Math.ceil(seconds * sr), sr)
-  const local = createBufferCache()
-  const dest = off.createGain()
-  dest.gain.value = clamp(finiteOr(model.master, 0.9), 0, 1)
-  const anySolo = model.buses.some((x) => x.solo)
-  const buses = model.buses.map((b) => {
-    const g = off.createGain()
-    const audible = !b.mute && (!anySolo || b.solo)
-    g.gain.value = audible ? clamp(finiteOr(b.volume, 0), 0, 1) : 0
-    const pan = off.createStereoPanner()
-    pan.pan.value = clamp(finiteOr(b.pan, 0), -1, 1)
-    g.connect(pan)
-    pan.connect(dest)
-    return g
-  })
-  dest.connect(off.destination)
-  let time = 0.05
-  for (const id of order) {
-    const seq = ensurePattern(id)
-    const count = stepCount(seq)
-    for (let step = 0; step < count; step++) {
-      if (time > seconds) break
-      const base = stepSeconds(clockBpm(model, seq, step))
-      const when = time + (step % 2 === 1 ? base * swing : 0)
-      ;(seq.steps[step] || []).forEach((ev, lane) => {
-        if (!ev || ev.off) return
-        try {
-          bounceHit(off, local, buses, dest, seq, step, lane, ev, when, base)
-        } catch (err) {
-          console.warn('bounce skipped an event', err)
-        }
-      })
-      time += base
+  // Bounce the song's own tempo and levels, not the ones playback may be holding right now.
+  const off = withSongValues(model, () => {
+    const order = bounceOrder()
+    const swing = clamp(finiteOr(model.swing, 0), 0, 0.75)
+    const seconds = bounceSeconds(order, model.bpm)
+    // A bounce cut short would be published or downloaded as if it were the song. Refuse it instead.
+    if (seconds > BOUNCE_MAX_SECONDS) {
+      throw new Error(`The song order runs ${clock(seconds)}; a WAV bounce holds ${clock(BOUNCE_MAX_SECONDS)}. Shorten the order (or play one pattern) and bounce again.`)
     }
-  }
+    const sr = 44100
+    const off = new OfflineAudioContext(2, Math.ceil(seconds * sr), sr)
+    const local = createBufferCache()
+    const dest = off.createGain()
+    dest.gain.value = clamp(finiteOr(model.master, 0.9), 0, 1)
+    const anySolo = model.buses.some((x) => x.solo)
+    const buses = model.buses.map((b) => {
+      const g = off.createGain()
+      const audible = !b.mute && (!anySolo || b.solo)
+      g.gain.value = audible ? clamp(finiteOr(b.volume, 0), 0, 1) : 0
+      const pan = off.createStereoPanner()
+      pan.pan.value = clamp(finiteOr(b.pan, 0), -1, 1)
+      g.connect(pan)
+      pan.connect(dest)
+      return g
+    })
+    dest.connect(off.destination)
+    let time = 0.05
+    for (const id of order) {
+      const seq = ensurePattern(id)
+      const count = stepCount(seq)
+      for (let step = 0; step < count; step++) {
+        if (time > seconds) break
+        const base = stepSeconds(clockBpm(model, seq, step))
+        const when = time + (step % 2 === 1 ? base * swing : 0)
+        ;(seq.steps[step] || []).forEach((ev, lane) => {
+          if (!ev || ev.off) return
+          try {
+            bounceHit(off, local, buses, dest, seq, step, lane, ev, when, base)
+          } catch (err) {
+            console.warn('bounce skipped an event', err)
+          }
+        })
+        time += base
+      }
+    }
+    return off
+  })
   const rendered = await off.startRendering()
   const left = rendered.getChannelData(0).slice()
   const right = rendered.getChannelData(1).slice()

@@ -11,6 +11,7 @@ import {
   idbSet,
 } from './model.js'
 import { bumpSong, exclusive } from './jobs.js'
+import { withSongValues } from './audio/arrange.js'
 
 const stack = []
 const CAP = 30
@@ -34,7 +35,8 @@ let settleTimer = 0
 const SETTLE_MS = 180
 
 function takeSnapshot() {
-  return JSON.parse(JSON.stringify({
+  // Undo returns to the song's own tempo and levels, not the ones playback is holding.
+  return withSongValues(model, () => JSON.parse(JSON.stringify({
     bpm: model.bpm,
     swing: model.swing,
     pattern: model.pattern,
@@ -59,7 +61,7 @@ function takeSnapshot() {
     songName: model.songName || '',
     songFile: model.songFile || '',
     songPlay: !!model.songPlay,
-  }))
+  })))
 }
 
 function applySnapshot(data) {

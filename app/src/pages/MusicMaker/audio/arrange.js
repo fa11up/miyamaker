@@ -135,38 +135,113 @@ function put(obj, key, value) {
   return true
 }
 
-/** Write one automated value onto the live song. True when the mixer faders must follow. */
-export function writeAuto(model, id, value) {
-  const spec = autoTarget(id)
-  if (!spec || !model) return false
-  const v = clamp(value, spec.min, spec.max)
-  if (id === 'bpm') {
-    model.bpm = Math.round(v)
-    return false
-  }
-  if (id === 'swing') {
-    model.swing = v
-    return false
-  }
-  if (id === 'master') return put(model, 'master', v)
+/** Where an automation target lives on the song: the object and the key, or null. */
+function slotOf(model, id) {
+  if (!model) return null
+  if (id === 'bpm' || id === 'swing' || id === 'master') return { obj: model, key: id }
   const bus = /^bus:(\d+):(volume|pan|fx[0-4])$/.exec(id)
   if (bus) {
     const row = model.buses?.[Number(bus[1])]
-    if (!row) return false
-    if (bus[2] === 'volume' || bus[2] === 'pan') return put(row, bus[2], v)
+    if (!row) return null
+    if (bus[2] === 'volume' || bus[2] === 'pan') return { obj: row, key: bus[2] }
     const slot = row.fx?.[Number(bus[2].slice(2))]
-    return put(slot, 'amount', v)
+    return slot ? { obj: slot, key: 'amount' } : null
   }
   const pad = /^pad:(\d+):([a-z]+)$/.exec(id)
-  if (!pad) return false
+  if (!pad) return null
   const row = model.pads?.[Number(pad[1])]
-  if (!row) return false
+  if (!row) return null
   const key = pad[2]
-  if (key === 'cutoff') put(row.filter, 'cutoff', v)
-  else if (key === 'q') put(row.filter, 'q', v)
-  else if (key === 'drive' || key === 'crush' || key === 'amp' || key === 'tone' || key === 'reverb' || key === 'width' || key === 'chorus') put(row.fx, key, v)
-  else if (key === 'volume' || key === 'pan' || key === 'pitch' || key === 'fine') put(row, key, key === 'pitch' || key === 'fine' ? Math.round(v) : v)
-  return false
+  if (key === 'cutoff' || key === 'q') return row.filter ? { obj: row.filter, key } : null
+  if (key === 'drive' || key === 'crush' || key === 'amp' || key === 'tone' || key === 'reverb' || key === 'width' || key === 'chorus') return row.fx ? { obj: row.fx, key } : null
+  if (key === 'volume' || key === 'pan' || key === 'pitch' || key === 'fine') return { obj: row, key }
+  return null
+}
+
+/** Mixer targets need the faders resynced after a write. */
+function mixTarget(id) {
+  return id === 'master' || id.startsWith('bus:')
+}
+
+/** Write one automated value onto the live song. True when the mixer faders must follow. */
+export function writeAuto(model, id, value) {
+  const spec = autoTarget(id)
+  if (!spec) return false
+  const at = slotOf(model, id)
+  if (!at) return false
+  let v = clamp(value, spec.min, spec.max)
+  if (id === 'bpm' || /^pad:\d+:(pitch|fine)$/.test(id)) v = Math.round(v)
+  const moved = put(at.obj, at.key, v)
+  return moved && mixTarget(id)
+}
+
+/*
+ * Playback writes automation and pattern tempos onto the song itself, so the mixer and pads hear them.
+ * The song's own values are kept here the first time playback moves them, and put back on stop and
+ * while the song is captured (save, undo, session). A value the user moves by hand while playing is theirs.
+ */
+const playBase = new Map()
+const playLast = new Map()
+
+/** Like writeAuto, but the first move keeps the song's own value to put back later. */
+export function playWrite(model, id, value) {
+  const at = slotOf(model, id)
+  if (!at) return false
+  if (!playBase.has(id)) playBase.set(id, at.obj[at.key])
+  const mix = writeAuto(model, id, value)
+  playLast.set(id, at.obj[at.key])
+  return mix
+}
+
+/** Forget targets the user has changed since playback last wrote them: their value is now the song's. */
+function forgetEdited(model) {
+  for (const [id, last] of playLast) {
+    const at = slotOf(model, id)
+    if (!at || changed(at.obj[at.key], last)) {
+      playBase.delete(id)
+      playLast.delete(id)
+    }
+  }
+}
+
+/** The song's own value for a target while playback may have moved it. */
+export function songValue(model, id) {
+  forgetEdited(model)
+  if (playBase.has(id)) return playBase.get(id)
+  const at = slotOf(model, id)
+  return at ? at.obj[at.key] : undefined
+}
+
+/** Put the song's own values back. True when the mixer faders must follow. */
+export function restorePlayValues(model) {
+  forgetEdited(model)
+  let mix = false
+  for (const [id, value] of playBase) {
+    const at = slotOf(model, id)
+    if (at) at.obj[at.key] = value
+    if (mixTarget(id)) mix = true
+  }
+  playBase.clear()
+  playLast.clear()
+  return mix
+}
+
+/** Run a synchronous capture of the song with its own values in place, then put playback's back. */
+export function withSongValues(model, fn) {
+  forgetEdited(model)
+  if (!playBase.size) return fn()
+  const live = []
+  for (const [id, value] of playBase) {
+    const at = slotOf(model, id)
+    if (!at) continue
+    live.push([at, at.obj[at.key]])
+    at.obj[at.key] = value
+  }
+  try {
+    return fn()
+  } finally {
+    for (const [at, value] of live) at.obj[at.key] = value
+  }
 }
 
 /** Tempo for this step: a BPM lane, then the pattern tempo, then the song tempo. */
@@ -186,7 +261,7 @@ export function applyAutoStep(model, seq, step) {
   for (const lane of lanes) {
     const value = valueAt(lane.points, step)
     if (value == null) continue
-    if (writeAuto(model, lane.id, value)) mix = true
+    if (playWrite(model, lane.id, value)) mix = true
   }
   return mix
 }
