@@ -2,7 +2,7 @@ import { formatLp, formatSl } from './audio/grain.js'
 import { PAD_KEYS } from './keys.js'
 import { FACTORY, KIT_LAYOUT } from './audio/presets.js'
 import { defaultNumpadFx, normalizeFxPresets, normalizeNumpadFx } from './audio/numpadFx.js'
-import { autoTarget, normalizeAuto, normalizeLaunch } from './audio/arrange.js'
+import { autoTarget, normalizeAuto, normalizeLaunch, withSongValues } from './audio/arrange.js'
 import { snapOctave } from './audio/knee.js'
 import { defaultEq, normalizeEq } from './audio/eq.js'
 import { defaultPatch, MAX_PARTIALS, MAX_UNISON, renderSynth, safeEntries, SYNTH_SR } from './audio/synth.js'
@@ -1285,7 +1285,8 @@ export function save() {
     setSaveError('Not saved: an older save could not be read or backed up')
     return
   }
-  const data = {
+  // Playback may be holding a pattern tempo or automated levels. The session keeps the song's own.
+  const json = withSongValues(model, () => JSON.stringify({
     v: 2,
     screen: model.screen,
     bank: model.bank,
@@ -1324,9 +1325,9 @@ export function save() {
     songLoop: model.songLoop === 'section' || model.songLoop === 'once' ? model.songLoop : 'wrap',
     songLaunch: normalizeLaunch(model.songLaunch),
     songCursor: model.songCursor | 0,
-  }
+  }))
   try {
-    localStorage.setItem(SAVE_KEY, JSON.stringify(data))
+    localStorage.setItem(SAVE_KEY, json)
     if (model.saveError && !model.saveError.startsWith('Sample')) setSaveError('')
   } catch (err) {
     // Quota or a blocked store: the session still has everything, but say so.

@@ -5,7 +5,7 @@ import { nextSongCursor, samplePlayKind as playKindOf } from '../src/pages/Music
 
 // The engine also passes `held`, which must not change the kind. The JS signature does not list it.
 const samplePlayKind = playKindOf as (opts: Parameters<typeof playKindOf>[0] & { held?: boolean }) => string
-import { clockBpm, launchStep, normalizeAuto, normalizeLaunch, valueAt, writeAuto } from '../src/pages/MusicMaker/audio/arrange.js'
+import { applyAutoStep, clockBpm, launchStep, normalizeAuto, normalizeLaunch, playWrite, restorePlayValues, songValue, valueAt, withSongValues, writeAuto } from '../src/pages/MusicMaker/audio/arrange.js'
 import { downsample, parseClock, shapeSample, sliceSpan, urlSampleHint } from '../src/pages/MusicMaker/audio/sampleShape.js'
 
 test('tracker notes and the tracker clock are one-shots', () => {
@@ -120,4 +120,34 @@ test('slices split a long crop and cap each piece', () => {
   assert.ok(cut.pieces.every((piece) => piece.seconds <= 1.02))
   const long = sliceSpan(pcm, 44100, { inSec: 0, outSec: 4, count: 2, cap: 1 })
   assert.equal(long.count, 4)
+})
+
+test('playback automation and pattern tempos never become the song\'s own values', () => {
+  const song = {
+    bpm: 120,
+    swing: 0,
+    master: 0.8,
+    buses: [{ volume: 0.7, pan: 0, fx: [] }],
+    pads: [{ volume: 0.85, pan: 0, pitch: 0, filter: { cutoff: 1000, q: 1 }, fx: {} }],
+  }
+  const seq = { auto: [{ id: 'master', points: [{ s: 0, v: 0.2 }] }, { id: 'pad:0:volume', points: [{ s: 8, v: 0 }] }] }
+  applyAutoStep(song, seq, 9)
+  playWrite(song, 'bpm', 90)
+  assert.equal(song.master, 0.2, 'playback hears the lane')
+  assert.equal(song.bpm, 90, 'playback hears the pattern tempo')
+  assert.equal(songValue(song, 'bpm'), 120, 'a pattern with no tempo falls back to the song tempo')
+
+  const saved = withSongValues(song, () => JSON.parse(JSON.stringify(song)))
+  assert.equal(saved.bpm, 120)
+  assert.equal(saved.master, 0.8)
+  assert.equal(saved.pads[0].volume, 0.85)
+  assert.equal(song.master, 0.2, 'playback values return after the capture')
+
+  song.buses[0]!.volume = 0.7
+  song.master = 0.5 // the user moves the master fader while playing: that is the song's value now
+  assert.equal(restorePlayValues(song), false)
+  assert.equal(song.bpm, 120)
+  assert.equal(song.pads[0]!.volume, 0.85)
+  assert.equal(song.master, 0.5)
+  assert.equal(songValue(song, 'bpm'), 120)
 })

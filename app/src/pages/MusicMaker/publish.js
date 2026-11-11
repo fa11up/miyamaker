@@ -1,5 +1,6 @@
 import { bounceOrder, bounceSeconds, renderBounce } from './audio/engine.js'
 import { captureKit, captureSong } from './audio/song.js'
+import { songValue } from './audio/arrange.js'
 import { assertPadsRead, model, unreadPads } from './model.js'
 
 /** Pads whose sample could not be read. The release dialog can check this before it offers anything. */
@@ -41,7 +42,7 @@ export async function buildPublish(intent) {
 export function askPublish(intent) {
   const event = new CustomEvent('miya-music-publish', {
     cancelable: true,
-    detail: { intent, name: model.songName || 'Song', bpm: model.bpm },
+    detail: { intent, name: model.songName || 'Song', bpm: songValue(model, 'bpm') },
   })
   window.dispatchEvent(event)
   return event.defaultPrevented

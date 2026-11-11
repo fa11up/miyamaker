@@ -1,6 +1,6 @@
 import { parseMod, parseXm } from './module.js'
 import { defaultNumpadFx, normalizeFxPresets, normalizeNumpadFx } from './numpadFx.js'
-import { normalizeAuto, normalizeLaunch } from './arrange.js'
+import { normalizeAuto, normalizeLaunch, withSongValues } from './arrange.js'
 import { FACTORY, KIT_LAYOUT } from './presets.js'
 import { renderSynth } from './synth.js'
 import { beginUndo, endUndo, songSwitch, stashUndo } from '../history.js'
@@ -403,7 +403,8 @@ export async function captureSong(name, what = 'Save') {
   const order = Array.isArray(model.songOrder) && model.songOrder.length
     ? model.songOrder.slice()
     : usedPatternIds()
-  const doc = packSong({
+  // Save the song's own tempo and levels, not the ones playback is holding right now.
+  const doc = withSongValues(model, () => packSong({
     name: name || model.songName || 'Song',
     bpm: model.bpm,
     swing: model.swing,
@@ -419,7 +420,7 @@ export async function captureSong(name, what = 'Save') {
     numpadFx: model.numpadFx,
     fxPresets: model.fxPresets,
     comp: model.comp,
-  })
+  }))
   if (!doc.patterns.length) {
     doc.patterns = [{ i: model.pattern || 0, name: '', bars: 1, steps: [] }]
     doc.order = [model.pattern || 0]
