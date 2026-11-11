@@ -915,7 +915,7 @@ export function AlignStep({
         {protocolFeeBps !== undefined && minAlignmentBps !== undefined ? ` miya keeps ${protocolFeeBps / 100}%.` : ''}
       </Lead>
       <small style={{ color: color.inkMuted }}>
-        A vault cut below the vault&apos;s minimum is parked until the next sale, or until it is sent from Manager. ETH
+        A vault cut below the vault&apos;s minimum is parked until sales are next split (a withdrawal, a Distribute or an auction settling), or until it is sent from Manager. ETH
         payouts arrive as WETH if your wallet can&apos;t take ETH.
       </small>
       <div role="radiogroup" aria-label="Community vault" style={{ display: 'grid', gap: space[2] }}>

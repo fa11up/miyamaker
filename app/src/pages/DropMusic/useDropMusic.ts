@@ -11,7 +11,7 @@ import { plainTxError, TX_CHECK_WORDS } from '@/miyamints/errors'
 import { erc1155FactoryAbi, erc1155InstanceAbi, miyaRegistryAbi } from '@/music/abi'
 import type { MusicMetadata } from '@/music/audio'
 import { musicConfig } from '@/music/config'
-import { editionArgs, GATING_SCOPE_BOTH, makeSalt, MUSIC_TOKENS } from '@/music/drop'
+import { collectionParams, editionArgs, makeSalt } from '@/music/drop'
 import { addKnownCollection } from '@/music/known'
 import { findFirstEdition, launchOnChain, SaidError } from '@/pages/Launch/launchChain'
 import type { SavedLaunch } from '@/pages/Launch/resume'
@@ -278,17 +278,7 @@ export function useDropMusic() {
     functionName: 'createInstance' as const,
     args: [
       salt,
-      {
-        name: c.name,
-        metadataURI: c.uri,
-        creator,
-        vault,
-        alignmentBps: c.bps,
-        styleUri: '',
-        gatingModule: zeroAddress,
-        freeMint: { allocation: 0n, scope: GATING_SCOPE_BOTH },
-        acceptedTokens: MUSIC_TOKENS,
-      },
+      collectionParams({ name: c.name, metadataURI: c.uri, creator, vault, alignmentBps: c.bps }),
     ] as const,
   })
 

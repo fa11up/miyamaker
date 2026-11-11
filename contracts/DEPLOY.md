@@ -138,9 +138,10 @@ before you broadcast, because no check here can know it.
    `REQUIRE_FORK_TESTS=true FORK_BLOCK=<a recent block> forge test` (the fork tests run the script on a mainnet fork,
    smoke-test every factory and convert real batches through zRouter and AllowanceHolder; `test/deploy/` also runs the
    script offline against mocks), `script/export-abis.sh --check`, and `cd ../app && yarn test`. Create a fresh deployer and import it into a keystore:
-   `cast wallet import miyamints-deployer --interactive` (or use a Ledger). Fund it: about 31.4M gas in total (16
-   transactions, the largest about 5.4M), so 0.03 ETH covers 1 gwei; at the 2026-11-01 base fee (~0.033 gwei) it
-   is about 0.002 ETH. Same order on 4663 (L1 data fees extra).
+   `cast wallet import miyamints-deployer --interactive` (or use a Ledger). Fund it: about 45.6M gas in total (38
+   transactions, the largest about 9.0M; mainnet dry run 2026-11-10), so 0.05 ETH covers 1 gwei; at ~0.1 gwei it
+   is about 0.005 ETH. Send nothing else from the deployer while the run is going: forge numbers every transaction
+   from the starting nonce. Same order on 4663 (L1 data fees extra).
 2. **Create the Safe** that will own the system on each chain and note its address (`OWNER`). On 4663, also pick
    the `TREASURY`.
 3. **Dry run** (no `--broadcast`), from the same clean `main`:
@@ -156,6 +157,10 @@ before you broadcast, because no check here can know it.
    OWNER=0xSafe KEEPER=0xKeeper script/deploy.sh --rpc-url https://ethereum-rpc.publicnode.com \
      --account miyamints-deployer --sender 0xDeployer --broadcast --verify --etherscan-api-key $ETHERSCAN_API_KEY
    ```
+   `deploy.sh` adds `--slow` to every broadcast, so each transaction waits for the one before it. Run it from a
+   clean shell (`env | grep -E 'TREASURY|ALIGN|FEE_BPS|SALT|MIYAMINTS_CONFIG|ALLOW_MISSING'` prints nothing): those
+   variables override the config without a warning. Afterwards, read `owner()` on the registry, vault factory,
+   auction factory, 1155 factory and pricing module, and `conversionKeeper()` on the registry.
    (`--ledger --sender 0x...` instead of `--account` for a hardware wallet.) Robinhood Chain (Blockscout):
    ```sh
    OWNER=0xSafe KEEPER=0xKeeper TREASURY=0x... script/deploy.sh \

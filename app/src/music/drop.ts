@@ -78,6 +78,27 @@ export function parseEdition(
 /** The tokens a Drop Music release accepts: ETH only for now (Launch → Editions offers the other tokens). */
 export const MUSIC_TOKENS: readonly Address[] = [zeroAddress]
 
+/** ERC1155Factory.createInstance's CreateParams for a music collection: no gating, no free mints, MUSIC_TOKENS. */
+export function collectionParams(p: {
+  name: string
+  metadataURI: string
+  creator: Address
+  vault: Address
+  alignmentBps: number
+}) {
+  return {
+    name: p.name,
+    metadataURI: p.metadataURI,
+    creator: p.creator,
+    vault: p.vault,
+    alignmentBps: p.alignmentBps,
+    styleUri: '',
+    gatingModule: zeroAddress as Address,
+    freeMint: { allocation: 0n, scope: GATING_SCOPE_BOTH },
+    acceptedTokens: [...MUSIC_TOKENS],
+  }
+}
+
 /** ERC1155Instance.addEdition(pieceTitle, prices, supply, metadataURI, pricingModel, priceIncreaseRate, openTime) */
 export function editionArgs(p: {
   title: string

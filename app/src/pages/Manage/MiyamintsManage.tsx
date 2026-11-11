@@ -860,7 +860,7 @@ function MoneyPanel({
       <Eyebrow>Vault fees</Eyebrow>
       <p>
         {vault.symbol
-          ? `Your vault share went in as paid and becomes ${vault.symbol} liquidity, in batches. It stays in the pool for good. The pool's trading fees are paid in INFER and IMD.`
+          ? `Your vault share goes in when sales are split (a withdrawal, a Distribute anyone can run, or an auction settling) and becomes ${vault.symbol} liquidity, in batches. It stays in the pool for good. The pool's trading fees are paid in INFER and IMD.`
           : 'The vault pays its trading fees to collections that sent it a share.'}
       </p>
       {queued.length > 0 && (

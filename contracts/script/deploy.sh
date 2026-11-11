@@ -40,6 +40,11 @@ else
   REF="main"
 fi
 
+# A broadcast waits for each receipt (--slow): without it forge sends every transaction at once, and a revert in the
+# middle still lets the later ones (ownership handoffs included) land on an incomplete system.
+EXTRA=()
+case " $* " in *" --broadcast "*) case " $* " in *" --slow "*) ;; *) EXTRA=(--slow) ;; esac ;; esac
+
 echo "deploy.sh: deploying ${REF} @ ${COMMIT}"
 export FOUNDRY_PROFILE=deploy DEPLOY_GIT_COMMIT="$COMMIT" DEPLOY_GIT_REF="$REF"
-exec forge script script/DeployMiyamints.s.sol "$@"
+exec forge script script/DeployMiyamints.s.sol "$@" ${EXTRA[@]+"${EXTRA[@]}"}

@@ -2,7 +2,10 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { editionArgs, makeSalt, MUSIC_TOKENS, parseAlignmentPct, parseEdition, parsePriceEth, parseSupply, PRICING_MODEL } from '../src/music/drop.ts'
+import { encodeFunctionData } from 'viem'
+
+import { erc1155FactoryAbi } from '../src/music/abi.ts'
+import { collectionParams, editionArgs, makeSalt, MUSIC_TOKENS, parseAlignmentPct, parseEdition, parsePriceEth, parseSupply, PRICING_MODEL } from '../src/music/drop.ts'
 
 test('prices are parsed exactly with parseEther (no float rounding) and must be > 0', () => {
   assert.deepEqual(parsePriceEth('0.1'), { ok: true, wei: 100000000000000000n })
@@ -88,4 +91,21 @@ test('makeSalt is a CreateX permissioned salt: factory ‖ 0x00 ‖ 11 random by
   assert.equal(salt, '0x00000000000000000000000000000000000000aa00ffffffffffffffffffffff')
   assert.equal(salt.length, 66)
   assert.throws(() => makeSalt('0x1234', new Uint8Array(11)))
+})
+
+test('collectionParams encodes as ERC1155Factory.createInstance and accepts ETH', () => {
+  const params = collectionParams({
+    name: 'Tape',
+    metadataURI: 'ar://m',
+    creator: '0x00000000000000000000000000000000000000c1',
+    vault: '0x00000000000000000000000000000000000000f1',
+    alignmentBps: 1000,
+  })
+  assert.deepEqual(params.acceptedTokens, [...MUSIC_TOKENS])
+  const data = encodeFunctionData({
+    abi: erc1155FactoryAbi,
+    functionName: 'createInstance',
+    args: [`0x${'00'.repeat(32)}`, params],
+  })
+  assert.match(data, /^0x[0-9a-f]+$/)
 })

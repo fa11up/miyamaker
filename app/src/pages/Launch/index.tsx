@@ -897,7 +897,7 @@ export default function LaunchPage() {
                         symbol: defaultVault.symbol,
                         detail: net.addresses.defaultVault
                           ? defaultVault.symbol
-                            ? `Your share goes in as paid and becomes ${defaultVault.symbol} liquidity in one shared pool.`
+                            ? `Your share goes in when sales are split and becomes ${defaultVault.symbol} liquidity in one shared pool.`
                             : 'The vault miya set up for this network.'
                           : 'The community vault opens with launch.',
                       }}
