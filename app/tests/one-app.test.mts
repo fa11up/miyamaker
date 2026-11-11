@@ -69,7 +69,7 @@ test('the apps that boot each have their own scene, and the others open straight
   const pages = readFileSync('src/constants/pages.ts', 'utf8')
   const ids = [...pages.matchAll(/^\s+id: '([a-z]+)',/gm)].map((m) => m[1]!)
   // These boot inside themselves or open straight away.
-  const own = ['mint', 'uploader', 'tv', 'dropmusic', 'auction', 'files', 'display', 'radio', 'manager']
+  const own = ['mint', 'uploader', 'tv', 'dropmusic', 'files', 'display', 'radio', 'manager']
   assert.deepEqual(ids.filter((id) => !own.includes(id)).sort(), Object.keys(SCENES).sort())
   for (const id of own) assert.equal(SCENES[id], undefined)
   assert.equal(new Set(Object.values(SCENES).map((s) => s.draw)).size, Object.keys(SCENES).length)

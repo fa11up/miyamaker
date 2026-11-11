@@ -16,19 +16,32 @@ const Picture = styled.canvas`
   }
 `
 
+/* No window yet: only the app's card, floating where the window will open. Any press in that space skips it. */
 const Splash = styled.button`
   all: unset;
   position: absolute;
   inset: 0;
-  display: block;
+  display: grid;
+  place-items: center;
   cursor: progress;
   pointer-events: auto;
-  background: #000;
-  &:focus-visible {
+  background: transparent;
+  &:focus-visible > div {
     outline: 2px dashed #fff35c;
-    outline-offset: -4px;
+    outline-offset: 4px;
   }
 `
+
+/* The card itself: a whole multiple of the scene's pixels, with a shadow that follows its outline. */
+const Card = styled.div`
+  filter: drop-shadow(0 6px 10px rgba(0, 0, 0, 0.45));
+`
+
+/** The largest whole scale, up to 3, that fits the card in the space and keeps it under 450px wide. */
+export function cardScale(size: [number, number], room: { width: number; height: number }) {
+  const fit = Math.min((room.width * 0.9) / size[0], (room.height * 0.9) / size[1], 450 / size[0])
+  return Math.max(1, Math.min(3, Math.floor(fit)))
+}
 
 /** A pixel scene is about this many pixels wide, whatever the window. */
 const PIXEL_WIDTH = 240
@@ -74,6 +87,8 @@ export function ScenePlayer({ scene, onDone }: { scene: Scene; onDone: () => voi
         el.height = h
       }
       g.setTransform(1, 0, 0, 1, 0, 0)
+      // A card has a shaped outline: what is outside it stays see-through.
+      if (scene.size) g.clearRect(0, 0, w, h)
       if (!scene.pixel) g.scale(ratio, ratio)
       const t = quiet ? scene.ms / 1000 : shown / 1000
       if (scene.pixel) scene.draw(g, t, w, h)
@@ -91,14 +106,36 @@ export function ScenePlayer({ scene, onDone }: { scene: Scene; onDone: () => voi
 export default function AppBoot({ identifier, children }: { identifier: string; children: ReactNode }) {
   const scene = SCENES[identifier]
   const [done, setDone] = useState(!scene)
+  const room = useRef<HTMLButtonElement>(null)
+  const [scale, setScale] = useState(0)
 
   // The scene is the wait, so the app downloads during it and is ready when it ends.
   useEffect(() => preloadApp(identifier), [identifier])
 
+  useEffect(() => {
+    const el = room.current
+    if (!el || !scene?.size || done) return undefined
+    const size = scene.size
+    const measure = () => setScale(cardScale(size, { width: el.clientWidth, height: el.clientHeight }))
+    measure()
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : null
+    ro?.observe(el)
+    return () => ro?.disconnect()
+  }, [scene, done])
+
   if (done || !scene) return <>{children}</>
+  const size = scene.size
   return (
-    <Splash type="button" aria-label="Loading. Press to skip." data-testid="app-boot" onClick={() => setDone(true)}>
-      <ScenePlayer scene={scene} onDone={() => setDone(true)} />
+    <Splash ref={room} type="button" aria-label="Loading. Press to skip." data-testid="app-boot" onClick={() => setDone(true)}>
+      {size ? (
+        scale > 0 && (
+          <Card style={{ width: size[0] * scale, height: size[1] * scale }}>
+            <ScenePlayer scene={scene} onDone={() => setDone(true)} />
+          </Card>
+        )
+      ) : (
+        <ScenePlayer scene={scene} onDone={() => setDone(true)} />
+      )}
     </Splash>
   )
 }
