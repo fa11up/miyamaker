@@ -2,7 +2,14 @@
 // claimed, each free cap set to what is left, and the public phase's token prices set from today's market. It READS
 // ONLY and SENDS NOTHING: it prints a setPhases call for the owner to check and send themselves.
 //
-//   node scripts/refresh-phases.mts --drop 0x… [--block finalized|latest|<n>] [--keep-passed-on] [--publish]
+//   node scripts/refresh-phases.mts --drop 0x… [--block finalized|latest|<n>] [--previous <claimers.json>]
+//        [--keep-passed-on] [--publish]
+//
+// WHO CLAIMED is read from the drop itself, not from event logs (the keyed RPC's plan allows eth_getLogs over 10
+// blocks only): mintedInPhase(phase, wallet) for every wallet on each list phase's list, at the pinned block. The drop
+// counts against the wallet that PAID (msg.sender), the same wallet the proof was checked for, so mintTo is covered.
+// Those counts only cover the current phase list (epoch). Each run writes refresh-claimers-<drop>-<block>.json; pass the
+// last one as --previous next time so wallets that claimed before an earlier setPhases stay left off. Keep that file.
 //
 // WHY CLAIMERS ARE LEFT OFF: setPhases replaces every phase and bumps phasesEpoch. The drop keys every per-wallet count
 // and every phase's sold count by that epoch, so after it every wallet's count starts again at 0. A wallet that claimed
@@ -19,34 +26,20 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 
 import type { Abi, Address, Hex, PublicClient } from 'viem'
-import { decodeEventLog, encodeFunctionData, formatEther, getAddress, parseAbiItem, zeroAddress } from 'viem'
+import { encodeFunctionData, formatEther, getAddress, zeroAddress } from 'viem'
 
 import type { AllowlistFile, AllowlistSource } from '../api/_lib/allowlist.ts'
 import { buildTree, readDump } from '../api/_lib/allowlist.ts'
-import { contractHolders, publishList, readHolders } from './allowlist-snapshot.mts'
+import { BURN, contractHolders, publishList, readHolders } from './allowlist-snapshot.mts'
 import { APP, args, client, pinBlock, rpcHost, rpcUrl, short } from './lib/chain.mts'
 import { ethEquivalents, fmt, IMD, IMDUSD, INFER, roundPrice } from './lib/prices.mts'
 
 const DROP_ABI = JSON.parse(readFileSync(`${APP}../contracts/abi/ERC721DropInstance.json`, 'utf8')) as Abi
-const DROP_FACTORY: Address = '0x9E3b21f6e0aE6068E9b7cB3B07579cC4af28EAfd'
-const DROP_CREATED = parseAbiItem(
-  'event DropCreated(address indexed drop, address indexed creator, address indexed vault, uint16 protocolBps, uint16 alignmentBps)'
-)
-const OWNER_MINT = (1n << 256n) - 1n
 const ZERO_ROOT = `0x${'0'.repeat(64)}`
 const LOG_CHUNK = 10_000n
 
 type TokenPrice = { token: Address; price: bigint }
 type Phase = { start: bigint; end: bigint; maxPerWallet: number; merkleRoot: Hex; supplyCap: number; prices: TokenPrice[] }
-
-async function logsInChunks(c: PublicClient, address: Address, from: bigint, to: bigint) {
-  const out = []
-  for (let a = from; a <= to; a += LOG_CHUNK) {
-    const b = a + LOG_CHUNK - 1n < to ? a + LOG_CHUNK - 1n : to
-    out.push(...(await c.getLogs({ address, fromBlock: a, toBlock: b })))
-  }
-  return out
-}
 
 /** A list file: this checkout's public/allowlists first, then the live site. */
 async function loadList(root: string, site: string): Promise<AllowlistFile | undefined> {
@@ -95,55 +88,51 @@ async function main() {
   ])
   say(`owner ${owner}; epoch ${epoch}; minted ${totalSupply}/${maxSupply}; reserve ${reserve} (${ownerMinted} used); phases can still sell ${publicRemaining}`)
 
-  // Every PhasesSet and Minted since the drop was made, in order: each Minted belongs to the phase list before it.
-  const created = await c.getLogs({ address: DROP_FACTORY, event: DROP_CREATED, args: { drop }, fromBlock: 26388865n, toBlock: block.number })
-  if (!created[0]) throw new Error('DropCreated not found for this drop on the miyamints factory')
-  const logs = await logsInChunks(c, drop, created[0].blockNumber as bigint, block.number)
-  const lists: Phase[][] = []
-  const claims: { root: string; to: Address; tx: Hex; block: bigint; epoch: number }[] = []
-  let publicSoldAll = 0n
-  for (const log of logs) {
-    let ev: { eventName: string; args: Record<string, unknown> }
-    try {
-      ev = decodeEventLog({ abi: DROP_ABI, data: log.data, topics: log.topics }) as unknown as typeof ev
-    } catch {
-      continue
-    }
-    if (ev.eventName === 'PhasesSet') lists.push(ev.args.phases as Phase[])
-    if (ev.eventName !== 'Minted') continue
-    const phaseId = ev.args.phaseId as bigint
-    if (phaseId === OWNER_MINT) continue
-    const ph = lists[lists.length - 1]?.[Number(phaseId)]
-    if (!ph) continue
-    if (ph.merkleRoot === ZERO_ROOT) publicSoldAll += ev.args.quantity as bigint
-    else claims.push({ root: ph.merkleRoot.toLowerCase(), to: ev.args.to as Address, tx: log.transactionHash as Hex, block: log.blockNumber as bigint, epoch: lists.length })
-  }
-  if (BigInt(lists.length) !== epoch) say(`WARNING: saw ${lists.length} PhasesSet events but phasesEpoch is ${epoch}.`)
-
-  // Who claimed: the drop checks the proof against msg.sender (the payer). A transaction sent straight to the drop:
-  // that is tx.from. One through a contract (a Safe, a batcher): mint() mints to msg.sender, so `to` if it is on the
-  // list; a contract's mintTo to someone else can't be told from the log, and is reported unresolved.
+  // Who claimed: mintedInPhase for every wallet on each list phase's list (current epoch), plus --previous.
   const files = new Map<string, AllowlistFile | undefined>()
-  for (const r of new Set([...claims.map((x) => x.root), ...phases.filter((p) => p.merkleRoot !== ZERO_ROOT).map((p) => p.merkleRoot.toLowerCase())])) {
-    files.set(r, await loadList(r, site))
+  for (const ph of phases) {
+    if (ph.merkleRoot !== ZERO_ROOT) files.set(ph.merkleRoot.toLowerCase(), await loadList(ph.merkleRoot.toLowerCase(), site))
   }
-  const onList = (root: string, a: string) => !!files.get(root)?.values.some((v) => v.value[0].toLowerCase() === a.toLowerCase())
   const claimersBySource = new Map<string, Set<string>>()
-  let unresolved = 0
-  for (const cl of claims) {
-    const tx = await c.getTransaction({ hash: cl.tx })
-    const direct = tx.to?.toLowerCase() === drop.toLowerCase()
-    const payer = direct ? tx.from : onList(cl.root, cl.to) ? cl.to : undefined
-    const src = files.get(cl.root)?.miya?.source?.contract?.toLowerCase() ?? cl.root
-    if (!payer) {
-      unresolved += 1
+  const addClaimer = (src: string, a: string) => {
+    const set = claimersBySource.get(src.toLowerCase()) ?? new Set<string>()
+    set.add(a.toLowerCase())
+    claimersBySource.set(src.toLowerCase(), set)
+  }
+  if (o.previous) {
+    const prev = JSON.parse(readFileSync(o.previous, 'utf8')) as { claimers: Record<string, string[]> }
+    for (const [src, list] of Object.entries(prev.claimers)) for (const a of list) addClaimer(src, a)
+    say(`--previous ${o.previous}: ${Object.values(prev.claimers).flat().length} earlier claimers carried over`)
+  }
+  for (const [i, ph] of phases.entries()) {
+    if (ph.merkleRoot === ZERO_ROOT) continue
+    const file = files.get(ph.merkleRoot.toLowerCase())
+    if (!file) {
+      say(`phase ${i}: miya has no copy of list ${ph.merkleRoot} (not in public/allowlists, not on ${site}): its claimers can't be read.`)
       continue
     }
-    const set = claimersBySource.get(src) ?? new Set<string>()
-    set.add(payer.toLowerCase())
-    claimersBySource.set(src, set)
+    const src = file.miya?.source?.contract ?? ph.merkleRoot
+    const wallets = file.values.map((v) => v.value[0])
+    let found = 0
+    for (let k = 0; k < wallets.length; k += 500) {
+      const slice = wallets.slice(k, k + 500)
+      const res = await c.multicall({
+        contracts: slice.map((w) => ({ address: drop, abi: DROP_ABI, functionName: 'mintedInPhase', args: [BigInt(i), w] })),
+        allowFailure: false,
+        blockNumber: block.number,
+        batchSize: 0,
+      })
+      res.forEach((n, j) => {
+        if ((n as bigint) > 0n) {
+          addClaimer(src, slice[j] as string)
+          found += 1
+        }
+      })
+    }
+    say(`phase ${i} (${file.miya?.source?.name ?? 'list'}): ${found} wallets on the list have claimed (sold ${sold[i] ?? 0n})`)
+    if (BigInt(found) > (sold[i] ?? 0n)) say(`    WARNING: more claimers than pieces sold in phase ${i}: check the list file is the right one.`)
   }
-  say(`claims in list phases (all epochs): ${claims.length}; claimers found: ${[...claimersBySource.values()].reduce((a, s) => a + s.size, 0)}; unresolved: ${unresolved}`)
+  const claimersFile = `${o.out || `${APP}scripts/out`}/refresh-claimers-${drop.slice(0, 8)}-${block.number}.json`
 
   // The new phase list, phase by phase.
   const next: Phase[] = []
@@ -198,7 +187,7 @@ async function main() {
         }
       }
     }
-    const addresses = [...now.holders.keys()].filter((a) => !excluded.has(a)).sort()
+    const addresses = [...now.holders.keys()].filter((a) => !excluded.has(a) && !BURN.has(a)).sort()
     if (!addresses.length) {
       say(`    nobody left on the list: phase ${i} is dropped from the plan`)
       continue
@@ -247,10 +236,19 @@ async function main() {
   say('    (after the block above) is not counted: read again right before sending.')
   say('  - "Holding a claimer\'s token" uses what the claimer held at the OLD list\'s block, not at the moment they')
   say('    claimed; a token bought after that block and passed on is not followed.')
-  say(`  - Unresolved claims (${unresolved}): mintTo sent by a contract wallet; that wallet is not left off. Check them by hand.`)
+  say(`  - Claimers are read from this phase list's counts. Wallets that claimed under an EARLIER phase list are only left`)
+  say(`    off if you passed --previous with the claimers file of the run before (this run wrote ${claimersFile}).`)
   say('  - Deploy the site with the new public/allowlists files first (--publish), or nobody on a new list can get a proof.')
   for (const n of notes) say(`  - ${n}`)
   writeFileSync(`${outDir}/refresh-${drop.slice(0, 8)}-${block.number}.txt`, `${out.join('\n')}\n`)
+  writeFileSync(
+    claimersFile,
+    JSON.stringify(
+      { drop, block: Number(block.number), claimers: Object.fromEntries([...claimersBySource].map(([k, v]) => [k, [...v]])) },
+      null,
+      1
+    )
+  )
 }
 
 main().catch((e) => {

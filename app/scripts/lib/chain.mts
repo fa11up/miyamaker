@@ -1,7 +1,10 @@
 // Shared by the allowlist scripts: the mainnet RPC and small helpers. Run with node (type stripping), from app/.
 //
-// The RPC URL comes from, in order: RPC_URL (shell), RPC_URL_1 (shell), then app/.env.production.local or app/.env.local
-// (RPC_URL_1, VITE_RPC_URL_1, or VITE_ALCHEMY_KEY made into an Alchemy URL). It is never printed: only its host is.
+// Every read goes through the KEYED mainnet RPC, never a public node, and there is no fallback: if it fails, the
+// script stops and says so. The URL comes from, in order: RPC_URL_1 (shell, as the Worker secret is named), then
+// app/.env.production.local or app/.env.local (RPC_URL_1, VITE_RPC_URL_1, or VITE_ALCHEMY_KEY made into an Alchemy
+// URL). RPC_URL may point a script at a local fork (anvil on localhost, itself forked from the keyed RPC), and only
+// there. The URL is never printed: only its host is.
 import { existsSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
@@ -27,10 +30,18 @@ function fromEnvFiles(): string | undefined {
   return undefined
 }
 
+const LOOPBACK = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?(\/|$)/i
+
 export function rpcUrl(): string {
-  const url = process.env.RPC_URL || process.env.RPC_URL_1 || fromEnvFiles()
+  if (process.env.RPC_URL) {
+    if (!LOOPBACK.test(process.env.RPC_URL)) {
+      throw new Error('RPC_URL is only for a local fork (http://127.0.0.1:…). Use the keyed RPC: RPC_URL_1 or app/.env.production.local.')
+    }
+    return process.env.RPC_URL
+  }
+  const url = process.env.RPC_URL_1 || fromEnvFiles()
   if (!url) {
-    throw new Error('No RPC: set RPC_URL, or RPC_URL_1 / VITE_RPC_URL_1 / VITE_ALCHEMY_KEY in app/.env.production.local')
+    throw new Error('No keyed RPC: set RPC_URL_1, or VITE_RPC_URL_1 / VITE_ALCHEMY_KEY in app/.env.production.local. Public nodes are not used.')
   }
   return url
 }

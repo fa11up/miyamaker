@@ -30,6 +30,8 @@ const erc721 = parseAbi([
   'function name() view returns (string)',
 ])
 const MULTICALL_BATCH = 500
+/** Burn addresses: tokens sent there are gone, and nobody can claim for them. Left off every list. */
+export const BURN = new Set(['0x000000000000000000000000000000000000dead'])
 
 export type Holders = Map<string, bigint[]>
 
@@ -155,7 +157,8 @@ async function main() {
   if (supply !== undefined && BigInt(owners.size) < supply && !o.ids) {
     throw new Error(`Only ${owners.size} of ${supply} tokens answered in ${from}..${to}: pass --ids to cover every id.`)
   }
-  const addresses = [...holders.keys()].sort()
+  const burned = [...holders.keys()].filter((a) => BURN.has(a))
+  const addresses = [...holders.keys()].filter((a) => !BURN.has(a)).sort()
   const contracts = await contractHolders(c, addresses, block.number)
   const { root, ...dump } = buildTree(addresses)
 
@@ -200,6 +203,7 @@ async function main() {
   writeFileSync(`${base}.proofs.json`, JSON.stringify(proofs))
 
   console.log(`tokens with an owner: ${owners.size} (ids that did not answer: ${failed})`)
+  if (burned.length) console.log(`left off: ${burned.join(', ')} (burn address, ${burned.map((a) => holders.get(a)?.length).join(', ')} tokens)`)
   console.log(`unique holders: ${addresses.length} (${contracts.length} of them contracts at the block: kept, a pool can't claim)`)
   console.log(`root ${root}`)
   console.log(`wrote ${base}.{json,txt,proofs.json}`)

@@ -486,6 +486,12 @@ export default function LiveMintView({ card }: { card: LiveMintCard }) {
   return (
     <MintCart
       name={live.name}
+      caption={
+        // More than one phase running: say on the screen which one the button mints in (Info lists them all).
+        card.kind === 'drop' && phase && lists.phases.length > 1
+          ? `${phase.isList ? lists.byPhase[phase.phaseId]?.name ?? 'Allowlist' : 'Public sale'} · Info: all sales`
+          : undefined
+      }
       artist={
         <ArtistTag
           artist={live.artist}
