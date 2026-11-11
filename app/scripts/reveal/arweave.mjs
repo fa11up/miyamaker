@@ -7,7 +7,8 @@
 //   node scripts/reveal/arweave.mjs --build ~/miyamaker-reveal-build [--site https://www.miyamaker.com] [--slug miyamaker]
 //   REVEAL_ADMIN_KEY=… REVEAL_IRYS_KEY=… node scripts/reveal/arweave.mjs --build … --execute
 //   … --provenance [--execute]                         at launch: provenance.json itself (it reveals nothing)
-//   … --manifest [--rpc <Ethereum RPC>] [--execute]   at sell-out: the folder manifest (paths 1..supply = token ids)
+//   … --manifest [--rpc <Ethereum RPC>] [--execute]   at sell-out: the folder manifest (paths 1..supply = token ids,
+//                                                        and assignments.json with every draw and salt)
 //                                                        and the setMetadata + lockMetadata calls for the owner to send
 //
 // REVEAL_IRYS_KEY is the Ethereum private key of a funded Irys account (environment only, never logged; this never
@@ -20,7 +21,7 @@ import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { createPublicClient, encodeFunctionData, http, parseAbi } from 'viem'
 
-import { servedMetadata, storedFromServed } from '../../api/_lib/revealpiece.mjs'
+import { metadataHash, servedMetadata, storedFromServed, tokenName } from '../../api/_lib/revealpiece.mjs'
 import { admin, adminKey, log, parseArgs, readJson, revealBase, run } from './lib.mjs'
 
 const flags = parseArgs(process.argv.slice(2), {
@@ -87,7 +88,9 @@ run(async () => {
     const want = provenance.pieces[a.piece - 1]
     // The site must serve this piece for this token right now: it is drawn, so it may go public.
     const served = await (await fetch(`${base}/${a.token}`)).json()
-    if ((await sha(storedFromServed(served))) !== want.metadata)
+    const salt = (await readFile(join(build, 'piece', `${a.piece}.salt`), 'utf8')).trim()
+    if (a.salt !== salt) throw new Error(`the site publishes another salt for piece ${a.piece}: stopping`)
+    if ((await metadataHash(salt, storedFromServed(served))) !== want.metadata)
       throw new Error(`token ${a.token} does not serve piece ${a.piece}: stopping`)
 
     const j = journal.get(a.piece) ?? {}
@@ -100,7 +103,8 @@ run(async () => {
     }
     if (!j.metadata) {
       const stored = await readFile(join(build, 'piece', `${a.piece}.json`), 'utf8')
-      const meta = JSON.stringify(servedMetadata(stored, `ar://${j.image}`))
+      const name = tokenName(list.name, list.nameBy, a.token, a.piece)
+      const meta = JSON.stringify(servedMetadata(stored, { name, image: `ar://${j.image}` }))
       const r = await irys.upload(meta, { tags: [{ name: 'Content-Type', value: 'application/json' }] })
       j.metadata = r.id
       await appendFile(journalPath, `${JSON.stringify({ piece: a.piece, metadata: r.id, at: Date.now() })}\n`)
@@ -130,6 +134,15 @@ async function manifest({ list, journal, journalPath, base }) {
     log('The manifest is for a sold-out drop: setting baseURI to it now would leave later tokens without metadata.')
     return 1
   }
+  // The final assignments.json (draws and salts) goes in the same folder, so the proof outlives the site.
+  let listId = journal.get('assignments')?.manifest
+  if (!listId && EXECUTE) {
+    const irys = await irysClient()
+    const r = await irys.upload(JSON.stringify(list), { tags: [{ name: 'Content-Type', value: 'application/json' }] })
+    listId = r.id
+    await appendFile(journalPath, `${JSON.stringify({ piece: 'assignments', manifest: listId, at: Date.now() })}\n`)
+  }
+  if (listId) paths['assignments.json'] = { id: listId }
   const body = JSON.stringify({ manifest: 'arweave/paths', version: '0.1.0', paths })
   await writeFile(join(dirname(journalPath), 'manifest.json'), body)
   log(`manifest: ${list.supply} paths, ${body.length} bytes, written to ${join(dirname(journalPath), 'manifest.json')}`)

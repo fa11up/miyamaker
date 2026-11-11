@@ -9,13 +9,21 @@
 //
 // It checks: provenance.json hashes to its provenanceHash (and to --provenance-hash if given); the drop's Transfer-from-0x0
 // logs are tokens 1..totalSupply with no gaps; for each listed token, the mint block, block B+1's mixHash (the seed),
-// that B+1 follows B, and the drawn piece. --content also fetches tokens' metadata and images and checks their sha256
-// against provenance.json. Reading logs from the deploy block needs an RPC that allows wide eth_getLogs ranges (it
+// that B+1 follows B, the drawn piece, and that each drawn piece's salt is published. --content also fetches tokens'
+// metadata and images: sha256(salt || metadata without name and image) and sha256(image) must be the provenance's, the
+// name "<collection> #<token id or piece>" and the last trait the piece number. Reading logs from the deploy block needs an RPC that allows wide eth_getLogs ranges (it
 // narrows the range on errors) and, for totalSupply at a past block, an archive node.
 import { createPublicClient, http, parseAbiItem } from 'viem'
 
 import { CONFIRMATIONS } from '../../api/_lib/revealdraw.mjs'
-import { provenanceHash, sha256Hex, storedFromServed } from '../../api/_lib/revealpiece.mjs'
+import {
+  metadataHash,
+  PIECE_TRAIT,
+  provenanceHash,
+  sha256Hex,
+  storedFromServed,
+  tokenName,
+} from '../../api/_lib/revealpiece.mjs'
 import { checkDraws, log, parseArgs, pool, readJson, run } from './lib.mjs'
 
 const flags = parseArgs(process.argv.slice(2), {
@@ -83,6 +91,10 @@ run(async () => {
   // 3. Every draw again, in token order.
   const res = checkDraws({ supply: list.supply, mints, headers, head, published: list.assignments })
   problems.push(...res.problems)
+  for (const a of list.assignments) {
+    if (typeof a.salt !== 'string' || !/^[0-9a-f]{64}$/.test(a.salt))
+      problems.push(`token ${a.token}: no salt published`)
+  }
   log(`${res.checked} draw(s) redone and compared; ${res.pending} minted token(s) drawable but not listed yet`)
   const notYet = mints.filter((m) => m.block + CONFIRMATIONS > head).length
   if (notYet) log(`${notYet} token(s) are within ${CONFIRMATIONS} blocks of the head: not drawn yet, by the rule`)
@@ -94,8 +106,15 @@ run(async () => {
     await pool(pick, 8, async (a) => {
       const want = prov.pieces[a.piece - 1]
       const meta = await (await fetch(`${site}/${a.token}`)).json()
-      const metaHash = await sha256Hex(storedFromServed(meta))
+      const metaHash = await metadataHash(a.salt, storedFromServed(meta)).catch(() => undefined)
       if (metaHash !== want.metadata) return problems.push(`token ${a.token}: metadata is not piece ${a.piece}'s`)
+      if (meta.name !== tokenName(list.name, list.nameBy, a.token, a.piece)) {
+        return problems.push(`token ${a.token}: named "${meta.name}"`)
+      }
+      const last = meta.attributes[meta.attributes.length - 1]
+      if (last?.trait_type !== PIECE_TRAIT || last?.value !== a.piece) {
+        return problems.push(`token ${a.token}: its last trait is not ${PIECE_TRAIT} ${a.piece}`)
+      }
       const img = await fetch(gateway(meta.image))
       const imgHash = await sha256Hex(new Uint8Array(await img.arrayBuffer()))
       if (imgHash !== want.image) return problems.push(`token ${a.token}: image is not piece ${a.piece}'s`)

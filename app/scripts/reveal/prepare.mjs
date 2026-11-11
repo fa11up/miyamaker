@@ -4,14 +4,16 @@
 //
 //   node scripts/reveal/prepare.mjs --out ~/miyamaker-reveal-build [--description-file desc.txt] [--count 50]
 //
-// Writes <out>/piece/<n>.jpg (the art, cloned/copied), <out>/piece/<n>.json (the cleaned metadata without image,
-// canonical: what is hashed), <out>/provenance.json and <out>/provenance-hash.txt. Same input, same output, so it can
-// be run again. The provenance hash covers the description: set the real one (--description-file) before launch.
+// Writes <out>/piece/<n>.jpg (the art, cloned/copied), <out>/piece/<n>.json (the cleaned metadata without name and
+// image, canonical), <out>/piece/<n>.salt (32 random bytes, hex: SECRET until the piece is drawn), <out>/provenance.json
+// and <out>/provenance-hash.txt. A salt is made once and kept: running again with the same input gives the same hash.
+// The provenance hash covers the description: set the real one (--description-file) before launch. Back up the build:
+// lost salts mean drawn pieces can no longer be shown to match the published provenance.
 //
 // Sources (defaults): ~/Downloads/images_A/1..4999.jpg, ~/Downloads/images_B/5000..10000.jpg, ~/Downloads/json/<n>.json
 // for 1..9999 and _metadata.json's edition 0 for piece 10000 (there is no 0.json). Each <n>.json is checked against
 // _metadata.json's edition n (all but the description, which is replaced anyway).
-import { createHash } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import { constants, existsSync } from 'node:fs'
 import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
@@ -19,7 +21,14 @@ import { join, resolve } from 'node:path'
 import { execFileSync } from 'node:child_process'
 
 import { CONFIRMATIONS, DRAW_RULE } from '../../api/_lib/revealdraw.mjs'
-import { canonicalJson, cleanMetadata, isJpeg, provenanceHash } from '../../api/_lib/revealpiece.mjs'
+import {
+  canonicalJson,
+  cleanMetadata,
+  HASH_RULE,
+  isJpeg,
+  metadataHash,
+  provenanceHash,
+} from '../../api/_lib/revealpiece.mjs'
 import { log, parseArgs, pool, run } from './lib.mjs'
 
 /** The token description. The owner's words go here (or --description-file) before the launch build. */
@@ -86,9 +95,12 @@ run(async () => {
         throw new Error(`json/${n}.json differs from _metadata.json edition ${n}`)
       }
     }
-    const stored = canonicalJson(cleanMetadata(raw, n, { prefix: PREFIX, description }))
+    const stored = canonicalJson(cleanMetadata(raw, n, { description }))
     await writeFile(join(out, 'piece', `${n}.json`), stored)
-    pieces[n - 1] = { n, image: sha256(img), metadata: sha256(Buffer.from(stored, 'utf8')) }
+    const saltPath = join(out, 'piece', `${n}.salt`)
+    const salt = existsSync(saltPath) ? (await readFile(saltPath, 'utf8')).trim() : randomBytes(32).toString('hex')
+    if (!existsSync(saltPath)) await writeFile(saltPath, salt, { mode: 0o600 })
+    pieces[n - 1] = { n, image: sha256(img), metadata: await metadataHash(salt, stored) }
     if (n % 1000 === 0) log(`${n} pieces`)
   })
 
@@ -100,10 +112,7 @@ run(async () => {
     provenanceHash: hash,
     confirmations: CONFIRMATIONS,
     rule: DRAW_RULE,
-    hashes:
-      'image = sha256 of the JPG bytes; metadata = sha256 of the token metadata without its image field, as JSON with ' +
-      'keys sorted at every level, no spaces, UTF-8; provenanceHash = sha256 of the lines "n:image:metadata\\n" for ' +
-      'n = 1..supply.',
+    hashes: HASH_RULE,
     pieces,
   }
   await writeFile(join(out, 'provenance.json'), `${JSON.stringify(provenance)}\n`)

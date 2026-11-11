@@ -8,8 +8,10 @@ CREATE TABLE IF NOT EXISTS reveal_collections (
   chain_id INTEGER NOT NULL,
   supply INTEGER NOT NULL,
   provenance_hash TEXT NOT NULL,
-  -- The cover every token shows until it is assigned.
+  -- The cover every token shows until it is assigned. A drawn token is named "<name> #<n>", n its token id or its
+  -- piece number (name_by 'token' or 'piece'); fixed once a token is drawn.
   name TEXT NOT NULL,
+  name_by TEXT NOT NULL DEFAULT 'token',
   description TEXT NOT NULL,
   cover_image TEXT NOT NULL,
   address TEXT,
@@ -28,12 +30,14 @@ CREATE TABLE IF NOT EXISTS reveal_collections (
   updated_at INTEGER NOT NULL DEFAULT 0
 );
 
--- Every piece's hashes from provenance.json, and whether its files are in R2 and on Arweave.
+-- Every piece's hashes from provenance.json, and whether its files are in R2 and on Arweave. salt is the piece's secret
+-- 32 bytes (hex), sent with its metadata: published only once the piece is drawn (assignments.json).
 CREATE TABLE IF NOT EXISTS reveal_pieces (
   slug TEXT NOT NULL,
   piece INTEGER NOT NULL,
   image_sha256 TEXT NOT NULL,
   metadata_sha256 TEXT NOT NULL,
+  salt TEXT,
   image_loaded INTEGER NOT NULL DEFAULT 0,
   metadata_loaded INTEGER NOT NULL DEFAULT 0,
   ar_image TEXT,

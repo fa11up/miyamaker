@@ -5,7 +5,11 @@
 //
 //   REVEAL_ADMIN_KEY=… node scripts/reveal/load.mjs --build ~/miyamaker-reveal-build --cover ar://<cover>
 //       [--site https://www.miyamaker.com] [--slug miyamaker] [--chain 1] [--name Miyamaker]
-//       [--cover-description "…"] [--concurrency 16] [--register-only]
+//       [--cover-description "…"] [--name-by token|piece] [--concurrency 16] [--register-only]
+//
+// --name-by: drawn tokens are named "<name> #<token id>" (token, the default) or "#<piece number>" (piece); the piece
+// number is always a "Piece" trait. It can change until the first token is drawn. Each piece's salt (<n>.salt) goes
+// with its metadata and stays private on the site until that piece is drawn.
 //
 // A draft build (placeholder description, or --count) only loads into a local site (wrangler dev).
 import { readFile } from 'node:fs/promises'
@@ -22,6 +26,7 @@ const flags = parseArgs(process.argv.slice(2), {
   name: 'value',
   cover: 'value',
   'cover-description': 'value',
+  'name-by': 'value',
   concurrency: 'value',
   'register-only': 'flag',
 })
@@ -55,6 +60,7 @@ run(async () => {
         flags['cover-description'] ??
         `${provenance.name}: revealed once minted. Provenance ${provenance.provenanceHash}`,
       coverImage: flags.cover,
+      nameBy: flags['name-by'] ?? 'token',
     }),
   })
   if (reg.status !== 200) throw new Error(`register: ${reg.status} ${reg.data.error}`)
@@ -87,6 +93,8 @@ run(async () => {
       key,
       body,
       contentType: ext === 'jpg' ? 'image/jpeg' : 'application/json',
+      headers:
+        ext === 'json' ? { 'x-reveal-salt': (await readFile(join(build, 'piece', `${n}.salt`), 'utf8')).trim() } : {},
     }).catch((e) => ({ status: 0, data: { error: e.message } }))
     const expected = ext === 'jpg' ? want.get(n)?.image : want.get(n)?.metadata
     if (res.status !== 200 || res.data.sha256 !== expected) {

@@ -7,7 +7,7 @@ import { test } from 'node:test'
 import type { RevealBucket, RevealChain, RevealDb, RevealStmt } from '../api/_lib/reveal.ts'
 import { handleRevealRequest, runRevealCron, TRANSFER_TOPIC, ZERO_TOPIC } from '../api/_lib/reveal.ts'
 import { CONFIRMATIONS, replay } from '../api/_lib/revealdraw.mjs'
-import { canonicalJson, provenanceHash, sha256Hex } from '../api/_lib/revealpiece.mjs'
+import { canonicalJson, metadataHash, provenanceHash, sha256Hex, storedFromServed } from '../api/_lib/revealpiece.mjs'
 
 // node:sqlite is not in this repo's @types/node yet, so it is typed here.
 type SqliteStmt = {
@@ -134,19 +134,22 @@ function fakeChain() {
 const KEY = 'k'.repeat(40)
 const ORIGIN = 'http://localhost:8787'
 
-/** The art: piece n's "JPEG" is FF D8 FF + n, its metadata names it. */
+/** The art: piece n's "JPEG" is FF D8 FF + n; its metadata has a trait and its Piece; its salt is n repeated. */
 async function art() {
-  const files = new Map<number, { jpg: Uint8Array; json: string }>()
+  const files = new Map<number, { jpg: Uint8Array; json: string; salt: string }>()
   const pieces = []
   for (let n = 1; n <= SUPPLY; n += 1) {
     const jpg = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, n])
     const json = canonicalJson({
-      name: `Miyamaker #${n}`,
       description: 'D',
-      attributes: [{ trait_type: 'N', value: String(n) }],
+      attributes: [
+        { trait_type: 'N', value: String(n) },
+        { trait_type: 'Piece', value: n },
+      ],
     })
-    files.set(n, { jpg, json })
-    pieces.push({ n, image: await sha256Hex(jpg), metadata: await sha256Hex(json) })
+    const salt = n.toString(16).padStart(2, '0').repeat(32)
+    files.set(n, { jpg, json, salt })
+    pieces.push({ n, image: await sha256Hex(jpg), metadata: await metadataHash(salt, json) })
   }
   return { files, pieces, hash: await provenanceHash(pieces) }
 }
@@ -157,12 +160,12 @@ async function setup({ load = true } = {}) {
   const fake = fakeChain()
   let now = 1_800_000_000_000
   const deps = { db, bucket, adminKey: KEY, chain: () => fake.chain, now: () => now }
-  const call = (method: string, path: string, body?: BodyInit, key = KEY) =>
+  const call = (method: string, path: string, body?: BodyInit, key = KEY, salt?: string) =>
     handleRevealRequest(
       new Request(`${ORIGIN}/reveal/${SLUG}/${path}`, {
         method,
         body,
-        headers: key ? { authorization: `Bearer ${key}` } : {},
+        headers: { ...(key ? { authorization: `Bearer ${key}` } : {}), ...(salt ? { 'x-reveal-salt': salt } : {}) },
       }),
       deps
     )
@@ -187,7 +190,7 @@ async function setup({ load = true } = {}) {
     assert.equal((await call('PUT', 'admin/provenance', JSON.stringify({ pieces: a.pieces }))).status, 200)
     for (const [n, f] of a.files) {
       assert.equal((await call('PUT', `admin/piece/${n}.jpg`, f.jpg)).status, 200)
-      assert.equal((await call('PUT', `admin/piece/${n}.json`, f.json)).status, 200)
+      assert.equal((await call('PUT', `admin/piece/${n}.json`, f.json, KEY, f.salt)).status, 200)
     }
     const at = await call('POST', 'admin/attach', JSON.stringify({ address: ADDRESS, deployBlock: DEPLOY }))
     assert.equal(at.status, 200, await at.clone().text())
@@ -236,7 +239,10 @@ test('load: provenance must hash to the registered hash; files must match it', a
   assert.equal((await call('PUT', 'admin/provenance', JSON.stringify({ pieces: a.pieces }))).status, 200) // again: fine
 
   assert.equal((await call('PUT', 'admin/piece/1.jpg', a.files.get(2)!.jpg)).status, 422) // piece 2's bytes as piece 1
-  assert.equal((await call('PUT', 'admin/piece/1.json', a.files.get(1)!.jpg)).status, 422)
+  assert.equal((await call('PUT', 'admin/piece/1.json', a.files.get(1)!.jpg, KEY, a.files.get(1)!.salt)).status, 422)
+  // Metadata needs its own salt: none, or another piece's, is refused.
+  assert.equal((await call('PUT', 'admin/piece/1.json', a.files.get(1)!.json)).status, 422)
+  assert.equal((await call('PUT', 'admin/piece/1.json', a.files.get(1)!.json, KEY, a.files.get(2)!.salt)).status, 422)
   assert.equal((await call('PUT', `admin/piece/${SUPPLY + 1}.jpg`, a.files.get(1)!.jpg)).status, 404)
   assert.equal((await call('PUT', 'admin/piece/1.jpg', a.files.get(1)!.jpg)).status, 200)
   const status = await getJson(call('GET', 'admin/status'))
@@ -292,11 +298,21 @@ test('a token shows the cover until its block is CONFIRMATIONS deep, then its pi
   assert.equal(res.headers.get('cache-control'), 'public, max-age=3600')
   const meta = await res.json()
   assert.deepEqual(meta, {
-    name: `Miyamaker #${piece}`,
+    name: 'Miyamaker #1', // the token id, by default
     description: 'D',
     image: `${ORIGIN}/reveal/${SLUG}/image/1`,
-    attributes: [{ trait_type: 'N', value: String(piece) }],
+    attributes: [
+      { trait_type: 'N', value: String(piece) },
+      { trait_type: 'Piece', value: piece },
+    ],
   })
+  // The published salt proves the served metadata is the provenance's piece; undrawn salts are never published.
+  const list = await getJson(call('GET', 'assignments.json'))
+  const [entry] = list.assignments as { salt: string }[]
+  assert.equal(entry!.salt, a.files.get(piece)!.salt)
+  assert.equal(await metadataHash(entry!.salt, storedFromServed(meta)), a.pieces[piece - 1]!.metadata)
+  const everything = JSON.stringify(list) + JSON.stringify(await getJson(call('GET', 'admin/status')))
+  for (const [n, f] of a.files) if (n !== piece) assert.ok(!everything.includes(f.salt), `salt of piece ${n} leaked`)
   const img = await call('GET', 'image/1')
   assert.equal(img.headers.get('content-type'), 'image/jpeg')
   assert.equal(img.headers.get('cache-control'), 'public, max-age=31536000, immutable')
@@ -483,4 +499,33 @@ test('the marketplace is asked to refresh each drawn token once', async () => {
   await runRevealCron({ db, chain: () => fake.chain, refresh, log: () => undefined })
   await runRevealCron({ db, chain: () => fake.chain, refresh, log: () => undefined })
   assert.deepEqual(asked, [1, 2, 2, 3])
+})
+
+test('names: "#<token id>" by default, "#<piece>" when the collection says so, fixed once a token is drawn', async () => {
+  const { fake, cron, db, call, art: a } = await setup()
+  const reg = (nameBy: string) =>
+    call(
+      'PUT',
+      'admin/collection',
+      JSON.stringify({
+        chainId: 1,
+        supply: SUPPLY,
+        provenanceHash: a.hash,
+        name: 'Miyamaker',
+        description: 'Soon.',
+        coverImage: 'ar://cover',
+        nameBy,
+      })
+    )
+  assert.equal((await reg('serial')).status, 400)
+  assert.equal((await reg('piece')).status, 200)
+  fake.mint(1010)
+  fake.state.head = 1020
+  await cron()
+  const piece = Number(assignments(db)[0]!.piece)
+  assert.equal((await getJson(call('GET', '1'))).name, `Miyamaker #${piece}`)
+  assert.equal((await getJson(call('GET', '2'))).name, 'Miyamaker #2') // the cover is always the token id
+  assert.equal((await reg('token')).status, 409)
+  assert.equal((await reg('piece')).status, 200)
+  assert.equal((await getJson(call('GET', 'assignments.json'))).nameBy, 'piece')
 })

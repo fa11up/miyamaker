@@ -21,7 +21,7 @@
 import { decodeAbiParameters } from 'viem'
 
 import { CONFIRMATIONS, DRAW_RULE, drawFor, hash32, newPool, takePiece } from './revealdraw.mjs'
-import { isJpeg, provenanceHash, servedMetadata, sha256Hex } from './revealpiece.mjs'
+import { isJpeg, metadataHash, provenanceHash, servedMetadata, sha256Hex, tokenName } from './revealpiece.mjs'
 
 export const REVEAL_PREFIX = '/reveal'
 
@@ -128,6 +128,8 @@ export type Collection = {
   supply: number
   provenanceHash: string
   name: string
+  /** Drawn tokens are "<name> #<token id>" or "#<piece>". */
+  nameBy: 'token' | 'piece'
   description: string
   coverImage: string
   address?: string
@@ -147,6 +149,7 @@ const fromRow = (r: Record<string, unknown>): Collection => ({
   supply: Number(r.supply),
   provenanceHash: String(r.provenance_hash),
   name: String(r.name),
+  nameBy: r.name_by === 'piece' ? 'piece' : 'token',
   description: String(r.description),
   coverImage: String(r.cover_image),
   address: r.address ? String(r.address) : undefined,
@@ -235,7 +238,8 @@ async function tokenMetadata(c: Collection, raw: string, origin: string, deps: R
   if (!obj) return json(503, { error: 'This piece is not loaded yet.' }, 'no-store', { 'retry-after': '60' })
   // The image link has the tokenURI's own origin (the baseURI checked at attach), whatever host asked.
   const image = a.arImage ? `ar://${a.arImage}` : `${c.baseUri ?? `${origin}${REVEAL_PREFIX}/${c.slug}/`}image/${id}`
-  return json(200, servedMetadata(await obj.text(), image), a.arImage ? IMMUTABLE : ASSIGNED_CACHE)
+  const name = tokenName(c.name, c.nameBy, id, a.piece)
+  return json(200, servedMetadata(await obj.text(), { name, image }), a.arImage ? IMMUTABLE : ASSIGNED_CACHE)
 }
 
 async function imageFile(c: Collection, raw: string, deps: RevealDeps): Promise<Response> {
@@ -273,7 +277,7 @@ export async function assignmentsFile(c: Collection, db: RevealDb): Promise<Resp
   const { results } = await db
     .prepare(
       `SELECT a.token_id, a.piece, a.seed_block, a.seed_block_hash, a.seed, m.block_number, m.block_hash, m.tx_hash,
-              p.ar_image, p.ar_metadata
+              p.salt, p.ar_image, p.ar_metadata
        FROM reveal_assignments a
        JOIN reveal_mints m ON m.slug = a.slug AND m.token_id = a.token_id
        LEFT JOIN reveal_pieces p ON p.slug = a.slug AND p.piece = a.piece
@@ -290,6 +294,8 @@ export async function assignmentsFile(c: Collection, db: RevealDb): Promise<Resp
       deployBlock: c.deployBlock ?? null,
       supply: c.supply,
       provenanceHash: c.provenanceHash,
+      name: c.name,
+      nameBy: c.nameBy,
       confirmations: CONFIRMATIONS,
       rule: DRAW_RULE,
       lastScannedBlock: c.lastScannedBlock ?? null,
@@ -304,6 +310,8 @@ export async function assignmentsFile(c: Collection, db: RevealDb): Promise<Resp
         seedBlock: Number(r.seed_block),
         seedBlockHash: String(r.seed_block_hash),
         seed: String(r.seed),
+        // Published only for drawn pieces: with it, anyone can check the piece's metadata against the provenance.
+        salt: r.salt ? String(r.salt) : null,
         ...(r.ar_image ? { arImage: String(r.ar_image) } : {}),
         ...(r.ar_metadata ? { arMetadata: String(r.ar_metadata) } : {}),
       })),
@@ -418,6 +426,8 @@ async function registerCollection(request: Request, db: RevealDb, slug: string, 
   const name = text(b.name, 100)
   const description = text(b.description, 2000)
   const cover = text(b.coverImage, 2048)
+  const nameBy = b.nameBy ?? 'token'
+  if (nameBy !== 'token' && nameBy !== 'piece') return json(400, { error: 'nameBy is "token" or "piece".' })
   if (!Number.isInteger(chainId) || chainId < 1) return json(400, { error: 'chainId must be a chain id.' })
   if (!Number.isInteger(supply) || supply < 1 || supply > 100_000)
     return json(400, { error: 'supply must be 1..100000.' })
@@ -430,14 +440,19 @@ async function registerCollection(request: Request, db: RevealDb, slug: string, 
   if (was && (was.chainId !== chainId || was.supply !== supply || was.provenanceHash !== hash)) {
     return json(409, { error: 'This slug is registered with another chain, supply or provenance. Use a new slug.' })
   }
+  if (was && was.assigned > 0 && was.nameBy !== nameBy) {
+    return json(409, { error: 'Tokens are drawn already: how they are named is fixed.' })
+  }
   await db
     .prepare(
-      `INSERT INTO reveal_collections (slug, chain_id, supply, provenance_hash, name, description, cover_image, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO reveal_collections
+         (slug, chain_id, supply, provenance_hash, name, name_by, description, cover_image, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT (slug) DO UPDATE SET name = excluded.name, description = excluded.description,
-         cover_image = excluded.cover_image, updated_at = excluded.updated_at`
+         cover_image = excluded.cover_image, updated_at = excluded.updated_at,
+         name_by = CASE WHEN assigned = 0 THEN excluded.name_by ELSE name_by END`
     )
-    .bind(slug, chainId, supply, hash, name, description, cover, now)
+    .bind(slug, chainId, supply, hash, name, nameBy, description, cover, now)
     .run()
   return json(200, { ok: true, collection: await getCollection(db, slug) })
 }
@@ -504,7 +519,10 @@ async function loadProvenance(request: Request, c: Collection, db: RevealDb, buc
   return json(200, { ok: true, pieces: pieces.length })
 }
 
-/** PUT …/admin/piece/<n>.jpg or <n>.json: kept only when its sha256 is the provenance's. */
+/**
+ * PUT …/admin/piece/<n>.jpg, or <n>.json with its salt in x-reveal-salt: kept only when the hash is the provenance's.
+ * The salt stays private (in D1) until the piece is drawn.
+ */
 async function loadPiece(
   request: Request,
   c: Collection,
@@ -525,28 +543,29 @@ async function loadPiece(
 
   const bytes = await readCappedBytes(request, ext === 'jpg' ? MAX_IMAGE_BYTES : MAX_PIECE_JSON_BYTES)
   if (!bytes) return json(413, { error: 'Too large.' })
-  const hash = await sha256Hex(bytes)
+  // A piece's metadata comes with its salt (header x-reveal-salt): its hash is sha256(salt || bytes).
+  const salt = ext === 'json' ? (request.headers.get('x-reveal-salt') ?? '').trim() : undefined
+  let hash: string
+  try {
+    if (ext === 'json') servedMetadata(new TextDecoder().decode(bytes), { name: '', image: '' })
+    hash = salt === undefined ? await sha256Hex(bytes) : await metadataHash(salt, new TextDecoder().decode(bytes))
+  } catch (e) {
+    return json(422, { error: (e as Error).message })
+  }
   const want = String(ext === 'jpg' ? row.image_sha256 : row.metadata_sha256)
   if (hash !== want) return json(422, { error: `sha256 ${hash} is not the provenance's ${want}.` })
   if (ext === 'jpg' && !isJpeg(bytes)) return json(422, { error: 'Not a JPEG.' })
-  if (ext === 'json') {
-    try {
-      servedMetadata(new TextDecoder().decode(bytes), '')
-    } catch (e) {
-      return json(422, { error: (e as Error).message })
-    }
-  }
 
   await bucket.put(pieceKey(c.slug, piece, ext), bytes, {
     httpMetadata: { contentType: ext === 'jpg' ? 'image/jpeg' : 'application/json' },
-    sha256: hash,
+    sha256: await sha256Hex(bytes),
   })
-  await db
-    .prepare(
-      `UPDATE reveal_pieces SET ${ext === 'jpg' ? 'image_loaded' : 'metadata_loaded'} = 1 WHERE slug = ? AND piece = ?`
-    )
-    .bind(c.slug, piece)
-    .run()
+  await (ext === 'jpg'
+    ? db.prepare('UPDATE reveal_pieces SET image_loaded = 1 WHERE slug = ? AND piece = ?').bind(c.slug, piece)
+    : db
+        .prepare('UPDATE reveal_pieces SET metadata_loaded = 1, salt = ? WHERE slug = ? AND piece = ?')
+        .bind(salt, c.slug, piece)
+  ).run()
   return json(200, { ok: true, piece, file: ext, sha256: hash })
 }
 

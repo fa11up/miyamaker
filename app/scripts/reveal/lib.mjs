@@ -58,7 +58,7 @@ export const isLocalSite = (site) => ['localhost', '127.0.0.1', '[::1]'].include
  * One admin request. Retries network errors, 429 and 5xx (with backoff) `tries` times; any other answer is returned.
  * Throws when the last try still failed.
  */
-export async function admin(base, path, { method = 'GET', body, key, tries = 4, contentType } = {}) {
+export async function admin(base, path, { method = 'GET', body, key, tries = 4, contentType, headers = {} } = {}) {
   let last
   for (let t = 0; t < tries; t += 1) {
     if (t) await new Promise((r) => setTimeout(r, 500 * 2 ** t))
@@ -68,6 +68,7 @@ export async function admin(base, path, { method = 'GET', body, key, tries = 4, 
         headers: {
           authorization: `Bearer ${key}`,
           ...(body !== undefined ? { 'content-type': contentType ?? 'application/json' } : {}),
+          ...headers,
         },
         body,
         signal: AbortSignal.timeout(120_000),
