@@ -1,8 +1,10 @@
 import { formatLp, formatSl } from './audio/grain.js'
 import { PAD_KEYS } from './keys.js'
 import { FACTORY, KIT_LAYOUT } from './audio/presets.js'
-import { defaultNumpadFx, normalizeNumpadFx } from './audio/numpadFx.js'
+import { defaultNumpadFx, normalizeFxPresets, normalizeNumpadFx } from './audio/numpadFx.js'
+import { autoTarget, normalizeAuto, normalizeLaunch } from './audio/arrange.js'
 import { snapOctave } from './audio/knee.js'
+import { defaultEq, normalizeEq } from './audio/eq.js'
 import { defaultPatch, MAX_PARTIALS, MAX_UNISON, renderSynth, safeEntries, SYNTH_SR } from './audio/synth.js'
 import { SongChanged, bumpSong, exclusive, sameSong, songId } from './jobs.js'
 
@@ -62,19 +64,26 @@ export const model = {
   dockOpen: true,
   arrangeOpen: false,
   dockWidth: 232,
+  /** Share of the dock column given to the browser when the arranger is open too. */
+  dockSplit: 0.5,
   help: false,
   about: false,
   tracker: { row: 0, col: 0, pair: 0, focus: false, hex: '', sign: 1, edit: false, step: 1, follow: true, grains: false },
   library: null,
   wallet: '',
   fileWindow: '',
+  /** Which ? card is open. Empty means none. Not saved with the song. */
+  coachTopic: '',
   keysHelp: false,
   dirTick: 0,
   sessionFiles: [],
   nftPacks: [],
   nftLocked: [],
   numpadFx: defaultNumpadFx(),
+  fxPresets: [],
   fxHeld: -1,
+  /** Digits held, oldest first. That order is the master FX chain. */
+  fxStack: [],
   fxEdit: 0,
   browserNote: '',
   waveView: 2,
@@ -85,7 +94,9 @@ export const model = {
   songCursor: 0,
   /** wrap plays the order and repeats it. section repeats one cell. once plays through and stops. */
   songLoop: 'wrap',
-  /** Cell to start on the next step, or null. */
+  /** end waits until the part finishes. now takes a tap on the next step. grid keeps the step. */
+  songLaunch: 'end',
+  /** Cell queued by a tap, or null. */
   launchCursor: null,
   songName: '',
   songFile: '',
@@ -464,6 +475,7 @@ export function defaultComp() {
     kPitch: 0,
     kSnap: true,
     lfo: { kPolice: defaultLfo(), kFold: defaultLfo() },
+    eq: defaultEq(),
   }
 }
 
@@ -487,6 +499,7 @@ export function normalizeComp(raw) {
       kPolice: normalizeLfo(raw.lfo && typeof raw.lfo === 'object' ? raw.lfo.kPolice : null),
       kFold: normalizeLfo(raw.lfo && typeof raw.lfo === 'object' ? raw.lfo.kFold : null),
     },
+    eq: normalizeEq(raw.eq),
   }
 }
 
@@ -499,6 +512,7 @@ function normalizeBus(raw, index) {
     mute: !!raw?.mute,
     solo: !!raw?.solo,
     fx: emptyFx(),
+    eq: normalizeEq(raw?.eq),
   }
   if (Array.isArray(raw?.fx)) {
     for (let i = 0; i < 5; i++) {
@@ -615,12 +629,34 @@ export function formatNudge(n) {
 }
 
 export function setPatternLength(steps) {
-  const seq = currentSequence()
+  setPatternLengthAt(model.pattern || 0, steps)
+}
+
+/** Length of one address. The open pattern is not required. */
+export function setPatternLengthAt(index, steps) {
+  const i = ((index % 256) + 256) % 256
+  const seq = ensurePattern(i)
   const n = Math.max(1, Math.min(256, steps | 0))
   if (stepCount(seq) === n) return
   seq.len = n
   ensureStepLength(seq)
-  if (model.tracker.row >= seq.len) model.tracker.row = 0
+  if ((model.pattern | 0) === i && model.tracker.row >= seq.len) model.tracker.row = 0
+  touch(true)
+}
+
+/** A live name. Control characters go. Trim happens when the field closes. */
+export function setPatternName(index, name) {
+  const raw = typeof name === 'string' ? name : ''
+  // eslint-disable-next-line no-control-regex
+  ensurePattern(index).name = raw.replace(/[\u0000-\u001f\u007f]+/g, ' ').slice(0, 48)
+  touch(true)
+}
+
+/** Absent tempo follows the song. A number is the tempo this pattern plays. */
+export function setPatternBpm(index, bpm) {
+  const seq = ensurePattern(index)
+  if (bpm == null || bpm === '' || !Number.isFinite(Number(bpm))) delete seq.bpm
+  else seq.bpm = Math.max(40, Math.min(240, Math.round(Number(bpm))))
   touch(true)
 }
 
@@ -742,13 +778,24 @@ function stepCursor(fromRow) {
   model.tracker.row = (fromRow + step) % rows
 }
 
+/** Playing with record off. The play row moves, and the cursor does not. */
+export function trackerLocked() {
+  return !!(model.playing && !model.tracker.edit)
+}
+
+/** Rec off. The pattern does not change, stopped or playing. */
+function trackerWrites() {
+  return !!model.tracker.edit
+}
+
 /**
  * Write one tracker cell.
  * A performance hit spills across the row for 40ms, then the cursor steps once.
- * Live record (playing and Follow) uses the playhead row and spills for the rest of that step.
+ * Live record (playing and Follow) writes the playhead row and leaves the edit cursor where it is.
  * Typed instrument entry stays on the armed track and steps immediately.
  */
 export function commitTrackerNote({ pad = 0, vel = TRACK_VEL, pitch = 0, off = false, row = null, nudge = 0, live = false, typed = false, stay = false }) {
+  if (!trackerWrites()) return
   const rows = stepCount()
   if (!rows) return
   const now = typeof performance !== 'undefined' ? performance.now() : Date.now()
@@ -788,8 +835,7 @@ export function commitTrackerNote({ pad = 0, vel = TRACK_VEL, pitch = 0, off = f
     }
   }
   batch(() => {
-    if (live) model.tracker.row = writeRow
-    else if (advance) stepCursor(writeRow)
+    if (!live && advance) stepCursor(writeRow)
     model.tracker.hex = ''
     model.tracker.focus = true
     writeLane(writeRow, lane, ev)
@@ -797,6 +843,7 @@ export function commitTrackerNote({ pad = 0, vel = TRACK_VEL, pitch = 0, off = f
 }
 
 export function patchTrackerEvent(row, lane, patch, { step = true } = {}) {
+  if (!trackerWrites()) return
   batch(() => {
     const cell = currentPattern().steps[row]
     const ev = cell?.[lane]
@@ -818,6 +865,7 @@ export function patchTrackerEvent(row, lane, patch, { step = true } = {}) {
 
 /** Blank one grain column. The note stays, and hiding the column does not drop it. */
 export function clearTrackerGrain(row, lane, field) {
+  if (!trackerWrites()) return
   batch(() => {
     const ev = currentPattern().steps[row]?.[lane]
     if (!ev) return
@@ -845,9 +893,59 @@ export function setGrainCols(on) {
 }
 
 export function clearTrackerLane(row, lane) {
+  if (!trackerWrites()) return
   batch(() => {
     writeLane(row, lane, null)
     model.tracker.hex = ''
+  })
+}
+
+/**
+ * One tracker column. NOTE replaces or removes the hit.
+ * INST, VEL, MOVE, SL, and LP change a hit that is already there, and do not create one.
+ * An empty snap clears that column: pad 00, velocity 0, MOVE 0, or a blank grain.
+ */
+export function writeTrackerField(row, lane, field, snap) {
+  if (!trackerWrites()) return
+  batch(() => {
+    if (field === 0) {
+      if (!snap) writeLane(row, lane, null)
+      else {
+        const ev = {
+          pad: Math.max(0, Math.min(63, snap.pad | 0)),
+          vel: Math.max(0, Math.min(1, snap.vel ?? TRACK_VEL)),
+          pitch: snap.pitch || 0,
+          nudge: Math.max(-50, Math.min(50, Math.round(snap.nudge || 0))),
+        }
+        if (snap.sl != null) ev.sl = snap.sl & 0xffff
+        if (snap.len != null && snap.move != null) {
+          ev.len = snap.len
+          ev.move = snap.move
+        }
+        writeLane(row, lane, ev)
+      }
+      model.tracker.hex = ''
+      return
+    }
+    const ev = currentPattern().steps[row]?.[lane]
+    if (!ev || ev.off) return
+    if (field === 1) ev.pad = snap ? Math.max(0, Math.min(63, snap.pad | 0)) : 0
+    else if (field === 2) ev.vel = snap ? Math.max(0, Math.min(1, Number(snap.vel) || 0)) : 0
+    else if (field === 3) ev.nudge = snap ? Math.max(-50, Math.min(50, Math.round(snap.nudge || 0))) : 0
+    else if (field === 4) {
+      if (!snap || snap.sl == null) delete ev.sl
+      else ev.sl = snap.sl & 0xffff
+    } else if (field === 5) {
+      if (!snap || snap.len == null) {
+        delete ev.move
+        delete ev.len
+      } else {
+        ev.len = snap.len
+        ev.move = snap.move || 0
+      }
+    }
+    model.tracker.hex = ''
+    touch(true)
   })
 }
 
@@ -905,6 +1003,7 @@ export function loadFactoryKit() {
   model.selection = []
   model.songOrder = null
   model.songPlay = false
+  model.songLaunch = 'end'
   model.songName = ''
   model.songFile = ''
   model.songCursor = 0
@@ -957,7 +1056,7 @@ export function deleteSelection() {
 }
 
 export function cyclePlaySurface() {
-  const order = ['off', 'pads', 'keys']
+  const order = ['off', 'pads', 'keys', 'fx']
   const cur = order.includes(model.playSurface) ? model.playSurface : 'pads'
   const next = order[(order.indexOf(cur) + 1) % order.length]
   model.playSurface = next
@@ -973,6 +1072,119 @@ export function cyclePlaySurface() {
 
 export function setSongLoop(loop) {
   model.songLoop = loop === 'section' || loop === 'once' ? loop : 'wrap'
+  touch(true)
+}
+
+export function setSongLaunch(mode) {
+  model.songLaunch = normalizeLaunch(mode)
+  touch(true)
+}
+
+function patternLanes(seq) {
+  if (!Array.isArray(seq.auto)) seq.auto = []
+  return seq.auto
+}
+
+export function addAutoLane(index, id) {
+  const spec = autoTarget(id)
+  if (!spec) return
+  const seq = ensurePattern(index)
+  const lanes = patternLanes(seq)
+  if (lanes.some((lane) => lane.id === spec.id) || lanes.length >= 64) return
+  lanes.push({ id: spec.id, points: [] })
+  touch(true)
+}
+
+export function setAutoPoint(index, id, step, value) {
+  const spec = autoTarget(id)
+  if (!spec) return
+  const seq = ensurePattern(index)
+  const lanes = patternLanes(seq)
+  let lane = lanes.find((item) => item.id === spec.id)
+  if (!lane) {
+    if (lanes.length >= 64) return
+    lane = { id: spec.id, points: [] }
+    lanes.push(lane)
+  }
+  const n = stepCount(seq)
+  const s = Math.max(0, Math.min(n - 1, step | 0))
+  const raw = Number(value)
+  if (!Number.isFinite(raw)) return
+  const v = spec.step >= 1 ? Math.round(Math.max(spec.min, Math.min(spec.max, raw))) : Math.max(spec.min, Math.min(spec.max, raw))
+  lane.points = lane.points.filter((point) => point.s !== s)
+  lane.points.push({ s, v })
+  lane.points.sort((a, b) => a.s - b.s)
+  touch(true)
+}
+
+export function removeAutoPoint(index, id, step) {
+  const seq = ensurePattern(index)
+  const lane = Array.isArray(seq.auto) ? seq.auto.find((item) => item.id === id) : null
+  if (!lane) return
+  lane.points = lane.points.filter((point) => point.s !== (step | 0))
+  touch(true)
+}
+
+export function clearAutoLane(index, id) {
+  const i = ((index % 256) + 256) % 256
+  const seq = model.patterns[i]
+  if (!seq || !Array.isArray(seq.auto)) return
+  seq.auto = seq.auto.filter((lane) => lane.id !== id)
+  if (!seq.auto.length) delete seq.auto
+  touch(true)
+}
+
+/** A pattern address holds something worth keeping. */
+export function patternOccupied(pattern) {
+  if (!pattern) return false
+  if (pattern.name) return true
+  if (Number.isFinite(pattern.bpm)) return true
+  if (Array.isArray(pattern.auto) && pattern.auto.length) return true
+  const len = Number.isFinite(pattern.len)
+    ? Math.max(1, Math.min(256, pattern.len | 0))
+    : Math.max(1, Math.min(16, Math.round(Number(pattern.bars) || 1))) * 16
+  if (len !== 16) return true
+  return Array.isArray(pattern.steps) && pattern.steps.some((cell) => Array.isArray(cell) && cell.some((event) => event))
+}
+
+function clonePattern(src) {
+  const copy = JSON.parse(JSON.stringify(src))
+  return copy
+}
+
+/** Copy the cell's pattern into the next free address and insert it after this cell. */
+export function duplicateSongCell(index) {
+  const order = Array.isArray(model.songOrder) ? model.songOrder.slice() : []
+  if (index < 0 || index >= order.length) return
+  const srcIndex = order[index] & 255
+  const src = ensurePattern(srcIndex)
+  let dest = null
+  for (let i = 0; i < 256; i++) {
+    if (i === srcIndex) continue
+    if (!patternOccupied(model.patterns[i])) {
+      dest = i
+      break
+    }
+  }
+  if (dest == null) order.splice(index + 1, 0, srcIndex)
+  else {
+    model.patterns[dest] = clonePattern(src)
+    ensureStepLength(model.patterns[dest])
+    order.splice(index + 1, 0, dest)
+  }
+  model.songOrder = order.slice(0, 256)
+  if (model.songCursor > index) model.songCursor += 1
+  if (model.launchCursor != null && model.launchCursor > index) model.launchCursor += 1
+  if (model.songCursor >= model.songOrder.length) model.songCursor = Math.max(0, model.songOrder.length - 1)
+  if (model.launchCursor != null && model.launchCursor >= model.songOrder.length) model.launchCursor = null
+  touch(true)
+}
+
+export function setSongCellPattern(index, pat) {
+  const order = Array.isArray(model.songOrder) ? model.songOrder.slice() : []
+  if (index < 0 || index >= order.length) return
+  order[index] = (pat | 0) & 255
+  model.songOrder = order
   touch(true)
 }
 
@@ -1060,6 +1272,12 @@ export function saveNow() {
   return !model.saveError.startsWith('Not saved')
 }
 
+function clampDockSplit(value) {
+  const n = Number(value)
+  if (!Number.isFinite(n)) return 0.5
+  return Math.max(0.15, Math.min(0.85, n))
+}
+
 export function save() {
   saveTimer = 0
   if (typeof localStorage === 'undefined') return
@@ -1084,7 +1302,8 @@ export function save() {
     dockOpen: model.dockOpen !== false,
     arrangeOpen: !!model.arrangeOpen,
     dockWidth: Math.max(120, Math.min(640, model.dockWidth | 0 || 232)),
-    playSurface: model.playSurface === 'off' || model.playSurface === 'keys' ? model.playSurface : 'pads',
+    dockSplit: clampDockSplit(model.dockSplit),
+    playSurface: ['off', 'pads', 'keys', 'fx'].includes(model.playSurface) ? model.playSurface : 'pads',
     settings: model.settings,
     octave: model.octave,
     keyMap: model.keyMap === 'renoise' ? 'renoise' : 'koala',
@@ -1095,6 +1314,7 @@ export function save() {
     library: model.library,
     wallet: model.wallet || '',
     numpadFx: model.numpadFx,
+    fxPresets: normalizeFxPresets(model.fxPresets),
     waveView: model.waveView === 0 || model.waveView === 1 || model.waveView === 2 ? model.waveView : 2,
     waveDefault: 2,
     mixPage: model.mixPage === 1 ? 1 : 0,
@@ -1104,6 +1324,7 @@ export function save() {
     songFile: model.songFile || '',
     songPlay: !!model.songPlay,
     songLoop: model.songLoop === 'section' || model.songLoop === 'once' ? model.songLoop : 'wrap',
+    songLaunch: normalizeLaunch(model.songLaunch),
     songCursor: model.songCursor | 0,
   }
   try {
@@ -1288,11 +1509,13 @@ export function compactPatterns() {
   const out = []
   for (let i = 0; i < 256; i++) {
     const p = model.patterns[i]
-    if (!p) continue
+    if (!patternOccupied(p)) continue
     const len = stepCount(p)
-    const used = p.name || len !== 16 || p.steps.some((cell) => cell && cell.some((e) => e))
-    if (!used) continue
-    out.push({ i, name: p.name || '', bars: p.bars, len, steps: p.steps })
+    const row = { i, name: p.name || '', bars: p.bars, len, steps: p.steps }
+    if (Number.isFinite(p.bpm)) row.bpm = Math.max(40, Math.min(240, Math.round(p.bpm)))
+    const auto = normalizeAuto(p.auto)
+    if (auto.length) row.auto = auto
+    out.push(row)
   }
   return out
 }
@@ -1301,7 +1524,11 @@ export function restorePatterns(list) {
   model.patterns = Array.from({ length: 256 }, () => null)
   ;(Array.isArray(list) ? list : []).forEach((p) => {
     if (!p || !Number.isInteger(p.i) || p.i < 0 || p.i > 255) return
-    model.patterns[p.i] = { name: text(p.name, ''), bars: int(p.bars, 1, 1, 16), len: Number.isFinite(p.len) ? p.len : undefined, steps: Array.isArray(p.steps) ? p.steps : [] }
+    const seq = { name: text(p.name, ''), bars: int(p.bars, 1, 1, 16), len: Number.isFinite(p.len) ? p.len : undefined, steps: Array.isArray(p.steps) ? p.steps : [] }
+    if (Number.isFinite(p.bpm)) seq.bpm = Math.max(40, Math.min(240, Math.round(Number(p.bpm))))
+    const auto = normalizeAuto(p.auto)
+    if (auto.length) seq.auto = auto
+    model.patterns[p.i] = seq
     ensureStepLength(model.patterns[p.i])
   })
 }
@@ -1371,6 +1598,7 @@ export function boot() {
       library: data.library || null,
       wallet: typeof data.wallet === 'string' ? data.wallet : '',
       numpadFx: normalizeNumpadFx(data.numpadFx),
+      fxPresets: normalizeFxPresets(data.fxPresets),
       waveView: data.waveDefault === 2
         ? (data.waveView === 0 || data.waveView === 1 || data.waveView === 2 ? data.waveView : 2)
         : (data.waveView === 1 || data.waveView === 2 ? data.waveView : 2),
@@ -1379,12 +1607,14 @@ export function boot() {
       songFile: typeof data.songFile === 'string' ? data.songFile : '',
       songPlay: !!data.songPlay,
       songLoop: data.songLoop === 'section' || data.songLoop === 'once' ? data.songLoop : 'wrap',
+      songLaunch: normalizeLaunch(data.songLaunch),
       songCursor: Math.max(0, data.songCursor | 0),
-      playSurface: data.playSurface === 'off' || data.playSurface === 'keys' || data.playSurface === 'pads'
+      playSurface: data.playSurface === 'off' || data.playSurface === 'keys' || data.playSurface === 'pads' || data.playSurface === 'fx'
         ? data.playSurface
         : (data.keyMap === 'renoise' ? 'keys' : 'pads'),
       arrangeOpen: !!data.arrangeOpen,
       dockWidth: Math.max(120, Math.min(640, Number(data.dockWidth) || 232)),
+      dockSplit: clampDockSplit(data.dockSplit),
     })
     model.keyboard = model.playSurface === 'keys' || (model.playSurface === 'off' && model.keyMap === 'renoise')
     if (data.v === 2) {

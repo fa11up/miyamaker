@@ -24,6 +24,7 @@ export function defaultNumpadFx() {
     type: types[i],
     a: a[i],
     b: b[i],
+    c: 0,
     div: divs[i],
     mix: i < 4 ? 0xff : 0x80,
   }))
@@ -41,9 +42,53 @@ export function normalizeSlot(raw, index) {
     type,
     a,
     b: clamp(raw?.b ?? base.b, 0, 255) | 0,
+    c: clamp(raw?.c ?? base.c ?? 0, 0, 255) | 0,
     div,
     mix: clamp(raw?.mix ?? base.mix, 0, 255) | 0,
   }
+}
+
+/** Named setups of the ten slots. Saved presets use the same shape. */
+export const FACTORY_FX = ['Retrig', 'Slices', 'Stretch', 'Wander']
+
+export function factoryFxSlots(name) {
+  const slots = defaultNumpadFx()
+  if (name === 'Slices') {
+    const pattern = [0, 1, 4, 5, 6, 7, 2, 3]
+    for (let i = 0; i < 8; i++) {
+      slots[i] = { type: 'slice', div: 2 + (i % 5), a: pattern[i], b: i % 6, c: i > 5 ? 80 : 0, mix: 255 }
+    }
+    slots[8] = { type: 'grain', div: 2, a: 140, b: 40, c: 180, mix: 200 }
+    slots[9] = { type: 'filter', div: 3, a: 90, b: 180, c: 200, mix: 255 }
+  } else if (name === 'Stretch') {
+    const sizes = [40, 90, 160, 220]
+    for (let i = 0; i < 4; i++) slots[i] = { type: 'grain', div: i % 3, a: sizes[i], b: 30 + i * 20, c: 40 + i * 50, mix: 230 }
+    for (let i = 4; i < 8; i++) slots[i] = { type: 'slice', div: 3, a: i - 4, b: 0, c: 120, mix: 220 }
+    slots[8] = { type: 'chorus', div: 0, a: 100, b: 40, c: 0, mix: 128 }
+    slots[9] = { type: 'filter', div: 4, a: 70, b: 140, c: 160, mix: 255 }
+  } else if (name === 'Wander') {
+    for (let i = 0; i < 6; i++) slots[i] = { type: 'filter', div: 1 + (i % 5), a: 40 + i * 30, b: Math.min(255, 100 + i * 20), c: Math.min(255, 80 + i * 25), mix: 255 }
+    slots[6] = { type: 'slice', div: 4, a: 6, b: 3, c: 60, mix: 255 }
+    slots[7] = { type: 'grain', div: 1, a: 100, b: 70, c: 200, mix: 210 }
+    slots[8] = { type: 'chorus', div: 0, a: 80, b: 60, c: 0, mix: 128 }
+    slots[9] = { type: 'flange', div: 0, a: 90, b: 70, c: 0, mix: 128 }
+  }
+  return normalizeNumpadFx(slots)
+}
+
+export function normalizeFxPresets(raw) {
+  if (!Array.isArray(raw)) return []
+  const out = []
+  const seen = new Set()
+  for (const item of raw) {
+    if (out.length >= 24) break
+    if (!item || typeof item !== 'object') continue
+    const name = String(item.name || '').replace(/\s+/g, ' ').trim().slice(0, 24)
+    if (!name || seen.has(name)) continue
+    seen.add(name)
+    out.push({ name, slots: normalizeNumpadFx(item.slots) })
+  }
+  return out
 }
 
 export function normalizeNumpadFx(raw) {
@@ -106,6 +151,16 @@ export function createFx(sampleRate) {
   let hLen = 1
   let hDir = 0
   let flip = 0
+  let drift = 0
+  let lastStep = -1
+  let fPhase = -1
+  let fRes = -1
+  let rng = 1
+
+  function nextRand() {
+    rng = (rng * 1664525 + 1013904223) >>> 0
+    return rng / 4294967296
+  }
 
   /** Fresh buffers, so a press never replays audio from an old one. */
   function reset() {
@@ -133,6 +188,11 @@ export function createFx(sampleRate) {
     gLeft = 0
     hOn = 0
     flip = 0
+    drift = 0
+    lastStep = -1
+    fPhase = -1
+    fRes = -1
+    rng = 1
   }
 
   function noteLen(div, tempo) {
@@ -237,8 +297,8 @@ export function createFx(sampleRate) {
     holdR = right * (1 - mix) + wetR * mix
   }
 
-  function process(inL, inR, outL, outR, slot, bpm, time, origin) {
-    const n = inL.length
+  function process(inL, inR, outL, outR, slot, bpm, time, origin, count) {
+    const n = count > 0 ? count | 0 : inL.length
     const type = slot && slot.type && slot.type !== 'off' ? slot.type : ''
     // No key held: the master chain still runs through this node. Reading slot.mix here threw and muted everything.
     if (!type) {
@@ -266,6 +326,11 @@ export function createFx(sampleRate) {
       hOn = 0
       histFill = 0
       histWrite = 0
+      drift = 0
+      lastStep = -1
+      fPhase = -1
+      fRes = -1
+      rng = 1
     }
     if ((type === 'repeat' || type === 'slice') && (div !== latchedDiv || tempo !== latchedBpm)) {
       latchedDiv = div
@@ -329,8 +394,15 @@ export function createFx(sampleRate) {
           } else {
             const step = (loopPos / slice) | 0
             const within = loopPos - step * slice
+            const move = clamp(slot.c | 0, 0, 255)
+            if (move > 0 && step !== lastStep) {
+              lastStep = step
+              const hop = Math.max(1, (move * slice / 255) | 0)
+              drift = (drift + hop) % slice
+            }
+            if (!(move > 0)) drift = 0
             const which = PAT[(pattern * 8 + (step % 8)) | 0] % slices
-            const off = fillAt(fill, within, slice)
+            const off = (fillAt(fill, within, slice) + drift) % slice
             const at = which * slice + off
             if (at >= 0 && at < cap) {
               wetL = repeatL[at]
@@ -389,14 +461,15 @@ export function createFx(sampleRate) {
           readGrain(gStart, gLen, gAt, gDir)
           let wetL = holdL
           let wetR = holdR
-          gPos += 1
+          const crawl = 1 - (clamp(slot.c | 0, 0, 255) / 255) * 0.85
+          gPos += crawl
           gLeft -= 1
           if (hOn) {
             const hAt = hPos < hLen ? hPos : hLen - 1
             readGrain(hStart, hLen, hAt, hDir)
             wetL += holdL
             wetR += holdR
-            hPos += 1
+            hPos += crawl
             if (hPos >= hLen) hOn = 0
           }
           holdL = l * (1 - mix) + wetL * mix
@@ -405,7 +478,27 @@ export function createFx(sampleRate) {
           r = holdR
         }
       } else if (type === 'filter') {
-        filter(slot.a | 0, slot.b | 0, l, r)
+        let reso = slot.b | 0
+        const wander = clamp(slot.c | 0, 0, 255)
+        if (wander > 0) {
+          let boundary = fRes < 0
+          if (synced) {
+            const stepN = noteLen(div > 0 ? div : 2, tempo)
+            const elapsed = startSample + i
+            let phase = elapsed % stepN
+            if (phase < 0) phase += stepN
+            boundary = fRes < 0 || (fPhase >= 0 && phase < fPhase)
+            fPhase = phase
+          } else if (i === 0) {
+            boundary = true
+          }
+          if (boundary) {
+            const j = ((nextRand() * 2 - 1) * wander) | 0
+            fRes = clamp(reso + j, 0, 255)
+          }
+          if (fRes >= 0) reso = fRes
+        }
+        filter(slot.a | 0, reso, l, r)
         l = holdL
         r = holdR
       } else if (type === 'chorus' || type === 'flange') {
@@ -432,19 +525,31 @@ export function workletSource() {
     class MiyaNumpadFx extends AudioWorkletProcessor {
       constructor() {
         super()
-        this.fx = createFx(sampleRate)
-        this.held = -1
+        this.fxs = []
+        for (let i = 0; i < 10; i++) this.fxs.push(createFx(sampleRate))
+        this.stack = []
         this.slots = []
         this.bpm = 96
         this.origin = null
+        this.scratchL = [new Float32Array(16384), new Float32Array(16384)]
+        this.scratchR = [new Float32Array(16384), new Float32Array(16384)]
         this.port.onmessage = (event) => {
           const data = event.data || {}
           if (data.slots) this.slots = data.slots
           if (typeof data.bpm === 'number' && data.bpm >= 20 && data.bpm <= 300) this.bpm = data.bpm
           if ('origin' in data) this.origin = typeof data.origin === 'number' && isFinite(data.origin) ? data.origin : null
-          if (typeof data.held === 'number') {
-            if (data.held >= 0 && data.held !== this.held) this.fx.reset()
-            this.held = data.held
+          let next = null
+          if (Array.isArray(data.stack)) next = data.stack
+          else if (typeof data.held === 'number') next = data.held >= 0 ? [data.held] : []
+          if (next) {
+            const stack = []
+            for (let i = 0; i < next.length && stack.length < 10; i++) {
+              const n = next[i] | 0
+              if (n < 0 || n > 9 || stack.indexOf(n) >= 0) continue
+              if (this.stack.indexOf(n) < 0) this.fxs[n].reset()
+              stack.push(n)
+            }
+            this.stack = stack
           }
         }
       }
@@ -452,8 +557,25 @@ export function workletSource() {
         const input = inputs[0]
         const output = outputs[0]
         if (!input || !input[0] || !output || !output[0]) return true
-        const slot = this.held >= 0 ? this.slots[this.held] : null
-        this.fx.process(input[0], input[1] || input[0], output[0], output[1] || output[0], slot, this.bpm, currentTime, this.origin)
+        const inR = input[1] || input[0]
+        const outR = output[1] || output[0]
+        const stack = this.stack
+        const n = input[0].length
+        if (!stack.length || n > this.scratchL[0].length) {
+          this.fxs[0].process(input[0], inR, output[0], outR, null, this.bpm, currentTime, this.origin, n)
+          return true
+        }
+        let srcL = input[0]
+        let srcR = inR
+        for (let s = 0; s < stack.length; s++) {
+          const index = stack[s]
+          const last = s === stack.length - 1
+          const dstL = last ? output[0] : this.scratchL[s & 1]
+          const dstR = last ? outR : this.scratchR[s & 1]
+          this.fxs[index].process(srcL, srcR, dstL, dstR, this.slots[index], this.bpm, currentTime, this.origin, n)
+          srcL = dstL
+          srcR = dstR
+        }
         return true
       }
     }

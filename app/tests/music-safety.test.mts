@@ -6,6 +6,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
+import { responseAt } from '../src/pages/MusicMaker/audio/eq.js'
 import {
   audioBank,
   assertPadsRead,
@@ -175,6 +176,24 @@ test('comp, bus and LFO normalizers turn NaN and junk into the defaults, and kee
   assert.equal(buses[0].name, '01')
   assert.equal(buses[0].fx[0].amount, 0.45)
   assert.equal(buses[0].fx[1].type, 'none')
+  assert.equal(comp.eq.length, 5)
+  assert.equal(comp.eq[0].type, 'low')
+  assert.equal(comp.eq[4].type, 'high')
+  assert.equal(comp.eq[0].freq, 40)
+  assert.equal(buses[0].eq[2].type, 'bell')
+  const junk = normalizeComp({ eq: [{ type: 'nope', freq: NaN, gain: 99, q: 0 }, { type: 'bell', freq: 90000, gain: 6 }] })
+  assert.equal(junk.eq[0].type, 'low')
+  assert.equal(junk.eq[0].freq, 40)
+  assert.equal(junk.eq[0].gain, 18)
+  assert.ok(junk.eq[0].q >= 0.2)
+  assert.equal(junk.eq[1].freq, 20000)
+  assert.equal(junk.eq[1].gain, 6)
+  const flat = responseAt(1000, normalizeComp(null).eq, 48000, [0, 0, 0, 0, 0])
+  assert.ok(Math.abs(flat) < 1.5, `flat eq at 1k is ${flat}`)
+  const peaked = normalizeComp(null).eq.map((row) => ({ ...row }))
+  peaked[2] = { ...peaked[2], type: 'bell', freq: 1000, gain: 12, q: 1 }
+  const peak = responseAt(1000, peaked, 48000, [0, 0, 0, 0, 0])
+  assert.ok(peak > 10 && peak < 14, `bell peak is ${peak}`)
 })
 
 test('a kit with a junk pad list or a hostile patch is refused or cleaned before any pad changes', async () => {
@@ -228,6 +247,22 @@ test('patterns from a file are capped, deduped, and lose unknown keys', () => {
   assert.equal(out[0].steps[0][1], null)
   assert.equal(plainText({ toString: () => 'x' } as any), '')
   assert.equal(plainText('a\u0000b'.repeat(50), 80).length, 80)
+  assert.equal('bpm' in out[0], false)
+  assert.equal('auto' in out[0], false)
+})
+
+test('a song file keeps a pattern tempo, its automation, and the launch mode', () => {
+  const out = normalizePatterns([
+    { i: 1, name: 'A', bars: 1, steps: [], bpm: 140.6, auto: [{ id: 'bpm', points: [{ s: 0, v: 100 }, { s: 4, v: 999 }] }, { id: 'gone', points: [{ s: 0, v: 1 }] }] },
+    { i: 2, name: 'B', bars: 1, steps: [] },
+  ])
+  assert.equal(out[0].bpm, 141)
+  assert.deepEqual(out[0].auto, [{ id: 'bpm', points: [{ s: 0, v: 100 }, { s: 4, v: 240 }] }])
+  assert.equal('bpm' in out[1], false)
+  assert.equal('auto' in out[1], false)
+  assert.equal(packSong({ name: 'T', bpm: 100, launch: 'grid', patterns: [], pads: [], samples: [] }).launch, 'grid')
+  assert.equal('launch' in packSong({ name: 'T', bpm: 100, patterns: [], pads: [], samples: [] }), false)
+  assert.equal('launch' in packSong({ name: 'T', bpm: 100, launch: 'soon', patterns: [], pads: [], samples: [] }), false)
 })
 
 function page(items: any[], next: any = null) {

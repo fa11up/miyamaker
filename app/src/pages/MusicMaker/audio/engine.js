@@ -5,11 +5,13 @@ import { encodeWav, trimSilence } from './wav.js'
 import { chopRange, evenPoints, evenSlices, nextEmptyPad } from './slice.js'
 import { workletSource } from './numpadFx.js'
 import { kneeWorkletSource } from './knee.js'
+import { EQ_BANDS } from './eq.js'
 import { cachePcm, ensureLibrary, newFolder } from '../media/library.js'
 import { allowedMediaUrl, SAMPLE_MEDIA_LIMIT, SAMPLE_MEDIA_PATH } from '../media/allow.js'
 import { fetchCapped } from '../media/capped.js'
 import { VIDEO_AUDIO_PATH, videoPage } from '../media/videoaudio.js'
 import { nextSongCursor, samplePlayKind } from './playKind.js'
+import { applyAutoStep, clockBpm, launchStep } from './arrange.js'
 import { shapeSample, sliceSpan, urlSampleHint, VIDEO_FETCH_CAP } from './sampleShape.js'
 import { beginUndo, endUndo, stashUndo } from '../history.js'
 import { createBufferCache, finiteOr, heldForPort, liveVoices, locateStep, playFraction, scrubPcm, stepSeconds, stepsBehind, voicesToFade } from './voices.js'
@@ -27,6 +29,8 @@ let limiterReady = false
 let numpadFx = null
 let stockComp = null
 let makeup = null
+let masterEq = null
+let preComp = null
 let kneeNode = null
 let routed = null
 let analyser = null
@@ -43,7 +47,10 @@ let timer = 0
 let nextTime = 0
 let nextStep = 0
 let started = false
-const meters = { bus: Array(BUS_COUNT).fill(0), master: 0, gr: 0, compGr: 0 }
+/** Visual playhead timers. Each step paints when it sounds, including the odd steps. */
+let playheadTimers = []
+let playheadDue = -1
+const meters = { bus: Array(BUS_COUNT).fill(0), master: 0, gr: 0, compGr: 0, compIn: 0 }
 let meterTimer = 0
 let recording = null
 /** A Mic or Resample press waiting on resume() or the permission prompt. */
@@ -144,6 +151,10 @@ async function build() {
   stockComp = c.createDynamicsCompressor()
   makeup = c.createGain()
   makeup.gain.value = model.comp?.makeup ?? 1
+  masterEq = makeEq(c)
+  preComp = c.createAnalyser()
+  preComp.fftSize = 256
+  preComp.smoothingTimeConstant = 0.4
   try {
     const kneeUrl = URL.createObjectURL(new Blob([kneeWorkletSource()], { type: 'text/javascript' }))
     await c.audioWorklet.addModule(kneeUrl)
@@ -442,17 +453,44 @@ function makeFx(context, type) {
   return { input: g, output: g, update() {}, stop() {} }
 }
 
+function makeEq(context) {
+  const input = context.createGain()
+  const output = context.createGain()
+  const filters = []
+  const ducks = []
+  let prev = input
+  for (let i = 0; i < EQ_BANDS; i++) {
+    const filter = context.createBiquadFilter()
+    const duck = context.createBiquadFilter()
+    duck.type = 'peaking'
+    duck.gain.value = 0
+    prev.connect(filter)
+    filter.connect(duck)
+    prev = duck
+    filters.push(filter)
+    ducks.push(duck)
+  }
+  prev.connect(output)
+  const spec = context.createAnalyser()
+  spec.fftSize = 512
+  spec.smoothingTimeConstant = 0.75
+  output.connect(spec)
+  return { input, output, filters, ducks, spec, det: [], env: Array(EQ_BANDS).fill(0) }
+}
+
 function makeBus(context, dest) {
   const input = context.createGain()
   const fader = context.createGain()
   const panner = context.createStereoPanner()
   const meter = context.createAnalyser()
   meter.fftSize = 256
-  input.connect(fader)
+  const eq = makeEq(context)
+  input.connect(eq.input)
+  eq.output.connect(fader)
   fader.connect(panner)
   panner.connect(meter)
   meter.connect(dest)
-  return { input, fader, panner, meter, fx: [], sig: '' }
+  return { input, fader, panner, meter, eq, fx: [], sig: '' }
 }
 
 /** Slot indexes that actually make sound. A `none` slot is a straight wire, so it is left out. */
@@ -490,7 +528,7 @@ function connectChain(bus, context) {
     prev.connect(node.input)
     prev = node.output
   })
-  prev.connect(bus.fader)
+  prev.connect(bus.eq ? bus.eq.input : bus.fader)
   bus.fx = nodes
   bus.slots = live.slots
   bus.sig = live.sig
@@ -508,23 +546,110 @@ function routeMaster() {
   const mode = useKnee ? 'knee' : 'stock'
   if (routed === mode) return
   try { master.disconnect() } catch { /* not yet connected */ }
+  try { masterEq?.output.disconnect() } catch { /* not yet connected */ }
   try { stockComp.disconnect() } catch { /* not yet connected */ }
   try { makeup.disconnect() } catch { /* not yet connected */ }
   try { kneeNode?.disconnect() } catch { /* not yet connected */ }
+  master.connect(masterEq.input)
+  masterEq.output.connect(preComp)
   if (useKnee) {
-    master.connect(kneeNode)
+    masterEq.output.connect(kneeNode)
     kneeNode.connect(next)
   } else {
-    master.connect(stockComp)
+    masterEq.output.connect(stockComp)
     stockComp.connect(makeup)
     makeup.connect(next)
   }
   routed = mode
 }
 
+function tuneEq(node, bands) {
+  if (!node || !ctx || !bands?.length) return
+  let sig = ''
+  for (let i = 0; i < bands.length; i++) {
+    const row = bands[i]
+    sig += `${row.type}:${row.freq}:${row.gain}:${row.q}:${row.dyn ? 1 : 0}|`
+  }
+  if (node.sig === sig) return
+  node.sig = sig
+  const t = ctx.currentTime
+  const n = Math.min(node.filters.length, bands.length)
+  for (let i = 0; i < n; i++) {
+    const row = bands[i]
+    const kind = row.type === 'low' ? 'highpass' : row.type === 'high' ? 'lowpass' : 'peaking'
+    const filter = node.filters[i]
+    const duck = node.ducks[i]
+    filter.type = kind
+    filter.frequency.setTargetAtTime(row.freq, t, 0.02)
+    filter.Q.setTargetAtTime(row.q, t, 0.02)
+    filter.gain.setTargetAtTime(kind === 'peaking' ? row.gain : 0, t, 0.02)
+    duck.frequency.setTargetAtTime(row.freq, t, 0.02)
+    duck.Q.setTargetAtTime(Math.max(0.5, row.q), t, 0.02)
+    if (!row.dyn) duck.gain.setTargetAtTime(0, t, 0.05)
+  }
+}
+
+function ensureDet(node, index) {
+  if (node.det[index]) return node.det[index]
+  const bp = ctx.createBiquadFilter()
+  bp.type = 'bandpass'
+  const an = ctx.createAnalyser()
+  an.fftSize = 256
+  an.smoothingTimeConstant = 0.35
+  node.input.connect(bp)
+  bp.connect(an)
+  node.det[index] = { bp, an }
+  return node.det[index]
+}
+
+function updateDynamics(node, bands) {
+  if (!node || !ctx || !bands) return
+  const t = ctx.currentTime
+  if (!node.buf) node.buf = new Float32Array(128)
+  const buf = node.buf
+  for (let i = 0; i < node.ducks.length; i++) {
+    const row = bands[i]
+    let env = node.env[i] || 0
+    if (row?.dyn) {
+      const det = ensureDet(node, i)
+      det.bp.frequency.setTargetAtTime(row.freq, t, 0.04)
+      det.bp.Q.setTargetAtTime(Math.max(0.7, row.q), t, 0.04)
+      det.an.getFloatTimeDomainData(buf)
+      let sum = 0
+      for (let s = 0; s < buf.length; s++) sum += buf[s] * buf[s]
+      const db = 10 * Math.log10(sum / buf.length + 1e-12)
+      const over = db - row.thresh
+      const target = over > 0 ? Math.min(row.range, over) : 0
+      env += (target - env) * (target > env ? 0.55 : 0.22)
+    } else {
+      env *= 0.4
+      if (env < 0.05) env = 0
+    }
+    node.env[i] = env
+    if (row?.dyn || env > 0) node.ducks[i].gain.setTargetAtTime(-env, t, 0.04)
+  }
+}
+
+export function syncEq() {
+  if (!ctx || !masterEq) return
+  tuneEq(masterEq, model.comp?.eq)
+  busNodes.forEach((node, i) => tuneEq(node.eq, model.buses[i]?.eq))
+}
+
+/** Frequency bins for the EQ graph. `which` is a bus index, or -1 for the output. */
+export function readEqSpectrum(which) {
+  if (!ctx) return null
+  const node = which < 0 ? masterEq : busNodes[which]?.eq
+  if (!node?.spec) return null
+  if (!node.bins) node.bins = new Uint8Array(node.spec.frequencyBinCount)
+  node.spec.getByteFrequencyData(node.bins)
+  return { bins: node.bins, rate: ctx.sampleRate, env: node.env }
+}
+
 export function syncMasterComp() {
   if (!ctx || !stockComp) return
   routeMaster()
+  syncEq()
   const c = model.comp
   if (!c) return
   const t = ctx.currentTime
@@ -583,6 +708,7 @@ export function syncMixer(force = false) {
     glideParam(node.fader.gain, audible ? clamp(finiteOr(b.volume, 0), 0, 1) : 0, t)
     glideParam(node.panner.pan, clamp(finiteOr(b.pan, 0), -1, 1), t)
   })
+  syncEq()
 }
 
 function readMeters() {
@@ -599,6 +725,14 @@ function readMeters() {
   let p = 0
   for (let s = 0; s < buf.length; s++) p = Math.max(p, Math.abs(buf[s]))
   meters.master = p
+  if (preComp) {
+    preComp.getFloatTimeDomainData(buf)
+    let inn = 0
+    for (let s = 0; s < buf.length; s++) inn = Math.max(inn, Math.abs(buf[s]))
+    meters.compIn = inn
+  }
+  if (masterEq) updateDynamics(masterEq, model.comp?.eq)
+  busNodes.forEach((node, i) => updateDynamics(node.eq, model.buses[i]?.eq))
 }
 
 function padAudible(pad) {
@@ -948,6 +1082,8 @@ function silence(v, when, seconds = 0.012) {
   if (v.quietAt != null && v.quietAt <= end + 0.0005) return
   v.dead = true
   v.quietAt = end
+  const heard = gainAt(v.gain, requested)
+  v.gain = [{ t: requested, v: Math.max(0.0001, heard) }, { t: end, v: 0.0001 }]
   const g = v.gate.gain
   // The envelope gain is already mid-ramp. A cut booked on that same param at
   // the current sample never replaces it. `gate` stays at 1 until this call.
@@ -1002,6 +1138,12 @@ export function releaseHeld(id) {
     }
     v.dead = true
     v.quietAt = stopAt
+    v.gain = [
+      { t, v: Math.max(0.0001, gainAt(v.gain, t)) },
+      { t: mid, v: peak },
+      { t: fadeAt, v: peak },
+      { t: Math.max(fadeAt + 0.004, stopAt), v: 0.0001 },
+    ]
     stopExtras(v, stopAt)
     return
   }
@@ -1019,6 +1161,10 @@ export function releaseHeld(id) {
   }
   v.dead = true
   v.quietAt = t + rel
+  v.gain = [
+    { t, v: Math.max(0.0001, gainAt(v.gain, t)) },
+    { t: t + rel, v: 0.0001 },
+  ]
   stopExtras(v, t + rel)
 }
 
@@ -1130,7 +1276,7 @@ export function playPad(index, velocity = TRACK_VEL, when = 0, opts = {}) {
   out.connect(busNodes[pad.bus]?.input || master)
 
   scheduleFilter(filter, pad, t)
-  scheduleAmp(amp, pad.amp, vel, t, envTotal)
+  const gain = scheduleAmp(amp, pad.amp, vel, t, envTotal)
 
   if (!grainLoop) {
     if (looping) {
@@ -1163,6 +1309,7 @@ export function playPad(index, velocity = TRACK_VEL, when = 0, opts = {}) {
     heldLoop: looping && heldLive,
     introUntil: t + regionDur,
     peak: Math.max(0.0001, vel * clamp(pad.amp.s ?? 1, 0, 1)),
+    gain,
     stops,
     out,
     sends,
@@ -1201,17 +1348,46 @@ export function playPad(index, velocity = TRACK_VEL, when = 0, opts = {}) {
   if (!opts.noCapture && !opts.fromSeq && !opts.pattern) captureHit(index, velocity, opts.pitch, t)
 }
 
+function voiceHeard(v, now) {
+  if (v.pad == null || !v.play) return false
+  if (now + 0.0005 < v.startAt) return false
+  if (v.quietAt != null && now >= v.quietAt - 0.0005) return false
+  return true
+}
+
 /** Sample fractions (0–1 of the pad's original audio) for each living voice. */
 export function voicePositions(padIndex) {
   if (!ctx) return []
   const now = ctx.currentTime
   const out = []
   for (const v of voices) {
-    if (v.pad !== padIndex || !v.play) continue
-    if (now + 0.0005 < v.startAt) continue
-    if (v.quietAt != null && now >= v.quietAt - 0.0005) continue
+    if (v.pad !== padIndex || !voiceHeard(v, now)) continue
     out.push(v.play.mode === 'grain' ? grainFraction(v, now) : bufferFraction(v, now))
   }
+  return out
+}
+
+/** Where each sounding pad is in its sample, and how loud that moment is. The louder voice wins. */
+export function livePadMarks() {
+  if (!ctx) return []
+  const now = ctx.currentTime
+  const at = new Map()
+  for (const v of voices) {
+    if (v.pad == null || !v.play) continue
+    if (v.quietAt != null && now >= v.quietAt - 0.0005) continue
+    if (now + 0.15 < v.startAt) continue
+    const started = voiceHeard(v, now)
+    const fraction = started
+      ? (v.play.mode === 'grain' ? grainFraction(v, now) : bufferFraction(v, now))
+      : (v.play.reverse ? 1 : v.play.offset / Math.max(0.0001, v.play.dur))
+    const env = gainAt(v.gain, started ? now : v.startAt)
+    const shape = sampleRms(getEntry(v.pad)?.pcm, fraction)
+    const level = Math.max(0, Math.min(1, env * 1.6 * Math.min(1, shape * 3.2)))
+    const prev = at.get(v.pad)
+    if (!prev || level >= prev.level) at.set(v.pad, { at: fraction, level })
+  }
+  const out = []
+  at.forEach((mark, pad) => out.push({ pad, at: mark.at, level: mark.level }))
   return out
 }
 
@@ -1274,6 +1450,19 @@ function captureHit(index, velocity, pitch, when) {
 }
 
 function scheduleAmp(amp, env, vel, t, total) {
+  const points = ampPoints(env, vel, t, total)
+  const g = amp.gain
+  g.cancelScheduledValues(t)
+  g.setValueAtTime(points[0].v, points[0].t)
+  g.exponentialRampToValueAtTime(points[1].v, points[1].t)
+  g.exponentialRampToValueAtTime(points[2].v, points[2].t)
+  g.setValueAtTime(points[3].v, points[3].t)
+  g.exponentialRampToValueAtTime(points[4].v, points[4].t)
+  return points
+}
+
+/** The same breakpoints scheduleAmp writes, so the pad light can follow the sound. */
+function ampPoints(env, vel, t, total) {
   const a = Math.max(0.001, finiteOr(env?.a, 0.001))
   const d = Math.max(0.001, finiteOr(env?.d, 0.001))
   const s = clamp(finiteOr(env?.s, 1), 0, 1)
@@ -1281,21 +1470,57 @@ function scheduleAmp(amp, env, vel, t, total) {
   const peak = Math.max(0.0001, finiteOr(vel, 0.0001))
   const sus = Math.max(0.0001, peak * s)
   total = Math.max(0, finiteOr(total, 0))
-  const g = amp.gain
-  g.cancelScheduledValues(t)
-  g.setValueAtTime(0.0001, t)
-  g.exponentialRampToValueAtTime(peak, t + a)
-  g.exponentialRampToValueAtTime(sus, t + a + d)
   const relAt = Math.max(t + a + d, t + total - r)
-  g.setValueAtTime(sus, relAt)
-  g.exponentialRampToValueAtTime(0.0001, relAt + r)
+  return [
+    { t, v: 0.0001 },
+    { t: t + a, v: peak },
+    { t: t + a + d, v: sus },
+    { t: relAt, v: sus },
+    { t: relAt + r, v: 0.0001 },
+  ]
+}
+
+function gainAt(points, now) {
+  if (!points?.length || !Number.isFinite(now)) return 0
+  if (now <= points[0].t) return points[0].v
+  for (let i = 1; i < points.length; i++) {
+    const b = points[i]
+    if (now <= b.t) {
+      const a = points[i - 1]
+      const u = (now - a.t) / Math.max(0.0001, b.t - a.t)
+      return a.v * Math.pow(Math.max(0.0001, b.v) / Math.max(0.0001, a.v), Math.max(0, Math.min(1, u)))
+    }
+  }
+  return points[points.length - 1].v
+}
+
+/** Loudness of a short window of the sample at `at` (0–1). */
+function sampleRms(pcm, at) {
+  if (!pcm?.length) return 1
+  const n = pcm.length
+  const centre = Math.floor(Math.max(0, Math.min(0.9999, at)) * n)
+  const win = Math.min(n, 768)
+  let b = Math.min(n, centre + (win >> 1))
+  let a = Math.max(0, b - win)
+  b = Math.min(n, a + win)
+  let sum = 0
+  let count = 0
+  const step = Math.max(1, Math.floor((b - a) / 48))
+  for (let i = a; i < b; i += step) {
+    const s = pcm[i] || 0
+    sum += s * s
+    count += 1
+  }
+  return Math.sqrt(sum / Math.max(1, count))
 }
 
 function flash(index) {
-  const el = document.querySelector(`[data-pad="${index}"]`)
-  if (!el) return
-  el.classList.add('lit')
-  window.setTimeout(() => el.classList.remove('lit'), 80)
+  if (typeof document === 'undefined') return
+  const root = document.querySelector('[data-miya-music]')?.shadowRoot || document
+  root.querySelectorAll(`.pad[data-pad="${index}"]`).forEach((el) => {
+    el.style.setProperty('--hit', '1')
+    el.style.zIndex = '1'
+  })
 }
 
 /** Anchored to the last fired step, so a tempo change mid-take does not shift the grid. */
@@ -1354,14 +1579,42 @@ function fireStep(step, time) {
     }
   })
   if (model.metro && step % 4 === 0) click(time, step % 16 === 0)
-  model.playhead = step
-  if (step % 2 === 0) touch(false)
+  showPlayhead(step, time)
+}
+
+function clearPlayheadTimers() {
+  for (const id of playheadTimers) window.clearTimeout(id)
+  playheadTimers = []
+}
+
+/** Paint this step when it is heard. A later step wins if an older timer arrives late. */
+function showPlayhead(step, time) {
+  const due = Number.isFinite(time) ? time : 0
+  const wait = ctx ? Math.max(0, (due - ctx.currentTime) * 1000) : 0
+  const id = window.setTimeout(() => {
+    playheadTimers = playheadTimers.filter((item) => item !== id)
+    if (!model.playing || due < playheadDue) return
+    playheadDue = due
+    if (model.playhead === step) return
+    model.playhead = step
+    touch(false)
+  }, wait)
+  playheadTimers.push(id)
 }
 
 function haltClock() {
   model.playing = false
   started = false
   window.clearInterval(timer)
+  clearPlayheadTimers()
+  touch(false)
+}
+
+function adoptPatternTempo(seq) {
+  if (!seq || !Number.isFinite(seq.bpm)) return
+  const next = Math.round(Math.max(40, Math.min(240, seq.bpm)))
+  if (model.bpm === next) return
+  model.bpm = next
   touch(false)
 }
 
@@ -1377,11 +1630,12 @@ function advanceSong() {
   }
   model.songCursor = next
   model.pattern = order[next] | 0
+  adoptPatternTempo(ensurePattern(model.pattern))
   return false
 }
 
 /** Jump to a queued cell at this step. The step time stays where it is. */
-function takeLaunch() {
+function takeLaunch(step) {
   if (model.launchCursor == null) return false
   const order = model.songOrder
   const at = model.launchCursor | 0
@@ -1389,8 +1643,33 @@ function takeLaunch() {
   if (!model.songPlay || !Array.isArray(order) || !order.length) return false
   model.songCursor = Math.max(0, Math.min(order.length - 1, at))
   model.pattern = order[model.songCursor] | 0
-  nextStep = 0
+  const seq = ensurePattern(model.pattern)
+  const n = Math.max(1, stepCount(seq))
+  nextStep = Math.max(0, Math.min(n - 1, step | 0))
+  adoptPatternTempo(seq)
   return true
+}
+
+function queuedLength() {
+  if (model.launchCursor != null && Array.isArray(model.songOrder) && model.songOrder.length) {
+    const at = Math.max(0, Math.min(model.songOrder.length - 1, model.launchCursor | 0))
+    return stepCount(ensurePattern(model.songOrder[at]))
+  }
+  return stepCount(currentSequence())
+}
+
+/** now and grid take a queued cell on this step. end waits for the wrap. A wrap with nothing queued advances. */
+function followLaunch(atWrap) {
+  const decision = launchStep({
+    mode: model.songLaunch,
+    queued: model.launchCursor != null,
+    atWrap,
+    step: nextStep,
+    nextLength: queuedLength(),
+  })
+  if (decision.take) return takeLaunch(decision.step) ? 'took' : 'stay'
+  if (decision.advance) return advanceSong() ? 'halt' : 'advanced'
+  return 'stay'
 }
 
 /** Launch a cell on the next step. From stop, Play starts on that cell. */
@@ -1455,26 +1734,39 @@ function scheduler() {
   pruneVoices(now)
   patternVoices = liveVoices(patternVoices, now)
   const horizon = now + 0.12
-  const base = stepSeconds(model.bpm)
-  const swing = clamp(finiteOr(model.swing, 0), 0, 0.75)
+  const skipBase = stepSeconds(clockBpm(model, currentSequence(), nextStep))
   // A throttled background tab can fall seconds behind: skip to now instead of firing every missed step at once.
-  const skip = stepsBehind(nextTime, now, base)
+  const skip = stepsBehind(nextTime, now, skipBase)
   if (skip) {
     const n = Math.max(1, stepCount(currentSequence()))
     const total = nextStep + skip
-    nextStep = total % n
-    if (total >= n) {
-      if (!takeLaunch() && advanceSong()) return
+    const crossed = total >= n
+    nextTime += skip * skipBase
+    const queuedNow = model.launchCursor != null && model.songLaunch !== 'end'
+    if (queuedNow) {
+      const kept = nextStep
+      nextStep = total
+      const result = followLaunch(false)
+      if (result === 'halt') return
+      if (result !== 'took') nextStep = ((kept + skip) % n + n) % n
+    } else if (crossed) {
+      nextStep = 0
+      if (followLaunch(true) === 'halt') return
+    } else {
+      nextStep = ((total % n) + n) % n
     }
-    nextTime += skip * base
   }
   let guard = 0
   while (nextTime < horizon && guard < 64) {
     guard += 1
-    if (model.launchCursor != null) takeLaunch()
+    if (followLaunch(false) === 'halt') return
     const seq = currentSequence()
     const n = Math.max(1, stepCount(seq))
     if (nextStep >= n) nextStep = 0
+    if (applyAutoStep(model, seq, nextStep)) syncMixer()
+    const bpm = clockBpm(model, seq, nextStep)
+    const base = stepSeconds(bpm)
+    const swing = clamp(finiteOr(model.swing, 0), 0, 0.75)
     const swung = nextTime + (nextStep % 2 === 1 ? base * swing : 0)
     anchor = { step: nextStep, time: nextTime }
     try {
@@ -1485,7 +1777,7 @@ function scheduler() {
     nextStep += 1
     if (nextStep >= n) {
       nextStep = 0
-      if (!takeLaunch() && advanceSong()) return
+      if (followLaunch(true) === 'halt') return
     }
     nextTime += base
   }
@@ -1506,6 +1798,9 @@ export function startTransport(opts = {}) {
   started = true
   nextTime = ctx.currentTime + 0.05
   nextStep = 0
+  model.playhead = 0
+  playheadDue = -1
+  clearPlayheadTimers()
   anchor = { step: 0, time: nextTime }
   model.launchCursor = null
   if (model.songPlay && Array.isArray(model.songOrder) && model.songOrder.length) {
@@ -1514,6 +1809,7 @@ export function startTransport(opts = {}) {
     model.songCursor = at
     model.pattern = model.songOrder[at] | 0
   }
+  adoptPatternTempo(currentSequence())
   window.clearInterval(timer)
   timer = window.setInterval(scheduler, 25)
   scheduler()
@@ -1523,6 +1819,7 @@ export function startTransport(opts = {}) {
 export function stopTransport() {
   model.playing = false
   window.clearInterval(timer)
+  clearPlayheadTimers()
   if (ctx) patternVoices.forEach((v) => silence(v, ctx.currentTime, 0.03))
   patternVoices = []
   touch(false)
@@ -1634,12 +1931,21 @@ function scheduleGrains(context, dest, pcm, sr, rate, spec, t0, hold) {
 export const BOUNCE_NOTE = 'WAV has the song order, swing, volume and pan. Bus FX, pad FX and filters, envelopes, chokes and the master compressor are not in it.'
 export const BOUNCE_MAX_SECONDS = 600
 
-/** How long the bounce of `order` runs, in seconds: every pattern's steps at this tempo, plus the tail. */
+/** How long the bounce of `order` runs, in seconds: every pattern's steps at its tempo, plus the tail. */
 export function bounceSeconds(order = bounceOrder(), bpm = model.bpm) {
-  const base = stepSeconds(bpm)
+  const song = Number.isFinite(Number(bpm)) ? Number(bpm) : 96
+  let seconds = 0
   let steps = 0
-  for (const id of order) steps += stepCount(ensurePattern(id))
-  return steps * base + 0.6
+  for (const id of order) {
+    const seq = ensurePattern(id)
+    const count = stepCount(seq)
+    for (let step = 0; step < count; step++) {
+      seconds += stepSeconds(clockBpm({ bpm: song }, seq, step))
+      steps += 1
+    }
+  }
+  if (!steps) seconds = stepSeconds(song)
+  return seconds + 0.6
 }
 
 function clock(seconds) {
@@ -1657,7 +1963,6 @@ export function bounceOrder() {
 export async function renderBounce() {
   await resume()
   const order = bounceOrder()
-  const base = stepSeconds(model.bpm)
   const swing = clamp(finiteOr(model.swing, 0), 0, 0.75)
   const seconds = bounceSeconds(order, model.bpm)
   // A bounce cut short would be published or downloaded as if it were the song. Refuse it instead.
@@ -1687,6 +1992,7 @@ export async function renderBounce() {
     const count = stepCount(seq)
     for (let step = 0; step < count; step++) {
       if (time > seconds) break
+      const base = stepSeconds(clockBpm(model, seq, step))
       const when = time + (step % 2 === 1 ? base * swing : 0)
       ;(seq.steps[step] || []).forEach((ev, lane) => {
         if (!ev || ev.off) return
@@ -2164,7 +2470,8 @@ export function shutdown() {
   anchor = null
   started = false
   model.fxHeld = -1
-  pushNumpadFx(-1)
+  model.fxStack = []
+  pushNumpadFx()
   if (midiAccess) {
     midiAccess.onstatechange = null
     for (const input of midiAccess.inputs.values()) {
@@ -2188,35 +2495,53 @@ function numpadOrigin() {
   return Number.isFinite(origin) ? origin : null
 }
 
+function fxStackNow() {
+  return Array.isArray(model.fxStack) ? model.fxStack.filter((n) => n >= 0 && n <= 9) : []
+}
+
 function postNumpadClock() {
-  if (!numpadFx || !(model.fxHeld >= 0)) return
+  if (!numpadFx || !fxStackNow().length) return
   numpadFx.port.postMessage({
     bpm: numpadTempo(),
     origin: numpadOrigin(),
   })
 }
 
-export function pushNumpadFx(held = model.fxHeld) {
+export function pushNumpadFx() {
   if (!numpadFx) return
   numpadFx.port.postMessage({
     slots: model.numpadFx,
     bpm: numpadTempo(),
-    held: Number.isFinite(held) ? held : -1,
+    stack: fxStackNow(),
     origin: numpadOrigin(),
   })
 }
 
+/** Press order is the chain order. A key already held stays where it is. */
 export function holdNumpadFx(digit) {
-  model.fxHeld = digit
-  model.fxEdit = digit
-  pushNumpadFx(digit)
+  const n = digit | 0
+  if (n < 0 || n > 9) return
+  const stack = fxStackNow()
+  model.fxEdit = n
+  if (!stack.includes(n)) {
+    stack.push(n)
+    model.fxStack = stack
+    model.fxHeld = n
+    pushNumpadFx()
+  }
   touch(false)
 }
 
 export function releaseNumpadFx(digit) {
-  if (digit != null && digit !== model.fxHeld) return
-  model.fxHeld = -1
-  pushNumpadFx(-1)
+  if (digit == null) {
+    model.fxStack = []
+    model.fxHeld = -1
+  } else {
+    const stack = fxStackNow().filter((n) => n !== digit)
+    model.fxStack = stack
+    model.fxHeld = stack.length ? stack[stack.length - 1] : -1
+  }
+  pushNumpadFx()
   touch(false)
 }
 

@@ -52,17 +52,24 @@ const noticeBox: CSSProperties = {
   bottom: 8,
   zIndex: 20,
   padding: '8px 10px',
-  background: '#fff8d6',
-  color: '#222',
-  border: '1px solid #b89b2a',
-  borderRadius: 4,
+  background: '#f9bba6',
+  color: '#000000',
+  border: '1px solid #3d2a6b',
+  borderRadius: 3,
   font: '12px/1.4 system-ui, sans-serif',
   display: 'flex',
   flexWrap: 'wrap',
   gap: 8,
   alignItems: 'center',
 }
-const noticeBtn: CSSProperties = { font: 'inherit', padding: '2px 8px', cursor: 'pointer' }
+const noticeBtn: CSSProperties = {
+  font: 'inherit',
+  padding: '2px 8px',
+  cursor: 'pointer',
+  color: '#000000',
+  background: 'linear-gradient(180deg, #ffe4dc 0%, #fe9ca1 48%, #e78fb1 100%)',
+  border: '1px solid #3d2a6b',
+}
 
 /**
  * What the session could not open, over the sampler where it is seen on every screen: pads whose samples
@@ -285,7 +292,7 @@ export default function MusicMakerPage() {
           }}
         />
         {replace && (
-          <div role="dialog" aria-modal="true" aria-label="Replace the current session" style={{ ...noticeBox, top: 8, bottom: 'auto', background: '#fff' }}>
+          <div role="dialog" aria-modal="true" aria-label="Replace the current session" style={{ ...noticeBox, top: 8, bottom: 'auto' }}>
             <span style={{ flex: '1 1 240px' }}>
               Replace the current {replace.job.kind === 'kit' ? 'kit' : 'song'} with {String(replace.job.name || 'that file').slice(0, 80)}? Undo brings this one back.
             </span>

@@ -2,7 +2,9 @@ import { noteName, renoiseNote } from '../keys.js'
 import { noteOff, noteOn, releaseKeyboardNotes } from '../audio/engine.js'
 import { BANKS, TRACK_VEL, busLabel, model, padKeyLabel, touch, trackerFields } from '../model.js'
 import { padGesture } from '../padEdit.js'
+import { PadWave, usePadVis } from '../padVis.js'
 import { useModel } from '../useModel.js'
+import { FxPresets, NumpadGrid } from './Fx.jsx'
 
 const ROWS = [
   ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'],
@@ -20,11 +22,23 @@ export function PlaySurface() {
   useModel()
   if (model.playSurface === 'off') return null
   if (model.playSurface === 'keys') return <PhoneKeys />
+  if (model.playSurface === 'fx') return <PhoneFx />
   if (model.screen === 'pads') return null
   return <PhonePads />
 }
 
+function PhoneFx() {
+  if (model.screen === 'fx') return null
+  return (
+    <div className="perf-surface for-fx">
+      <FxPresets />
+      <NumpadGrid />
+    </div>
+  )
+}
+
 function PhonePads() {
+  usePadVis()
   const start = model.bank * 16
   return (
     <div className="perf-surface for-pads">
@@ -34,13 +48,14 @@ function PhonePads() {
           const pad = model.pads[index]
           const cls = [
             'pad',
-            pad.source === 'empty' ? 'empty' : '',
+            pad.source === 'empty' ? 'empty' : 'seen',
             model.selected === index || model.selection.includes(index) ? 'selected' : '',
             pad.mute ? 'muted' : '',
             pad.solo ? 'soloed' : '',
           ].filter(Boolean).join(' ')
           return (
             <button key={index} type="button" className={cls} data-pad={index} {...padGesture(index, { play: true })}>
+              <PadWave index={index} />
               <span className="key">{padKeyLabel(local)}</span>
               <span className="name">{pad.name}</span>
               <span className="meta">{BANKS[model.bank]}{local + 1} · {model.buses[pad.bus]?.name || busLabel(pad.bus)}</span>

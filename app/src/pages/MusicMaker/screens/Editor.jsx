@@ -82,10 +82,9 @@ export function Editor() {
   return (
     <div className="screen edit-screen">
       <div className="screen-head">
-        <HelpButton title="Sample">
-          Drag the wave to set S and E. Drag inside the span to slide it. Pinch or ctrl-scroll to zoom, double-click to fit. Chop copies the span to the next empty pad. Hold a note on the Pads page to loop from LP. Tracker notes play once from the trim start to the trim end, and the same lane chokes the previous note. Drag a slice line to move a chop. Release writes that chop back into the folder.
-        </HelpButton>
+        <HelpButton title="Sample" topic="sample" />
       </div>
+      <PadPick pad={pad} />
       <div className="slot-grid" role="listbox" aria-label="Sample slots">
         {model.pads.map((slot, i) => (
           <button
@@ -111,6 +110,14 @@ export function Editor() {
         ))}
       </div>
       <div className="edit-top">
+        <label className="pad-play">
+          <span>Play</span>
+          <select aria-label="Play" value={pad.mode} onChange={(e) => set({ mode: e.target.value })}>
+            <option value="oneshot">One-shot</option>
+            <option value="gate">Gate</option>
+            <option value="loop">Loop</option>
+          </select>
+        </label>
         <button type="button" className="btn" onClick={() => file.current?.click()}>
           Import
         </button>
@@ -320,6 +327,71 @@ export function Editor() {
 
 function ms(seconds) {
   return `${Math.round(seconds * 1000)} ms`
+}
+
+function PadPick({ pad }) {
+  const bankRoot = useRef(null)
+  const padRoot = useRef(null)
+  const [bankOpen, setBankOpen] = useState(false)
+  const [padOpen, setPadOpen] = useState(false)
+  useEffect(() => {
+    if (!bankOpen && !padOpen) return undefined
+    const down = (event) => {
+      const path = event.composedPath?.() || []
+      if (bankRoot.current && (bankRoot.current.contains(event.target) || path.includes(bankRoot.current))) return
+      if (padRoot.current && (padRoot.current.contains(event.target) || path.includes(padRoot.current))) return
+      setBankOpen(false)
+      setPadOpen(false)
+    }
+    window.addEventListener('pointerdown', down)
+    return () => window.removeEventListener('pointerdown', down)
+  }, [bankOpen, padOpen])
+  const bank = model.bank | 0
+  const local = model.selected % 16
+  const choose = (index) => {
+    model.selected = index
+    model.bank = Math.floor(index / 16)
+    model.selection = []
+    model.sliceView = null
+    setPadOpen(false)
+    setBankOpen(false)
+    touch(false)
+  }
+  return (
+    <div className="pad-pick">
+      <div className="mmm-file" ref={padRoot}>
+        <button type="button" className="btn" aria-expanded={padOpen} aria-haspopup="menu" onClick={() => { setPadOpen((v) => !v); setBankOpen(false) }}>
+          {`Pad: ${BANKS[bank]}${local + 1}`}
+        </button>
+        {padOpen && (
+          <div className="file-menu" role="menu">
+            {Array.from({ length: 16 }, (_, i) => {
+              const index = bank * 16 + i
+              const slot = model.pads[index]
+              return (
+                <button key={index} type="button" onClick={() => choose(index)}>
+                  {`${BANKS[bank]}${i + 1} ${slot.name}`}
+                </button>
+              )
+            })}
+          </div>
+        )}
+      </div>
+      <div className="mmm-file" ref={bankRoot}>
+        <button type="button" className="btn" aria-expanded={bankOpen} aria-label="Sample bank" aria-haspopup="menu" onClick={() => { setBankOpen((v) => !v); setPadOpen(false) }}>
+          {BANKS[bank]}
+        </button>
+        {bankOpen && (
+          <div className="file-menu" role="menu">
+            {BANKS.map((name, i) => (
+              <button key={name} type="button" onClick={() => choose(i * 16 + local)}>{name}</button>
+            ))}
+          </div>
+        )}
+      </div>
+      <span className="pad-pick-name">{pad.name}</span>
+    </div>
+  )
 }
 
 function slotText(name) {

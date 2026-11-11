@@ -30,9 +30,7 @@ export function Synth() {
   return (
     <div className="screen synth-screen">
       <div className="synth-top">
-        <HelpButton title="Synth">
-          Draw a sound for the selected pad. A preset replaces the patch. The knobs are the oscillators, the filter, and the envelope.
-        </HelpButton>
+        <HelpButton title="Synth" topic="synth" />
         <div className="presets">
           {FACTORY.map((item) => (
             <button

@@ -227,6 +227,7 @@ export function useDropMusic() {
       priceWei: bigint
       supply: bigint
       model: number
+      rate: bigint
       alignmentBps: number
     }) => {
       const cfg = musicConfig(chain?.id)
@@ -289,6 +290,7 @@ export function useDropMusic() {
             supply: input.supply,
             model: input.model,
             metadataURI: metadata,
+            priceIncreaseRate: input.rate,
           }),
         }
 

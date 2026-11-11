@@ -7,6 +7,7 @@ import { formatEther } from 'viem'
 import { useAccount, useSwitchChain } from 'wagmi'
 
 import LoadingHourglass from '@/assets/loading_hourglass.gif'
+import BondingCurvePick from '@/components/BondingCurve'
 import {
   CloseGuardBox,
   DropWords,
@@ -31,6 +32,7 @@ import { useRadio } from '@/context/RadioProvider'
 import { burst } from '@/desktop/mints/confetti'
 import { useReducedMotion } from '@/desktop/prefs'
 import { pctLabel } from '@/miyamints/split'
+import { curveCaption } from '@/music/bonding'
 import type { FileCheck } from '@/music/audio'
 import {
   AUDIO_ACCEPT,
@@ -44,7 +46,7 @@ import {
   validateImageFile,
 } from '@/music/audio'
 import { refusedWords, storageWords, storedBytes } from '@/music/creatorWords'
-import { parseAlignmentPct, parsePriceEth, parseSupply } from '@/music/drop'
+import { parseAlignmentPct, parseEdition, parsePriceEth } from '@/music/drop'
 import { readAudioDuration } from '@/music/readDuration'
 import { useAppDispatch } from '@/store/hooks'
 import { closeWindow, minimizeWindow } from '@/store/windows/actions'
@@ -408,6 +410,7 @@ type Form = {
   collectionName: string
   price: string
   supply: string
+  rise: string
   alignment: string
   audioUri: string
   coverUri: string
@@ -423,6 +426,7 @@ const EMPTY: Form = {
   collectionName: '',
   price: '',
   supply: '',
+  rise: '1',
   alignment: '',
   audioUri: '',
   coverUri: '',
@@ -632,7 +636,7 @@ export default function DropMusicWindow() {
   )
 
   const price = parsePriceEth(form.price)
-  const supply = parseSupply(form.supply)
+  const edition = parseEdition(form.supply, form.rise)
   const align = parseAlignmentPct(form.alignment, music.minAlignmentBps, music.protocolFeeBps)
   const metaErrors = preview.ok ? {} : preview.errors
   const audioError =
@@ -647,7 +651,7 @@ export default function DropMusicWindow() {
       : ''
   const coverError = mode === 'upload' ? (!cover ? 'Add cover art.' : !cover.check.ok ? cover.check.error : '') : ''
   const fileError = audioError || coverError
-  const valid = preview.ok && price.ok && supply.ok && align.ok && !fileError && !(audio?.reading && mode === 'upload')
+  const valid = preview.ok && price.ok && edition.ok && align.ok && !fileError && !(audio?.reading && mode === 'upload')
   const done = !!drop.launched.editionId
   const collectionName =
     form.collectionName.trim() ||
@@ -671,7 +675,7 @@ export default function DropMusicWindow() {
     metaErrors.artist ||
     metaErrors.bpm ||
     ''
-  const editionNeeds = (!price.ok && price.error) || (!supply.ok && supply.error) || (!align.ok && align.error) || ''
+  const editionNeeds = (!price.ok && price.error) || (!edition.ok && edition.error) || (!align.ok && align.error) || ''
   const needs: Record<Section, string> = {
     track: trackNeeds,
     credits: creditsNeeds,
@@ -690,7 +694,7 @@ export default function DropMusicWindow() {
   const submit = () => {
     setTouched(true)
     // The checklist on this tab says what is missing, with a button to each.
-    if (!valid || !price.ok || !supply.ok || !align.ok) return
+    if (!valid || !price.ok || !edition.ok || !align.ok) return
 
     drop.run({
       audioFile: mode === 'upload' ? audio?.file : undefined,
@@ -704,8 +708,9 @@ export default function DropMusicWindow() {
       collectionName,
       title: form.title.trim(),
       priceWei: price.wei,
-      supply: supply.supply,
-      model: supply.model,
+      supply: edition.supply,
+      model: edition.model,
+      rate: edition.rate,
       alignmentBps: align.bps,
     })
   }
@@ -854,7 +859,7 @@ export default function DropMusicWindow() {
       : 'Soundcheck: releasing opens soon. You can still upload.'
   const activeStep = STEPS.find((s) => drop.steps[s.id] === 'active')
   const priceWords = price.ok ? `${formatEther(price.wei)} ETH` : ''
-  const supplyWords = supply.ok ? (supply.supply ? `edition of ${supply.supply}` : 'open edition') : ''
+  const supplyWords = edition.ok ? (edition.supply ? `edition of ${edition.supply}` : 'open edition') : ''
   const marquee = drop.running
     ? `recording · ${activeStep?.label || 'getting ready'} · follow your wallet`
     : done
@@ -877,7 +882,7 @@ export default function DropMusicWindow() {
     ? {
         big: formatEther((price as { wei: bigint }).wei),
         small: 'ETH',
-        tiny: supply.ok && supply.supply ? `${supply.supply} only` : 'open',
+        tiny: edition.ok && edition.supply ? `${edition.supply} only` : 'open',
       }
     : hasTrack
     ? { big: 'new', small: 'single' }
@@ -885,7 +890,7 @@ export default function DropMusicWindow() {
   const cardMeta = [
     formatDuration(duration),
     form.genre.trim(),
-    supply.ok ? `0${supply.supply ? `/${supply.supply}` : ''} minted` : '',
+    edition.ok ? `0${edition.supply ? `/${edition.supply}` : ''} minted` : '',
   ]
     .filter(Boolean)
     .join(' · ')
@@ -1271,15 +1276,26 @@ export default function DropMusicWindow() {
                         aria-invalid={(!!form.price || touched) && !price.ok}
                       />
                       <Err>{form.price || touched ? (!price.ok ? price.error : undefined) : undefined}</Err>
-                      {price.ok && <small>{formatEther(price.wei)} ETH per copy</small>}
+                      {price.ok && (
+                        <small>
+                          {formatEther(price.wei)} ETH {edition.ok && edition.rate > 0n ? 'to start' : 'per copy'}
+                        </small>
+                      )}
                     </Field>
                     <Field>
                       Number of copies
                       <input value={form.supply} inputMode="numeric" placeholder="No limit" onChange={set('supply')} />
-                      <Err>{!supply.ok ? supply.error : undefined}</Err>
-                      {supply.ok && <small>{supply.supply ? `${supply.supply} copies` : 'Open edition'}</small>}
+                      <Err>{!edition.ok && form.supply ? edition.error : undefined}</Err>
+                      {edition.ok && <small>{edition.supply ? `${edition.supply} copies` : 'Open edition'}</small>}
                     </Field>
                   </Row2>
+                  <BondingCurvePick
+                    rise={form.rise}
+                    onRise={(rise) => setForm((f) => ({ ...f, rise }))}
+                    priceWei={price.ok ? price.wei : undefined}
+                    supply={edition.ok ? edition.supply : undefined}
+                    error={touched && !edition.ok ? edition.error : undefined}
+                  />
                   <Field>
                     Share for the vault (%)
                     <input
@@ -1315,8 +1331,9 @@ export default function DropMusicWindow() {
                       { label: 'Price', value: priceWords || 'not set' },
                       {
                         label: 'Copies',
-                        value: supply.ok ? (supply.supply ? String(supply.supply) : 'No limit') : '—',
+                        value: edition.ok ? (edition.supply ? String(edition.supply) : 'No limit') : '—',
                       },
+                      { label: 'Curve', value: curveCaption(form.rise) },
                       {
                         label: 'You keep',
                         value: align.ok

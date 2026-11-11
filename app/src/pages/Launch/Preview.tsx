@@ -83,7 +83,10 @@ export function priceLine(form: LaunchForm): string {
 
   if (form.type === 'editions') {
     const p = parseEth(form.editionPrice)
-    return p.ok ? `${ethLabel(p.wei)} a copy` : '—'
+    if (!p.ok) return '—'
+    const rise = (form.editionRise || '').trim()
+    if (!rise || /^0+(?:\.0+)?$/.test(rise)) return `${ethLabel(p.wei)} a copy`
+    return `${ethLabel(p.wei)} to start, then +${rise}% a copy`
   }
 
   return '—'

@@ -9,9 +9,10 @@ import { plainTxError } from '@/miyamints/errors'
 import { buildMusicMetadata, type MusicForm, validateAudioFile, validateImageFile } from '@/music/audio'
 import { MUSIC_CHAINS } from '@/music/config'
 import { storageWords, storedBytes } from '@/music/creatorWords'
+import BondingCurvePick from '@/components/BondingCurve'
 import { parseAlignmentPct, parseEdition, parsePriceEth } from '@/music/drop'
 import { useMusicChain } from '@/pages/DropMusic/useDropMusic'
-import { space, text } from '@/theme/tokens'
+import { font, space, text } from '@/theme/tokens'
 import { isUnconfirmed } from '@/utils/batch'
 import { FREE_BYTES, fundAndUpload } from '@/utils/fundAndUpload'
 import getIrysToken from '@/utils/getIrysToken'
@@ -66,11 +67,12 @@ const OTHER_TAB =
 const Back = styled.div`
   position: absolute;
   inset: 0;
-  z-index: 5;
+  /* The phone SHIFT rail is 8 and the top bar is 20, and both paint out of the music page. */
+  z-index: 30;
   display: grid;
   place-items: center;
   padding: ${space[3]};
-  background: rgba(90, 20, 102, 0.28);
+  background: rgba(61, 42, 107, 0.45);
 `
 
 const Card = styled.form`
@@ -81,25 +83,40 @@ const Card = styled.form`
   flex-direction: column;
   gap: ${space[2]};
   padding: ${space[3]};
-  background: #fff6fb;
-  color: #3a1248;
-  box-shadow: 2px 2px 0 #5a1466;
-  font-size: ${text.sm};
+  background: #f9bba6;
+  color: #000000;
+  box-shadow: 2px 2px 0 #3d2a6b;
+  /* W95FA only sits square at 16px. A smaller size crunches the letters on some displays. */
+  font-family: ${font.ui};
+  font-size: 16px;
+  line-height: 1.15;
+  -webkit-font-smoothing: none;
+  text-size-adjust: 100%;
+  && label,
+  && p,
+  && button,
+  && input,
+  && small,
+  && span {
+    font-size: 16px;
+    line-height: 1.15;
+  }
 `
 
 const Row = styled.label`
   display: flex;
   flex-direction: column;
   gap: 2px;
-  font-size: ${text.xs};
 `
 
 const Field = styled.input`
   font: inherit;
   color: inherit;
-  background: #fff;
-  border: 1px solid #5a1466;
+  background: #fff1ea;
+  color: #000000;
+  border: 1px solid #3d2a6b;
   padding: 4px 6px;
+  min-height: 28px;
 `
 
 const Actions = styled.div`
@@ -112,13 +129,14 @@ const Actions = styled.div`
 const Btn = styled.button`
   font: inherit;
   cursor: pointer;
-  border: 1px solid #5a1466;
-  background: #f4b6d8;
-  color: #3a1248;
+  border: 1px solid #3d2a6b;
+  background: linear-gradient(180deg, #ffe4dc, #fe9ca1 55%, #e78fb1);
+  color: #000000;
   padding: 4px 10px;
   &:disabled {
     cursor: default;
-    opacity: 0.6;
+    color: #000000;
+    background: #e7b7d0;
   }
 `
 
@@ -133,7 +151,7 @@ const Banner = styled.div`
   flex-direction: column;
   gap: ${space[1]};
   padding: ${space[2]};
-  border: 1px dashed #5a1466;
+  border: 1px dashed #3d2a6b;
   font-size: ${text.xs};
 `
 
@@ -143,11 +161,11 @@ function plainCover(title: string): Promise<File> {
   canvas.height = 512
   const pen = canvas.getContext('2d')
   if (!pen) return Promise.reject(new SaidError('Could not draw a cover'))
-  pen.fillStyle = '#f4b6d8'
+  pen.fillStyle = '#f9bba6'
   pen.fillRect(0, 0, 512, 512)
-  pen.fillStyle = '#5a1466'
+  pen.fillStyle = '#5a4a96'
   pen.fillRect(36, 36, 440, 440)
-  pen.fillStyle = '#fff6fb'
+  pen.fillStyle = '#ffffff'
   pen.font = 'bold 42px sans-serif'
   const words = (title || 'Song').slice(0, 48).split(/\s+/)
   let line = ''
@@ -310,7 +328,7 @@ export default function PublishDialog({ job, onClose }: { job: PublishJob; onClo
   const [artist, setArtist] = useState('')
   const [price, setPrice] = useState('0.01')
   const [supply, setSupply] = useState('')
-  const [rise, setRise] = useState('')
+  const [rise, setRise] = useState('1')
   const [cover, setCover] = useState<File | null>(null)
   const [coverName, setCoverName] = useState('')
   const [mintFirst, setMintFirst] = useState(false)
@@ -357,18 +375,25 @@ export default function PublishDialog({ job, onClose }: { job: PublishJob; onClo
     let gone = false
     bounce()
       .then(async (built) => {
+        const audioOnly = job.intent === 'mint-audio'
         const parts: { file?: File; kind: string }[] = mint
-          ? [
-              { file: built.audio, kind: 'bounce' },
-              { file: built.pack, kind: built.packKind },
-            ]
+          ? audioOnly
+            ? [{ file: built.audio, kind: 'bounce' }]
+            : [
+                { file: built.audio, kind: 'bounce' },
+                { file: built.pack, kind: built.packKind },
+              ]
           : [{ file: job.intent === 'upload-bounce' ? built.audio : built.pack, kind: job.intent === 'upload-bounce' ? 'bounce' : built.packKind }]
         const sizes = await Promise.all(
           parts
             .filter((p): p is { file: File; kind: string } => !!p.file)
             .map(async (p) => ({ key: await contentKey(p.kind, p.file), size: p.file.size }))
         )
-        const content = built.pack ? await contentKey(built.packKind, built.pack) : undefined
+        const content = audioOnly && built.audio
+          ? await contentKey('audio', built.audio)
+          : built.pack
+            ? await contentKey(built.packKind, built.pack)
+            : undefined
         if (!gone) setFiles({ content, sizes })
       })
       .catch(() => {
@@ -598,7 +623,10 @@ export default function PublishDialog({ job, onClose }: { job: PublishJob; onClo
     setStatus('Bouncing and packing…')
     const built = await bounce()
     const { audio, pack } = built
-    if (!audio || !pack) throw new SaidError('Could not prepare the bounce and the file')
+    const audioOnly = job.intent === 'mint-audio'
+    if (audioOnly) {
+      if (!audio) throw new SaidError('Could not prepare the audio file')
+    } else if (!audio || !pack) throw new SaidError('Could not prepare the bounce and the file')
     const audioCheck = validateAudioFile(audio)
     if (!audioCheck.ok) throw new SaidError(audioCheck.error)
     const picture = cover || (await plainCover(title))
@@ -615,7 +643,11 @@ export default function PublishDialog({ job, onClose }: { job: PublishJob; onClo
       bpm: publishBpm(job.bpm),
       song: built.packKind === 'song' ? uris.pack : undefined,
       kit: built.packKind === 'kit' ? uris.pack : undefined,
-      description: built.packKind === 'kit' ? 'A MiyaMusicMaker kit.' : 'A MiyaMusicMaker song.',
+      description: built.packKind === 'kit'
+        ? 'A MiyaMusicMaker kit.'
+        : built.packKind === 'audio'
+          ? 'A MiyaMusicMaker audio file.'
+          : 'A MiyaMusicMaker song.',
     })
     // The same checks the real metadata gets, with stand-in links, before the first upload is paid for.
     const trial = buildMusicMetadata(form(PLACEHOLDER_URIS))
@@ -624,7 +656,7 @@ export default function PublishDialog({ job, onClose }: { job: PublishJob; onClo
     await checkLaunch({ account, chainId, factory, vault, name: title, alignmentBps: alignment.bps })
 
     // From here to start() nothing waits, so two openings can't both get past the check below.
-    const content = await contentKey(built.packKind, pack)
+    const content = audioOnly ? await contentKey('audio', audio) : await contentKey(built.packKind, pack!)
     const key = releaseKey(account, chainId, content)
     if (runs.has(key)) {
       const earlier = live.get(key)
@@ -695,13 +727,15 @@ export default function PublishDialog({ job, onClose }: { job: PublishJob; onClo
       }
       const audioUri = await put(audio, 'bounce', 'The bounce')
       const imageUri = await put(picture, 'cover', 'The cover')
-      const packUri = await put(pack, built.packKind, built.packKind === 'kit' ? 'The kit' : 'The song')
+      const packUri = audioOnly || !pack
+        ? ''
+        : await put(pack, built.packKind, built.packKind === 'kit' ? 'The kit' : 'The song')
       const meta = buildMusicMetadata(form({ audio: audioUri, image: imageUri, pack: packUri }))
       if (!meta.ok) throw new SaidError(Object.values(meta.errors)[0] || 'Check the mint fields.')
       const metadataFile = new File([JSON.stringify(meta.metadata)], 'metadata.json', { type: 'application/json' })
       const metadataUri = await put(metadataFile, 'metadata', 'The token metadata')
       rec.launch = { ...rec.launch, metadataURI: metadataUri }
-      rec.links = [audioUri, packUri, metadataUri]
+      rec.links = packUri ? [audioUri, packUri, metadataUri] : [audioUri, metadataUri]
       rec.sealed = true
       if (!saveNow(rec)) throw new SaidError(SAVE_BLOCKED)
     }
@@ -788,7 +822,11 @@ export default function PublishDialog({ job, onClose }: { job: PublishJob; onClo
     return choice === 'anyway' ? 'Discard anyway' : 'Discard this release'
   }
 
-  const kind = job.intent === 'mint-kit' || job.intent === 'upload-kit' ? 'kit' : 'song'
+  const kind = job.intent === 'mint-kit' || job.intent === 'upload-kit'
+    ? 'kit'
+    : job.intent === 'mint-audio' || job.intent === 'upload-bounce'
+      ? 'audio'
+      : 'song'
   const alignmentBps = sealed ? sealed.alignmentBps : music.minAlignmentBps
   const rising = sealed ? sealed.rate > 0n : editionNow.ok && editionNow.rate > 0n
   const last = !mint ? lastUpload(store, job.intent) : undefined
@@ -812,7 +850,7 @@ export default function PublishDialog({ job, onClose }: { job: PublishJob; onClo
           if (!busy && !(mint && released)) void (mint ? runMint() : runUpload())
         }}
       >
-        <strong id="mmm-publish-title">{mint ? (job.intent === 'mint-kit' ? 'Mint kit' : 'Mint song') : 'Publish to Arweave'}</strong>
+        <strong id="mmm-publish-title">{mint ? (job.intent === 'mint-kit' ? 'Mint kit' : job.intent === 'mint-audio' ? 'Mint audio' : 'Mint song') : 'Publish to Arweave'}</strong>
         {mint && other && !current && (
           <Banner>
             <span>
@@ -868,16 +906,19 @@ export default function PublishDialog({ job, onClose }: { job: PublishJob; onClo
                 onChange={(e) => setSupply(e.target.value)}
               />
             </Row>
-            <Row>
-              Price rise each mint, in percent
-              <Field
-                aria-label="Price rise"
-                value={rise}
-                placeholder="Blank stays flat. 1 raises 1% each mint."
-                disabled={committed}
-                onChange={(e) => setRise(e.target.value)}
-              />
-            </Row>
+            <BondingCurvePick
+              rise={rise}
+              onRise={setRise}
+              priceWei={pricedNow.ok ? pricedNow.wei : undefined}
+              supply={editionNow.ok ? editionNow.supply : undefined}
+              disabled={committed}
+              error={
+                !editionNow.ok &&
+                !(editionNow.error === 'A rising price needs a supply above 0.' && !supply.trim())
+                  ? editionNow.error
+                  : undefined
+              }
+            />
             {committed ? (
               <Note>Cover: {coverName || 'as uploaded'}</Note>
             ) : (
@@ -911,8 +952,9 @@ export default function PublishDialog({ job, onClose }: { job: PublishJob; onClo
                   : 'Reading the vault share and fee from the network… Mint waits for them.'}
             </Note>
             <Note>
-              The bounce plays in miya radio. The {kind} file is stored beside it so it can be opened again. Both are
-              public and permanent on Arweave, and the {kind} file holds every sample in it, mic recordings too.
+              {job.intent === 'mint-audio'
+                ? 'The bounce plays in miya radio. This edition is the audio file only. It is public and permanent on Arweave.'
+                : `The bounce plays in miya radio. The ${kind} file is stored beside it so it can be opened again. Both are public and permanent on Arweave, and the ${kind} file holds every sample in it, mic recordings too.`}
               {music.wrongChain ? ` Switch to ${music.cfg.name} before releasing.` : ''}
             </Note>
             {!committed && !released && <Note>{costLine}</Note>}
@@ -950,7 +992,7 @@ export default function PublishDialog({ job, onClose }: { job: PublishJob; onClo
           </Note>
         )}
         {error && (
-          <Note role="alert" style={{ color: '#8a1030' }}>
+          <Note role="alert" style={{ color: '#000000' }}>
             {error}
           </Note>
         )}

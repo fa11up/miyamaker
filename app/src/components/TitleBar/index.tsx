@@ -64,6 +64,7 @@ export type TitleSkin =
   | 'files'
   | 'upload'
   | 'display'
+  | 'traits'
 
 const MARK: Record<TitleSkin, string> = {
   miyanet: '✦',
@@ -78,6 +79,7 @@ const MARK: Record<TitleSkin, string> = {
   files: '▤',
   upload: '◎',
   display: '▣',
+  traits: '✎',
 }
 
 const StyledTitleBar = styled.div`
@@ -251,29 +253,34 @@ const StyledTitleBar = styled.div`
     }
   }
 
-  /* MiyaMusicMaker: a groovebox of the time, brushed aluminium, graphite print and tangerine rubber keys. */
+  /* MiyaMusicMaker: deep violet bar, white type, coral glass keys. */
   &[data-skin='music'] {
-    background: repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.16) 0 1px, transparent 1px 3px),
-      linear-gradient(180deg, #eef0f3 0%, #c9ccd2 46%, #b3b7be 54%, #d6d9de 100%);
-    border-bottom: 2px solid #ff7a1f;
-    color: #17191d;
+    background:
+      linear-gradient(128deg, rgba(255, 255, 255, 0.28) 0%, rgba(255, 255, 255, 0) 36%),
+      linear-gradient(160deg, #6a58a4, #5a4a96 58%, #4a3b86);
+    border-bottom: 2px solid #fe9ca1;
+    color: #ffffff;
     .mark {
-      color: #ff7a1f;
-      text-shadow: 0 0 5px rgba(255, 122, 31, 0.85);
+      color: #ffffff;
+      text-shadow: 0 0 5px rgba(254, 156, 161, 0.85);
     }
     .title-bar {
       font-family: ${font.display};
       letter-spacing: 0.06em;
-      text-shadow: 0 1px 0 rgba(255, 255, 255, 0.75);
+      text-shadow: 0 1px 0 #3d2a6b;
     }
     ${ChromeButton} {
       border-radius: 3px;
-      color: #2a1204;
-      background: linear-gradient(180deg, #ffb27a, #ff7a1f 55%, #e2600c);
-      box-shadow: 0 0 0 1px #3a1a06, inset 0 1px 0 rgba(255, 255, 255, 0.55);
+      color: #000000;
+      background:
+        linear-gradient(148deg, rgba(255, 255, 255, 0.85) 0%, rgba(255, 255, 255, 0) 42%),
+        linear-gradient(146deg, #fff6f2, #fe9ca1 55%, #e78fb1);
+      box-shadow: inset 0 1px 0 #ffffff, 0 2px 0 rgba(61, 42, 107, 0.35), 0 0 0 1px #3d2a6b;
     }
     ${ChromeButton}:hover {
-      filter: brightness(1.08);
+      background:
+        linear-gradient(148deg, rgba(255, 255, 255, 0.9) 0%, rgba(255, 255, 255, 0) 42%),
+        linear-gradient(146deg, #fff6f2, #ffb3b4 55%, #ee9ab8);
     }
   }
 
@@ -401,6 +408,54 @@ const StyledTitleBar = styled.div`
     }
   }
 
+  /* MiyaMaker Studio: orchid to violet. White needs the black edge because the left end is light. */
+  &[data-skin='traits'] {
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.55) 0%, rgba(255, 255, 255, 0) 46%, rgba(26, 18, 48, 0.18) 100%),
+      linear-gradient(90deg, #cd6cd5, #8756cb);
+    border-bottom: 2px solid #4a3478;
+    color: #fff;
+    text-shadow: -1px 0 0 #000, 1px 0 0 #000, 0 -1px 0 #000, 0 1px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000;
+    .mark {
+      color: #fff;
+    }
+    .title-bar {
+      letter-spacing: 0.04em;
+      text-shadow: -1px 0 0 #000, 1px 0 0 #000, 0 -1px 0 #000, 0 1px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000;
+    }
+    ${ChromeButton} {
+      color: #fff;
+      border-radius: 5px;
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.85) 0%, rgba(255, 255, 255, 0) 46%),
+        linear-gradient(180deg, #d9d2ee, #7a49c4);
+      box-shadow: inset 0 1px 0 #fff, 0 1px 0 #4a3478, 0 2px 4px rgba(74, 52, 120, 0.45);
+      svg {
+        filter: drop-shadow(0 1px 0 #000) drop-shadow(0 -1px 0 #000) drop-shadow(1px 0 0 #000) drop-shadow(-1px 0 0 #000);
+      }
+    }
+    ${ChromeButton}:hover {
+      background:
+        linear-gradient(180deg, #fff 0%, rgba(255, 255, 255, 0) 50%),
+        linear-gradient(180deg, #d9d2ee, #a45dce);
+    }
+  }
+
+  .react-draggable:not(.is-focused) &[data-skin='traits'] {
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.35) 0%, rgba(255, 255, 255, 0) 46%),
+      linear-gradient(90deg, #b7b0d4, #9f98c1);
+    color: #1a1230;
+    text-shadow: none;
+    .mark {
+      color: #1a1230;
+    }
+    .title-bar {
+      color: #1a1230;
+      text-shadow: none;
+    }
+  }
+
   /* Display: the settings blue of every computer of the time. */
   &[data-skin='display'] {
     background: linear-gradient(90deg, #000080, #1084d0);
@@ -439,6 +494,10 @@ const StyledTitleBar = styled.div`
   /* A themed header dims when its window is not on top, and keeps its colours. */
   .react-draggable:not(.is-focused) &[data-skin] {
     filter: saturate(0.45) brightness(0.8);
+  }
+  /* Music stays in the sunset. A little darker, still the same violet, not a grey bar. */
+  .react-draggable:not(.is-focused) &[data-skin='music'] {
+    filter: brightness(0.92);
   }
 
   @media (prefers-reduced-motion: no-preference) {

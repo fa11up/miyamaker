@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
+import { curveId, curvePrice } from '../src/music/bonding.ts'
 import { editionArgs, makeSalt, parseAlignmentPct, parseEdition, parsePriceEth, parseSupply, PRICING_MODEL } from '../src/music/drop.ts'
 
 test('prices are parsed exactly with parseEther (no float rounding) and must be > 0', () => {
@@ -63,6 +64,18 @@ test('a rise percent turns a limited edition into the on-chain curve', () => {
   })
   assert.equal(parseEdition('', '1').ok, false)
   assert.equal(parseEdition('50', '101').ok, false)
+})
+
+test('the bonding curve compounds one percent per copy already sold', () => {
+  const base = 10_000n
+  assert.equal(curvePrice(base, 100, 0), base)
+  assert.equal(curvePrice(base, 100, 1), 10_100n)
+  assert.equal(curvePrice(base, 100, 2), 10_201n)
+  assert.equal(curvePrice(base, 0, 4), base)
+  assert.equal(curveId('1'), 'gentle')
+  assert.equal(curveId('2.5'), 'steady')
+  assert.equal(curveId(''), 'flat')
+  assert.equal(curveId('3'), 'custom')
 })
 
 test('makeSalt is a CreateX permissioned salt: factory ‖ 0x00 ‖ 11 random bytes', () => {

@@ -31,14 +31,16 @@ import { Pads } from './screens/Pads.jsx'
 import { Editor } from './screens/Editor.jsx'
 import { Sequencer } from './screens/Sequencer.jsx'
 import { Mixer } from './screens/Mixer.jsx'
-import { Tracker, handleTrackerKey } from './screens/Tracker.jsx'
+import { Tracker, finger, handleTrackerKey } from './screens/Tracker.jsx'
 import { Synth } from './screens/Synth.jsx'
 import { Fx } from './screens/Fx.jsx'
 import { SampleBrowser } from './screens/Browser.jsx'
 import { FileMenu } from './screens/FileMenu.jsx'
 import { KeysMap } from './screens/KeysMap.jsx'
-import { buildPublish, listenForFiles } from './publish.js'
-import { NewMenu, SaveMenu } from './screens/SongMenus.jsx'
+import { askPublish, buildPublish, listenForFiles } from './publish.js'
+import { NewMenu, ReleaseRows, SaveMenu } from './screens/SongMenus.jsx'
+import { CoachLayer } from './screens/Coach.jsx'
+import { Manual } from './screens/Manual.jsx'
 import { PadMenu } from './screens/PadMenu.jsx'
 import { Arranger } from './screens/Arranger.jsx'
 import { PlaySurface } from './screens/PlaySurface.jsx'
@@ -46,6 +48,18 @@ import { PlaySurface } from './screens/PlaySurface.jsx'
 export function MiyaMusicMaker() {
   useModel()
   useEffect(() => listenForFiles(buildPublish), [])
+  useEffect(() => {
+    const node = document.querySelector('[data-miya-music]')?.shadowRoot?.querySelector('.mmm')
+    if (!node || typeof ResizeObserver === 'undefined') return undefined
+    const watch = new ResizeObserver(() => {
+      if (node.clientWidth <= 600 && model.dockOpen !== false && model.arrangeOpen) {
+        model.arrangeOpen = false
+        touch(false)
+      }
+    })
+    watch.observe(node)
+    return () => watch.disconnect()
+  }, [])
   useEffect(() => {
     const down = () => {
       enableMidi().catch(() => {})
@@ -134,6 +148,7 @@ export function MiyaMusicMaker() {
     }
   }, [])
 
+  const bothDocks = model.dockOpen !== false && !!model.arrangeOpen
   return (
     <div
       className={`mmm surface-${model.playSurface || 'pads'} ${model.k3 ? 'theme-k3' : ''}`}
@@ -158,43 +173,41 @@ export function MiyaMusicMaker() {
         style={{ '--dock-size': `${Math.max(120, model.dockWidth || 232)}px` }}
       >
         <div className="dock-rail">
-          <button
-            type="button"
-            className={`btn ${model.dockOpen !== false ? 'on' : ''}`}
-            aria-label={model.dockOpen === false ? 'Show sample browser' : 'Hide sample browser'}
-            onClick={() => {
-              model.dockOpen = model.dockOpen === false
-              if (model.dockOpen !== false && (model.dockWidth || 0) < 120) model.dockWidth = 232
-              touch(true)
-            }}
-          >
-            {model.dockOpen === false ? '>' : '<'}
-          </button>
-          <button
-            type="button"
-            className={`btn ${model.arrangeOpen ? 'on' : ''}`}
-            aria-label={model.arrangeOpen ? 'Hide arranger' : 'Show arranger'}
-            onClick={() => {
-              model.arrangeOpen = !model.arrangeOpen
-              if (model.arrangeOpen && (model.dockWidth || 0) < 120) model.dockWidth = 232
-              touch(true)
-            }}
-          >
-            ≡
-          </button>
+          <DockToggles names />
+          <ShiftHold />
         </div>
         {(model.dockOpen !== false || model.arrangeOpen) && (
           <>
             <div className="dock-pane">
-              {model.dockOpen !== false && <SampleBrowser />}
-              {model.dockOpen !== false && model.arrangeOpen && <div className="dock-rule" />}
-              {model.arrangeOpen && <Arranger />}
+              {model.dockOpen !== false && (
+                <div className="dock-slot" style={bothDocks ? { flexGrow: dockSplit() } : undefined}>
+                  <SampleBrowser />
+                </div>
+              )}
+              {bothDocks && (
+                <div
+                  className="dock-rule"
+                  role="separator"
+                  aria-orientation="horizontal"
+                  aria-label="Split between the browser and the arranger"
+                  aria-valuemin={15}
+                  aria-valuemax={85}
+                  aria-valuenow={Math.round(dockSplit() * 100)}
+                  tabIndex={0}
+                  onPointerDown={splitPair}
+                  onKeyDown={nudgePair}
+                />
+              )}
+              {model.arrangeOpen && (
+                <div className="dock-slot" style={bothDocks ? { flexGrow: 1 - dockSplit() } : undefined}>
+                  <Arranger />
+                </div>
+              )}
             </div>
             <div className="dock-splitter" onPointerDown={splitDrag} />
           </>
         )}
         <div className="mmm-main">
-          <PlaySurface />
           {model.screen === 'pads' && <Pads />}
           {model.screen === 'edit' && <Editor />}
           {model.screen === 'seq' && <Sequencer />}
@@ -202,6 +215,7 @@ export function MiyaMusicMaker() {
           {model.screen === 'track' && <Tracker />}
           {model.screen === 'synth' && <Synth />}
           {model.screen === 'fx' && <Fx />}
+          <PlaySurface />
           <PadMenu />
           {model.keysHelp && (
             <KeysMap onClose={() => { model.keysHelp = false; touch(false) }} />
@@ -222,6 +236,8 @@ export function MiyaMusicMaker() {
           )}
         </div>
       </div>
+      {model.fileWindow === 'manual' && <Manual />}
+      <CoachLayer />
     </div>
   )
 }
@@ -232,11 +248,12 @@ function Transport() {
   return (
     <>
         <div className="transport-group">
-          <button type="button" className={`btn free-width ${model.playing ? 'on' : ''}`} onClick={() => togglePlay()}>
+          <button type="button" className={`btn free-width ${model.playing ? 'on' : ''}`} data-coach="play" onClick={() => togglePlay()}>
             {model.playing ? 'Stop' : 'Play'}
           </button>
           <button
             type="button"
+            data-coach="rec"
             className={`btn free-width rec ${(model.screen === 'track' ? model.tracker.edit : model.recording) ? 'on' : ''}`}
             onClick={() => {
               if (model.screen === 'track') {
@@ -314,6 +331,7 @@ function Transport() {
               key={screen.id}
               type="button"
               className={`btn free-width ${model.screen === screen.id ? 'on' : ''}`}
+              data-coach={`page-${screen.id}`}
               onClick={() => setScreen(screen.id)}
             >
               {screen.label}
@@ -321,6 +339,90 @@ function Transport() {
           ))}
         </div>
         <ScreenMenu />
+        <div className="dock-pair">
+          <DockToggles />
+        </div>
+    </>
+  )
+}
+
+function narrowWindow() {
+  const node = document.querySelector('[data-miya-music]')?.shadowRoot?.querySelector('.mmm')
+  return !!node && node.clientWidth <= 600
+}
+
+function toggleBrowser() {
+  const open = model.dockOpen !== false
+  if (open) model.dockOpen = false
+  else {
+    model.dockOpen = true
+    if (narrowWindow()) model.arrangeOpen = false
+    if ((model.dockWidth || 0) < 120) model.dockWidth = 232
+  }
+  touch(true)
+}
+
+function toggleArranger() {
+  if (model.arrangeOpen) model.arrangeOpen = false
+  else {
+    model.arrangeOpen = true
+    if (narrowWindow()) model.dockOpen = false
+    if ((model.dockWidth || 0) < 120) model.dockWidth = 232
+  }
+  touch(true)
+}
+
+function ShiftHold() {
+  const [on, setOn] = useState(false)
+  const release = () => {
+    finger.shift = false
+    setOn(false)
+  }
+  useEffect(() => () => { finger.shift = false }, [])
+  return (
+    <button
+      type="button"
+      className={`btn shift-hold ${on ? 'on' : ''}`}
+      data-coach="shift"
+      aria-pressed={on}
+      aria-label="Shift. Hold and drag the tracker to edit the cell."
+      onPointerDown={(e) => {
+        if (e.button !== 0) return
+        e.preventDefault()
+        e.stopPropagation()
+        try { e.currentTarget.setPointerCapture(e.pointerId) } catch { /* already gone */ }
+        finger.shift = true
+        setOn(true)
+      }}
+      onPointerUp={release}
+      onPointerCancel={release}
+      onLostPointerCapture={release}
+      onContextMenu={(e) => e.preventDefault()}
+    >
+      SHIFT
+    </button>
+  )
+}
+
+function DockToggles({ names = false }) {
+  return (
+    <>
+      <button
+        type="button"
+        className={`btn ${model.dockOpen !== false ? 'on' : ''}`}
+        aria-label={model.dockOpen === false ? 'Show sample browser' : 'Hide sample browser'}
+        onClick={toggleBrowser}
+      >
+        {names ? 'Browser' : (model.dockOpen === false ? '>' : '<')}
+      </button>
+      <button
+        type="button"
+        className={`btn ${model.arrangeOpen ? 'on' : ''}`}
+        aria-label={model.arrangeOpen ? 'Hide arranger' : 'Show arranger'}
+        onClick={toggleArranger}
+      >
+        {names ? 'Arranger' : '≡'}
+      </button>
     </>
   )
 }
@@ -328,6 +430,7 @@ function Transport() {
 function surfaceLabel() {
   if (model.playSurface === 'off') return 'Off'
   if (model.playSurface === 'keys') return `Keys ${model.renoiseOct}`
+  if (model.playSurface === 'fx') return 'FX'
   return 'Pads'
 }
 
@@ -366,6 +469,8 @@ function BarMenu() {
       </button>
       {open && (
         <div className="file-menu" role="menu">
+          <button type="button" onClick={() => go('manual')}>Manual</button>
+          <hr />
           <button type="button" onClick={() => go('open')}>Open file…</button>
           <button type="button" onClick={() => go('folder')}>Open folder…</button>
           <button type="button" onClick={() => go('link')}>Load song link…</button>
@@ -385,6 +490,17 @@ function BarMenu() {
           <button type="button" onClick={() => go('save-template')}>Save as template</button>
           <button type="button" onClick={() => go('song')}>Save song…</button>
           <button type="button" onClick={() => go('kit')}>Save kit…</button>
+          <hr />
+          <ReleaseRows
+            busy={false}
+            onPublish={(intent) => {
+              setOpen(false)
+              if (!askPublish(intent)) {
+                model.browserNote = 'Arweave and mint run inside miyamaker.com'
+                touch(false)
+              }
+            }}
+          />
           <hr className="menu-phone" />
           <button type="button" className="menu-phone" onClick={() => { setOpen(false); undo().then((did) => { if (!did) return; syncMasterComp(); syncMixer(true); pushNumpadFx() }) }}>Undo</button>
           <button type="button" className="menu-phone" onClick={() => { setOpen(false); toggleMetro() }}>Metro</button>
@@ -420,10 +536,11 @@ function ScreenMenu() {
   const [open, setOpen] = useState(false)
   useMenuCloser(open, root, setOpen)
   const current = SCREENS.find((screen) => screen.id === model.screen) || SCREENS[0]
+  const barLabel = { seq: 'Seq', track: 'Track' }[current.id] || current.label
   return (
     <div className="mmm-file screen-one" ref={root}>
-      <button type="button" className="btn free-width on" aria-expanded={open} aria-label="Screen" onClick={() => setOpen((v) => !v)}>
-        {current.label}
+      <button type="button" className="btn free-width on" aria-expanded={open} aria-label="Screen" title={current.label} onClick={() => setOpen((v) => !v)}>
+        {barLabel}
       </button>
       {open && (
         <div className="file-menu" role="menu">
@@ -434,6 +551,52 @@ function ScreenMenu() {
       )}
     </div>
   )
+}
+
+function dockSplit() {
+  const n = Number(model.dockSplit)
+  if (!Number.isFinite(n)) return 0.5
+  return Math.max(0.15, Math.min(0.85, n))
+}
+
+function splitPair(event) {
+  if (event.button != null && event.button !== 0) return
+  event.preventDefault()
+  const rule = event.currentTarget
+  const pane = rule.parentElement
+  if (!pane) return
+  const startY = event.clientY
+  const origin = dockSplit()
+  const room = Math.max(1, pane.clientHeight - (rule.offsetHeight || 6))
+  const id = event.pointerId
+  const move = (ev) => {
+    if (ev.pointerId !== id) return
+    const min = Math.min(0.4, 64 / room)
+    const next = origin + (ev.clientY - startY) / room
+    model.dockSplit = Math.max(min, Math.min(1 - min, next))
+    touch(false)
+  }
+  const end = (ev) => {
+    if (ev && ev.pointerId !== id) return
+    rule.removeEventListener('pointermove', move)
+    rule.removeEventListener('pointerup', end)
+    rule.removeEventListener('pointercancel', end)
+    save()
+  }
+  rule.setPointerCapture?.(id)
+  rule.addEventListener('pointermove', move)
+  rule.addEventListener('pointerup', end)
+  rule.addEventListener('pointercancel', end)
+}
+
+function nudgePair(event) {
+  if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
+  event.preventDefault()
+  event.stopPropagation()
+  const dir = event.key === 'ArrowDown' ? 0.04 : -0.04
+  model.dockSplit = Math.max(0.15, Math.min(0.85, dockSplit() + dir))
+  touch(false)
+  save()
 }
 
 function splitDrag(event) {
@@ -635,7 +798,19 @@ let kAt = 0
 function onKey(e) {
   if (musicUnfocused()) return
   if (typing(e)) return
+  // Space is the transport toggle on every screen, even when a button is highlighted.
+  if ((e.key === ' ' || e.code === 'Space') && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    e.preventDefault()
+    if (!e.repeat) togglePlay()
+    return
+  }
   if (model.fileWindow || model.keysHelp) return
+  if (e.key === 'Escape' && model.coachTopic) {
+    e.preventDefault()
+    model.coachTopic = ''
+    touch(false)
+    return
+  }
   const key = e.key
   if (!e.repeat && e.shiftKey && e.altKey && !e.ctrlKey && !e.metaKey && e.code === 'Digit4') {
     const now = performance.now()
@@ -699,6 +874,14 @@ function onKey(e) {
     })
     return
   }
+  if (model.screen === 'track' && model.tracker.focus) {
+    const block = e.shiftKey && e.altKey && !e.ctrlKey && !e.metaKey && key.startsWith('Arrow')
+    const clip = (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && (key === 'c' || key === 'C' || key === 'v' || key === 'V')
+    if ((block || clip) && handleTrackerKey(e)) {
+      e.preventDefault()
+      return
+    }
+  }
   if (e.metaKey || e.ctrlKey || e.altKey) return
   const digit = numpadDigit(e)
   if (digit != null && e.shiftKey) {
@@ -707,7 +890,6 @@ function onKey(e) {
     return
   }
   const trackerFocusNow = model.screen === 'track' && model.tracker.focus
-  if (e.repeat && key === ' ') return
   if (e.repeat && !trackerFocusNow) return
   const low = key.length === 1 ? key.toLowerCase() : key
   const musical = renoiseLive()
@@ -741,14 +923,6 @@ function onKey(e) {
   if (low === 'b' && !model.keyboard) {
     model.hold = 'mute'
     e.preventDefault()
-    return
-  }
-  if (key === ' ') {
-    const el = focusedControl()
-    if (el && el.tagName === 'BUTTON' && !el.classList.contains('dial')) return
-    if (el && (el.tagName === 'SELECT' || el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) return
-    e.preventDefault()
-    togglePlay()
     return
   }
   if (key === '0' && !musical && !(model.screen === 'track' && model.tracker.focus)) {
@@ -835,7 +1009,10 @@ function onKey(e) {
   if ((key === 'Delete' || key === 'Backspace') && !(model.screen === 'track' && model.tracker.focus)) {
     e.preventDefault()
     if (model.screen === 'seq' && model.seqHit) {
-      clearHit(model.seqHit.step, model.seqHit.pad)
+      const hit = model.seqHit
+      const from = Math.min(hit.step, hit.end ?? hit.step)
+      const to = Math.max(hit.step, hit.end ?? hit.step)
+      for (let s = from; s <= to; s++) clearHit(s, hit.pad)
       model.seqHit = null
       touch(false)
       return

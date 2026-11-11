@@ -173,17 +173,35 @@ export function paintWave(ctx, width, height, pcm, sr, view, span) {
   }
 }
 
+let specCanvas = null
+let specCtx = null
+
+/** A small stamp of the spectrum columns. The on-screen wave stretches it. */
+function specStamp(w, h) {
+  if (!specCanvas || specCanvas.width !== w || specCanvas.height !== h) {
+    if (typeof OffscreenCanvas === 'function') specCanvas = new OffscreenCanvas(w, h)
+    else if (typeof document !== 'undefined') specCanvas = document.createElement('canvas')
+    else return null
+    specCanvas.width = w
+    specCanvas.height = h
+    specCtx = specCanvas.getContext('2d')
+  }
+  return specCtx ? { canvas: specCanvas, ctx: specCtx } : null
+}
+
 function paintSpectrum(ctx, width, height, pcm, rate, from = 0, to = 1) {
   const fMin = 40
   const fMax = Math.min(20000, rate * 0.5)
   const logSpan = Math.log(fMax / fMin)
-  const columns = Math.min(width, 160)
+  const columns = Math.max(1, Math.min(width, 160))
   const count = pcm.length
   const a = clamp(Math.floor(Math.min(from, to) * count), 0, Math.max(0, count - 1))
   const b = clamp(Math.ceil(Math.max(from, to) * count), a + 1, count)
   const spanN = b - a
-  for (let x = 0; x < width; x++) {
-    const cx = Math.floor((x * columns) / width)
+  const stamp = specStamp(columns, height)
+  const image = stamp ? stamp.ctx.createImageData(columns, height) : null
+  const data = image ? image.data : null
+  for (let cx = 0; cx < columns; cx++) {
     const centre = a + Math.floor(((cx + 0.5) * spanN) / columns)
     let i0 = Math.max(0, centre - FFT / 2)
     let i1 = Math.min(pcm.length, i0 + FFT)
@@ -205,13 +223,35 @@ function paintSpectrum(ctx, width, height, pcm, rate, from = 0, to = 1) {
     }
     for (let y = 1; y < height; y++) if (column[y] <= 0) column[y] = column[y - 1]
     for (let y = height - 2; y >= 0; y--) if (column[y] <= 0) column[y] = column[y + 1]
-    for (let y = 0; y < height; y++) {
-      const db = 20 * Math.log10(column[y] + 1e-10)
-      const [r, g, b] = rxColour((db + 78) / 78)
-      ctx.fillStyle = `rgb(${r}, ${g}, ${b})`
-      ctx.fillRect(x, y, 1, 1)
+    if (data) {
+      let p = cx * 4
+      const stride = columns * 4
+      for (let y = 0; y < height; y++) {
+        const db = 20 * Math.log10(column[y] + 1e-10)
+        const [r, g, b] = rxColour((db + 78) / 78)
+        data[p] = r
+        data[p + 1] = g
+        data[p + 2] = b
+        data[p + 3] = 255
+        p += stride
+      }
+    } else {
+      const x0 = Math.floor((cx * width) / columns)
+      const x1 = Math.max(x0 + 1, Math.floor(((cx + 1) * width) / columns))
+      for (let y = 0; y < height; y++) {
+        const db = 20 * Math.log10(column[y] + 1e-10)
+        const [r, g, b] = rxColour((db + 78) / 78)
+        ctx.fillStyle = `rgb(${r}, ${g}, ${b})`
+        ctx.fillRect(x0, y, x1 - x0, 1)
+      }
     }
   }
+  if (!stamp || !image) return
+  stamp.ctx.putImageData(image, 0, 0)
+  const smooth = ctx.imageSmoothingEnabled
+  ctx.imageSmoothingEnabled = false
+  ctx.drawImage(stamp.canvas, 0, 0, width, height)
+  ctx.imageSmoothingEnabled = smooth
 }
 
 export const WAVE_VIEWS = ['INK', 'RGB', 'SPEC']

@@ -1,11 +1,12 @@
 /**
- * How a sample voice plays. Tracker clock and tracker keys are one-shots.
- * A pad hold, or a pad set to loop, keeps looping. Grain follows the caller.
+ * How a sample voice plays. One-shot stays one-shot while a pad is held, so a
+ * drum roll cannot leave the end cycling. Loop mode is the opt-in for that.
+ * Tracker clock and tracker keys are one-shots. Grain follows the caller.
  */
-export function samplePlayKind({ grain = false, pattern = false, trackerNote = false, held = false, mode = 'oneshot' } = {}) {
+export function samplePlayKind({ grain = false, pattern = false, trackerNote = false, mode = 'oneshot' } = {}) {
   if (grain) return 'grain'
   if (pattern || trackerNote) return 'oneshot'
-  if (held || mode === 'loop') return 'loop'
+  if (mode === 'loop') return 'loop'
   if (mode === 'gate') return 'gate'
   return 'oneshot'
 }

@@ -9,6 +9,8 @@
 import type { Address } from 'viem'
 import { formatEther, getAddress, isAddress, parseEther, zeroAddress } from 'viem'
 
+import { parseEdition } from '../music/drop.ts'
+
 /**
  * Kept identical to src/music/drop.ts (makeSalt, PRICING_MODEL; parseAlignmentPct with plainer words): this module
  * has no runtime relative imports so node:test can load it directly; tests/miyamints-launch.test.mts checks both agree.
@@ -75,6 +77,8 @@ export type LaunchForm = {
   // editions
   editionPrice: string
   editionSupply: string
+  /** Bonding-curve rise, as a percent. Blank or 0 is a flat price. 1 is 1% more each copy. */
+  editionRise: string
   editionStart: string
   // alignment
   vaultChoice: 'default' | 'custom'
@@ -112,6 +116,7 @@ export const EMPTY_FORM: LaunchForm = {
   bidStep: '0.01',
   editionPrice: '',
   editionSupply: '',
+  editionRise: '1',
   editionStart: '',
   vaultChoice: 'default',
   customVault: '',
@@ -395,6 +400,10 @@ export function validateStep(step: StepKey, f: LaunchForm, ctx: ValidationContex
       if (!p.ok) e.editionPrice = p.error
       const s = parseWhole(f.editionSupply, { min: 1, max: 1_000_000, label: 'Supply', blank: 0 })
       if (!s.ok) e.editionSupply = s.error
+      else {
+        const curve = parseEdition(s.n ? String(s.n) : '', f.editionRise || '')
+        if (!curve.ok) e.editionRise = curve.error
+      }
       const t = parseLocalTime(f.editionStart, 0n)
       if (!t.ok) e.editionStart = t.error
     }
@@ -511,6 +520,8 @@ export function buildEditionArgs(f: LaunchForm, r: Resolved, salt: `0x${string}`
   const supply = parseWhole(f.editionSupply, { min: 1, max: 1_000_000, label: 'Supply', blank: 0 })
   const open = parseLocalTime(f.editionStart, 0n)
   if (!price.ok || !supply.ok || !open.ok || !c.name) throw new Error('Fix the highlighted fields first.')
+  const curve = parseEdition(supply.n ? String(supply.n) : '', f.editionRise || '')
+  if (!curve.ok) throw new Error(curve.error)
   const music = f.editionKind === 'music' && r.audio
   const token = tokenJson({
     ...c,
@@ -518,7 +529,6 @@ export function buildEditionArgs(f: LaunchForm, r: Resolved, salt: `0x${string}`
     audio: music ? { uri: r.audio as string, mime: r.audioMime, artist: f.artist.trim() || undefined } : undefined,
   })
   const metadataURI = jsonDataUri(token)
-  const model = supply.n === 0 ? PRICING_MODEL.UNLIMITED : PRICING_MODEL.LIMITED_FIXED
   return {
     create: [
       salt,
@@ -534,7 +544,7 @@ export function buildEditionArgs(f: LaunchForm, r: Resolved, salt: `0x${string}`
       },
     ] as const,
     // ERC1155Instance.addEdition(pieceTitle, basePrice, supply, metadataURI, pricingModel, priceIncreaseRate, openTime)
-    edition: [c.name, price.wei, BigInt(supply.n), metadataURI, model, 0n, open.at] as const,
+    edition: [c.name, price.wei, curve.supply, metadataURI, curve.model, curve.rate, open.at] as const,
   }
 }
 
@@ -608,6 +618,7 @@ const DRAFT_FIELDS: (keyof LaunchForm)[] = [
   'bidStep',
   'editionPrice',
   'editionSupply',
+  'editionRise',
   'editionStart',
   'customVault',
 ]

@@ -11,12 +11,20 @@ import {
   boot,
   emptyPad,
   idbSet,
+  addAutoLane,
+  clearAutoLane,
+  compactPatterns,
+  duplicateSongCell,
   loadFactoryKit,
   model,
   normalizeEvent,
   normalizePad,
   normalizePatch,
   save,
+  setAutoPoint,
+  setPatternBpm,
+  setPatternLengthAt,
+  stepCount,
   touch,
 } from '../src/pages/MusicMaker/model.js'
 import { armHistory, beginUndo, endUndo, historyDepth, undo } from '../src/pages/MusicMaker/history.js'
@@ -31,7 +39,7 @@ import {
   stepsBehind,
 } from '../src/pages/MusicMaker/audio/voices.js'
 import { createKnee } from '../src/pages/MusicMaker/audio/knee.js'
-import { createFx, normalizeSlot, repeatAmount } from '../src/pages/MusicMaker/audio/numpadFx.js'
+import { createFx, factoryFxSlots, normalizeFxPresets, normalizeSlot, repeatAmount } from '../src/pages/MusicMaker/audio/numpadFx.js'
 import { parseXm } from '../src/pages/MusicMaker/audio/module.js'
 import { bounceOrder } from '../src/pages/MusicMaker/audio/engine.js'
 
@@ -397,6 +405,54 @@ test('slice rearranges notes and grain does not retrigger the beat', () => {
   assert.deepEqual(peaks, [0], 'a press between beats waits for the next note instead of chopping a grain')
 })
 
+test('numpad FX chain follows press order, and move, stretch, and wander change the sound', () => {
+  const sr = 44100
+  const n = 4096
+  const input = sine(n, 0.6)
+  function chain(first: object, second: object) {
+    const a = createFx(sr)
+    const b = createFx(sr)
+    const midL = new Float32Array(n)
+    const midR = new Float32Array(n)
+    const outL = new Float32Array(n)
+    a.process(input, input, midL, midR, first, 120)
+    b.process(midL, midR, outL, midR, second, 120)
+    return outL
+  }
+  const low = { type: 'filter', a: 8, b: 40, c: 0, div: 2, mix: 255 }
+  const chorus = { type: 'chorus', a: 220, b: 90, c: 0, div: 0, mix: 128 }
+  const forward = chain(low, chorus)
+  const reverse = chain(chorus, low)
+  assert.ok(forward.every(Number.isFinite))
+  assert.ok(forward.some((v, i) => Math.abs(v - reverse[i]) > 0.0001), 'chorus into a filter is not the same chain as a filter into chorus')
+
+  const still = renderFx(createFx(sr), { type: 'grain', div: 0, a: 90, b: 40, c: 0, mix: 255 }, 120, n, (t) => Math.sin(t / 9) * 0.5)
+  const stretched = renderFx(createFx(sr), { type: 'grain', div: 0, a: 90, b: 40, c: 255, mix: 255 }, 120, n, (t) => Math.sin(t / 9) * 0.5)
+  assert.ok(stretched.every(Number.isFinite))
+  assert.ok(still.some((v, i) => v !== stretched[i]), 'stretch moves a grain')
+
+  const fixed = renderFx(createFx(sr), { type: 'filter', a: 80, b: 40, c: 0, div: 2, mix: 255 }, 120, n, (t) => Math.sin(t / 7) * 0.5)
+  const wander = renderFx(createFx(sr), { type: 'filter', a: 80, b: 40, c: 255, div: 2, mix: 255 }, 120, n, (t) => Math.sin(t / 7) * 0.5)
+  assert.ok(wander.every(Number.isFinite))
+  assert.ok(fixed.some((v, i) => Math.abs(v - wander[i]) > 1e-5), 'wander steps the resonance')
+
+  const slice = Math.round((sr * 60 / 120) * 2 / 8)
+  const window = slice * 8
+  const plain = renderFx(createFx(sr), { type: 'slice', div: 3, a: 0, b: 0, c: 0, mix: 255 }, 120, window + slice, (t) => ((t % slice) === 0 ? 1 : 0))
+  const moved = renderFx(createFx(sr), { type: 'slice', div: 3, a: 0, b: 0, c: 128, mix: 255 }, 120, window + slice, (t) => ((t % slice) === 0 ? 1 : 0))
+  assert.ok(moved.every(Number.isFinite))
+  assert.ok(plain.some((v, i) => v !== moved[i]), 'move walks the slice')
+
+  assert.equal(normalizeSlot({ type: 'filter', c: 900 }, 0).c, 255)
+  assert.equal(normalizeSlot({ type: 'repeat', a: 10, b: 20 }, 0).c, 0)
+  const saved = normalizeFxPresets([{ name: ' Night ', slots: [{ type: 'grain', c: 12 }] }, { name: 'Night', slots: [] }, { name: '', slots: [] }])
+  assert.equal(saved.length, 1)
+  assert.equal(saved[0].name, 'Night')
+  assert.equal(saved[0].slots[0].type, 'grain')
+  assert.equal(factoryFxSlots('Slices')[0].type, 'slice')
+  assert.equal(factoryFxSlots('Retrig')[0].type, 'repeat')
+})
+
 test('undo re-renders only synth pads whose patch changed', async () => {
   loadFactoryKit()
   armHistory()
@@ -567,6 +623,31 @@ test('an XM pattern longer than 256 rows loads, cut to the 256-step limit', () =
   assert.equal(parsed.patterns.length, 1)
   assert.equal(parsed.patterns[0].steps.length, 256)
   assert.ok(parsed.patterns[0].steps[255][0])
+})
+
+test('a duplicated section copies into a free slot and keeps tempo and automation', () => {
+  loadFactoryKit()
+  model.songOrder = [0]
+  setPatternBpm(0, 140)
+  addAutoLane(0, 'master')
+  setAutoPoint(0, 'master', 0, 0.5)
+  setPatternLengthAt(3, 32)
+  assert.equal(stepCount(model.patterns[0]), 16)
+  assert.equal(stepCount(model.patterns[3]), 32)
+  duplicateSongCell(0)
+  assert.deepEqual(model.songOrder, [0, 1])
+  assert.equal(model.patterns[1].bpm, 140)
+  assert.equal(model.patterns[1].auto[0].points[0].v, 0.5)
+  assert.notEqual(model.patterns[1].steps, model.patterns[0].steps)
+  clearAutoLane(1, 'master')
+  assert.equal(model.patterns[1].auto, undefined)
+  const packed = compactPatterns().find((row) => row.i === 0)
+  assert.equal(packed?.bpm, 140)
+  assert.equal(packed?.auto[0].id, 'master')
+  for (let i = 1; i < 256; i++) model.patterns[i] = { name: 'x', bars: 1, len: 16, steps: [] }
+  model.songOrder = [0]
+  duplicateSongCell(0)
+  assert.deepEqual(model.songOrder, [0, 0])
 })
 
 test('the WAV bounce follows the song order when the song is playing', () => {

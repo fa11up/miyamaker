@@ -5,6 +5,7 @@ import styled from 'styled-components/macro'
 import ComputerIcon from '@/assets/computer.png'
 import EditionsIcon from '@/assets/filepack-0.png'
 import AuctionIcon from '@/assets/icon/auction.png'
+import BondingCurvePick from '@/components/BondingCurve'
 import {
   DropWords,
   DropZone,
@@ -19,7 +20,7 @@ import {
 import MyUploads from '@/components/MyUploads'
 import { Eyebrow, Well } from '@/components/Retro'
 import type { FieldErrors, LaunchForm, LaunchType, PhaseForm } from '@/miyamints/launch'
-import { EMPTY_PHASE, MAX_PHASES, parseAlignmentPct, parseEth, phaseFieldsBad } from '@/miyamints/launch'
+import { EMPTY_PHASE, MAX_PHASES, parseAlignmentPct, parseEth, parseWhole, phaseFieldsBad } from '@/miyamints/launch'
 import { pctLabel } from '@/miyamints/split'
 import type { FileCheck } from '@/music/audio'
 import { AUDIO_ACCEPT, formatDuration, IMAGE_ACCEPT } from '@/music/audio'
@@ -513,22 +514,31 @@ export function SaleStep({ form, set, errors }: StepProps) {
   }
 
   if (form.type === 'editions') {
+    const priced = parseEth(form.editionPrice)
+    const copies = parseWhole(form.editionSupply, { min: 1, max: 1_000_000, label: 'Supply', blank: 0 })
     return (
       <Stack>
-        <Lead>Set the price and how many copies can be bought.</Lead>
+        <Lead>Set the starting price, how many copies can be bought, and the bonding curve those copies follow.</Lead>
         <Row2>
           <Field>
-            Price per copy (ETH)
+            Starting price (ETH)
             <input {...input('editionPrice')} inputMode="decimal" placeholder="0.005" />
             <Err>{errors.editionPrice}</Err>
           </Field>
           <Field>
             Number of copies
             <input {...input('editionSupply')} inputMode="numeric" placeholder="No limit" />
-            <small>Leave empty for an open edition: no limit.</small>
+            <small>Leave empty for an open edition: no limit. A rising curve needs a number.</small>
             <Err>{errors.editionSupply}</Err>
           </Field>
         </Row2>
+        <BondingCurvePick
+          rise={form.editionRise}
+          onRise={(rise) => set('editionRise', rise)}
+          priceWei={priced.ok ? priced.wei : undefined}
+          supply={copies.ok ? BigInt(copies.n) : undefined}
+          error={errors.editionRise}
+        />
         {(parseEth(form.editionPrice).ok || form.editionStart) && (
           <Field>
             Sale opens (optional)

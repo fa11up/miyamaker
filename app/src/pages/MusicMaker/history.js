@@ -48,12 +48,14 @@ function takeSnapshot() {
     library: model.library,
     wallet: model.wallet || '',
     numpadFx: model.numpadFx,
+    fxPresets: model.fxPresets,
     waveView: model.waveView,
     mixPage: model.mixPage,
     comp: model.comp,
     songOrder: model.songOrder,
     songCursor: model.songCursor | 0,
     songLoop: model.songLoop === 'section' || model.songLoop === 'once' ? model.songLoop : 'wrap',
+    songLaunch: model.songLaunch === 'now' || model.songLaunch === 'grid' ? model.songLaunch : 'end',
     songName: model.songName || '',
     songFile: model.songFile || '',
     songPlay: !!model.songPlay,
@@ -73,12 +75,14 @@ function applySnapshot(data) {
   model.library = data.library
   model.wallet = data.wallet || ''
   model.numpadFx = data.numpadFx
+  model.fxPresets = data.fxPresets || []
   model.waveView = data.waveView
   model.mixPage = data.mixPage === 1 ? 1 : 0
   model.comp = data.comp
   model.songOrder = data.songOrder || null
   model.songCursor = Math.max(0, data.songCursor | 0)
   model.songLoop = data.songLoop === 'section' || data.songLoop === 'once' ? data.songLoop : 'wrap'
+  model.songLaunch = data.songLaunch === 'now' || data.songLaunch === 'grid' ? data.songLaunch : 'end'
   model.launchCursor = null
   model.songName = data.songName || ''
   model.songFile = data.songFile || ''

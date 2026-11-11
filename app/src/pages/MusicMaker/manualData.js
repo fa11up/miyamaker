@@ -1,0 +1,262 @@
+/** Manual pages. The order and the five groups follow the K-OS-III manual. English only. */
+
+export const CATEGORIES = [
+  { id: 'foundations', label: 'FOUNDATIONS', blurb: 'Start here. No earlier knowledge.' },
+  { id: 'song', label: 'THE SONG', blurb: 'Patterns, the sequence, the tracker, and the arranger.' },
+  { id: 'sounds', label: 'SOUNDS', blurb: 'Samples, pictures, the synth, and the mixer.' },
+  { id: 'further', label: 'GOING FURTHER', blurb: 'Effects, the phone, and how notes end.' },
+  { id: 'reference', label: 'REFERENCE', blurb: 'Save, export, mint, and the keys.' },
+]
+
+export const ARTICLES = [
+  {
+    slug: 'welcome',
+    category: 'foundations',
+    level: 'beginner',
+    title: 'Welcome',
+    one: 'What this instrument is, and where to tap first.',
+    see: ['top-bar', 'play-a-pad'],
+    body: [
+      'Miya Music Maker is a sampler and a tracker in one window. You play pads, draw a pattern, and arrange those patterns into a song.',
+      'The ? on each page opens a short card. Each step shows a picture of the button, and Show me draws a white line to the real one. You can drag the card by its title.',
+      'This Manual is the longer book. FILE, then Manual, opens it. On a narrow window the same item is inside Menu.',
+    ],
+  },
+  {
+    slug: 'top-bar',
+    category: 'foundations',
+    level: 'beginner',
+    title: 'The top bar',
+    one: 'FILE, NEW, SAVE, Play, and the pages.',
+    see: ['welcome', 'save-mint'],
+    body: [
+      '[[FILE]] opens songs, kits, a video link, an image, and this Manual.',
+      '[[NEW]] starts a song, a folder, a kit, or a slice. [[SAVE]] writes the song you are editing. Under that are the export and mint rows.',
+      '[[Play]] starts and stops. Space does the same, unless you are typing in a text field. [[Rec]] on the tracker lets the pattern change. Rec off does not change the pattern.',
+      'The page buttons are Pads, Sample, Sequence, Mixer, Tracker, Synth, and FX. On a narrow window they fold into one button that shows the page you are on.',
+    ],
+  },
+  {
+    slug: 'play-a-pad',
+    category: 'foundations',
+    level: 'beginner',
+    title: 'Play a pad',
+    one: 'Hear a sound before you sequence it.',
+    see: ['welcome', 'samples', 'oneshots'],
+    body: [
+      'Open Pads. Tap a pad. A loaded pad already shows its wave. An empty pad is blank.',
+      'The keys 1 2 3 4, then Q W E R, A S D F, and Z X C V, play the sixteen pads in the current bank. Banks are A, B, C, and D.',
+      'Drag a sample from the browser onto a pad. Right-click a pad, or hold it on a touch screen, for Copy pad and Paste.',
+    ],
+  },
+  {
+    slug: 'draw-a-beat',
+    category: 'foundations',
+    level: 'beginner',
+    title: 'Draw a beat',
+    one: 'Paint hits on the sequence page.',
+    see: ['sequence', 'play-a-pad'],
+    body: [
+      'Open Sequence. [[Draw]] paints a hit on a pad row. [[Erase]] clears it. The note on the hit is the same note the tracker shows.',
+      '[[Note]], [[Vel]], and [[Bus FX]] choose what a drag changes. [[Select]] a hit, then the lower left handle moves it, the lower right handle changes its length, and the handle on the right moves it to another pad.',
+      'Press [[Play]]. The song plays the pattern you are looking at, unless the arranger is running the song order.',
+    ],
+  },
+  {
+    slug: 'sequence',
+    category: 'song',
+    level: 'beginner',
+    title: 'Sequence',
+    one: 'Sixteen pad rows, and the same hits as the tracker.',
+    see: ['draw-a-beat', 'patterns'],
+    body: [
+      'The rows are the sixteen pads of this bank. A hit shows its note. Each step can hold its own note. The tracker shows the same hits.',
+      '[[Draw]] paints. [[Erase]] clears. [[Select]] a hit. The lower left handle moves it in time. The lower right handle changes how many steps it lasts. The handle on the right moves it to another pad.',
+      '[[Note]] sets the pitch. [[Vel]] sets how hard. [[Bus FX]] is the pad’s send, so the whole row shares it. A dry bus becomes a filter while you drag. Zoom widens the steps. Drag a pad name, or the bar numbers, to scroll.',
+      '− bar and + bar change the pattern length. Double copies the pattern onto itself.',
+    ],
+  },
+  {
+    slug: 'tracker',
+    category: 'song',
+    level: 'intermediate',
+    title: 'Tracker',
+    one: 'The marked cell, Rec, the trackpad, and a block selection.',
+    see: ['sequence', 'patterns', 'shortcuts'],
+    body: [
+      '[[Rec]] on: the marked cell is where edits land, and the pattern can change. Rec off: the pattern does not change, stopped or playing. While it plays with Rec off, the play row follows the sound and the cursor stays put. Escape toggles Rec.',
+      'Arrows move the cursor. Drag empty grid space and the cursor walks the way your finger points. Hold [[SHIFT]] at the lower left and drag with the other thumb to edit the cell under the cursor.',
+      'Shift and the arrows edit the column you are on, and only while Rec is on. On NOTE, Shift+Left and Shift+Right are one semitone. Shift+Up and Shift+Down are one octave.',
+      'Shift+Alt and the arrows mark a rectangle from the cell you started on. Left and right step by column: NOTE, INST, VEL, MOVE, and SL and LP when those columns are open. Up and down step by row. A plain arrow drops the block.',
+      'Cmd+C or Ctrl+C copies only the columns inside the block. Cmd+V or Ctrl+V pastes them with the cursor as the top-left. Delete removes only those columns. NOTE delete removes the hit. VEL delete sets the velocity to 0 and leaves the note. Shift+arrows change every selected cell of those columns, each column by its own rule.',
+      'Notes play once. The same lane chokes the previous note. SL and LP still loop a grain until the next note or OFF.',
+    ],
+  },
+  {
+    slug: 'arranger',
+    category: 'song',
+    level: 'intermediate',
+    title: 'Arranger',
+    one: 'Chain patterns into a song.',
+    see: ['patterns', 'tracker'],
+    body: [
+      'The button under Browser opens the arranger in the same column. With both open, the bar between them drags.',
+      '+ pattern opens four banks, and each bank opens its patterns, named or empty. A new part waits until the one playing finishes.',
+      'Play chooses Wait, Now, or Grid, and Order or Once. Right-click a section to give it another slot, or Edit, Duplicate, and Delete.',
+      'The bar under a playing part shows how far that loop has gone. A part waiting for the current loop to finish blinks until it starts.',
+    ],
+  },
+  {
+    slug: 'patterns',
+    category: 'song',
+    level: 'beginner',
+    title: 'Patterns and banks',
+    one: 'Where a beat is stored.',
+    see: ['sequence', 'arranger'],
+    body: [
+      'A pattern is one grid of hits. There are four banks of patterns. The pattern menu shows the banks first, then the patterns in that bank.',
+      'The sequence page and the tracker page edit the same pattern. Changing it in one place changes it in the other.',
+      'The arranger points at pattern slots. Removing a cell from the song keeps the pattern.',
+    ],
+  },
+  {
+    slug: 'samples',
+    category: 'sounds',
+    level: 'beginner',
+    title: 'Samples',
+    one: 'Trim, zoom, and chop.',
+    see: ['play-a-pad', 'video-image', 'oneshots'],
+    body: [
+      'The Sample page is the sound on the selected pad. Drag the wave to set S and E. Drag inside a shorter span to slide it. Drag near an edge to resize it.',
+      'Pinch, or ctrl-scroll, zooms in. Double-click, or Fit, shows the whole sample.',
+      'Chop copies the span onto the next empty pad and leaves the original.',
+    ],
+  },
+  {
+    slug: 'video-image',
+    category: 'sounds',
+    level: 'intermediate',
+    title: 'Video and image',
+    one: 'A link or a picture becomes a sample.',
+    see: ['samples', 'top-bar'],
+    body: [
+      'FILE, then Video link, opens a crop window. Set the in point, the out point, the rate, and the pad. A start time in the link is the suggested in point.',
+      'YouTube, Odysee, LBRY, and X are the hosts it reads. The crop stays in Cache until you put it on a pad.',
+      'Image turns a picture into a Cache sample. You choose the resolution, the bins, the octave, and the speed. It does not land on a pad until you load it.',
+    ],
+  },
+  {
+    slug: 'synth',
+    category: 'sounds',
+    level: 'beginner',
+    title: 'Synth',
+    one: 'A drawn sound on a pad.',
+    see: ['play-a-pad', 'mixer'],
+    body: [
+      'The Synth page replaces the selected pad’s patch. A preset replaces the whole patch.',
+      'The knobs are the oscillators, the filter, and the envelope. Drag a knob up or down. Shift on a knob jumps by a larger step.',
+    ],
+  },
+  {
+    slug: 'mixer',
+    category: 'sounds',
+    level: 'intermediate',
+    title: 'Mixer',
+    one: 'Buses, sends, and the limiter.',
+    see: ['sequence', 'numpad-fx'],
+    body: [
+      'There are sixteen buses, eight on a page. [[1–8]] and 9–16 switch the page. Tap a channel to open its five effect slots. Tap another channel and the slots change. Empty slots stay off.',
+      'The EQ under the slots follows that channel. Its header menu can switch to another channel or to Output. Drag a point. Right-click it, or hold SHIFT and tap it, for low cut, bell, or high cut. Dynamic ducks that band when it jumps up. The compressor after the EQ draws the gain it is taking off.',
+      'Pads on one bus share that bus, including its reverb. Bus FX on the sequence page edits the pad’s send.',
+      'The limiter sits after the master compressor and does not pass 0 dBFS.',
+    ],
+  },
+  {
+    slug: 'numpad-fx',
+    category: 'further',
+    level: 'intermediate',
+    title: 'Numpad FX',
+    one: 'Hold a key to run an effect.',
+    see: ['mixer', 'shortcuts'],
+    body: [
+      'On the FX page, hold a numpad key. A short tap selects that slot so you can edit it. Keys you hold at the same time run in the order you pressed them.',
+      'Repeat locks a note value to the project tempo. Slice rearranges those notes. Grain can stretch. Wander steps a filter’s resonance.',
+      'Presets on this page save with the song.',
+    ],
+  },
+  {
+    slug: 'phone',
+    category: 'further',
+    level: 'beginner',
+    title: 'Phone and keyboard',
+    one: 'One row of buttons, and SHIFT at the lower left.',
+    see: ['top-bar', 'tracker'],
+    body: [
+      'On a narrow window the top row is Menu, Play, Rec, the tempo, the surface, one bank, and one screen. Menu holds Manual, the file commands, save, export, and mint.',
+      '[[SHIFT]] sits at the lower left, in the same strip as Browser and Arranger. Hold it and drag the tracker with the other thumb.',
+      'Ctrl and an arrow, or R1 and the d-pad, change page. The d-pad alone is the arrow keys.',
+    ],
+  },
+  {
+    slug: 'oneshots',
+    category: 'further',
+    level: 'beginner',
+    title: 'One-shots, loops, and slices',
+    one: 'What happens when you hold a pad.',
+    see: ['play-a-pad', 'samples'],
+    body: [
+      'One-shot is the default. The pad plays once, even if you hold it, and tracker notes play once.',
+      'Loop repeats from LP until you let go. Tracker notes still play once from the trim start to the trim end. SL and LP on the tracker loop a grain until the next note or OFF.',
+      'Slice splits a crop across consecutive pads. One kept piece is capped at 16 seconds.',
+    ],
+  },
+  {
+    slug: 'save-mint',
+    category: 'reference',
+    level: 'beginner',
+    title: 'Save, export, and mint',
+    one: 'A file on this computer, on Arweave, or an Ethereum edition.',
+    see: ['top-bar', 'welcome'],
+    body: [
+      '[[SAVE]], then Save, writes the current song. Save as stores a new .m1ya and keeps editing that file. Save as template stores a starting point and does not change the current song.',
+      'Publish song to Arweave, Publish kit to Arweave, and Publish bounce to Arweave upload a public file. It cannot be deleted, and a song or kit includes every sample in it.',
+      '[[Mint song]], [[Mint kit]], and [[Mint audio]] open the same Ethereum release. Mint song stores the bounce and the .m1ya. Mint kit stores the bounce and the .k1t. Mint audio stores the bounce only, as the audio file, with no song file and no kit file beside it. The bounce plays in miya radio.',
+      'On a narrow window those six rows are inside Menu, after Save kit.',
+    ],
+  },
+  {
+    slug: 'shortcuts',
+    category: 'reference',
+    level: 'intermediate',
+    title: 'Shortcuts',
+    one: 'The keys that are always available.',
+    see: ['tracker', 'phone'],
+    body: [
+      'Space is play and stop. Escape toggles Rec on the tracker when no window is open. Arrows move the tracker cursor. Shift and the arrows edit one column while Rec is on.',
+      'Shift+Alt and the arrows mark a block. Cmd+C or Ctrl+C copies it. Cmd+V or Ctrl+V pastes it. Delete changes only the columns in the block.',
+      'The square button beside the play surface opens two keyboard diagrams. Those diagrams list the rest of the keys.',
+    ],
+  },
+  {
+    slug: 'glossary',
+    category: 'reference',
+    level: 'beginner',
+    title: 'Glossary',
+    one: 'Short names for the words on the buttons.',
+    see: ['welcome', 'tracker'],
+    body: [
+      'Pad: one sound you can hit. Bank: sixteen pads, A through D. Pattern: one grid of hits. Lane: one column of the tracker, sixteen of them.',
+      'Rec: record. On the tracker it arms editing. It does not start playback by itself.',
+      'Bounce: a WAV of the song as it plays. Kit: the pads, saved as .k1t. Song: the patterns and the kit, saved as .m1ya.',
+      'Mint: an Ethereum edition through miyamints. The audio is permanent on Arweave, and the token points at it.',
+    ],
+  },
+]
+
+export function articlesIn(category) {
+  return ARTICLES.filter((article) => article.category === category)
+}
+
+export function articleBy(slug) {
+  return ARTICLES.find((article) => article.slug === slug) || null
+}

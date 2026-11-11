@@ -4,6 +4,7 @@ import type { Address } from 'viem'
 import { isAddress } from 'viem'
 import { useBalance, useReadContract, useReadContracts } from 'wagmi'
 
+import BondingCurvePick from '@/components/BondingCurve'
 import { Err, Field, Row2, SmallButton, SplitMeter } from '@/components/LaunchKit'
 import { BigButton, Eyebrow, StatusBox, Well } from '@/components/Retro'
 import Tabs from '@/components/Tabs'
@@ -14,6 +15,7 @@ import { auctionInstanceAbi, dropInstanceAbi, editionsManageAbi, erc1155Instance
 import type { LaunchKind } from '@/miyamints/collections'
 import { progressLabel } from '@/miyamints/collections'
 import { jsonDataUri, parseEth, parseLink, parseName, parseWhole, tokenJson } from '@/miyamints/launch'
+import { parseEdition } from '@/music/drop'
 import { ethLabel } from '@/miyamints/split'
 import { useVaultInfo } from '@/miyamints/useMiyamints'
 import { txWords, useTx } from '@/miyamints/useTx'
@@ -411,18 +413,21 @@ function EditionsTab({
   const [img, setImg] = useState('')
   const [price, setPrice] = useState('')
   const [copies, setCopies] = useState('')
+  const [rise, setRise] = useState('1')
   useEffect(() => {
     if (tx.phase === 'done' && tx.id === 'edition') {
       setTitle('')
       setImg('')
       setPrice('')
       setCopies('')
+      setRise('1')
     }
   }, [tx.phase, tx.id])
   const n = parseName(title)
   const l = parseLink(img)
   const p = parseEth(price)
   const c = parseWhole(copies, { min: 1, max: 1_000_000, label: 'Copies', blank: 0 })
+  const edition = c.ok ? parseEdition(c.n ? String(c.n) : '', rise) : { ok: false as const, error: c.error }
   return (
     <Stack>
       <Table>
@@ -474,15 +479,22 @@ function EditionsTab({
           <Err>{!c.ok ? c.error : undefined}</Err>
         </Field>
       </Row2>
+      <BondingCurvePick
+        rise={rise}
+        onRise={setRise}
+        priceWei={p.ok ? p.wei : undefined}
+        supply={edition.ok ? edition.supply : undefined}
+        error={!edition.ok && copies.trim() ? edition.error : undefined}
+      />
       <div>
         <SmallButton
           type="button"
-          disabled={busy || !isOwner || !n.ok || !l.ok || !p.ok || !c.ok}
+          disabled={busy || !isOwner || !n.ok || !l.ok || !p.ok || !edition.ok}
           onClick={() =>
             n.ok &&
             l.ok &&
             p.ok &&
-            c.ok &&
+            edition.ok &&
             run('edition', {
               address,
               chainId,
@@ -491,10 +503,10 @@ function EditionsTab({
               args: [
                 n.name,
                 p.wei,
-                BigInt(c.n),
+                edition.supply,
                 jsonDataUri(tokenJson({ name: n.name, description: '', image: l.uri, website: '' })),
-                c.n === 0 ? 0 : 1,
-                0n,
+                edition.model,
+                edition.rate,
                 0n,
               ],
             })

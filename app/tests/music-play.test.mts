@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
 import { nextSongCursor, samplePlayKind } from '../src/pages/MusicMaker/audio/playKind.js'
+import { clockBpm, launchStep, normalizeAuto, normalizeLaunch, valueAt, writeAuto } from '../src/pages/MusicMaker/audio/arrange.js'
 import { downsample, parseClock, shapeSample, sliceSpan, urlSampleHint } from '../src/pages/MusicMaker/audio/sampleShape.js'
 
 test('tracker notes and the tracker clock are one-shots', () => {
@@ -11,11 +12,65 @@ test('tracker notes and the tracker clock are one-shots', () => {
   assert.equal(samplePlayKind({ grain: true, pattern: true }), 'grain')
 })
 
-test('pad holds and loop mode keep looping', () => {
-  assert.equal(samplePlayKind({ held: true, mode: 'oneshot' }), 'loop')
+test('a one-shot stays a one-shot while held, and only loop mode cycles', () => {
+  assert.equal(samplePlayKind({ held: true, mode: 'oneshot' }), 'oneshot')
+  assert.equal(samplePlayKind({ held: true, mode: 'loop' }), 'loop')
   assert.equal(samplePlayKind({ mode: 'loop' }), 'loop')
+  assert.equal(samplePlayKind({ held: true, mode: 'gate' }), 'gate')
   assert.equal(samplePlayKind({ mode: 'gate' }), 'gate')
   assert.equal(samplePlayKind({ mode: 'oneshot' }), 'oneshot')
+  assert.equal(samplePlayKind({ held: false }), 'oneshot')
+})
+
+test('automation holds the last point and stays quiet before the first one', () => {
+  const points = [{ s: 4, v: 1 }, { s: 8, v: 2 }]
+  assert.equal(valueAt(points, 3), null)
+  assert.equal(valueAt(points, 4), 1)
+  assert.equal(valueAt(points, 9), 2)
+  assert.equal(valueAt([], 0), null)
+})
+
+test('a pattern tempo sits between a BPM lane and the song tempo', () => {
+  const seq = { bpm: 140, auto: [{ id: 'bpm', points: [{ s: 2, v: 180 }] }] }
+  assert.equal(clockBpm({ bpm: 96 }, seq, 0), 140)
+  assert.equal(clockBpm({ bpm: 96 }, seq, 2), 180)
+  assert.equal(clockBpm({ bpm: 96 }, {}, 0), 96)
+  assert.equal(clockBpm({}, {}, 0), 96)
+})
+
+test('launch waits, restarts, or keeps the step of the next pattern', () => {
+  assert.equal(normalizeLaunch('soon'), 'end')
+  assert.equal(normalizeLaunch('now'), 'now')
+  assert.equal(normalizeLaunch(undefined), 'end')
+  assert.deepEqual(launchStep({ mode: 'now', queued: true, atWrap: false, step: 5, nextLength: 16 }), { take: true, advance: false, step: 0 })
+  assert.deepEqual(launchStep({ mode: 'end', queued: true, atWrap: false, step: 5, nextLength: 16 }), { take: false, advance: false, step: 5 })
+  assert.deepEqual(launchStep({ mode: 'end', queued: true, atWrap: true, step: 0, nextLength: 16 }), { take: true, advance: false, step: 0 })
+  assert.deepEqual(launchStep({ mode: 'grid', queued: true, atWrap: false, step: 14, nextLength: 12 }), { take: true, advance: false, step: 2 })
+  assert.deepEqual(launchStep({ mode: 'grid', queued: true, atWrap: false, step: 5, nextLength: 16 }), { take: true, advance: false, step: 5 })
+  assert.deepEqual(launchStep({ mode: 'now', queued: false, atWrap: true, step: 0, nextLength: 16 }), { take: false, advance: true, step: 0 })
+  assert.deepEqual(launchStep({ mode: 'end', queued: false, atWrap: false, step: 3, nextLength: 16 }), { take: false, advance: false, step: 3 })
+})
+
+test('automation keeps an empty lane, drops an unknown one, and writes a mixer value once', () => {
+  assert.deepEqual(normalizeAuto([
+    { id: 'swing', points: [] },
+    { id: 'nope', points: [{ s: 0, v: 1 }] },
+    { id: 'bpm', points: [{ s: 1, v: 10 }, { s: 1, v: 80 }, { s: -4, v: 90 }] },
+  ]), [
+    { id: 'swing', points: [] },
+    { id: 'bpm', points: [{ s: 0, v: 90 }, { s: 1, v: 80 }] },
+  ])
+  const live = {
+    bpm: 96,
+    master: 0.9,
+    pads: [{ pitch: 0, filter: { cutoff: 1000 }, fx: { drive: 0 } }],
+  }
+  assert.equal(writeAuto(live, 'master', 0.4), true)
+  assert.equal(live.master, 0.4)
+  assert.equal(writeAuto(live, 'master', 0.4), false)
+  assert.equal(writeAuto(live, 'pad:0:pitch', 12.4), false)
+  assert.equal(live.pads[0].pitch, 12)
+  assert.equal(writeAuto(live, 'nope', 1), false)
 })
 
 test('song order wraps, repeats a section, or stops', () => {

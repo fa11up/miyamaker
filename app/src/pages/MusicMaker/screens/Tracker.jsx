@@ -3,8 +3,6 @@ import { noteName } from '../keys.js'
 import {
   LANES,
   TRACK_VEL,
-  clearTrackerGrain,
-  clearTrackerLane,
   commitTrackerNote,
   currentPattern,
   formatLp,
@@ -17,17 +15,24 @@ import {
   stepCount,
   touch,
   trackerFields,
+  trackerLocked,
+  writeTrackerField,
 } from '../model.js'
 import { useModel } from '../useModel.js'
 import { PatternBar } from './PatternBar.jsx'
 import { HelpButton } from '../widgets.jsx'
 
 const HEADS = ['NOTE', 'INST', 'VEL', 'MOVE', 'SL', 'LP']
+const STICK_DEAD = 16
+
+/** Held by the lower-left SHIFT control. The trackpad edits instead of moving while this is set. */
+export const finger = { shift: false }
 
 export function Tracker() {
   useModel()
   const [menu, setMenu] = useState(null)
   const gridRef = useRef(null)
+  const stick = useRef({ on: false, id: 0, ox: 0, oy: 0, x: 0, y: 0, ax: 0, ay: 0, moved: false, ate: false, raf: 0, then: 0 })
   const seq = currentPattern()
   const rows = stepCount(seq)
   const t = model.tracker
@@ -43,29 +48,33 @@ export function Tracker() {
     return () => window.removeEventListener('pointerdown', down)
   }, [menu])
   useEffect(() => {
-    if (!model.playing || !t.follow) return
-    if (t.row === model.playhead) return
-    t.row = model.playhead
-    t.hex = ''
-    touch(false)
-  }, [model.playing, model.playhead, t.follow, t.row])
+    if (!model.playing) return
+    // Record off: the play cursor is the only cursor, so it rides the playhead.
+    // Record on: the edit cursor stays put and the play row moves on its own.
+    if (!t.edit && t.row !== model.playhead) {
+      t.row = model.playhead
+      t.hex = ''
+      touch(false)
+    }
+    if (!t.follow) return
+    revealTracker(gridRef.current, gridRef.current?.querySelector('tr.play'), 'y')
+  }, [model.playing, model.playhead, t.follow, t.edit, t.row])
   useEffect(() => {
-    if (!t.focus) return
-    document.querySelector('.tracker td.cursor')?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
-  }, [t.focus, t.row, t.col, model.pattern])
+    if (!t.focus || (model.playing && t.follow && !t.edit)) return
+    revealTracker(gridRef.current, gridRef.current?.querySelector('td.here'))
+  }, [t.focus, t.row, t.col, t.edit, t.follow, model.pattern, model.playing])
   useEffect(() => {
     if (!t.focus || activeField()) return
     gridRef.current?.focus({ preventScroll: true })
   }, [t.focus, model.screen])
+  useEffect(() => () => cancelAnimationFrame(stick.current.raf), [])
   const focusLane = Math.floor((t.col || 0) / fields)
   const focusEv = seq.steps[t.row]?.[focusLane]
   return (
     <div className="screen tracker-screen">
       <div className="tracker-bar">
         <PatternBar />
-        <HelpButton title="Tracker">
-          Esc or Rec arms edit. Arrows move the cursor. Notes play once from the trim start to the trim end. The same lane chokes the previous note. SL and LP still loop a grain until the next note or OFF. Ctrl and an arrow, or R1 and the d-pad, change page. A plain arrow on any other page moves the highlighted setting.
-        </HelpButton>
+        <HelpButton title="Tracker" topic="tracker" />
         <div className="tracker-tools">
           <label className="slider">
             <span title="Rows to skip after a note or a finished value. 0 stays on the row. Ctrl and 1–0 set this from the grid.">Step</span>
@@ -103,13 +112,13 @@ export function Tracker() {
       </div>
       <div
         className="tracker"
+        data-coach="tracker"
         ref={gridRef}
         tabIndex={0}
-        onMouseDown={(event) => {
-          t.focus = true
-          event.currentTarget.focus({ preventScroll: true })
-          touch(false)
-        }}
+        onPointerDown={beginStick}
+        onPointerMove={moveStick}
+        onPointerUp={endStick}
+        onPointerCancel={endStick}
       >
         <table>
           <thead onContextMenu={openCols}>
@@ -144,6 +153,7 @@ export function Tracker() {
             {Array.from({ length: rows }, (_, row) => {
               const events = seq.steps[row] || []
               const play = model.playing && model.playhead === row
+              const armed = !!t.edit
               return (
                 <tr key={row} className={rowClass(row, play)}>
                   <td className="st">{hexByte(row)}</td>
@@ -151,27 +161,40 @@ export function Tracker() {
                     const lane = Math.floor(col / fields)
                     const field = col % fields
                     const ev = events[lane]
-                    const active = t.focus && t.row === row && t.col === col
+                    const rect = blockOf(t)
+                    const cursor = !trackerLocked() && t.row === row && t.col === col
+                    const anchor = !!(rect && row === t.block.ar && col === t.block.ac)
+                    const inside = !!(rect && row >= rect.r0 && row <= rect.r1 && col >= rect.c0 && col <= rect.c1)
                     const cls = [
                       field === 0 ? 'note edge' : field === 1 ? 'inst' : field === 2 ? 'vel' : field === 3 ? 'move' : field === 4 ? 'sl' : 'lp',
-                      active ? 'cursor' : '',
-                      active && t.edit ? 'armed' : '',
+                      cursor || anchor ? (armed ? 'edit' : 'mark') : '',
+                      cursor ? 'here' : '',
+                      inside && !cursor && !anchor ? 'block' : '',
                     ].filter(Boolean).join(' ')
                     return (
                       <td
                         key={col}
                         className={cls}
                         onClick={() => {
+                          if (stick.current.ate) {
+                            stick.current.ate = false
+                            return
+                          }
                           t.focus = true
+                          if (trackerLocked()) {
+                            touch(false)
+                            return
+                          }
                           t.row = row
                           t.col = col
                           t.pair = 0
                           t.hex = ''
+                          t.block = null
                           t.sign = 1
                           touch(false)
                         }}
                       >
-                        {renderCell(ev, field, active, t)}
+                        {renderCell(ev, field, cursor && armed, t)}
                       </td>
                     )
                   })}
@@ -187,6 +210,7 @@ export function Tracker() {
             type="button"
             onClick={() => {
               setMenu(null)
+              model.tracker.block = null
               setGrainCols(!model.tracker.grains)
             }}
           >
@@ -202,6 +226,126 @@ export function Tracker() {
     const frame = event.currentTarget.closest('.mmm')
     const rect = frame ? frame.getBoundingClientRect() : { left: 0, top: 0 }
     setMenu({ x: event.clientX - rect.left, y: event.clientY - rect.top })
+  }
+
+  function beginStick(event) {
+    if (event.button !== 0) return
+    const el = event.currentTarget
+    if (event.target === el && (event.offsetX > el.clientWidth || event.offsetY > el.clientHeight)) return
+    event.preventDefault()
+    window.getSelection?.()?.removeAllRanges?.()
+    const s = stick.current
+    s.on = true
+    s.id = event.pointerId
+    s.ox = s.x = event.clientX
+    s.oy = s.y = event.clientY
+    s.ax = 0
+    s.ay = 0
+    s.moved = false
+    s.ate = false
+    s.tapRow = -1
+    s.tapCol = -1
+    const cell = event.target?.closest?.('td')
+    if (cell && !cell.classList.contains('st') && el.contains(cell)) {
+      const rowEl = cell.parentElement
+      s.tapRow = [...el.querySelectorAll('tbody tr')].indexOf(rowEl)
+      s.tapCol = [...rowEl.querySelectorAll('td:not(.st)')].indexOf(cell)
+    }
+    s.then = performance.now()
+    t.focus = true
+    el.focus({ preventScroll: true })
+    try { el.setPointerCapture(event.pointerId) } catch { /* already gone */ }
+    cancelAnimationFrame(s.raf)
+    s.raf = requestAnimationFrame(tickStick)
+    touch(false)
+  }
+
+  function moveStick(event) {
+    const s = stick.current
+    if (!s.on || event.pointerId !== s.id) return
+    s.x = event.clientX
+    s.y = event.clientY
+  }
+
+  function endStick(event) {
+    const s = stick.current
+    if (!s.on || (event.pointerId != null && event.pointerId !== s.id)) return
+    s.on = false
+    cancelAnimationFrame(s.raf)
+    s.ate = true
+    setTimeout(() => {
+      s.ate = false
+    }, 0)
+    if (s.moved || trackerLocked() || s.tapRow < 0 || s.tapCol < 0) return
+    const tr = model.tracker
+    tr.row = s.tapRow
+    tr.col = s.tapCol
+    tr.pair = 0
+    tr.hex = ''
+    tr.block = null
+    tr.sign = 1
+    tr.focus = true
+    touch(false)
+  }
+
+  function tickStick(now) {
+    const s = stick.current
+    if (!s.on) return
+    const dt = Math.min(0.05, (now - s.then) / 1000)
+    s.then = now
+    const dx = s.x - s.ox
+    const dy = s.y - s.oy
+    const dist = Math.hypot(dx, dy)
+    if (dist > STICK_DEAD && !trackerLocked()) {
+      s.moved = true
+      const span = Math.min(1, (dist - STICK_DEAD) / 90)
+      const rate = (finger.shift ? 2.5 : 4) + span * (finger.shift ? 6 : 14)
+      s.ax += (dx / dist) * rate * dt
+      s.ay += (dy / dist) * rate * dt
+      let guard = 0
+      while (guard++ < 4 && (Math.abs(s.ax) >= 1 || Math.abs(s.ay) >= 1)) {
+        if (Math.abs(s.ax) >= Math.abs(s.ay)) {
+          const key = s.ax > 0 ? 'ArrowRight' : 'ArrowLeft'
+          s.ax += s.ax > 0 ? -1 : 1
+          applyTrackerArrow(key, finger.shift)
+        } else {
+          const key = s.ay > 0 ? 'ArrowDown' : 'ArrowUp'
+          s.ay += s.ay > 0 ? -1 : 1
+          applyTrackerArrow(key, finger.shift)
+        }
+      }
+    }
+    s.raf = requestAnimationFrame(tickStick)
+  }
+}
+
+/** Keep a cell in view past the sticky step column, the sticky header, and the scrollbars.
+ *  scrollIntoView stops one header short of the start, so the edges needed the scrollbar. */
+function revealTracker(grid, el, axis) {
+  if (!grid || !el) return
+  const gridRect = grid.getBoundingClientRect()
+  const elRect = el.getBoundingClientRect()
+  const stickyLeft = grid.querySelector('th.st')?.getBoundingClientRect().width || 0
+  const stickyTop = grid.querySelector('thead')?.getBoundingClientRect().height || 0
+  const barX = grid.offsetWidth - grid.clientWidth
+  const barY = grid.offsetHeight - grid.clientHeight
+  const viewLeft = gridRect.left + stickyLeft
+  const viewTop = gridRect.top + stickyTop
+  const viewRight = gridRect.right - barX
+  const viewBottom = gridRect.bottom - barY
+  if (axis !== 'y') {
+    if (elRect.left < viewLeft) grid.scrollLeft += elRect.left - viewLeft
+    else if (elRect.right > viewRight) grid.scrollLeft += elRect.right - viewRight
+    if (el.cellIndex === 1) grid.scrollLeft = 0
+    else if (el.parentElement?.cells && el.cellIndex === el.parentElement.cells.length - 1) grid.scrollLeft = grid.scrollWidth
+  }
+  if (axis !== 'x') {
+    if (elRect.top < viewTop) grid.scrollTop += elRect.top - viewTop
+    else if (elRect.bottom > viewBottom) grid.scrollTop += elRect.bottom - viewBottom
+    const rows = grid.querySelectorAll('tbody tr')
+    const row = el.closest('tr')
+    if (row && row === rows[0]) grid.scrollTop = 0
+    else if (row && row === rows[rows.length - 1]) grid.scrollTop = grid.scrollHeight
   }
 }
 
@@ -282,9 +426,7 @@ export function handleTrackerKey(e) {
   const t = model.tracker
   if (t.col == null) t.col = 0
   const seq = currentPattern()
-  const rows = stepCount(seq)
   const fields = trackerFields()
-  const cols = LANES * fields
   const key = e.key
   if (key === 'Escape') {
     t.edit = !t.edit
@@ -293,49 +435,63 @@ export function handleTrackerKey(e) {
     touch(false)
     return true
   }
+  if (isCopy(e)) {
+    e.preventDefault()
+    copyBlock()
+    return true
+  }
+  if (isPaste(e)) {
+    e.preventDefault()
+    if (t.edit && !trackerLocked()) pasteBlock()
+    return true
+  }
+  // Green playback: the pattern is locked. Note keys already auditioned. Space is play/pause.
+  if (trackerLocked()) {
+    if (key === ' ' || e.code === 'Space') return false
+    if (key === 'Tab' || key.startsWith('Arrow') || key === 'Delete' || key === 'Backspace' || key.length === 1) return true
+    return false
+  }
+  // Stopped with Rec off: the cursor can move. Notes, hex, delete, and paste do not.
+  if (!t.edit) {
+    if (key === ' ' || e.code === 'Space') return false
+    if (key === 'Tab') {
+      const lane = Math.floor(t.col / fields)
+      const next = (lane + (e.shiftKey ? -1 : 1) + LANES) % LANES
+      t.col = next * fields
+      t.pair = 0
+      t.hex = ''
+      t.block = null
+      touch(false)
+      return true
+    }
+    if (blockArrows(e)) {
+      growBlock(key)
+      return true
+    }
+    if (key.startsWith('Arrow') && !(e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey)) {
+      applyTrackerArrow(key, false)
+      return true
+    }
+    if (key.startsWith('Arrow') || key === 'Delete' || key === 'Backspace' || key.length === 1) return true
+    return false
+  }
   if (key === 'Tab') {
     const lane = Math.floor(t.col / fields)
     const next = (lane + (e.shiftKey ? -1 : 1) + LANES) % LANES
     t.col = next * fields
     t.pair = 0
     t.hex = ''
+    t.block = null
     touch(false)
     return true
   }
-  if (e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey && key.startsWith('Arrow')) {
-    nudgeCell(t, seq, key)
-    return true
-  }
-  if (key === 'ArrowUp') {
-    t.row = (t.row - 1 + rows) % rows
-    t.hex = ''
-    touch(false)
-    return true
-  }
-  if (key === 'ArrowDown') {
-    t.row = (t.row + 1) % rows
-    t.hex = ''
-    touch(false)
-    return true
-  }
-  if (key === 'ArrowLeft' || key === 'ArrowRight') {
-    const dir = key === 'ArrowRight' ? 1 : -1
-    const here = t.col % fields
-    const pairs = pairCount(here)
-    if (pairs > 1) {
-      const next = (t.pair | 0) + dir
-      if (next >= 0 && next < pairs) {
-        t.pair = next
-        t.hex = ''
-        touch(false)
-        return true
-      }
+  if (key.startsWith('Arrow')) {
+    if (blockArrows(e)) {
+      growBlock(key)
+      return true
     }
-    t.col = (t.col + (dir > 0 ? 1 : cols - 1)) % cols
-    const landed = pairCount(t.col % fields)
-    t.pair = dir > 0 ? 0 : landed - 1
-    t.hex = ''
-    touch(false)
+    const shifted = e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey
+    applyTrackerArrow(key, shifted)
     return true
   }
   const lane = Math.floor(t.col / fields)
@@ -343,12 +499,7 @@ export function handleTrackerKey(e) {
   const cell = seq.steps[t.row]
   if (!cell) return false
   if (key === 'Delete' || key === 'Backspace') {
-    if (field === 3) {
-      if (cell[lane]) patchTrackerEvent(t.row, lane, { nudge: 0 }, { step: false })
-      return true
-    }
-    if (field === 4 || field === 5) clearTrackerGrain(t.row, lane, field)
-    else clearTrackerLane(t.row, lane)
+    deleteSelection(t, fields)
     return true
   }
   if (field === 4 || field === 5) {
@@ -427,6 +578,198 @@ export function handleTrackerKey(e) {
     return true
   }
   return false
+}
+
+function applyTrackerArrow(key, shifted) {
+  const t = model.tracker
+  if (t.col == null) t.col = 0
+  if (trackerLocked()) return
+  const seq = currentPattern()
+  const rows = stepCount(seq)
+  const fields = trackerFields()
+  const cols = LANES * fields
+  if (shifted) {
+    if (!model.tracker.edit) return
+    if (finger.shift) nudgeCell(t, seq, key)
+    else nudgeSelection(t, seq, key)
+    return
+  }
+  if (t.block) t.block = null
+  if (key === 'ArrowUp') {
+    t.row = (t.row - 1 + rows) % rows
+    t.hex = ''
+    touch(false)
+    return
+  }
+  if (key === 'ArrowDown') {
+    t.row = (t.row + 1) % rows
+    t.hex = ''
+    touch(false)
+    return
+  }
+  if (key === 'ArrowLeft' || key === 'ArrowRight') {
+    const dir = key === 'ArrowRight' ? 1 : -1
+    const here = t.col % fields
+    const pairs = pairCount(here)
+    if (pairs > 1) {
+      const next = (t.pair | 0) + dir
+      if (next >= 0 && next < pairs) {
+        t.pair = next
+        t.hex = ''
+        touch(false)
+        return
+      }
+    }
+    t.col = (t.col + (dir > 0 ? 1 : cols - 1)) % cols
+    const landed = pairCount(t.col % fields)
+    t.pair = dir > 0 ? 0 : landed - 1
+    t.hex = ''
+    touch(false)
+  }
+}
+
+function blockArrows(e) {
+  return e.shiftKey && e.altKey && !e.ctrlKey && !e.metaKey && e.key.startsWith('Arrow')
+}
+
+function isCopy(e) {
+  const key = e.key
+  return (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && (key === 'c' || key === 'C')
+}
+
+function isPaste(e) {
+  const key = e.key
+  return (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && (key === 'v' || key === 'V')
+}
+
+/** The rectangle from the anchor to the far corner. One cell is no block. */
+function blockOf(t) {
+  const b = t.block
+  if (!b) return null
+  const fields = trackerFields()
+  const cols = LANES * fields
+  const rows = Math.max(1, stepCount(currentPattern()))
+  const ar = Math.max(0, Math.min(rows - 1, b.ar | 0))
+  const ac = Math.max(0, Math.min(cols - 1, b.ac | 0))
+  const r = Math.max(0, Math.min(rows - 1, b.r | 0))
+  const c = Math.max(0, Math.min(cols - 1, b.c | 0))
+  if (ar === r && ac === c) return null
+  return { r0: Math.min(ar, r), r1: Math.max(ar, r), c0: Math.min(ac, c), c1: Math.max(ac, c) }
+}
+
+function growBlock(key) {
+  const t = model.tracker
+  const fields = trackerFields()
+  const cols = LANES * fields
+  const rows = Math.max(1, stepCount(currentPattern()))
+  if (!t.block) t.block = { ar: t.row | 0, ac: t.col | 0, r: t.row | 0, c: t.col | 0 }
+  const step = key === 'ArrowUp' ? [-1, 0] : key === 'ArrowDown' ? [1, 0] : key === 'ArrowLeft' ? [0, -1] : [0, 1]
+  const r = Math.max(0, Math.min(rows - 1, (t.block.r | 0) + step[0]))
+  const c = Math.max(0, Math.min(cols - 1, (t.block.c | 0) + step[1]))
+  t.block.r = r
+  t.block.c = c
+  t.row = r
+  t.col = c
+  t.pair = 0
+  t.hex = ''
+  if (r === t.block.ar && c === t.block.ac) t.block = null
+  touch(false)
+}
+
+/** The columns inside the block, or the one cell under the cursor. */
+function selectionCells(t) {
+  const fields = trackerFields()
+  const rect = blockOf(t)
+  const cells = []
+  if (!rect) {
+    cells.push({ row: t.row | 0, col: t.col | 0, field: (t.col | 0) % fields })
+    return cells
+  }
+  for (let row = rect.r0; row <= rect.r1; row++) {
+    for (let col = rect.c0; col <= rect.c1; col++) cells.push({ row, col, field: col % fields })
+  }
+  return cells
+}
+
+let clip = null
+
+function snapField(ev, field) {
+  if (!ev || ev.off) return null
+  if (field === 0) {
+    return {
+      pad: ev.pad | 0,
+      vel: ev.vel,
+      pitch: ev.pitch | 0,
+      nudge: ev.nudge || 0,
+      sl: ev.sl == null ? null : ev.sl,
+      len: ev.len == null ? null : ev.len,
+      move: ev.move || 0,
+    }
+  }
+  if (field === 1) return { pad: ev.pad | 0 }
+  if (field === 2) return { vel: ev.vel }
+  if (field === 3) return { nudge: ev.nudge || 0 }
+  if (field === 4) return ev.sl == null ? null : { sl: ev.sl }
+  if (field === 5) return ev.len == null ? null : { len: ev.len, move: ev.move || 0 }
+  return null
+}
+
+function copyBlock() {
+  const t = model.tracker
+  const fields = trackerFields()
+  const seq = currentPattern()
+  const rect = blockOf(t)
+  const originR = rect ? rect.r0 : (t.row | 0)
+  const originC = rect ? rect.c0 : (t.col | 0)
+  clip = selectionCells(t).map((cell) => ({
+    dr: cell.row - originR,
+    dc: cell.col - originC,
+    field: cell.field,
+    snap: snapField(seq.steps[cell.row]?.[Math.floor(cell.col / fields)], cell.field),
+  }))
+  touch(false)
+}
+
+function pasteBlock() {
+  if (!clip || !model.tracker.edit) return
+  const t = model.tracker
+  const fields = trackerFields()
+  const rows = stepCount(currentPattern())
+  const cols = LANES * fields
+  for (const cell of clip) {
+    const row = (t.row | 0) + cell.dr
+    const col = (t.col | 0) + cell.dc
+    if (row < 0 || row >= rows || col < 0 || col >= cols) continue
+    const field = col % fields
+    if (field !== cell.field) continue
+    writeTrackerField(row, Math.floor(col / fields), field, cell.snap)
+  }
+}
+
+function deleteSelection(t, fields) {
+  for (const cell of selectionCells(t)) {
+    writeTrackerField(cell.row, Math.floor(cell.col / fields), cell.field, null)
+  }
+}
+
+function nudgeSelection(t, seq, key) {
+  const rect = blockOf(t)
+  if (!rect) {
+    nudgeCell(t, seq, key)
+    return
+  }
+  const saved = { row: t.row, col: t.col, pair: t.pair }
+  for (let row = rect.r0; row <= rect.r1; row++) {
+    for (let col = rect.c0; col <= rect.c1; col++) {
+      t.row = row
+      t.col = col
+      t.pair = 0
+      nudgeCell(t, currentPattern(), key)
+    }
+  }
+  t.row = saved.row
+  t.col = saved.col
+  t.pair = saved.pair
 }
 
 function nudgeCell(t, seq, key) {

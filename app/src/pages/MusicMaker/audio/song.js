@@ -1,5 +1,6 @@
 import { parseMod, parseXm } from './module.js'
-import { defaultNumpadFx, normalizeNumpadFx } from './numpadFx.js'
+import { defaultNumpadFx, normalizeFxPresets, normalizeNumpadFx } from './numpadFx.js'
+import { normalizeAuto, normalizeLaunch } from './arrange.js'
 import { FACTORY, KIT_LAYOUT } from './presets.js'
 import { renderSynth } from './synth.js'
 import { beginUndo, endUndo, songSwitch, stashUndo } from '../history.js'
@@ -76,6 +77,7 @@ export function blankSong() {
     master: 0.9,
     buses: factoryBuses(),
     numpadFx: defaultNumpadFx(),
+    fxPresets: [],
     comp: defaultComp(),
   }
 }
@@ -163,6 +165,9 @@ export function normalizePatterns(list) {
       : []
     const next = { i, name: plainText(pattern.name, PATTERN_NAME_MAX), bars: Math.round(num(pattern.bars, 1, 1, 16)), steps }
     if (Number.isFinite(pattern.len)) next.len = Math.max(1, Math.min(256, pattern.len | 0))
+    if (Number.isFinite(Number(pattern.bpm))) next.bpm = Math.max(40, Math.min(240, Math.round(Number(pattern.bpm))))
+    const auto = normalizeAuto(pattern.auto)
+    if (auto.length) next.auto = auto
     out.push(next)
   }
   return out
@@ -184,7 +189,9 @@ export function packSong(doc) {
   if (Array.isArray(doc.buses)) packed.buses = normalizeBuses(doc.buses)
   if (typeof doc.master === 'number' && Number.isFinite(doc.master)) packed.master = Math.max(0, Math.min(1, doc.master))
   if (Array.isArray(doc.numpadFx)) packed.numpadFx = normalizeNumpadFx(doc.numpadFx)
+  if (Array.isArray(doc.fxPresets)) packed.fxPresets = normalizeFxPresets(doc.fxPresets)
   if (doc.comp && typeof doc.comp === 'object') packed.comp = normalizeComp(doc.comp)
+  if (doc.launch === 'now' || doc.launch === 'end' || doc.launch === 'grid') packed.launch = normalizeLaunch(doc.launch)
   return packed
 }
 
@@ -401,14 +408,16 @@ export async function captureSong(name, what = 'Save') {
     bpm: model.bpm,
     swing: model.swing,
     order,
+    launch: model.songLaunch,
     patterns: model.patterns
-      .map((pattern, i) => (pattern ? { i, name: pattern.name || '', bars: pattern.bars, len: pattern.len, steps: pattern.steps } : null))
-      .filter((pattern) => pattern && (pattern.name || (pattern.len ?? pattern.bars * 16) !== 16 || pattern.steps.some((cell) => cell?.some(Boolean)))),
+      .map((pattern, i) => (patternHeld(pattern) ? patternRow(pattern, i) : null))
+      .filter(Boolean),
     pads: model.pads.map((pad) => ({ ...pad })),
     samples: liveSamples(what),
     master: model.master,
     buses: model.buses,
     numpadFx: model.numpadFx,
+    fxPresets: model.fxPresets,
     comp: model.comp,
   })
   if (!doc.patterns.length) {
@@ -418,13 +427,29 @@ export async function captureSong(name, what = 'Save') {
   return doc
 }
 
+function patternRow(pattern, i) {
+  const row = { i, name: pattern.name || '', bars: pattern.bars, len: pattern.len, steps: pattern.steps }
+  if (Number.isFinite(pattern.bpm)) row.bpm = pattern.bpm
+  if (Array.isArray(pattern.auto) && pattern.auto.length) row.auto = pattern.auto
+  return row
+}
+
+function patternHeld(pattern) {
+  if (!pattern) return false
+  const len = pattern.len ?? (pattern.bars || 1) * 16
+  return !!(
+    pattern.name
+    || len !== 16
+    || Number.isFinite(pattern.bpm)
+    || (Array.isArray(pattern.auto) && pattern.auto.length)
+    || pattern.steps?.some((cell) => cell?.some(Boolean))
+  )
+}
+
 function usedPatternIds() {
   const ids = []
   for (let i = 0; i < 256; i++) {
-    const pattern = model.patterns[i]
-    if (!pattern) continue
-    const used = pattern.name || (pattern.len ?? pattern.bars * 16) !== 16 || pattern.steps.some((cell) => cell?.some(Boolean))
-    if (used) ids.push(i)
+    if (patternHeld(model.patterns[i])) ids.push(i)
   }
   if (!ids.length) ids.push(model.pattern || 0)
   return ids
@@ -573,6 +598,10 @@ function applySongMix(doc) {
     model.numpadFx = normalizeNumpadFx(doc.numpadFx)
     changed = true
   }
+  if (Array.isArray(doc.fxPresets)) {
+    model.fxPresets = normalizeFxPresets(doc.fxPresets)
+    changed = true
+  }
   if (doc.comp && typeof doc.comp === 'object') {
     model.comp = normalizeComp(doc.comp)
     changed = true
@@ -640,18 +669,27 @@ async function loadSongNow(doc, fileId, ticket) {
     const mix = applySongMix(doc)
     model.patterns = Array.from({ length: 256 }, () => null)
     for (const pattern of normalizePatterns(doc.patterns)) {
-      model.patterns[pattern.i] = {
+      const seq = {
         name: pattern.name,
         bars: pattern.bars,
         len: Number.isFinite(pattern.len) ? pattern.len : undefined,
         steps: Array.isArray(pattern.steps) ? pattern.steps : [],
       }
+      if (Number.isFinite(pattern.bpm)) seq.bpm = pattern.bpm
+      if (Array.isArray(pattern.auto) && pattern.auto.length) {
+        seq.auto = pattern.auto.map((lane) => ({
+          id: lane.id,
+          points: (lane.points || []).map((point) => ({ s: point.s, v: point.v })),
+        }))
+      }
+      model.patterns[pattern.i] = seq
       ensurePattern(pattern.i)
     }
     const order = (Array.isArray(doc.order) && doc.order.length ? doc.order : [0]).slice(0, 256).map((n) => n & 255)
     model.songOrder = order
     model.songCursor = 0
     model.songLoop = 'wrap'
+    model.songLaunch = normalizeLaunch(doc.launch)
     model.launchCursor = null
     model.songPlay = true
     model.songName = plainText(doc.name, 80) || 'Song'

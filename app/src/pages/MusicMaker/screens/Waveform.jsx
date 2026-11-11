@@ -71,16 +71,27 @@ export function Waveform({ pcm, sr, trim = null, onTrim, marks = null, onMark, t
       canvas.width = Math.floor(width * dpr)
       canvas.height = Math.floor(height * dpr)
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-      ctx.fillStyle = '#000000'
+      ctx.fillStyle = '#24143f'
       ctx.fillRect(0, 0, width, height)
       if (!pcm) return
       const { zoom: z, pan: p } = viewRef.current
       paintWave(ctx, width, height, pcm, sr || 44100, view, { from: p, to: Math.min(1, p + 1 / z) })
     }
-    draw()
-    const ro = new ResizeObserver(draw)
+    let raf = 0
+    const schedule = () => {
+      if (raf) return
+      raf = requestAnimationFrame(() => {
+        raf = 0
+        draw()
+      })
+    }
+    schedule()
+    const ro = new ResizeObserver(schedule)
     ro.observe(canvas)
-    return () => ro.disconnect()
+    return () => {
+      if (raf) cancelAnimationFrame(raf)
+      ro.disconnect()
+    }
   }, [pcm, sr, view, zoom, pan])
 
   useEffect(() => {
@@ -332,6 +343,7 @@ export function Waveform({ pcm, sr, trim = null, onTrim, marks = null, onMark, t
   return (
     <div
       className={`wave-wrap ${tall ? '' : 'wave-short'}`}
+      data-coach="wave"
       ref={wrap}
       data-zoom={zoom.toFixed(3)}
       data-pan={pan.toFixed(3)}

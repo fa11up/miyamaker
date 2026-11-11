@@ -294,12 +294,15 @@ export function FileMenu() {
         className={`btn free-width ${menu ? 'on' : ''}`}
         aria-expanded={menu}
         aria-haspopup="menu"
+        data-coach="file"
         onClick={() => setMenu((open) => !open)}
       >
         FILE
       </button>
       {menu && (
         <div className="file-menu" role="menu">
+          <button type="button" onClick={() => openWindow('manual')}>Manual</button>
+          <hr />
           <button type="button" onClick={() => openWindow('open')}>Open file…</button>
           <button type="button" onClick={() => openWindow('folder')}>Open folder…</button>
           <button type="button" onClick={() => openWindow('link')}>Load song link…</button>

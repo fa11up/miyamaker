@@ -14,9 +14,13 @@ export async function buildPublish(intent) {
   assertPadsRead(intent.startsWith('mint') ? 'Mint' : 'Upload')
   const name = model.songName || 'Song'
   const bpm = model.bpm
-  const packKind = intent === 'upload-kit' || intent === 'mint-kit' ? 'kit' : 'song'
+  const packKind = intent === 'upload-kit' || intent === 'mint-kit'
+    ? 'kit'
+    : intent === 'upload-bounce' || intent === 'mint-audio'
+      ? 'audio'
+      : 'song'
   const wantsAudio = intent === 'upload-bounce' || intent.startsWith('mint-')
-  const wantsPack = intent !== 'upload-bounce'
+  const wantsPack = packKind !== 'audio'
   let audio
   let duration
   if (wantsAudio) {

@@ -1,4 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react'
+import { model, touch } from './model.js'
+import { useModel } from './useModel.js'
 
 function hexTop(bits) {
   if (bits >= 16) return 65535
@@ -39,7 +41,75 @@ export function Knob({ label, value, min, max, bits = 8, onChange, text }) {
   const tip = [26 + ux * 22, 26 + uy * 22]
   const base = [26 + ux * 15.5, 26 + uy * 15.5]
   const drag = useRef(null)
+  const dial = useRef(null)
+  const live = useRef(null)
+  const beginDrag = useRef(() => {})
+  const glossId = `k${useId().replace(/:/g, '')}`
   const commit = (next) => onChange(hexValue(next, min, max, bits))
+  live.current = { count, bits, commit }
+  useEffect(() => {
+    const node = dial.current
+    if (!node) return undefined
+    const onWheel = (e) => {
+      e.preventDefault()
+      e.stopPropagation()
+      const now = live.current
+      now.commit(now.count + (e.deltaY < 0 ? 1 : -1) * (e.shiftKey ? 16 : 1))
+    }
+    node.addEventListener('wheel', onWheel, { passive: false })
+    return () => node.removeEventListener('wheel', onWheel)
+  })
+  // Leaving the dial is not a release. Keep editing until the button or finger comes up,
+  // even if that release never reaches the dial itself.
+  useEffect(() => {
+    const finish = (e) => {
+      const session = drag.current
+      if (!session) return
+      if (e && e.pointerId != null && e.pointerId !== session.id) return
+      // Still holding: this is not the release, so the drag keeps going.
+      if (e?.type === 'pointerup' && e.pointerType !== 'touch' && (e.buttons & 1) !== 0) return
+      drag.current = null
+      window.removeEventListener('pointermove', move, true)
+      window.removeEventListener('pointerup', finish, true)
+      window.removeEventListener('pointercancel', finish, true)
+      const node = dial.current
+      if (node && session.id != null) {
+        try {
+          if (node.hasPointerCapture?.(session.id)) node.releasePointerCapture(session.id)
+        } catch { /* the pointer is already gone */ }
+      }
+    }
+    const move = (e) => {
+      const session = drag.current
+      if (!session || e.pointerId !== session.id) return
+      // A finger often reports buttons as 0 while it is still down. A mouse with no button is a missed release.
+      if (e.pointerType !== 'touch' && (e.buttons & 1) === 0) {
+        finish(e)
+        return
+      }
+      const travel = session.fine ? 280 : 72
+      const delta = ((session.y - e.clientY) / travel) * hexTop(session.bits)
+      live.current.commit(session.count + Math.round(delta))
+    }
+    beginDrag.current = (e) => {
+      if (e.button != null && e.button !== 0) return
+      const node = dial.current
+      if (!node) return
+      finish()
+      const now = live.current
+      drag.current = { y: e.clientY, count: now.count, bits: now.bits, fine: e.shiftKey, id: e.pointerId }
+      try { node.setPointerCapture(e.pointerId) } catch { /* no live pointer */ }
+      window.addEventListener('pointermove', move, true)
+      window.addEventListener('pointerup', finish, true)
+      window.addEventListener('pointercancel', finish, true)
+    }
+    return () => {
+      drag.current = null
+      window.removeEventListener('pointermove', move, true)
+      window.removeEventListener('pointerup', finish, true)
+      window.removeEventListener('pointercancel', finish, true)
+    }
+  }, [])
   return (
     <div className="knob">
       <button
@@ -52,25 +122,8 @@ export function Knob({ label, value, min, max, bits = 8, onChange, text }) {
         aria-valuenow={count}
         aria-valuetext={hex}
         title={`${label} ${hex} · ${detail}`}
-        ref={(node) => {
-          if (!node) return
-          node.onwheel = (e) => {
-            e.preventDefault()
-            commit(count + (e.deltaY < 0 ? 1 : -1) * (e.shiftKey ? 16 : 1))
-          }
-        }}
-        onPointerDown={(e) => {
-          drag.current = { y: e.clientY, count, fine: e.shiftKey }
-          try { e.currentTarget.setPointerCapture(e.pointerId) } catch { /* already released */ }
-        }}
-        onPointerMove={(e) => {
-          if (!drag.current) return
-          const travel = drag.current.fine ? 480 : 120
-          const delta = ((drag.current.y - e.clientY) / travel) * hexTop(bits)
-          commit(drag.current.count + Math.round(delta))
-        }}
-        onPointerUp={() => { drag.current = null }}
-        onPointerCancel={() => { drag.current = null }}
+        ref={dial}
+        onPointerDown={(e) => beginDrag.current(e)}
         onKeyDown={(e) => {
           const dir = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0
           if (!dir) return
@@ -80,9 +133,25 @@ export function Knob({ label, value, min, max, bits = 8, onChange, text }) {
         }}
       >
         <svg viewBox="0 0 52 52" width="52" height="52" aria-hidden="true">
-          <circle className="ring" cx="26" cy="26" r="23" />
+          <defs>
+            <linearGradient id={`${glossId}d`} x1="0.12" y1="0" x2="0.88" y2="1">
+              <stop offset="0%" stopColor="#fff6f2" />
+              <stop offset="36%" stopColor="#fe9ca1" />
+              <stop offset="70%" stopColor="#e78fb1" />
+              <stop offset="100%" stopColor="#766eb8" />
+            </linearGradient>
+            <radialGradient id={`${glossId}g`} cx="32%" cy="24%" r="68%">
+              <stop offset="0%" stopColor="#ffffff" stopOpacity="0.95" />
+              <stop offset="34%" stopColor="#ffffff" stopOpacity="0.2" />
+              <stop offset="100%" stopColor="#ffffff" stopOpacity="0" />
+            </radialGradient>
+          </defs>
+          <circle className="dome" cx="26" cy="26" r="23" fill="#fe9ca1" />
+          <circle cx="26" cy="26" r="23" fill={`url(#${glossId}d)`} />
+          <ellipse cx="19" cy="15" rx="11" ry="6.5" fill={`url(#${glossId}g)`} />
+          <circle className="ring" cx="26" cy="26" r="22.15" />
           <polygon className="needle" points={`${tip[0]},${tip[1]} ${base[0] + px * 3.2},${base[1] + py * 3.2} ${base[0] - px * 3.2},${base[1] - py * 3.2}`} />
-          <text className={`read d${width}`} x="26" y="26.5" textAnchor="middle" dominantBaseline="central">{hex}</text>
+          <text className={`read d${width}`} x="26" y="27" textAnchor="middle" dominantBaseline="central">{hex}</text>
         </svg>
       </button>
       <span>{label}</span>
@@ -164,6 +233,7 @@ export function Dialog({ title, onClose, busy = false, children }) {
       const win = frame()
       if (win && !win.classList.contains('is-focused')) return
       if (event.key === 'Escape') {
+        if (node.querySelector('.arrange-menu')) return
         if (event.defaultPrevented) return
         event.preventDefault()
         event.stopPropagation()
@@ -223,17 +293,22 @@ export function Dialog({ title, onClose, busy = false, children }) {
   )
 }
 
-/** Opens the old on-screen note. Escape closes it, same as every other dialog. */
-export function HelpButton({ title, children }) {
-  const [open, setOpen] = useState(false)
+/** Opens the beginner card for this page. Escape closes it. */
+export function HelpButton({ title, topic }) {
+  useModel()
+  const open = !!topic && model.coachTopic === topic
   return (
-    <>
-      <button type="button" className="btn help-btn" aria-label={title || 'Help'} onClick={() => setOpen(true)}>?</button>
-      {open && (
-        <Dialog title={title || 'Help'} onClose={() => setOpen(false)}>
-          {typeof children === 'string' ? <p className="hint">{children}</p> : children}
-        </Dialog>
-      )}
-    </>
+    <button
+      type="button"
+      className={`btn help-btn ${open ? 'on' : ''}`}
+      aria-label={title || 'Help'}
+      aria-expanded={open}
+      onClick={() => {
+        model.coachTopic = open ? '' : (topic || '')
+        touch(false)
+      }}
+    >
+      ?
+    </button>
   )
 }

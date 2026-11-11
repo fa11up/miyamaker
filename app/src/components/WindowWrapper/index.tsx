@@ -14,12 +14,13 @@ const SELECTION: Partial<Record<TitleSkin, [string, string]>> = {
   aqua: ['#1e6fd9', '#ffffff'],
   tv: ['#c49a3a', '#2a1a04'],
   mint: ['#9a5fe0', '#ffffff'],
-  music: ['#ff7a1f', '#17191d'],
+  music: ['#fe9ca1', '#000000'],
   launch: ['#c9b27a', '#12261e'],
   auction: ['#7a1620', '#f4dd9c'],
   manager: ['#4b5563', '#ffffff'],
   files: ['#7dff9a', '#04140a'],
   display: ['#000080', '#ffffff'],
+  traits: ['#7A49C4', '#ffffff'],
 }
 const selectionRules = Object.entries(SELECTION)
   .map(([skin, colours]) => `&[data-skin='${skin}'] ::selection { background: ${colours?.[0]}; color: ${colours?.[1]}; }`)
@@ -81,11 +82,15 @@ const WindowFrame = styled.div`
     background: linear-gradient(180deg, #ff9fd6, #9a5fe0);
     box-shadow: inset 0 0 0 1px #5a1466, 4px 6px 0 rgba(20, 16, 31, 0.3);
   }
-  /* Brushed aluminium, edged in graphite, the same metal as the title bar and the app inside. */
+  /* Sunset frame, angled like the glass inside. */
   &[data-skin='music'] {
-    background: repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.14) 0 1px, transparent 1px 3px),
-      linear-gradient(180deg, #d6d9de, #9ea3ab);
-    box-shadow: inset 0 0 0 1px #2b2e34, 4px 6px 0 rgba(20, 16, 31, 0.3);
+    background: repeating-linear-gradient(118deg, rgba(255, 255, 255, 0.18) 0 1px, transparent 1px 3px),
+      linear-gradient(162deg, #766eb8 0%, #b380b7 28%, #e78fb1 58%, #fe9ca1 78%, #f9bba6 100%);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55), inset 0 0 0 1px #3d2a6b, 0 10px 18px rgba(42, 24, 72, 0.28);
+    color: #000000;
+  }
+  &[data-skin='music'] > .window-body {
+    background: linear-gradient(165deg, #c98eb4, #e78fb1 58%, #f9bba6);
   }
   /* A slab of the stone, with a gold inlay line where it meets the page. */
   &[data-skin='launch'] {
@@ -117,6 +122,17 @@ const WindowFrame = styled.div`
   &[data-skin='upload'] {
     background: linear-gradient(180deg, #1b3fb0, #040c34);
     box-shadow: inset 0 0 0 1px #27b8ff, 4px 6px 0 rgba(4, 12, 52, 0.35);
+  }
+  /* MiyaMaker Studio: lilac face under an orchid frame. Dark ink, the face is too light for white. */
+  &[data-skin='traits'] {
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.35), rgba(255, 255, 255, 0) 42%),
+      linear-gradient(180deg, #d9d2ee, #9f98c1);
+    box-shadow: inset 0 0 0 1px #4a3478, 4px 6px 0 rgba(74, 52, 120, 0.35);
+  }
+  &[data-skin='traits'] > .window-body {
+    background: #9f98c1;
+    color: #1a1230;
   }
   /* Display keeps the window face: the classic grey dialog under a blue bar. */
 

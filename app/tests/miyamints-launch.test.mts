@@ -217,7 +217,14 @@ test('buildAuctionArgs → createInstance(salt, CreateParams) + queuePiece with 
 
 test('buildEditionArgs → ERC1155Factory.createInstance + addEdition (open edition, music metadata)', () => {
   const salt = makeSalt(FACTORY, new Uint8Array(11))
-  const f = form({ type: 'editions', editionKind: 'music', name: 'Night Tone', artist: 'Miya', editionPrice: '0.005' })
+  const f = form({
+    type: 'editions',
+    editionKind: 'music',
+    name: 'Night Tone',
+    artist: 'Miya',
+    editionPrice: '0.005',
+    editionRise: '',
+  })
   const { create, edition } = buildEditionArgs(f, { ...resolved, audio: 'ar://song', audioMime: 'audio/mpeg' }, salt)
   assert.equal(create[1].gatingModule, zeroAddress)
   assert.equal(create[1].creator, CREATOR)
@@ -227,8 +234,13 @@ test('buildEditionArgs → ERC1155Factory.createInstance + addEdition (open edit
   const meta = JSON.parse(decodeURIComponent(uri.split(',')[1] as string))
   assert.equal(meta.animation_url, 'ar://song')
   assert.equal(meta.mime_type, 'audio/mpeg')
-  // Limited edition → LIMITED_FIXED.
+  // Limited edition with a flat curve stays one price.
   assert.equal(buildEditionArgs({ ...f, editionKind: 'art', editionSupply: '50' }, resolved, salt).edition[4], 1)
+  // The default gentle curve is 1% more each copy.
+  const curved = buildEditionArgs({ ...f, editionSupply: '50', editionRise: '1' }, resolved, salt).edition
+  assert.equal(curved[4], 2)
+  assert.equal(curved[5], 100n)
+  assert.equal(validateStep('sale', form({ type: 'editions', editionPrice: '0.01', editionRise: '1' }), ctx).editionRise?.length > 0, true)
 })
 
 test('makeSalt matches music/drop.ts; data URIs are percent-encoded JSON', () => {

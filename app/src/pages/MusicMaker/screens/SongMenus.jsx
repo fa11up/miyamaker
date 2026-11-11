@@ -288,6 +288,20 @@ export function NewMenu() {
   )
 }
 
+/** Arweave export and Ethereum mint. SAVE and the phone Menu both render this list. */
+export function ReleaseRows({ busy, onPublish }) {
+  return (
+    <>
+      <button type="button" disabled={busy} onClick={() => onPublish('upload-song')}>Publish song to Arweave…</button>
+      <button type="button" disabled={busy} onClick={() => onPublish('upload-kit')}>Publish kit to Arweave…</button>
+      <button type="button" disabled={busy} onClick={() => onPublish('upload-bounce')}>Publish bounce to Arweave…</button>
+      <button type="button" disabled={busy} onClick={() => onPublish('mint-song')}>Mint song…</button>
+      <button type="button" disabled={busy} onClick={() => onPublish('mint-kit')}>Mint kit…</button>
+      <button type="button" disabled={busy} onClick={() => onPublish('mint-audio')}>Mint audio…</button>
+    </>
+  )
+}
+
 export function SaveMenu() {
   useModel()
   const root = useRef(null)
@@ -400,6 +414,7 @@ export function SaveMenu() {
         className={`btn free-width ${menu ? 'on' : ''}`}
         aria-expanded={menu}
         aria-haspopup="menu"
+        data-coach="save"
         onClick={() => setMenu((open) => !open)}
       >
         SAVE
@@ -409,11 +424,7 @@ export function SaveMenu() {
           <button type="button" disabled={busy} onClick={saveOver}>Save</button>
           <button type="button" onClick={() => choose('save-as')}>Save as…</button>
           <button type="button" onClick={() => choose('save-template')}>Save as template</button>
-          <button type="button" disabled={busy} onClick={() => publish('upload-song')}>Publish song to Arweave…</button>
-          <button type="button" disabled={busy} onClick={() => publish('upload-kit')}>Publish kit to Arweave…</button>
-          <button type="button" disabled={busy} onClick={() => publish('upload-bounce')}>Publish bounce to Arweave…</button>
-          <button type="button" disabled={busy} onClick={() => publish('mint-song')}>Mint song…</button>
-          <button type="button" disabled={busy} onClick={() => publish('mint-kit')}>Mint kit…</button>
+          <ReleaseRows busy={busy} onPublish={publish} />
         </div>
       )}
       {windowId === 'save-as' && (

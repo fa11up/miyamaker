@@ -35,13 +35,13 @@ That is enough to make a beat and a bass line. Pick a drum pad, play it in Pad. 
 
 Banks A, B, C, and D hold sixteen pads each. The pad you are on is the selected instrument. The Sample page trims it, tunes it, and sets how it plays: one shot, while you hold it, or looping. Pads in the same choke group cut each other off, which is how a closed hat silences an open hat.
 
-The Synth page draws a sound and stores it on a pad. The Mixer page is four buses and the master. The FX page is ten performance slots. Hold Shift and a numpad digit while the song plays, or hold the on-screen numpad key on that page. Repeat locks one note value, from a half note to a 128th, to the project tempo and retriggers it. Slice rearranges a run of those notes. Grain sprays short pieces and is not a retrigger. Tracker notes play once. A pad set to loop, and a pad you hold on the Pads page, still loop.
+The Synth page draws a sound and stores it on a pad. The Mixer page is sixteen buses and the master. The FX page is ten performance slots. Hold Shift and a numpad digit while the song plays, or hold the on-screen numpad key on that page. Repeat locks one note value, from a half note to a 128th, to the project tempo and retriggers it. Slice rearranges a run of those notes. Grain sprays short pieces and is not a retrigger. Tracker notes play once. A one-shot plays once even while the pad is held. Gate lasts only as long as the hold. Loop repeats from LP to the end until you let go.
 
 You can ignore every one of those pages until you want them.
 
 ## Trim a sample
 
-Open the Sample page. The wave fills the space under the knobs. **S** and **E** are the start and the end of what plays. **LP** is where a held note starts looping. The handles stay thin.
+Open the Sample page. The wave fills the space under the knobs. **S** and **E** are the start and the end of what plays. **LP** is where Loop mode repeats, from that point to the end. One-shot never uses it. The handles stay thin.
 
 Drag across the wave to draw a new span. When the span is already shorter than the sample, drag inside it and the whole span slides. Drag near either edge and that edge moves. Arrow keys nudge the handle you last touched.
 
@@ -65,6 +65,30 @@ On the Pads page, `Y U I O` and `H J K L` jump between eight patterns. `{` and `
 
 Record quantizes to the grid. There is a natural-feel option on the Sequence page when you want the hit to sit a little early or late.
 
+## Arrange the song
+
+The left column is the sample browser. The button under it opens the arranger in the same column. With both open, drag the bar between them. Drag that bar to the outer edge and the column closes. On a narrow window, opening one closes the other, and each takes the full width of its area.
+
+**+ pattern** opens four banks, `00–3F`, `40–7F`, `80–BF`, and `C0–FF`. Pick a slot, named or empty. The new part is a cell in the song order. Click the cell to launch it. **Wait** holds the launch until the part that is playing finishes. **Now** starts it as soon as you tap it. **Grid** switches on the beat and keeps the step. **Order** walks the cells and returns to the first. **Once** plays through and stops. **Loop** on a cell repeats that section.
+
+The bar along the bottom of a cell is the loop position. Only the cell that is actually playing fills it, from the first step to the last. That cell does not blink. Its mark turns accent, and the line under the name counts the step, such as `9/16`. A cell you have selected while another loop is still going stays empty and blinks on the beat until the current loop ends and it starts. Right-click a cell, or use its menu button, for Edit, Duplicate, and Delete. Removing a cell leaves the pattern where it is.
+
+## The mixer
+
+Sixteen buses, eight on a page. Tap a channel and its five effect slots open. Tap another channel and the slots follow. The EQ under the slots follows that channel too. Its header can point the EQ at another channel or at the output.
+
+The graph runs from low cut on the left to high cut on the right. Drag a point to tune it. Right-click a point, or hold SHIFT and tap it, to choose low cut, bell, or high cut, and to make that band duck when it gets loud. The compressor after the EQ draws the gain it is taking off. A limiter sits after the master compressor and does not pass 0 dBFS.
+
+## On a phone
+
+A narrow window keeps one row: Menu, Play, Rec, the tempo, Off/Pads/Keys, one bank, and one screen. Menu holds the file commands, save, export, and mint. Pads and keys sit at the bottom, where a thumb can reach them. SHIFT sits at the lower left. Hold it and drag the tracker with the other thumb.
+
+Ctrl and an arrow, or R1 and the d-pad on a handheld controller, change page. The d-pad alone moves like the arrow keys.
+
+## The manual
+
+The **?** on a page opens a short card. Show me draws a line to the real button. **FILE**, then **Manual**, opens the longer book. On a narrow window the same item is inside Menu. The book is Foundations, The song, Sounds, Going further, and Reference.
+
 ## The tracker, when you want it
 
 The Tracker is a spreadsheet of notes. Sixteen lanes run sideways. A cell is a note, an instrument, a velocity, and a tiny timing nudge.
@@ -85,7 +109,9 @@ Right-click a column header and choose **Show/hide SL/LP columns** if you want t
 
 **NEW** starts a song, a folder, a kit, or a slice. **FILE** opens songs and kits from the disk, from a link, or from sounds in a wallet.
 
-On [miyamaker.com](https://www.miyamaker.com/) the same instrument can **Publish to Arweave** a song, a kit, or a bounce, and mint the song or kit as a music drop. Publishing is public and permanent: anyone can download the file, it can never be deleted, and a song or kit carries every sample in it, mic recordings too. Storage is paid in real ETH on Ethereum mainnet (files under about 90 KB are free), and the dialog shows the price before you press anything.
+On [miyamaker.com](https://www.miyamaker.com/) the same instrument can **Publish to Arweave** a song, a kit, or a bounce, and mint the song, the kit, or the bounce as an edition. **Mint song** stores the bounce and the `.m1ya`. **Mint kit** stores the bounce and the `.k1t`. **Mint audio** stores the bounce only. The bounce can play in miya radio. Publishing is public and permanent: anyone can download the file, it can never be deleted, and a song or kit carries every sample in it, mic recordings too. Storage is paid in real ETH on Ethereum mainnet (files under about 90 KB are free), and the dialog shows the price before you press anything.
+
+An edition asks for a bonding curve before it is released. **Gentle** is the default: each copy costs 1% more than the one before it. **Steady** is 2.5%, **Steep** is 5%, and **Custom** is a percent you type, up to 100%. **Flat** keeps one price, which is what an open edition needs. A rising curve needs a copy count above zero. The curve is stored with the edition and cannot be changed after release. A fixed-price drop and an auction do not use it. Drop Music, Launch, and Manager ask for the same curve when they release an edition.
 
 A copy you run yourself (`yarn dev`) does the same: it uploads to the real Arweave and pays real ETH. **SAVE** and **Save as** are the only ways to keep a file on this computer. Releasing on Sepolia uses test ETH for the collection, but storage is still paid in real ETH on mainnet.
 

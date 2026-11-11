@@ -1,22 +1,19 @@
 import { BANKS, busLabel, currentPattern, hexByte, model, padKeyLabel, touch } from '../model.js'
-import { SEQ_KEYS } from '../keys.js'
 import { padGesture } from '../padEdit.js'
 import { useModel } from '../useModel.js'
+import { PadWave, usePadVis } from '../padVis.js'
 import { HelpButton, Slider } from '../widgets.jsx'
 
 export function Pads() {
   useModel()
+  usePadVis()
   const start = model.bank * 16
-  const slot = model.pattern % 8
-  const bank = Math.floor(model.pattern / 8)
   const pat = currentPattern()
   return (
     <div className="screen">
       <div className="screen-head">
         <span className="hint">{BANKS[model.bank]} · {hexByte(model.pattern)} {pat.name || 'untitled'}</span>
-        <HelpButton title="Pads">
-          {`${BANKS[model.bank]} pads on 1 2 3 4 / Q W E R / A S D F / Z X C V. Pattern ${hexByte(model.pattern)} ${pat.name || 'untitled'} · slot ${slot + 1} (${SEQ_KEYS[slot].toUpperCase()}) · sequence bank ${bank + 1}. Keys plays the selected pad: Z is C, Q and comma are the C above, I is the next C. A or Caps Lock stops the note. Drag a sample onto a pad. Right-click, or hold on a touch screen, then Copy pad and Paste. Paste & replace shows when that pad already has a sound. Shift selects several pads. N solos. B mutes. The open hat and closed hat share choke 1. Loop on this page, and holding a pad, still loops. Tracker notes play once.`}
-        </HelpButton>
+        <HelpButton title="Pads" topic="pads" />
       </div>
       <div className="pad-layout">
         <div className="pad-grid">
@@ -25,7 +22,7 @@ export function Pads() {
             const pad = model.pads[index]
             const cls = [
               'pad',
-              pad.source === 'empty' ? 'empty' : '',
+              pad.source === 'empty' ? 'empty' : 'seen',
               model.selected === index || model.selection.includes(index) ? 'selected' : '',
               pad.mute ? 'muted' : '',
               pad.solo ? 'soloed' : '',
@@ -38,8 +35,10 @@ export function Pads() {
                 type="button"
                 className={cls}
                 data-pad={index}
+                data-coach={local === 0 ? 'pad' : undefined}
                 {...padGesture(index, { play: true })}
               >
+                <PadWave index={index} />
                 <span className="key">{padKeyLabel(local)}</span>
                 <span className="name">{pad.name}</span>
                 <span className="meta">
