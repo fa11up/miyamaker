@@ -320,6 +320,10 @@ export function batchInstance(logged: Hex | undefined, predicted: Hex | undefine
 /** Where a saved launch stands, for the banner. */
 export function resumeWords(p: LaunchProgress, hasFirst: boolean, firstName = 'the first piece'): string {
   const at = p.instance ? `The collection is live at ${p.instance.slice(0, 6)}…${p.instance.slice(-4)}` : ''
+  // The create's hash stays once it has landed, so a prompt for the first piece is told by `asking` alone: it may
+  // have paid (the auction's deposit), so it is never "without it yet".
+  if (p.asking === 'first' && !p.firstHash)
+    return `${at ? `${at}. ` : ''}A wallet request for ${firstName} was open when this closed. Continue checks the chain before sending anything.`
   if (p.asking && !p.batchId && !p.deployHash && !p.firstHash)
     return 'A wallet request was open when this closed. Continue checks the chain before sending anything.'
   switch (nextLaunchStep(p, hasFirst)) {

@@ -196,7 +196,8 @@ export const Segmented = styled.div`
   }
 `
 
-export type TxStepState = 'idle' | 'active' | 'done' | 'error' | 'skipped'
+/** `unknown`: it was sent, or its wallet prompt was open, when the window closed: only the chain can say how it ended. */
+export type TxStepState = 'idle' | 'active' | 'done' | 'error' | 'skipped' | 'unknown'
 
 export const STEP_DOT: Record<TxStepState, string> = {
   idle: color.shadow,
@@ -204,6 +205,7 @@ export const STEP_DOT: Record<TxStepState, string> = {
   done: '#2fbf71',
   error: color.danger,
   skipped: color.light,
+  unknown: '#e0a100',
 }
 
 const STEP_WORD: Record<TxStepState, string> = {
@@ -212,6 +214,7 @@ const STEP_WORD: Record<TxStepState, string> = {
   done: 'done',
   error: 'failed',
   skipped: 'skipped',
+  unknown: 'not known yet',
 }
 
 export const StepList = styled.ol`

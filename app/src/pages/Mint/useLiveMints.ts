@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { useMemo } from 'react'
+import { useMemo, useRef } from 'react'
 import type { Abi, Address } from 'viem'
 import { parseAbi } from 'viem'
 import { useReadContracts } from 'wagmi'
@@ -202,6 +202,9 @@ export function useLiveMints() {
   })
 
   const discovered = useRegistryDrops()
+  // The last name each registry drop read back. A card's slug is made from its name, so a later read that fails must
+  // not rename it to its address: the open collection would no longer be found, and Mint would drop to the menu.
+  const knownNames = useRef(new Map<string, string>())
   const registryReads = useReadContracts({
     contracts: discovered.flatMap((d) => dropCalls(d.address, d.chainId)),
     query: { enabled: discovered.length > 0, refetchInterval: REFRESH_MS, staleTime: REFRESH_MS / 2 },
@@ -223,7 +226,9 @@ export function useLiveMints() {
       const reads = registryReads.data
         ? readsFromResults('drop', registryReads.data.slice(i * n, (i + 1) * n) as ReadResult[], d.chainId)
         : undefined
-      return { entry: registryEntry(d.chainId, d.address, reads?.name), reads }
+      const key = `${d.chainId}:${d.address.toLowerCase()}`
+      if (reads?.name) knownNames.current.set(key, reads.name)
+      return { entry: registryEntry(d.chainId, d.address, reads?.name || knownNames.current.get(key)), reads }
     })
 
     return buildLiveMintList(LIVE_MINTS, byKey, registry)

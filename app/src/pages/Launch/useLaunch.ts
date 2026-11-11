@@ -88,8 +88,9 @@ function stepsOf(saved: SavedLaunch<LaunchSaved>): PipeState {
   return {
     image: saved.uploads.image ? (form.imageMode === 'link' ? 'skipped' : 'done') : 'idle',
     audio: music && saved.uploads.audio ? (form.audioMode === 'link' ? 'skipped' : 'done') : 'idle',
-    deploy: p.instance ? 'done' : p.batchId || p.deployHash || p.asking ? 'error' : 'idle',
-    first: p.firstDone ? 'done' : p.firstHash ? 'error' : 'idle',
+    // Sent, or a prompt was open, when the window closed: not failed, just not known until Continue reads the chain.
+    deploy: p.instance ? 'done' : p.batchId || p.deployHash || p.asking ? 'unknown' : 'idle',
+    first: p.firstDone ? 'done' : p.firstHash || p.asking === 'first' ? 'unknown' : 'idle',
   }
 }
 
