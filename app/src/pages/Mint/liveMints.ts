@@ -140,7 +140,7 @@ export const LIVE_MINTS: LiveMintEntry[] = [
     artistLogo: '/artists/koolskull.png',
     artistUrl: 'https://koolskull.com/',
     view: 'miyamini',
-    pin: 0,
+    pin: 1,
   },
   {
     slug: 'miyamaker',
@@ -154,7 +154,8 @@ export const LIVE_MINTS: LiveMintEntry[] = [
     artist: 'koolskull.eth',
     artistLogo: '/artists/koolskull.png',
     artistUrl: 'https://koolskull.com/',
-    pin: 1,
+    // The live drop: first on the Mint home.
+    pin: 0,
   },
 ]
 
@@ -220,7 +221,7 @@ const STATUS_ORDER: Record<LiveMintStatus, number> = { open: 0, unknown: 1, clos
 /**
  * Merges curated entries and registry-discovered collections into the ordered card list:
  * - one card per chain+address (curated wins over registry, so overrides stick);
- * - pinned curated entries first (MIYAMINI at 0) - except "coming soon" entries, which always sit at the end;
+ * - pinned curated entries first (the Miyamaker drop at 0, MIYAMINI at 1) - except "coming soon" entries, which always sit at the end;
  * - then open before closed before sold out; registry entries keep their discovery order within a status.
  * Slugs are made unique so every card has its own deep link.
  */

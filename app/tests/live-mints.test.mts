@@ -23,11 +23,13 @@ const A = '0x1111111111111111111111111111111111111111' as const
 const B = '0x2222222222222222222222222222222222222222' as const
 const MIYAMINI = LIVE_MINTS[0]!
 
-test('curated list: MIYAMINI first, credited to koolskull.eth', () => {
+test('curated list: the Miyamaker drop first, then MIYAMINI, both credited to koolskull.eth', () => {
   const cards = buildLiveMintList(LIVE_MINTS, {})
-  assert.equal(cards[0]!.slug, 'miyamini')
-  assert.equal(cards[0]!.artist, 'koolskull.eth')
-  assert.ok(cards[0]!.artistLogo)
+  assert.deepEqual(cards.slice(0, 2).map((c) => c.slug), ['miyamaker', 'miyamini'])
+  for (const c of cards.slice(0, 2)) {
+    assert.equal(c.artist, 'koolskull.eth')
+    assert.ok(c.artistLogo)
+  }
   assert.equal(cards.find((c) => c.slug === 'miyakakis'), undefined)
 })
 
