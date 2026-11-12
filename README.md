@@ -15,7 +15,7 @@ The Start menu groups the programs:
 | Group | Programs |
 | --- | --- |
 | Collect | Mint, Auction, Trade |
-| Create | Launch, Manager, Infinite Upload, Drop Music, MiyaMusicMaker |
+| Create | Launch, Manager, Infinite Upload, Drop Music, MiyaMusicMaker, MODKEYS |
 | Entertainment | miyaTV, miya radio, miyanet |
 | System | My Files, Display |
 
@@ -38,6 +38,7 @@ A wallet connects through the usual browser wallets, and through a passkey or a 
 | miya radio | `/radio` | A player for stations and for music that has been released. A minted bounce can land here. |
 | Drop Music | `/drop-music` | Release a track as an edition: the audio, the cover, the price, the split, and the curve. |
 | MiyaMusicMaker | `/music` | The sampler, tracker, and song arranger. The playing guide is [its README](app/src/pages/MusicMaker/README.md). |
+| MODKEYS | `/modkeys` | A 3D mechanical keyboard configurator: layout, keycaps, switches, case, plate, lighting, and per-key legends. Exports KLE, SVG, PDF, and a spec sheet. A build saved here joins the community gallery it shares with [nuroctane.xyz/modkeys](https://nuroctane.xyz/modkeys). `/modkeys#<build>` opens a shared build. |
 
 ### Editions and the bonding curve
 
@@ -64,6 +65,7 @@ Songs save as `.m1ya`. Kits save as `.k1t`. From the site, or from a local check
 | `app/src/pages/MusicMaker/` | The sampler. Its guide is [the MusicMaker README](app/src/pages/MusicMaker/README.md). |
 | `app/src/pages/OperatingSystem/` | The desktop, the wallpaper, and the window layer |
 | `app/src/desktop/` | Icons, My Files, Display, the pet, and the screen saver |
+| `app/embed/modkeys/` | MODKEYS, its own page (vanilla JS, three.js), shown in a frame by the Modkeys window (`app/src/pages/Modkeys/`). Ported from nuroctane.xyz's `artifacts/modkeys`. It uses its own three.js, installed as `three-modkeys`. |
 | `app/src/miyamints/` | Launch, manage, and the edition math the windows share |
 | `contracts/` | Foundry project: the miyamints launchpad (`MiyaRegistry`, ERC721 drop / auction and ERC1155 factories, Uniswap v4 alignment vaults, NFT pools) and prediction markets. The factories and vaults started from [Zodomo/ms2fun-contracts](https://github.com/Zodomo/ms2fun-contracts) @ `ebb1190` |
 

@@ -502,7 +502,8 @@ export default defineConfig(({ mode }) => ({
           },
         ],
         navigateFallback: 'index.html',
-        navigateFallbackDenylist: [/^\/api\//, /^\/surf(\/|$)/],
+        // /embed/* are pages of their own (the Modkeys window's frame), not the desktop.
+        navigateFallbackDenylist: [/^\/api\//, /^\/surf(\/|$)/, /^\/embed\//],
         cleanupOutdatedCaches: true,
       },
     }),
@@ -510,6 +511,13 @@ export default defineConfig(({ mode }) => ({
   build: {
     // No source maps in the deployed bundle: 'hidden' would still copy the .map files into dist/ (and so publish them).
     sourcemap: false,
+    rollupOptions: {
+      // The desktop, and MODKEYS as its own page for the Modkeys window's frame (src/pages/Modkeys).
+      input: {
+        main: path.resolve(__dirname, 'index.html'),
+        modkeys: path.resolve(__dirname, 'embed/modkeys/index.html'),
+      },
+    },
   },
   resolve: {
     alias: [
