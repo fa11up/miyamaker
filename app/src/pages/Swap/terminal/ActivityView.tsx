@@ -7,7 +7,7 @@ import { shortAddress } from '../board'
 import { color, space, text } from '../floor/tokens'
 import { formatPrice } from '../nft/markets'
 import type { ActivityRow } from './activity'
-import { activityTime } from './activity'
+import { activityTime, isTxHash, saleDecimals } from './activity'
 
 /** The ACTIVITY screen (a full table) and the tape along the bottom of the terminal (the latest few, scrolling). */
 
@@ -16,7 +16,11 @@ const AMBER = color.accent
 const priceWords = (r: ActivityRow) => {
   if (r.kind === 'mint') return '–'
   try {
-    return formatPrice({ amount: BigInt(r.price ?? '0'), decimals: 18, symbol: r.currency ?? 'ETH' })
+    return formatPrice({
+      amount: BigInt(r.price ?? '0'),
+      decimals: saleDecimals(r.currency),
+      symbol: r.currency ?? 'ETH',
+    })
   } catch {
     return '–'
   }
@@ -50,6 +54,7 @@ const Panel = styled.div`
     letter-spacing: 0.14em;
   }
   .filters button {
+    min-height: 30px;
     padding: 3px 10px;
     border: 1px solid ${color.dark};
     background: #000;
@@ -57,6 +62,9 @@ const Panel = styled.div`
     font: inherit;
     font-size: ${text.xs};
     cursor: pointer;
+  }
+  .narrow & .filters button {
+    min-height: 44px;
   }
   .filters button[aria-pressed='true'] {
     border-color: ${AMBER};
@@ -117,11 +125,20 @@ export function ActivityPanel({
   rows,
   loading,
   failed,
+  partial = [],
+  capped,
+  unlisted = 0,
   onOpen,
 }: {
   rows: ActivityRow[]
   loading: boolean
   failed: string[]
+  /** Collections whose week of sales was cut short by the market service. */
+  partial?: string[]
+  /** More sales than the feed lists. */
+  capped?: boolean
+  /** Mints counted but not listed (one jump bigger than the list keeps). */
+  unlisted?: number
   onOpen: (r: ActivityRow) => void
 }) {
   const [only, setOnly] = useState<'all' | 'sale' | 'mint'>('all')
@@ -141,12 +158,18 @@ export function ActivityPanel({
         <span className="note">
           Sales this week across the watchlist; Miyamaker mints as they land. Times in UTC.
           {failed.length ? ` Couldn't read ${failed.join(', ')} right now.` : ''}
+          {capped ? ' Showing the latest 200 sales.' : ''}
+          {partial.length ? ` Only the latest sales of ${partial.join(', ')} were read.` : ''}
+          {unlisted ? ` ${unlisted.toLocaleString()} more mints landed than are listed.` : ''}
         </span>
       </div>
       {loading && !rows.length ? (
         <p className="note">Reading…</p>
       ) : !shown.length ? (
-        <p className="note">Nothing yet.</p>
+        <p className="note">
+          {only === 'mint' ? 'No mints yet.' : only === 'sale' ? 'No sales this week.' : 'Nothing yet.'}
+          {failed.length ? ' Some collections could not be read.' : ''}
+        </p>
       ) : (
         <table>
           <thead>
@@ -176,7 +199,7 @@ export function ActivityPanel({
                 <td className="num">{priceWords(r)}</td>
                 <td className="opt">{r.from && r.to ? `${shortAddress(r.from)} → ${shortAddress(r.to)}` : ''}</td>
                 <td className="opt">
-                  {r.tx && (
+                  {isTxHash(r.tx) && (
                     <a
                       href={`${explorerUrl(r.chainId)}/tx/${r.tx}`}
                       target="_blank"
@@ -270,7 +293,20 @@ const TapeBar = styled.footer`
   }
 `
 
-export function ActivityTape({ rows, onOpen }: { rows: ActivityRow[]; onOpen: (r: ActivityRow) => void }) {
+export function ActivityTape({
+  rows,
+  loading,
+  failed = [],
+  busy,
+  onOpen,
+}: {
+  rows: ActivityRow[]
+  loading?: boolean
+  failed?: string[]
+  /** A trade is in flight: opening a row would move its screen. */
+  busy?: boolean
+  onOpen: (r: ActivityRow) => void
+}) {
   const now = useNowSeconds()
   const latest = rows.slice(0, 16)
   const cells = (copy: boolean) =>
@@ -280,6 +316,7 @@ export function ActivityTape({ rows, onOpen }: { rows: ActivityRow[]; onOpen: (r
         type="button"
         tabIndex={copy ? -1 : undefined}
         aria-hidden={copy || undefined}
+        disabled={busy}
         onClick={() => onOpen(r)}
       >
         <span className={r.kind}>{r.kind === 'sale' ? 'SALE' : 'MINT'}</span>
@@ -300,7 +337,13 @@ export function ActivityTape({ rows, onOpen }: { rows: ActivityRow[]; onOpen: (r
             {cells(true)}
           </div>
         ) : (
-          <span className="none">No sales or mints yet.</span>
+          <span className="none">
+            {loading
+              ? 'Reading…'
+              : failed.length
+              ? `Couldn't read sales for ${failed.join(', ')} right now.`
+              : 'No sales or mints yet.'}
+          </span>
         )}
       </div>
     </TapeBar>

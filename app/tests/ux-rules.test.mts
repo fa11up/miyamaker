@@ -120,8 +120,6 @@ test('page-wide shortcuts on printable keys never fire while typing', () => {
     // Modals that own the keyboard while open (nothing to type into behind them):
     // the handheld's zoom viewer (+, -, arrows, Escape).
     'src/pages/Mint/handheld/Holo.tsx',
-    // Trade's full-screen NFT viewer (arrows, +, -, 0, Escape); it has no fields.
-    'src/pages/Swap/nft/Viewer.tsx',
     // The sampler's keyboard: its handler returns first when typing(e) (keys.js) says a field has focus.
     'src/pages/MusicMaker/MiyaMusicMaker.jsx',
   ]

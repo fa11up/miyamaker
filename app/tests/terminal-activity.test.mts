@@ -2,7 +2,13 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { activityTime, mergeActivity, newlyMinted } from '../src/pages/Swap/terminal/activity.ts'
+import {
+  activityTime,
+  isTxHash,
+  mergeActivity,
+  newlyMinted,
+  saleDecimals,
+} from '../src/pages/Swap/terminal/activity.ts'
 
 const MIYA = { chainId: 1, address: '0xb86b68bca287afd48f81d1f792db69368664a120', ticker: 'MIYA' }
 const MILADY = { chainId: 1, address: '0x5Af0D9827E0c53E4799BB226655A1de152A425a5', ticker: 'MILADY' }
@@ -64,4 +70,23 @@ test('newly minted ids between two supply reads, capped, nothing when it did not
   assert.deepEqual(newlyMinted(91, 91), [])
   assert.deepEqual(newlyMinted(91, 80), [])
   assert.deepEqual(newlyMinted(0, 500, 3), ['498', '499', '500'])
+})
+
+test('the cap counts sales and mints apart: a full week of sales keeps every mint', () => {
+  const sales = Array.from({ length: 10 }, (_, i) => sale(String(i + 1), 1000 + i))
+  const rows = mergeActivity([{ collection: MILADY, sales }], [{ ...MIYA, tokenId: '5' }, { ...MIYA, tokenId: '6' }], 4)
+  assert.equal(rows.filter((r) => r.kind === 'sale').length, 4)
+  assert.deepEqual(
+    rows.filter((r) => r.kind === 'mint').map((r) => r.tokenId),
+    ['6', '5']
+  )
+})
+
+test('sale decimals and transaction hashes', () => {
+  assert.equal(saleDecimals('USDC'), 6)
+  assert.equal(saleDecimals('ETH'), 18)
+  assert.equal(saleDecimals(undefined), 18)
+  assert.equal(isTxHash(`0x${'a'.repeat(64)}`), true)
+  assert.equal(isTxHash('../address/0x1'), false)
+  assert.equal(isTxHash(undefined), false)
 })

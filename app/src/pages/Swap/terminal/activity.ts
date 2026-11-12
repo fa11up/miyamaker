@@ -65,16 +65,26 @@ export function mergeActivity(
   // The same sale or mint twice (two reads, or two pages) appears once.
   const rows = [...saleRows, ...mintRows].filter((r, i, all) => all.findIndex((x) => x.key === r.key) === i)
 
-  // Newest first; mints with no known time go after the timed rows, highest id first.
-  return rows
-    .sort((a, b) => {
-      if (a.at !== undefined && b.at !== undefined) return b.at - a.at
-      if (a.at !== undefined) return -1
-      if (b.at !== undefined) return 1
-      return Number(b.tokenId) - Number(a.tokenId)
-    })
-    .slice(0, max)
+  // Newest first; mints with no known time go after the timed rows, highest id first. The cap applies to sales and
+  // mints separately, so a busy week of sales never pushes every mint off the list.
+  const sorted = rows.sort((a, b) => {
+    if (a.at !== undefined && b.at !== undefined) return b.at - a.at
+    if (a.at !== undefined) return -1
+    if (b.at !== undefined) return 1
+    return Number(b.tokenId) - Number(a.tokenId)
+  })
+  const kept = { sale: 0, mint: 0 }
+  return sorted.filter((r) => {
+    kept[r.kind] += 1
+    return kept[r.kind] <= max
+  })
 }
+
+/** Decimals of a sale price in a currency the market service names: USDC and USDT have 6 decimals, the rest 18. */
+export const saleDecimals = (currency: string | undefined) => (/^(usdc|usdt)$/i.test(currency ?? '') ? 6 : 18)
+
+/** A transaction hash fit for an explorer link; anything else gets no link. */
+export const isTxHash = (tx: string | undefined): tx is string => !!tx && /^0x[0-9a-fA-F]{64}$/.test(tx)
 
 /** "18:02" today, "Nov 11 18:02" before today (UTC, like the clock). */
 export function activityTime(at: number | undefined, nowSeconds: number): string {
@@ -87,8 +97,9 @@ export function activityTime(at: number | undefined, nowSeconds: number): string
   return `${month} ${d.getUTCDate()} ${hm}`
 }
 
-/** Ids minted between two reads of totalSupply (ids count up from 1). Nothing when it went down or did not move. */
-export function newlyMinted(before: number | undefined, after: number | undefined, cap = 50): string[] {
+/** Ids minted between two reads of totalSupply (ids count up from 1), newest `cap` of them. Nothing when it went down
+ *  or did not move. */
+export function newlyMinted(before: number | undefined, after: number | undefined, cap = 200): string[] {
   if (before === undefined || after === undefined || after <= before) return []
   const from = Math.max(before + 1, after - cap + 1)
   return Array.from({ length: after - from + 1 }, (_, i) => String(from + i))

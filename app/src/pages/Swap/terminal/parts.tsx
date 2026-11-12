@@ -74,8 +74,8 @@ function useClock() {
   return now
 }
 
-const gwei = (wei: bigint | undefined) => {
-  if (wei === undefined) return '…'
+const gwei = (wei: bigint | undefined, failed?: boolean) => {
+  if (wei === undefined) return failed ? 'n/a' : '…'
   const g = Number(wei) / 1e9
   return g >= 10 ? g.toFixed(0) : g >= 1 ? g.toFixed(1) : g.toFixed(2)
 }
@@ -108,11 +108,11 @@ export function StatusLine({
       </span>
       <span className="opt">
         <span className="k">GAS</span>
-        <span className="v">{gwei(gas.data)} gwei</span>
+        <span className="v">{gwei(gas.data, gas.isError)} gwei</span>
       </span>
       <span className="opt">
         <span className="k">BLK</span>
-        <span className="v">{block.data !== undefined ? block.data.toString() : '…'}</span>
+        <span className="v">{block.data !== undefined ? block.data.toString() : block.isError ? 'n/a' : '…'}</span>
       </span>
       <span className="opt">
         <span className="k">PX</span>
@@ -293,9 +293,12 @@ export function CommandLine({
           }
         }}
         placeholder="Type MIYA, INFER, BUY 3 MIYA, or paste an address, then Enter"
+        role="combobox"
         aria-label="Command: a collection ticker, a token symbol, BUY count ticker, or an address"
         aria-autocomplete="list"
         aria-expanded={hints.length > 0}
+        aria-controls="terminal-command-matches"
+        aria-activedescendant={hints[pick] ? `terminal-command-match-${pick}` : undefined}
         spellCheck={false}
         autoComplete="off"
       />
@@ -303,10 +306,11 @@ export function CommandLine({
         GO
       </button>
       {hints.length > 0 && (
-        <Suggest role="listbox" aria-label="Matches">
+        <Suggest id="terminal-command-matches" role="listbox" aria-label="Matches">
           {hints.map((h, i) => (
             <li
               key={`${h.kind}-${h.label}-${h.detail}`}
+              id={`terminal-command-match-${i}`}
               role="option"
               aria-selected={i === pick}
               onMouseDown={(e) => {
@@ -390,10 +394,13 @@ const Keys = styled.nav`
 export function FunctionKeys({
   tab,
   railOpen,
+  busy,
   onTab,
 }: {
   tab: TerminalTab
   railOpen: boolean
+  /** A trade is in flight: only WATCH (which moves nothing) stays live. */
+  busy?: boolean
   onTab: (t: TerminalTab) => void
 }) {
   return (
@@ -403,8 +410,9 @@ export function FunctionKeys({
           key={t.tab}
           type="button"
           aria-current={(t.tab === 'watch' ? railOpen : t.tab === tab) ? 'page' : undefined}
+          disabled={busy && t.tab !== 'watch'}
           onClick={() => onTab(t.tab)}
-          title={`${t.label} (${t.key})`}
+          title={busy && t.tab !== 'watch' ? 'Finish the trade in progress first' : `${t.label} (${t.key})`}
         >
           <span className="key" aria-hidden>
             {t.key}
@@ -447,8 +455,12 @@ const List = styled.div`
     text-align: left;
     cursor: pointer;
   }
-  button:hover {
+  button:hover:not(:disabled) {
     background: ${color.hover};
+  }
+  button:disabled {
+    cursor: default;
+    opacity: 0.55;
   }
   button[aria-current='true'] {
     background: #1d1600;
@@ -506,16 +518,24 @@ const List = styled.div`
 function CollectionLine({
   c,
   active,
+  disabled,
   onOpen,
 }: {
   c: { slug: string; name: string; address: string }
   active: boolean
+  disabled?: boolean
   onOpen: () => void
 }) {
   const f = useCollectionFloor(c.slug)
   const house = c.slug === 'miyamaker'
   return (
-    <button type="button" className={house ? 'house' : undefined} aria-current={active} onClick={onOpen}>
+    <button
+      type="button"
+      className={house ? 'house' : undefined}
+      aria-current={active}
+      disabled={disabled}
+      onClick={onOpen}
+    >
       <span className="pic" aria-hidden>
         <NftImage src={f.image} alt="" variant="thumb" />
       </span>
@@ -540,6 +560,7 @@ export function Watchlist({
   rows,
   activeCollection,
   activeToken,
+  busy,
   onCollection,
   onToken,
 }: {
@@ -547,6 +568,8 @@ export function Watchlist({
   rows: BoardRow[]
   activeCollection?: string
   activeToken?: string
+  /** A trade is in flight: opening anything else would move its screen. */
+  busy?: boolean
   onCollection: (address: string) => void
   onToken: (t: SwapToken) => void
 }) {
@@ -558,6 +581,7 @@ export function Watchlist({
           key={c.slug}
           c={c}
           active={sameAddress(c.address, activeCollection)}
+          disabled={busy}
           onOpen={() => onCollection(c.address)}
         />
       ))}
@@ -567,6 +591,7 @@ export function Watchlist({
           key={token.address}
           type="button"
           aria-current={sameAddress(token.address, activeToken)}
+          disabled={busy}
           onClick={() => onToken(token)}
           title={`Trade ${token.symbol}`}
         >

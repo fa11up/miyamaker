@@ -457,14 +457,11 @@ export default function NftTrade({
   }
 
   const wrongChain = isConnected && walletChainId !== chainId
-  if (sweepAsk && collection && !collection.tokenId) {
-    const k = `${collection.address}/`.toLowerCase()
-    if (places.current[`ask:${k}`]?.sweepCount !== sweepAsk.key) {
-      places.current[k] = { ...places.current[k], sweepCount: sweepAsk.count }
-      places.current[`ask:${k}`] = { sweepCount: sweepAsk.key }
-    }
-  }
   if (collection && collection.chainId === chainId) {
+    // The viewer's BUY is used once: the page it opens reads it on mount, and coming back later asks nothing.
+    const itemKey = `${collection.address}/${collection.tokenId}`.toLowerCase()
+    const autoBuy = !!collection.tokenId && buyNext.current === itemKey
+    if (autoBuy) buyNext.current = undefined
     return (
       <Body ref={bodyRef}>
         {collection.tokenId ? (
@@ -474,13 +471,14 @@ export default function NftTrade({
             contract={collection.address}
             tokenId={collection.tokenId}
             onBack={() => onOpenCollection({ chainId, address: collection.address })}
-            autoBuy={buyNext.current === `${collection.address}/${collection.tokenId}`.toLowerCase()}
+            autoBuy={autoBuy}
             onOpenPool={(p) => onOpenPool(p)}
             onBusy={setPageBusy}
           />
         ) : (
           <CollectionView
-            key={`${collection.address}-${sweepAsk?.key ?? ''}`}
+            key={collection.address}
+            sweepAsk={sweepAsk}
             chainId={chainId}
             address={collection.address}
             onBack={() => onOpenCollection(undefined)}

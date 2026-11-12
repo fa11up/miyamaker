@@ -127,6 +127,8 @@ export default function MintPage() {
     if (!slug && navigationType !== 'POP') return
     setLiveSlug(slug)
     setPageSection(sectionForSlug(slug))
+    // Back to the game select closes the shelf, as the B button does.
+    if (sectionForSlug(slug) === EXPLORER_PAGE_SECTION.GAMES_SECTION) setShelf(undefined)
   }, [location.pathname, navigationType, held])
 
   // The open shelf (Miyamaker or Community). A collection's Menu button returns to its own shelf.
@@ -176,9 +178,9 @@ export default function MintPage() {
     go(EXPLORER_PAGE_SECTION.GAMES_SECTION, GAMES_SLUG)
   }
 
-  // What the D-pad moves between: everything on the open shelf that opens, then the music. Stepping never crosses from
-  // a miyamaker drop into a community one.
-  const openable = cards.filter((c) => c.clickable && (!shelf || shelfOf(c) === shelf))
+  // What the D-pad moves between: everything on the open shelf that opens (the Miyamaker shelf when none is open, as
+  // from Music), then the music. Stepping never reaches a community mint without its shelf being open.
+  const openable = cards.filter((c) => c.clickable && shelfOf(c) === (shelf ?? 'official'))
   const toMusic = () => go(EXPLORER_PAGE_SECTION.MUSIC_SECTION, MUSIC_SLUG)
   const carts: { slug: string; open: () => void }[] = [
     ...openable.map((c) => ({ slug: c.view === 'miyamini' ? 'miyamini' : c.slug, open: () => openCard(c) })),

@@ -3,6 +3,7 @@ import styled from 'styled-components/macro'
 import { useReadContracts } from 'wagmi'
 
 import { dropAbi } from '@/pages/Mint/dropAbi'
+import type { LiveMintStatus } from '@/pages/Mint/liveMints'
 import { cardPrice, mintPath } from '@/pages/Mint/liveMints'
 import { useLiveMints } from '@/pages/Mint/useLiveMints'
 
@@ -17,6 +18,13 @@ import { useCollectionFloor } from '../MarketBoard'
 
 const HOUSE = FEATURED_COLLECTIONS.find((c) => c.slug === 'miyamaker')!
 const COVER = '/covers/miyamaker.webp'
+const STATUS_WORDS: Record<LiveMintStatus, string> = {
+  open: 'OPEN',
+  closed: 'CLOSED',
+  soldout: 'SOLD OUT',
+  soon: 'SOON',
+  unknown: 'n/a',
+}
 
 const Banner = styled.section`
   display: grid;
@@ -109,7 +117,6 @@ export default function House({ onOpen }: { onOpen: (address: string) => void })
   const navigate = useNavigate()
   const floor = useCollectionFloor(HOUSE.slug)
   // The mint's price as the Mint app reads it from the drop's live phase.
-  const card = useLiveMints().cards.find((c) => c.slug === HOUSE.slug)
   const reads = useReadContracts({
     contracts: [
       { address: HOUSE.address, abi: dropAbi, functionName: 'totalSupply', chainId: HOUSE.chainId },
@@ -119,6 +126,10 @@ export default function House({ onOpen }: { onOpen: (address: string) => void })
   })
   const minted = reads.data?.[0]?.result as bigint | undefined
   const max = reads.data?.[1]?.result as number | undefined
+  // A read that failed says so, instead of looking like one still loading.
+  const readFailed = reads.isError || reads.data?.[0]?.status === 'failure'
+  const lives = useLiveMints()
+  const card = lives.cards.find((c) => c.slug === HOUSE.slug)
   const share = minted !== undefined && max ? Math.min(1, Number(minted) / max) : undefined
 
   return (
@@ -135,7 +146,7 @@ export default function House({ onOpen }: { onOpen: (address: string) => void })
           <div>
             <dt>MINTED</dt>
             <dd>
-              {minted !== undefined ? minted.toLocaleString() : '…'}
+              {minted !== undefined ? minted.toLocaleString() : readFailed ? 'n/a' : '…'}
               {max ? ` / ${max.toLocaleString()}` : ''}
             </dd>
             {share !== undefined && (
@@ -146,7 +157,17 @@ export default function House({ onOpen }: { onOpen: (address: string) => void })
           </div>
           <div>
             <dt>MINT</dt>
-            <dd>{card ? (card.status === 'open' ? cardPrice(card) : card.status.toUpperCase()) : '…'}</dd>
+            <dd>
+              {card
+                ? card.status === 'open'
+                  ? cardPrice(card)
+                  : card.status === 'unknown' && lives.isLoading
+                  ? '…'
+                  : STATUS_WORDS[card.status]
+                : lives.isLoading
+                ? '…'
+                : 'n/a'}
+            </dd>
           </div>
         </dl>
         <div className="acts">

@@ -182,8 +182,10 @@ keys.
 ## On the keeper box (later)
 
 1. Copy `keeper/` to `~/imd-vault-keeper`, `npm ci --omit=dev`.
-2. Create a NEW hot key for this keeper (not imd-keeper's, not a governance key); store it in a mode-600 file and set
-   `KEEPER_KEY_FILE` in `.env` (see `.env.example`). Fund it with gas only.
+2. Create a NEW hot key for this keeper (not imd-keeper's, not a governance key); store it in a mode-600 file, and only
+   then set `KEEPER_KEY_FILE` in `.env` (see `.env.example`). The keeper reads the key at startup even in report-only
+   mode, so a path to a file that doesn't exist yet stops it (and `Restart=always` retries every 30 s). Leave
+   `KEEPER_KEY_FILE` unset until the file is there. Fund it with gas only.
 3. Have the registry owner call `setConversionKeeper(<its address>)`.
 4. Set `ZEROEX_API_KEY` and `VAULTS` in `~/imd-vault-keeper/.env` (`PRIVATE_RPC_URL` defaults to MEV Blocker
    `/noreverts`).
@@ -196,8 +198,12 @@ keys.
 
 The unit runs with `UMask=0077`, `ProtectSystem=strict`, `ProtectHome=tmpfs` (an empty home) with only the app dir and
 the key file bound back read-only (`BindReadOnlyPaths=`) and `state/` read-write (`BindPaths=`),
-`ProtectKernelTunables/Modules/Logs=yes`, `RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX`,
-`SystemCallFilter=@system-service` (denied calls fail with `EPERM`), `NoNewPrivileges`, no capabilities. `node` must live
+`ProtectKernelTunables=yes`, `ProtectControlGroups=yes`, `RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX`,
+`SystemCallFilter=@system-service` (denied calls fail with `EPERM`) and `NoNewPrivileges`. It leaves out
+`CapabilityBoundingSet=`, `ProtectKernelModules=`, `ProtectKernelLogs=` and `ProtectClock=`: they work by dropping
+capabilities, which a user manager cannot do (on Ubuntu 26.04 the unit failed with `218/CAPABILITIES`), and an
+unprivileged user holds none to drop. The key file's bind is optional (`-`), so the unit starts in report-only mode
+before the key exists. `node` must live
 outside `$HOME` (or get its own `BindReadOnlyPaths=` line). **User units may silently ignore some of these** (they need
 unprivileged user namespaces), so verify on the host what actually applies:
 

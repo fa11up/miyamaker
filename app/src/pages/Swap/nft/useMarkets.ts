@@ -1,5 +1,5 @@
 import { useQueries, useQuery } from '@tanstack/react-query'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import type { MarketListing, MarketSale } from '../../../../api/_lib/market'
 import { MARKET_PREFIX } from '../../../../api/_lib/market'
@@ -235,6 +235,8 @@ type MarketListings = {
 type MarketSales = {
   at: number
   stale: boolean
+  /** The service stopped at its page cap: older sales this week are missing. */
+  partial?: boolean
   day: { count: number; volume: string; other?: number }
   sales: MarketSale[]
 }
@@ -324,7 +326,7 @@ export const marketSalesQuery = (slug: string | undefined) => ({
 export function useMarketSales(slug: string | undefined) {
   const q = useQuery(marketSalesQuery(slug))
   const sales = q.data ? (Array.isArray(q.data.sales) ? q.data.sales : []) : undefined
-  return { sales, day: q.data?.day, loading: !!slug && q.isLoading, error: q.error }
+  return { sales, day: q.data?.day, partial: !!q.data?.partial, loading: !!slug && q.isLoading, error: q.error }
 }
 
 /** One NFT on OpenSea: details, its best listing and best offer. */
@@ -504,14 +506,18 @@ export function useCollectionGallery(slug: string | undefined) {
   const [pages, setPages] = useState<{ items: GalleryItem[]; next?: string }[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<unknown>()
+  // Each collection is a new generation: a page that answers after the collection changed is dropped.
+  const generation = useRef(0)
   const load = async (cursor?: string, reset = false) => {
     if (!slug || !configured) return
+    const mine = generation.current
     setLoading(true)
     setError(undefined)
     try {
       const page = parseCollectionNfts(
         await get({ op: 'collection_nfts', slug, ...(cursor ? { next: cursor } : {}) })
       )
+      if (mine !== generation.current) return
       setPages((all) => (reset ? [page] : [...all, page]))
     } catch (e) {
       setError(e)
@@ -520,6 +526,7 @@ export function useCollectionGallery(slug: string | undefined) {
     }
   }
   useEffect(() => {
+    generation.current += 1
     setPages([])
     if (slug && configured) load(undefined, true)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -537,9 +544,11 @@ export function useCollectionGallery(slug: string | undefined) {
 
 /** One NFT's sales in the last week (from the collection's sales feed), newest first. */
 export function useItemSales(slug: string | undefined, tokenId: string | undefined) {
-  const { sales, loading, error } = useMarketSales(slug)
+  const { sales, partial, loading, error } = useMarketSales(slug)
   return {
     sales: tokenId && sales ? sales.filter((s) => s.tokenId === tokenId) : undefined,
+    /** Only the latest sales were read: none found here does not mean none this week. */
+    partial,
     loading,
     error,
   }

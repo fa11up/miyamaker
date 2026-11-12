@@ -427,7 +427,10 @@ export default function CollectionView({
   onBusy,
   place,
   onPlace,
+  sweepAsk,
 }: {
+  /** BUY n from the command line: set the sweep to n (clamped to what a sweep can buy). Each new key asks again. */
+  sweepAsk?: { key: number; count: number }
   chainId: SupportedChainId
   address: Address
   onBack: () => void
@@ -463,6 +466,9 @@ export default function CollectionView({
   // a finished sweep for the next NFTs at higher prices, with the old run still opening wallet prompts behind it.
   const [sweepSet, setSweepSet] = useState<OsOrder[]>()
   const [sweepCount, setSweepCount] = useState(place?.sweepCount ?? 3)
+  useEffect(() => {
+    if (sweepAsk) setSweepCount(Math.max(2, Math.min(sweepAsk.count, MAX_SWEEP)))
+  }, [sweepAsk?.key])
   // Each tile looks up its own image, so the grid grows on request rather than asking for every listing at once.
   const [tileLimit, setTileLimit] = useState(place?.tileLimit ?? TILE_PAGE)
   useEffect(() => onPlace?.({ tileLimit, sweepCount }), [tileLimit, sweepCount])
@@ -488,8 +494,11 @@ export default function CollectionView({
       ? Array.from({ length: Math.min(onchainSupply, galleryLimit) }, (_, i) => ({ tokenId: String(i + 1) }))
       : []
   const listedItems: ViewerItem[] = listed.map((l) => ({ tokenId: l.tokenId!, price: l.price }))
-  const [viewing, setViewing] = useState<{ list: 'gallery' | 'listed'; index: number }>()
+  // The open NFT is kept by its id, not its place: a refetch that adds a cheaper listing on top must not move the
+  // viewer (and its BUY) onto another NFT. If it leaves the list (sold), the viewer closes.
+  const [viewing, setViewing] = useState<{ list: 'gallery' | 'listed'; tokenId: string }>()
   const viewerItems = viewing?.list === 'listed' ? listedItems : galleryItems
+  const viewingIndex = viewing ? viewerItems.findIndex((v) => v.tokenId === viewing.tokenId) : -1
   // A buy of it still unconfirmed this session is not swept again: it may yet land.
   const stillUnconfirmed = unconfirmedHashes(sessionStore())
   const canSweep = sweepable(
@@ -757,7 +766,8 @@ export default function CollectionView({
         canSweep.length >= 2 && (
           <SweepBar aria-label="Sweep the floor">
             <label htmlFor="sweep-count">
-              <b>Sweep:</b> buy the {sweepCount} cheapest
+              <b>Sweep:</b> buy the {pickedListings.length} cheapest
+              {sweepAsk && sweepAsk.count > pickedListings.length ? ` (asked ${sweepAsk.count})` : ''}
             </label>
             <input
               id="sweep-count"
@@ -837,7 +847,7 @@ export default function CollectionView({
                   chainId={chainId}
                   contract={address}
                   listing={l}
-                  onOpen={() => setViewing({ list: 'listed', index: listed.indexOf(l) })}
+                  onOpen={() => setViewing({ list: 'listed', tokenId: l.tokenId! })}
                 />
               ))}
             </Tiles>
@@ -944,15 +954,19 @@ export default function CollectionView({
         </Eyebrow>
         {galleryItems.length > 0 ? (
           <>
-            <Hint>Every piece, for sale or not. Press one to view it full screen.</Hint>
+            <Hint>
+              {gallery.items.length
+                ? 'Every piece, for sale or not. Press one to view it full screen.'
+                : `OpenSea is offline, so these are numbered #1 up to the minted count; a collection that starts at #0 or has burned pieces will differ. Press one to view it full screen.`}
+            </Hint>
             <ArtGrid>
-              {galleryItems.map((g, i) => (
+              {galleryItems.map((g) => (
                 <GalleryTile
                   key={g.tokenId}
                   chainId={chainId}
                   contract={address}
                   item={g}
-                  onOpen={() => setViewing({ list: 'gallery', index: i })}
+                  onOpen={() => setViewing({ list: 'gallery', tokenId: g.tokenId })}
                 />
               ))}
             </ArtGrid>
@@ -980,7 +994,7 @@ export default function CollectionView({
         )}
       </Card>
 
-      {viewing && viewerItems[viewing.index] && (
+      {viewing && viewingIndex >= 0 && (
         <Viewer
           chainId={chainId}
           contract={address}
@@ -988,8 +1002,8 @@ export default function CollectionView({
           collectionName={name}
           supply={os.info?.supply ?? onchainSupply}
           items={viewerItems}
-          index={viewing.index}
-          onIndex={(index) => setViewing({ ...viewing, index })}
+          index={viewingIndex}
+          onIndex={(index) => setViewing({ ...viewing, tokenId: viewerItems[index]!.tokenId })}
           onClose={() => setViewing(undefined)}
           onOpen={(tokenId, buy) => {
             setViewing(undefined)

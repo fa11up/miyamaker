@@ -2,16 +2,18 @@ import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import styled from 'styled-components/macro'
 import type { Address } from 'viem'
+import { useAccount } from 'wagmi'
 
 import NftImage from '@/components/NftImage'
 import type { SupportedChainId } from '@/config/wagmi'
 import { cleanText } from '@/desktop/files/sanitize'
 
 import { color, font, space, text } from '../floor/tokens'
+import { saleDecimals } from '../terminal/activity'
 import type { OsTrait, Price } from './markets'
 import { formatPrice, itemUrl, traitShare } from './markets'
 import { KIND } from './pool'
-import { goneHashes, sessionStore } from './sweep'
+import { goneHashes, sessionStore, unconfirmedHashes } from './sweep'
 import { useCollectionTraits, useItemSales, useOpenSeaItem } from './useMarkets'
 import { useNftMeta } from './usePools'
 
@@ -29,7 +31,8 @@ const MAX_ZOOM = 8
 const Shade = styled.div`
   position: fixed;
   inset: 0;
-  z-index: 2000;
+  /* Over everything, like the other full-screen viewers (ArtViewer, Holo) and above the mint toasts. */
+  z-index: 200000;
   display: grid;
   grid-template-columns: minmax(0, 1fr) 360px;
   background: #000;
@@ -117,8 +120,8 @@ const StageBar = styled.div`
     color: ${color.inkMuted};
   }
   button {
-    min-width: 36px;
-    height: 36px;
+    min-width: 44px;
+    height: 44px;
     padding: 0 10px;
     border: 1px solid ${color.dark};
     background: rgba(0, 0, 0, 0.8);
@@ -263,6 +266,10 @@ const Side = styled.aside`
   }
 `
 
+/** A field that takes typing: its keys are its own. */
+const isTextEntry = (t: EventTarget | null) =>
+  !!(t as HTMLElement | null)?.closest?.('input, textarea, select, [contenteditable="true"]')
+
 const pct = (share: number) => (share < 0.001 ? '<0.1%' : `${(share * 100).toFixed(share < 0.1 ? 1 : 0)}%`)
 const when = (at: number) => new Date(at * 1000).toISOString().slice(0, 16).replace('T', ' ')
 
@@ -335,7 +342,12 @@ export default function Viewer({
   const meta = useNftMeta(chainId, contract, KIND.ERC721, BigInt(id))
   const counts = useCollectionTraits(slug)
   const sales = useItemSales(slug, id)
-  const listing = os.listing && !goneHashes(sessionStore()).has(os.listing.hash) ? os.listing : undefined
+  const { address: me } = useAccount()
+  const store = sessionStore()
+  // A listing already sold here, or bought here and still unconfirmed, or the viewer's own, offers no BUY.
+  const listing = os.listing && !goneHashes(store).has(os.listing.hash) ? os.listing : undefined
+  const ownListing = !!listing?.maker && !!me && listing.maker.toLowerCase() === me.toLowerCase()
+  const pendingBuy = !!listing && unconfirmedHashes(store).has(listing.hash)
   const image = item?.image || os.nft?.image || meta.image
   const title = cleanText(item?.name || os.nft?.name || meta.name, 80) || `${collectionName} #${id}`
   const traits: OsTrait[] = os.nft?.traits.length
@@ -369,6 +381,8 @@ export default function Viewer({
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const k = keys.current
+      // The viewer has no fields; a field behind it (should one ever hold focus) keeps its keys.
+      if (isTextEntry(e.target)) return
       if (e.key === 'Escape') k.onClose()
       else if (e.key === 'ArrowRight') k.step(1)
       else if (e.key === 'ArrowLeft') k.step(-1)
@@ -393,13 +407,51 @@ export default function Viewer({
     })
   }, [index, items])
 
+  // Focus: on Close while open, kept inside the dialog (Tab wraps), and given back to whatever had it on close, so the
+  // terminal's keys work again straight away.
   const closeRef = useRef<HTMLButtonElement>(null)
-  useEffect(() => closeRef.current?.focus(), [])
+  const shadeRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const before = document.activeElement as HTMLElement | null
+    closeRef.current?.focus()
+    return () => before?.focus?.()
+  }, [])
+  const trapTab = (e: React.KeyboardEvent) => {
+    if (e.key !== 'Tab' || !shadeRef.current) return
+    const all = Array.from(
+      shadeRef.current.querySelectorAll<HTMLElement>('button:not(:disabled), a[href], [tabindex]:not([tabindex="-1"])')
+    )
+    if (!all.length) return
+    const first = all[0]!
+    const lastEl = all[all.length - 1]!
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault()
+      lastEl.focus()
+    } else if (!e.shiftKey && document.activeElement === lastEl) {
+      e.preventDefault()
+      first.focus()
+    }
+  }
+
+  const endDrag = () => {
+    drag.current = undefined
+    setDragging(false)
+  }
 
   const pixel = /\.(gif|png)(\?|$)/i.test(image ?? '')
 
   return createPortal(
-    <Shade role="dialog" aria-modal="true" aria-label={`${title}, viewer`}>
+    <Shade
+      ref={shadeRef}
+      role="dialog"
+      aria-modal="true"
+      aria-label={`${title}, viewer`}
+      onKeyDown={(e) => {
+        trapTab(e)
+        // Portaled out of the terminal's DOM but not its React tree: its F-keys and / must not act behind the viewer.
+        e.stopPropagation()
+      }}
+    >
       <Stage
         className={[zoom > 1 && 'zoomed', dragging && 'dragging'].filter(Boolean).join(' ')}
         onWheel={(e) => zoomTo(zoom * (e.deltaY < 0 ? 1.15 : 1 / 1.15))}
@@ -415,10 +467,9 @@ export default function Viewer({
           if (!d) return
           setPan({ x: d.px + (e.clientX - d.x) / zoom, y: d.py + (e.clientY - d.y) / zoom })
         }}
-        onPointerUp={() => {
-          drag.current = undefined
-          setDragging(false)
-        }}
+        onPointerUp={endDrag}
+        onPointerCancel={endDrag}
+        onLostPointerCapture={endDrag}
       >
         <StageBar className="top">
           <span className="id">
@@ -478,9 +529,15 @@ export default function Viewer({
                 {formatPrice(listing.price)}
                 <small>on OpenSea</small>
               </div>
-              <button className="buy" type="button" onClick={() => onOpen(id, true)} data-viewer-buy>
-                BUY #{id}
-              </button>
+              {ownListing ? (
+                <p className="sub">This is your listing.</p>
+              ) : pendingBuy ? (
+                <p className="sub">Your buy of it is still waiting to confirm.</p>
+              ) : (
+                <button className="buy" type="button" onClick={() => onOpen(id, true)} data-viewer-buy>
+                  BUY #{id}
+                </button>
+              )}
             </>
           ) : os.loading ? (
             <p className="quiet">Checking…</p>
@@ -489,7 +546,7 @@ export default function Viewer({
           ) : os.error ? (
             <p className="quiet">Couldn&apos;t check the price. Try again in a moment.</p>
           ) : (
-            <p className="quiet">Not for sale right now.</p>
+            <p className="quiet">Not listed on OpenSea right now.</p>
           )}
           {os.offer && <p className="sub">Best offer {formatPrice(os.offer.price)}</p>}
         </section>
@@ -498,6 +555,8 @@ export default function Viewer({
           <h3>TRAITS{counts && supply ? ' · SHARE OF COLLECTION' : ''}</h3>
           {meta.loading && !traits.length ? (
             <p className="quiet">Reading…</p>
+          ) : !traits.length && meta.failed ? (
+            <p className="quiet">Couldn&apos;t read its traits right now.</p>
           ) : (
             <Traits traits={traits} counts={counts} size={supply} />
           )}
@@ -513,15 +572,19 @@ export default function Viewer({
             <table>
               <tbody>
                 {sales.sales.slice(0, 8).map((s) => (
-                  <tr key={s.tx}>
+                  <tr key={`${s.tx}-${s.at}`}>
                     <td className="t">{when(s.at)}</td>
-                    <td className="v">{formatPrice({ amount: BigInt(s.price), decimals: 18, symbol: s.currency })}</td>
+                    <td className="v">
+                      {formatPrice({ amount: BigInt(s.price), decimals: saleDecimals(s.currency), symbol: s.currency })}
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           ) : (
-            <p className="quiet">No sales this week.</p>
+            <p className="quiet">
+              {sales.partial ? 'None in the latest sales read this week.' : 'No sales this week.'}
+            </p>
           )}
         </section>
 

@@ -568,7 +568,7 @@ export default function LiveMintView({ card }: { card: LiveMintCard }) {
         // A community mint says so on the art, before anything else. More than one phase running: say which one the
         // button mints in (Info lists them all).
         [
-          community ? 'Community mint · not by miyamaker' : '',
+          community ? COMMUNITY_WORDS : '',
           card.kind === 'drop' && phase && lists.phases.length > 1
             ? `${phase.isList ? lists.byPhase[phase.phaseId]?.name ?? 'Allowlist' : 'Public sale'} · Info: all sales`
             : '',

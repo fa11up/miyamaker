@@ -319,13 +319,18 @@ export default function TradePage() {
     if (location.pathname !== path) navigate(path)
   }
 
+  // While a trade is in flight (a swap, an NFT buy or sweep, a pool trade) nothing may move the screen it lives on: its
+  // review would unmount mid-signature and the pending record it keeps would never be written. Showing the watchlist
+  // is fine (it only hides the rail's ticket, which stays mounted).
   const showTab = (t: TerminalTab) => {
-    setQuery('')
     if (t === 'watch') {
       setRail('watch')
       if (narrow) setSheetOpen((o) => !o)
       return
     }
+
+    if (tradeBusy) return
+    setQuery('')
 
     setView(t)
     setSheetOpen(false)
@@ -336,17 +341,19 @@ export default function TradePage() {
   }
 
   const openCollection = (c: CollectionRef | undefined, buy?: number) => {
+    if (tradeBusy) return
     setQuery('')
     setCollection(c)
     setView('nft')
     setSheetOpen(false)
-    setSweepAsk(buy ? { key: Date.now(), count: buy } : undefined)
-    // Back to the watchlist, unless a swap is in flight on the ticket (it stays one press away either way).
-    if (!swapBusy) setRail('watch')
+    // BUY n asks the sweep for n (it sweeps 2 or more); a plain open leaves an earlier ask alone.
+    if (buy && buy >= 2) setSweepAsk({ key: Date.now(), count: buy })
+    setRail('watch')
     push(c ? tradePath('nfts', undefined, c) : TRADE_PATH)
   }
 
   const openPool = (p: `0x${string}` | undefined) => {
+    if (tradeBusy) return
     setQuery('')
     setPool(p)
     setView('pools')
@@ -354,6 +361,7 @@ export default function TradePage() {
   }
 
   const openToken = (t: SwapToken | TokenRef, keepPreset = false) => {
+    if (tradeBusy) return
     if (!keepPreset) setPreset(undefined)
     const ref = { chainId: t.chainId, address: t.address }
     setQuery('')
@@ -369,6 +377,7 @@ export default function TradePage() {
     openCollection({ chainId: r.chainId, address: r.address as `0x${string}`, tokenId: r.tokenId })
 
   const run = (c: Command) => {
+    if (tradeBusy && !(c.kind === 'tab' && c.tab === 'watch')) return
     if (c.kind === 'tab') showTab(c.tab)
     else if (c.kind === 'collection')
       openCollection({ chainId: c.collection.chainId, address: c.collection.address as `0x${string}` }, c.buy)
@@ -501,7 +510,12 @@ export default function TradePage() {
           disabled={tradeBusy}
           onCommand={run}
         />
-        <FunctionKeys tab={view === 'search' ? 'nft' : view} railOpen={narrow ? sheetOpen : false} onTab={showTab} />
+        <FunctionKeys
+          tab={view === 'search' ? 'nft' : view}
+          railOpen={narrow ? sheetOpen : false}
+          busy={tradeBusy}
+          onTab={showTab}
+        />
         <Tape rows={board.rows} loading={board.loading} disabled={tradeBusy} onTrade={(t) => openToken(t)} />
 
         <Body>
@@ -543,6 +557,7 @@ export default function TradePage() {
                   rows={board.rows}
                   activeCollection={view === 'nft' ? collection?.address : undefined}
                   activeToken={view === 'tokens' ? tokenRef?.address : undefined}
+                  busy={tradeBusy}
                   onCollection={(address) => openCollection({ chainId, address: address as `0x${string}` })}
                   onToken={(t) => openToken(t)}
                 />
@@ -633,13 +648,24 @@ export default function TradePage() {
                   rows={activity.rows}
                   loading={activity.loading}
                   failed={activity.failed}
+                  partial={activity.partial}
+                  capped={activity.capped}
+                  unlisted={activity.unlisted}
                   onOpen={openActivity}
                 />
               </Pane>
             )}
           </Main>
         </Body>
-        {!narrow && <ActivityTape rows={activity.rows} onOpen={openActivity} />}
+        {!narrow && (
+          <ActivityTape
+            rows={activity.rows}
+            loading={activity.loading}
+            failed={activity.failed}
+            busy={tradeBusy}
+            onOpen={openActivity}
+          />
+        )}
       </Root>
     </WindowWrapper>
   )

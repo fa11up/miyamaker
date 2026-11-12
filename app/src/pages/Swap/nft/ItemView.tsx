@@ -99,12 +99,14 @@ export default function ItemView({
   const listingIsMine = !!listing && mine
   const unverified = !isFeatured(chainId, contract) && os.info?.verified !== true
   const openSeaHref = itemUrl('opensea', chainId, contract, tokenId)
+  // Read once on mount: the flag is used up as soon as this page opens.
+  const wantsBuy = useRef(autoBuy)
   const autoBought = useRef(false)
   useEffect(() => {
-    if (!autoBuy || autoBought.current || !listing || listingIsMine) return
+    if (!wantsBuy.current || autoBought.current || !listing || listingIsMine) return
     autoBought.current = true
     setReview({ side: 'buy', order: listing })
-  }, [autoBuy, listing, listingIsMine])
+  }, [listing, listingIsMine])
   const [viewing, setViewing] = useState(false)
 
   return (

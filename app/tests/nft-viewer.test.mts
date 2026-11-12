@@ -35,7 +35,7 @@ test('trait counts: shares by any casing, unknown when counts or size are missin
   assert.equal(traitShare(counts, { trait: 'Eyes', value: 'Star' }, 100), undefined)
   assert.equal(traitShare(counts, { trait: 'Hair', value: 'Pink' }, undefined), undefined)
   assert.equal(traitShare(undefined, { trait: 'Hair', value: 'Pink' }, 100), undefined)
-  assert.deepEqual(parseTraitCounts(null), {})
+  assert.deepEqual(Object.keys(parseTraitCounts(null)), [])
 })
 
 test('gallery page: numbered NFTs only, and the cursor for the next page', () => {
@@ -68,4 +68,12 @@ test('metadata attributes: plain pairs, capped, anything odd dropped', () => {
   )
   assert.equal(cleanAttributes(Array.from({ length: 99 }, (_, i) => ({ trait_type: `t${i}`, value: 'v' }))).length, 40)
   assert.deepEqual(cleanAttributes('nope'), [])
+})
+
+test('trait counts have no prototype: "constructor" and "__proto__" are plain keys, never NaN', () => {
+  const counts = parseTraitCounts(JSON.parse('{"counts":{"Hair":{"Pink":2},"__proto__":{"blue":3}}}'))
+  assert.equal(traitShare(counts, { trait: 'Hair', value: 'constructor' }, 10), undefined)
+  assert.equal(traitShare(counts, { trait: 'constructor', value: 'length' }, 10), undefined)
+  assert.equal(traitShare(counts, { trait: '__proto__', value: 'blue' }, 10), 0.3)
+  assert.equal(({} as Record<string, unknown>).blue, undefined)
 })

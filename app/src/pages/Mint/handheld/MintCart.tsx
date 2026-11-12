@@ -39,6 +39,8 @@ const Tag = styled.span`
   z-index: 1;
   left: 8px;
   top: 8px;
+  /* A long caption (community notice and the sale) wraps instead of running over the art's edge. */
+  max-width: calc(100% - 16px);
   padding: 2px 7px;
   border-radius: 3px;
   background: rgba(12, 10, 24, 0.8);

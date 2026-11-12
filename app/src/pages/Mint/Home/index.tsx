@@ -81,7 +81,7 @@ export default function MainMenu({
                 return {
                   key: c.key,
                   name: c.name,
-                  line: shelf === 'community' ? `Community · not by miyamaker · ${state}` : state,
+                  line: shelf === 'community' ? `${COMMUNITY_WORDS} · ${state}` : state,
                   action: c.clickable ? `Open ${c.name}` : 'Coming soon',
                   open: c.clickable ? () => onOpen(c) : undefined,
                   pic: c.status === 'soon' ? <Glyph>?</Glyph> : <Cover card={c} />,
@@ -91,7 +91,7 @@ export default function MainMenu({
                 {
                   key: 'empty',
                   name: isLoading ? 'Loading…' : 'Nothing yet',
-                  line: isLoading ? 'Reading the chain' : 'No community mints are live',
+                  line: isLoading ? 'Reading the chain' : 'No community mints yet',
                   action: 'Back to shelves',
                   open: () => onShelf(undefined),
                   pic: <Glyph>…</Glyph>,

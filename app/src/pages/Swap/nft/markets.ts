@@ -360,12 +360,13 @@ export function parseNft(j: unknown): OsNft | undefined {
 export type TraitCounts = Record<string, Record<string, number>>
 export function parseTraitCounts(j: unknown): TraitCounts {
   const counts = obj(obj(j)?.counts)
-  const out: TraitCounts = {}
+  // No prototype: a trait or value named "constructor" or "__proto__" is just a key.
+  const out: TraitCounts = Object.create(null)
   if (!counts) return out
   for (const [trait, values] of Object.entries(counts).slice(0, 200)) {
     const v = obj(values)
     if (!v) continue
-    const row: Record<string, number> = {}
+    const row: Record<string, number> = Object.create(null)
     for (const [value, n] of Object.entries(v).slice(0, 2000)) {
       if (typeof n === 'number' && Number.isFinite(n) && n >= 0) row[value.toLowerCase()] = n
     }
@@ -376,8 +377,9 @@ export function parseTraitCounts(j: unknown): TraitCounts {
 
 /** Share of the collection holding a value (0..1), or undefined when the counts or the size are unknown. */
 export function traitShare(counts: TraitCounts | undefined, t: OsTrait, size: number | undefined) {
-  const n = counts?.[t.trait.toLowerCase()]?.[t.value.toLowerCase()]
-  return n !== undefined && size && size > 0 ? Math.min(1, n / size) : undefined
+  const row = counts && Object.hasOwn(counts, t.trait.toLowerCase()) ? counts[t.trait.toLowerCase()] : undefined
+  const n = row && Object.hasOwn(row, t.value.toLowerCase()) ? row[t.value.toLowerCase()] : undefined
+  return typeof n === 'number' && size && size > 0 ? Math.min(1, n / size) : undefined
 }
 
 export type GalleryItem = { tokenId: string; name?: string; image?: string }

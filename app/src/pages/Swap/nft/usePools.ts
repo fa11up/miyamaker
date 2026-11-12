@@ -260,6 +260,8 @@ export function useNftMeta(chainId: SupportedChainId, collection: Address | unde
     image: clean?.image,
     attributes: clean?.attributes,
     loading: uri.isLoading || meta.isLoading,
+    /** The token URI or its metadata could not be read: its traits are unknown, not empty. */
+    failed: uri.isError || meta.isError,
   }
 }
 

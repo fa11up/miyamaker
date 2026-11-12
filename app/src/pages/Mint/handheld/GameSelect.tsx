@@ -66,6 +66,14 @@ export default function GameSelect({ onMint, onFrenPet }: { onMint: () => void; 
   const [lookOpen, setLookOpen] = useState(false)
 
   if (lookOpen) {
+    // Up and down keep the column and wrap between rows; a short last row takes its last colour.
+    const stepRow = (by: number) => {
+      const i = TINTS.findIndex((t) => t.id === look.tint)
+      const rows = Math.ceil(TINTS.length / TINT_COLUMNS)
+      const row = (Math.floor(i / TINT_COLUMNS) + by + rows) % rows
+      const next = Math.min(row * TINT_COLUMNS + (i % TINT_COLUMNS), TINTS.length - 1)
+      setLook({ tint: TINTS[next]!.id })
+    }
     const step = (by: number) => {
       const i = TINTS.findIndex((t) => t.id === look.tint)
       setLook({ tint: TINTS[wrapIndex(TINTS.length, i, by)]!.id })
@@ -113,8 +121,8 @@ export default function GameSelect({ onMint, onFrenPet }: { onMint: () => void; 
         dpad={{
           left: () => step(-1),
           right: () => step(1),
-          up: () => step(-TINT_COLUMNS),
-          down: () => step(TINT_COLUMNS),
+          up: () => stepRow(-1),
+          down: () => stepRow(1),
         }}
       />
     )

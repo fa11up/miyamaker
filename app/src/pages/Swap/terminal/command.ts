@@ -150,9 +150,17 @@ export function suggest(
 }
 
 /** The tab a function key or Alt+digit selects, or undefined. */
-export function tabForKey(e: { key: string; altKey?: boolean }): TerminalTab | undefined {
+export function tabForKey(e: {
+  key: string
+  altKey?: boolean
+  ctrlKey?: boolean
+  metaKey?: boolean
+  shiftKey?: boolean
+}): TerminalTab | undefined {
+  // Ctrl/Shift/Cmd + F-key (hard reload, OS shortcuts) and Alt + F-key (Alt+F4) belong to the browser and the OS.
+  if (e.ctrlKey || e.metaKey || e.shiftKey) return undefined
   const f = TABS.find((t) => t.key === e.key)
-  if (f) return f.tab
+  if (f) return e.altKey ? undefined : f.tab
   if (e.altKey && /^[1-5]$/.test(e.key)) return TABS[Number(e.key) - 1]!.tab
   return undefined
 }

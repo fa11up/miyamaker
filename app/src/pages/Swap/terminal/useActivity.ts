@@ -13,6 +13,10 @@ import { tickerOf } from './command'
 const HOUSE = FEATURED_COLLECTIONS.find((c) => c.slug === 'miyamaker')!
 /** Mints shown from before the page opened (their time is unknown), newest ids. */
 const RECENT_MINTS = 6
+const POLL_SECONDS = 30
+const MAX_SEEN = 400
+/** The most sales the feed lists (newest first); the same cap holds for mints. */
+export const ACTIVITY_MAX = 200
 
 /**
  * The feed: the week's sales of every watchlist collection on this chain (the market service, refreshed with its own
@@ -30,22 +34,28 @@ export function useActivity(chainId: number) {
     abi: dropAbi,
     functionName: 'totalSupply',
     chainId: HOUSE.chainId,
-    query: { enabled: chainId === HOUSE.chainId, refetchInterval: 30_000 },
+    query: { enabled: chainId === HOUSE.chainId, refetchInterval: POLL_SECONDS * 1000 },
   })
   const minted = typeof supply.data === 'bigint' ? Number(supply.data) : undefined
   // The supply when the page first read it: the mints before it are listed without a time.
   const [first, setFirst] = useState<number>()
-  const last = useRef<number>()
-  const [seen, setSeen] = useState<{ tokenId: string; at: number }[]>([])
+  const last = useRef<{ supply: number; at: number }>()
+  const [seen, setSeen] = useState<{ tokenId: string; at?: number }[]>([])
+  // Mints that grew past the list's cap in one jump: counted, not listed.
+  const [unlisted, setUnlisted] = useState(0)
   useEffect(() => {
     if (minted === undefined) return
     setFirst((f) => f ?? minted)
-    const fresh = newlyMinted(last.current, minted)
-    last.current = minted
-    if (fresh.length) {
-      const at = Math.floor(Date.now() / 1000)
-      setSeen((s) => [...s, ...fresh.map((tokenId) => ({ tokenId, at }))])
-    }
+    const now = Math.floor(Date.now() / 1000)
+    const prev = last.current
+    const fresh = newlyMinted(prev?.supply, minted)
+    last.current = { supply: minted, at: now }
+    if (!fresh.length || !prev) return
+    // Only a jump seen within one poll gets the moment it was seen as its time. After a gap (a hidden tab pauses the
+    // reads) the time is not known: those mints are listed without one.
+    const timed = now - prev.at <= POLL_SECONDS * 2.5
+    setSeen((s) => [...s, ...fresh.map((tokenId) => ({ tokenId, at: timed ? now : undefined }))].slice(-MAX_SEEN))
+    setUnlisted((n) => n + Math.max(0, minted - prev.supply - fresh.length))
   }, [minted])
 
   const rows: ActivityRow[] = useMemo(() => {
@@ -55,12 +65,14 @@ export function useActivity(chainId: number) {
       chainId === HOUSE.chainId && before
         ? Array.from({ length: Math.min(RECENT_MINTS, before) }, (_, i) => ({ ...house, tokenId: String(before - i) }))
         : []
+    const mints = chainId === HOUSE.chainId ? [...seen.map((m) => ({ ...house, ...m })), ...earlier] : []
     return mergeActivity(
       collections.map((c, i) => ({
         collection: { chainId: c.chainId, address: c.address, ticker: tickerOf(c) },
         sales: results[i]?.data?.sales,
       })),
-      [...seen.map((m) => ({ ...house, ...m })), ...earlier]
+      mints,
+      ACTIVITY_MAX
     )
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chainId, seen, first, ...results.map((r) => r.dataUpdatedAt)])
@@ -70,5 +82,11 @@ export function useActivity(chainId: number) {
     loading: results.some((r) => r.isLoading),
     /** Collections whose sales could not be read: their rows are missing, not zero. */
     failed: collections.filter((_, i) => results[i]?.isError).map((c) => tickerOf(c)),
+    /** Collections whose sales list was cut at the service's cap: older sales this week are missing. */
+    partial: collections.filter((_, i) => results[i]?.data?.partial).map((c) => tickerOf(c)),
+    /** More sales this week than the feed lists. */
+    capped: results.reduce((n, r) => n + (r.data?.sales?.length ?? 0), 0) > ACTIVITY_MAX,
+    /** Mints that landed in one jump bigger than the list keeps. */
+    unlisted: chainId === HOUSE.chainId ? unlisted : 0,
   }
 }

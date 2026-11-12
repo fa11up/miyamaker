@@ -77,4 +77,10 @@ test('F1–F5 and Alt+1–5 pick a tab', () => {
   assert.equal(tabForKey({ key: '4', altKey: true }), 'activity')
   assert.equal(tabForKey({ key: '4' }), undefined)
   assert.equal(tabForKey({ key: 'F6' }), undefined)
+  // The browser's and the OS's own: hard reload, Alt+F4, AltGr digits.
+  assert.equal(tabForKey({ key: 'F5', ctrlKey: true }), undefined)
+  assert.equal(tabForKey({ key: 'F5', shiftKey: true }), undefined)
+  assert.equal(tabForKey({ key: 'F5', metaKey: true }), undefined)
+  assert.equal(tabForKey({ key: 'F4', altKey: true }), undefined)
+  assert.equal(tabForKey({ key: '2', altKey: true, ctrlKey: true }), undefined)
 })
