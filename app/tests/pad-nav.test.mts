@@ -2,8 +2,12 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { hatKey, padStep, readPad } from '../src/pages/MusicMaker/padNav.js'
 
-function pad({ mapping = 'standard', buttons = {}, axes = [] } = {}) {
-  const list = []
+function pad({
+  mapping = 'standard',
+  buttons = {},
+  axes = [],
+}: { mapping?: string; buttons?: Record<number, boolean>; axes?: number[] } = {}) {
+  const list: { pressed: boolean; value: number }[] = []
   for (const [index, on] of Object.entries(buttons)) {
     list[Number(index)] = { pressed: !!on, value: on ? 1 : 0 }
   }
