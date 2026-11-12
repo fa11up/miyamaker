@@ -401,7 +401,6 @@ export default function Assets({
   onClear,
   onToggleHide,
   onNew,
-  onImport,
 }: {
   layers: Layer[]
   traits: Trait[]
@@ -416,9 +415,7 @@ export default function Assets({
   onClear: (layer: string) => void
   onToggleHide: (id: string) => void
   onNew: () => void
-  onImport: (files: FileList, stretch: boolean) => void
 }) {
-  const [stretch, setStretch] = useState(false)
   const sidebar = sidebarLayers(layers)
   return (
     <Column>
@@ -432,26 +429,7 @@ export default function Assets({
         >
           New trait
         </button>
-        <label aria-disabled={!openLayer}>
-          Import
-          <input
-            type="file"
-            accept="image/png,image/jpeg,image/webp"
-            multiple
-            hidden
-            disabled={!openLayer}
-            onChange={(event) => {
-              const files = event.target.files
-              if (files && files.length) onImport(files, stretch)
-              event.target.value = ''
-            }}
-          />
-        </label>
       </Head>
-      <label style={{ display: 'flex', gap: 6, alignItems: 'center', padding: '0 8px 6px', background: pink.soft, color: pink.ink }}>
-        <input type="checkbox" checked={stretch} onChange={(event) => setStretch(event.target.checked)} />
-        Stretch imports to fill
-      </label>
       <List>
         {sidebar.map((layer) => {
           const rows = traits.filter((trait) => trait.layer === layer.id).slice().sort(byTraitName)

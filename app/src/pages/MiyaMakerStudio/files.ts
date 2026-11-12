@@ -48,7 +48,7 @@ export function canPickFolder(): boolean {
 export async function pickFolder(): Promise<FileSystemDirectoryHandle> {
   const picker = (window as Window & { showDirectoryPicker?: (options?: { mode?: 'readwrite' }) => Promise<FileSystemDirectoryHandle> })
     .showDirectoryPicker
-  if (!picker) throw new Error('This browser cannot open a folder. Import a zip instead.')
+  if (!picker) throw new Error('This browser cannot open a folder. The published layers are still available.')
   return picker({ mode: 'readwrite' })
 }
 
@@ -56,7 +56,7 @@ async function list(dir: FileSystemDirectoryHandle): Promise<{ name: string; han
   const listing = dir as FileSystemDirectoryHandle & {
     entries?: () => AsyncIterable<[string, FileSystemHandle]>
   }
-  if (typeof listing.entries !== 'function') throw new Error('This browser cannot list a folder. Import a zip instead.')
+  if (typeof listing.entries !== 'function') throw new Error('This browser cannot list a folder. The published layers are still available.')
   const out: { name: string; handle: FileSystemHandle }[] = []
   for await (const [name, handle] of listing.entries()) out.push({ name, handle })
   return out

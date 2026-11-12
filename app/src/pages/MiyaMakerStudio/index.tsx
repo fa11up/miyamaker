@@ -15,7 +15,7 @@ import Assets from './Assets'
 import { DEFAULT_BRUSH, type Brush, type Pixels } from './brush'
 import Canvas, { type CanvasHandle, type Tool } from './Canvas'
 import { forgetDraft, rememberDraft } from './drafts'
-import { canPickFolder, docFromZip, docToZip, firstWorn, loadFolder, pickFolder, writeTrait, ZIP_LIMIT } from './files'
+import { canPickFolder, firstWorn, loadFolder, pickFolder, writeTrait } from './files'
 import Inspector from './Inspector'
 import Knob from './Knob'
 import Loading, { type Gate } from './Loading'
@@ -29,7 +29,6 @@ import {
   EMPTY_LAYERS,
   nameError,
   orderLayers,
-  parseTraitFile,
   placeKey,
   previewStack,
   randomWorn,
@@ -381,7 +380,7 @@ export default function MiyaMakerStudioPage() {
     setGate(null)
     const layers = orderLayers(EMPTY_LAYERS)
     replaceDoc({ rootName: 'Untitled', layers, traits: ensureEmptyOptions(layers, []) })
-    setStatus('Empty set. New traits stay in this browser until you export a zip.')
+    setStatus('Empty set. New traits stay in this browser. Export image saves the picture you are wearing.')
   }
 
   const cycleLayer = async (layerId: string, direction: -1 | 1) => {
@@ -463,43 +462,6 @@ export default function MiyaMakerStudioPage() {
     void rememberDraft(next.rootName, trait).catch(() => undefined)
   }
 
-  const importImages = async (files: FileList, stretch: boolean) => {
-    if (!docRef.current) startEmpty()
-    await commitLive()
-    const current = docRef.current
-    const layer = openLayer ?? current?.layers[0]?.id
-    if (!current || !layer) return
-    const added: Trait[] = []
-    try {
-      for (const file of files) {
-        const pixels = await blobToPixels(file, stretch ? 'stretch' : 'letterbox')
-        const png = await pixelsToPng(pixels)
-        const trait = blankTrait(layer, [...current.traits, ...added])
-        const parsed = parseTraitFile(file.name)
-        if (parsed && !nameError(parsed.name)) {
-          trait.name = parsed.name
-          trait.weight = parsed.weight
-        }
-        if (traitClash([...current.traits, ...added], trait)) trait.name = trait.name + ' copy'
-        trait.draft = png
-        added.push(trait)
-      }
-    } catch (error) {
-      setStatus(error instanceof Error ? error.message : 'Could not import that picture.')
-      return
-    }
-    const latest = docRef.current ?? current
-    const next = { ...latest, traits: [...latest.traits, ...added] }
-    update(next)
-    const last = added[added.length - 1]
-    if (!last) return
-    setOpenLayer(layer)
-    const wornNext = { ...wornRef.current, [layer]: last.id }
-    wornRef.current = wornNext
-    setWorn(wornNext)
-    choose(last.id)
-  }
-
   const patchTrait = (patch: Partial<Trait>) => {
     const id = activeRef.current
     const current = docRef.current
@@ -541,7 +503,7 @@ export default function MiyaMakerStudioPage() {
         setStatus(
           trait.sourceUrl
             ? 'Kept in this browser. The picture on koolskull.com is unchanged.'
-            : 'Kept in this browser. Export a zip to take it with you.'
+            : 'Kept in this browser. Export image saves the picture you are wearing.'
         )
         return
       }
@@ -560,50 +522,29 @@ export default function MiyaMakerStudioPage() {
     }
   }
 
-  const importZip = async (file: File) => {
-    if (!dirtyGuard()) return
-    if (file.size > ZIP_LIMIT) {
-      setStatus('That zip is the whole engine. Use Open folder on the layers directory.')
-      return
-    }
-    const mine = ++loadToken.current
-    setBusy(true)
-    setGate({ label: 'Reading that zip…', done: 0, total: 0 })
-    try {
-      const next = await docFromZip(new Uint8Array(await file.arrayBuffer()), file.name)
-      if (mine !== loadToken.current) return
-      replaceDoc(next)
-      await paintStack(mine)
-      if (mine !== loadToken.current) return
-      setStatus(`${countLabel(next.traits.length)} from ${file.name}. They stay in this browser until you export.`)
-    } catch (error) {
-      if (mine !== loadToken.current) return
-      setStatus(error instanceof Error ? error.message : 'Could not read that zip.')
-    } finally {
-      if (mine === loadToken.current) {
-        setBusy(false)
-        setGate(null)
-      }
-    }
-  }
-
-  const exportZip = async () => {
-    await commitLive()
+  const exportImage = async () => {
     const current = docRef.current
     if (!current) return
     setBusy(true)
     try {
-      const bytes = await docToZip(current)
-      const blob = new Blob([Uint8Array.from(bytes)], { type: 'application/zip' })
+      const blob = await canvasRef.current?.flattenPng()
+      if (!blob) {
+        setStatus('Nothing to export yet.')
+        return
+      }
+      const wornBody = current.traits.find((trait) => trait.id === wornRef.current.Body)
+      const label = wornBody && !isEmptyOption(wornBody) ? wornBody.name : 'picture'
+      const slug = label.replace(/[^\w.-]+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '') || 'picture'
+      const fileName = `miyamaker-${slug}.png`
       const url = URL.createObjectURL(blob)
       const link = document.createElement('a')
       link.href = url
-      link.download = `${current.rootName.replace(/[^\w.-]+/g, '_') || 'traits'}.zip`
+      link.download = fileName
       link.click()
-      URL.revokeObjectURL(url)
-      setStatus('Exported a zip of the traits in this window.')
+      window.setTimeout(() => URL.revokeObjectURL(url), 1500)
+      setStatus(`Saved ${fileName}.`)
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : 'Could not export.')
+      setStatus(error instanceof Error ? error.message : 'Could not export that picture.')
     } finally {
       setBusy(false)
     }
@@ -689,21 +630,8 @@ export default function MiyaMakerStudioPage() {
           <button type="button" onClick={startEmpty} disabled={busy} data-testid="trait-empty">
             Empty set
           </button>
-          <label>
-            <input
-              type="file"
-              accept=".zip,application/zip"
-              hidden
-              onChange={(event) => {
-                const file = event.target.files?.[0]
-                if (file) void importZip(file)
-                event.target.value = ''
-              }}
-            />
-            <span>Import zip</span>
-          </label>
-          <button type="button" onClick={() => void exportZip()} disabled={!doc || busy}>
-            Export zip
+          <button type="button" onClick={() => void exportImage()} disabled={!doc || busy} data-testid="trait-export-image">
+            Export image
           </button>
           <button type="button" onClick={() => void save()} disabled={!active || busy} data-testid="trait-save">
             Save
@@ -734,7 +662,6 @@ export default function MiyaMakerStudioPage() {
                   update({ ...current, traits })
                 }}
                 onNew={() => void addTrait()}
-                onImport={(files, stretch) => void importImages(files, stretch)}
               />
             </div>
             <Gutter onPointerDown={dragSize('left', leftW)} />
@@ -857,10 +784,10 @@ export default function MiyaMakerStudioPage() {
             <h2>MiyaMaker Studio</h2>
             <p>
               The window opens the layers published at <b>koolskull.com/miyamaker/layers</b>. A random character stacks every layer, in the same
-              order as koolskull.com/miyamaker. Arrows step through one layer from A to Z. New trait adds a blank in that layer's place.
+              order as koolskull.com/miyamaker. Arrows step through one layer from A to Z. Export image saves the picture you built.
             </p>
             <p>Pressure size and opacity are on. They follow a pen. A mouse paints at the size on the knob. Spray and smudge follow a pen the same way.</p>
-            {!folderOk ? <p>This browser cannot open a folder. Import a zip, or use Empty set and export when you are done.</p> : null}
+            {!folderOk ? <p>This browser cannot open a folder. The published layers still open on their own.</p> : null}
           </Welcome>
         )}
         <Status role="status">

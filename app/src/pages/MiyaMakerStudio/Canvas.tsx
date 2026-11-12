@@ -16,6 +16,8 @@ export type Tool = 'pen' | 'erase' | 'smudge' | 'pick'
 export type CanvasHandle = {
   load: (pixels: Pixels) => void
   toPng: () => Promise<Blob>
+  /** The worn stack plus anything painted on the open trait, as one PNG. */
+  flattenPng: () => Promise<Blob>
   isPaintDirty: () => boolean
   markSaved: () => void
   undo: () => void
@@ -245,6 +247,19 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas({ brush, tool, co
       const pixels = pixelsRef.current
       if (!pixels) return Promise.reject(new Error('Nothing is open.'))
       return pixelsToPng(pixels)
+    },
+    flattenPng() {
+      const view = viewRef.current
+      const out = document.createElement('canvas')
+      out.width = CANVAS
+      out.height = CANVAS
+      const ctx = out.getContext('2d')
+      if (!view || !ctx) return Promise.reject(new Error('Nothing to export yet.'))
+      ctx.imageSmoothingEnabled = false
+      view.querySelectorAll('canvas').forEach((layer) => ctx.drawImage(layer, 0, 0))
+      return new Promise((resolve, reject) => {
+        out.toBlob((blob) => (blob ? resolve(blob) : reject(new Error('Could not build that picture.'))), 'image/png')
+      })
     },
     isPaintDirty: () => dirtyRef.current,
     markSaved() {
