@@ -33,6 +33,7 @@ import {
   createBufferCache,
   heldForPort,
   liveVoices,
+  chopParts,
   edgeParts,
   gridEnd,
   gridPlace,
@@ -256,6 +257,29 @@ test('gridPlace snaps to a straight division, and a note end can stop inside a s
   assert.deepEqual(edgeParts(0.125, 0), { end: 0, tail: 13 })
   assert.equal(normalizeEvent({ pad: 0, vel: 1, pitch: 0, nudge: 0, tail: 25 }).tail, 25)
   assert.equal('tail' in normalizeEvent({ pad: 0, vel: 1, pitch: 0, nudge: 0, tail: 100 }), false)
+  assert.equal(normalizeEvent({ pad: 0, vel: 1, pitch: 0, nudge: 0, cut: true }).cut, true)
+  assert.equal('cut' in normalizeEvent({ pad: 0, vel: 1, pitch: 0, nudge: 0 }), false)
+  assert.equal('cut' in normalizeEvent({ pad: 0, vel: 0, pitch: 0, nudge: 0, off: true, cut: true }), false)
+})
+
+test('chopParts keeps a short note when the start sits on the next step', () => {
+  const span = (parts) => ({
+    start: Math.round((parts.step + parts.nudge / 100) * 1000) / 1000,
+    end: Math.round((parts.end + parts.tail / 100 + parts.nudge / 100) * 1000) / 1000,
+  })
+  const half = chopParts(4.5, 5, 16, true, 32)
+  assert.deepEqual(half, { step: 5, nudge: -50, end: 5, tail: 50 })
+  assert.deepEqual(span(half), { start: 4.5, end: 5 })
+  const quarter = chopParts(4.25, 4.5, 16, true, 64)
+  assert.deepEqual(quarter, { step: 4, nudge: 25, end: 4, tail: 25 })
+  assert.deepEqual(span(quarter), { start: 4.25, end: 4.5 })
+  const eighth = chopParts(0, 0.125, 16, true, 128)
+  assert.equal(eighth.step, 0)
+  assert.equal(eighth.end, 0)
+  assert.ok(eighth.tail > 0 && eighth.tail < 50)
+  const held = chopParts(4, 6, 16, true, 16)
+  assert.deepEqual(held, { step: 4, nudge: 0, end: 5, tail: 100 })
+  assert.deepEqual(span(held), { start: 4, end: 6 })
 })
 
 test('liveVoices drops ended and long-quiet voices and keeps sounding ones', () => {

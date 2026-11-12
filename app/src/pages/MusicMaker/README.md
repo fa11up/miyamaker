@@ -20,7 +20,7 @@ These are the parts of the instrument. The keys come after, once the pages make 
 
 **Chords** chooses a harmony. The buttons do not play. The piano plays that chord, and the strip above it plays one note.
 
-**Sequence** is the beat, painted on the pad rows. Its tools sit in the left rail when that rail has room. **Tracker** is the same pattern as a spreadsheet. The row in the middle is the one you are hearing or editing.
+**Sequence** is the beat, painted on the pad rows. Its tools stay above the grid on a wide window, and stack in the left rail on a narrow one when that rail has room. **Tracker** is the same pattern as a spreadsheet. The row in the middle is the one you are hearing or editing.
 
 **Arranger** chains patterns into a song. A new part waits until the one that is playing finishes.
 
@@ -121,9 +121,9 @@ On the Pads page, `Y U I O` and `H J K L` jump between eight patterns. `{` and `
 
 Quantize, in the top bar, records MOVE when it is on: how far a hit sits from its step. Off leaves that movement out. Velocity and a pitch bend still write.
 
-Snap, on the Sequence page, is the grid those notes land on. Click it to turn Snap off. Hold it, right-click it, or Shift-click it for the division: 1/4, 1/8, 1/16, 1/32, 1/64, or 1/128. A bar is sixteen steps, so 1/16 is one step. Snap on lands the note and its end on that division. Snap off lets the note sit between steps, and End lets it finish anywhere inside a step. The start is the MOVE column in the tracker, and it stays when you go from one page to the other.
+Snap, on the Sequence page, is the grid those notes land on. Click it to turn Snap off. Hold it, right-click it, or Shift-click it for the division: 1/4, 1/8, 1/16, 1/32, 1/64, or 1/128. A bar is sixteen steps, so 1/16 is one step. Snap on lands the note and its end on that division. Snap off lets the note sit between steps, and End lets it finish anywhere inside a step. A click places one note as long as that division. Drag along the row and the note holds across the steps you cross. A later click beside it stays its own note, down to a 128th, even when the two sit against each other. The start is the MOVE column in the tracker, and it stays when you go from one page to the other.
 
-Draw, Erase, Snap, − bar, + bar, Double, and the note tools sit in the left rail when that rail has room. The pattern, the step count, and Swing stay on top. SHIFT stays at the bottom of the rail.
+Draw, Erase, Snap, − bar, + bar, Double, and the note tools stay above the grid on a wide window. On a narrow window they stack in the left rail when that rail has room. The pattern, the step count, and Swing stay on top. SHIFT stays at the bottom of the rail.
 
 ## Arrange the song
 
@@ -154,6 +154,8 @@ The **?** on a page opens a short card. Show me draws a line to the real button.
 The Tracker is a spreadsheet of notes. Sixteen lanes run sideways. A cell is a note, an instrument, a velocity, and a tiny timing nudge.
 
 Press Esc or Rec to edit. On a note, `Z` is C and `Q` is the next C. `A` is note off. The instrument column is the pad number in hex. While Rec is on, the on-screen pads, the piano keys, and the chord piano write into this pattern from any page. Each note of a chord takes the next lane of that step. The sequence page stacks those notes on that pad’s row.
+
+The cross at the bottom right moves the cursor the way the arrow keys do. Tap one arm for a single step. Drag away from the center and it repeats, faster the farther you drag, and it stops when you let go. A drag on empty grid space walks the same way and also stops on the lift, instead of jumping to the cell under your finger. Pinch two fingers, or scroll the wheel, to make the note type bigger or smaller.
 
 Shift and the arrows change the cell you are on, and the cursor stays there. On a note, Shift+Left and Shift+Right move one semitone. Shift+Up and Shift+Down move one octave. On the other columns, Shift+Up and Shift+Down change the left digit, and Shift+Left and Shift+Right change the right digit. The digits wrap. Left and Right on SL or LP walk each pair of digits before they leave the column.
 

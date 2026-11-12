@@ -27,9 +27,9 @@ export const COACH = {
   sequence: {
     title: 'Sequence',
     screen: 'seq',
-    blurb: 'This page is the beat. The rows are the pads, and the tracker shows the same hits. The tools sit in the left rail when it has room.',
+    blurb: 'This page is the beat. The rows are the pads, and the tracker shows the same hits. On a wide window the tools stay above the grid. On a narrow window they stack in the left rail when it has room.',
     steps: [
-      { text: 'Draw paints a hit on a pad row. The note on the hit is the same note the tracker shows.', chip: { label: 'Draw', kind: 'btn' }, target: 'draw', screen: 'seq' },
+      { text: 'Draw places one note as long as the grid. Drag along the row to hold it. Click again beside it and that note stays separate, down to a 128th.', chip: { label: 'Draw', kind: 'btn' }, target: 'draw', screen: 'seq' },
       { text: 'Erase clears a hit.', chip: { label: 'Erase', kind: 'btn' }, target: 'erase', screen: 'seq' },
       { text: 'Snap keeps a dragged note on the grid. Click it to turn Snap off. Hold it, right-click it, or Shift-click it for 1/4, 1/8, 1/16, 1/32, 1/64, or 1/128.', chip: { label: 'Snap', kind: 'btn' }, target: 'snap', screen: 'seq' },
       { text: 'Snap on lands the note and its end on that division. Snap off lets it sit between steps, and End finishes it inside a step. The start is the MOVE column in the tracker.', chip: { label: 'End', kind: 'btn' } },
@@ -56,7 +56,8 @@ export const COACH = {
     steps: [
       { text: 'Rec on: the marked cell is where edits land, and the pattern can change. Rec off: the pattern does not change, stopped or playing.', chip: { label: 'Rec', kind: 'rec' }, target: 'rec', screen: 'track' },
       { text: 'Space plays and stops.', chip: { label: 'Play', kind: 'btn' }, target: 'play' },
-      { text: 'Drag empty grid space. The cursor walks the way your finger points.', target: 'tracker', screen: 'track' },
+      { text: 'Drag empty grid space. The cursor walks the way your finger points, and letting go stops it there.', target: 'tracker', screen: 'track' },
+      { text: 'The cross at the bottom right is the arrow keys. Tap a direction for one step. Drag away from the center to go faster, and let go to stop. Pinch, or scroll the wheel, to make the notes bigger or smaller.', target: 'track-pad', screen: 'track' },
       { text: 'Hold SHIFT at the lower left and drag with the other thumb to edit the cell.', chip: { label: 'SHIFT', kind: 'btn' }, target: 'shift', screen: 'track' },
       { text: 'Shift+Alt and the arrows mark a block from the cursor. Copy and paste that block. Delete and Shift+arrows change only the columns inside it.', chip: { label: 'NOTE', kind: 'btn' }, target: 'tracker', screen: 'track' },
     ],

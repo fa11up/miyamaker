@@ -33,6 +33,29 @@ test('a recorded chord keeps every note, and the sequence lists each one', () =>
   commitTrackerNote({ pad: 0, vel: 0.8, pitch: 7, row: 2, live: false })
   assert.equal(JSON.stringify(seq.steps[2]), before)
 
+  const lane = (events) => {
+    const cell = Array.from({ length: 16 }, () => null)
+    events.forEach((ev, i) => { cell[i] = ev })
+    return cell
+  }
+  const held = [
+    lane([{ pad: 0, pitch: 0, vel: 1, nudge: 0 }]),
+    lane([{ pad: 0, pitch: 0, vel: 1, nudge: 0 }]),
+  ]
+  assert.equal(noteRuns(held, 0).length, 1)
+  const chops = [
+    lane([{ pad: 0, pitch: 0, vel: 1, nudge: 0, tail: 50, cut: true }]),
+    lane([{ pad: 0, pitch: 0, vel: 1, nudge: -50, tail: 50, cut: true }]),
+  ]
+  assert.deepEqual(noteRuns(chops, 0).map((run) => [run.start, run.end, run.lane]), [[0, 0, 0], [1, 1, 0]])
+  const pair = [
+    lane([
+      { pad: 0, pitch: 3, vel: 1, nudge: 0, tail: 25, cut: true },
+      { pad: 0, pitch: 3, vel: 1, nudge: 25, tail: 25, cut: true },
+    ]),
+  ]
+  assert.equal(noteRuns(pair, 0).length, 2)
+
   model.patterns[7] = null
   model.pattern = prev
   model.tracker.edit = prevEdit
