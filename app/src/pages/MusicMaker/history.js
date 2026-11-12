@@ -11,7 +11,7 @@ import {
   idbSet,
 } from './model.js'
 import { bumpSong, exclusive } from './jobs.js'
-import { withSongValues } from './audio/arrange.js'
+import { resetPlayValues, withSongValues } from './audio/arrange.js'
 
 const stack = []
 const CAP = 30
@@ -90,7 +90,10 @@ function applySnapshot(data) {
   model.songFile = data.songFile || ''
   model.songPlay = !!data.songPlay
   restorePatterns(data.patterns)
-  ensurePattern(model.pattern || 0)
+  const seq = ensurePattern(model.pattern || 0)
+  // The snapshot holds the song's own values. What playback kept belongs to the song before the undo;
+  // a pattern still playing with its own tempo takes it up again, as the clock does.
+  resetPlayValues(model, model.playing ? seq : null)
 }
 
 /** Bytes of audio a held value pins: decoded PCM, or the base64 of a stored song or kit. */
