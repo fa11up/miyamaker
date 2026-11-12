@@ -3,21 +3,30 @@ pragma solidity ^0.8.24;
 
 import { MiyaPool } from "./MiyaPool.sol";
 
+interface IVaultTokens {
+    function imd() external view returns (address);
+    function infer() external view returns (address);
+}
+
 /**
  * @title MiyaPoolFactory (v2)
  * @notice Permissionless, ownerless factory for MiyaPool. One pool per collection, with both redeem paths (random
- *         redeems only where `MiyaPool.randomEnabled`). Whoever creates a collection's pool sets its targeted-redeem
- *         premium (0 to MiyaPool.MAX_PREMIUM_BPS), fixed forever. The premium is sold for ETH that goes to `vault`.
- *         Pools deploy with CREATE2 from (collection, kind, premium) and read the vault from this factory, so with the
- *         factory at the same address on every chain, a collection's pool address is the same everywhere for the same
- *         premium.
+ *         redeems only where `MiyaPool.randomEnabled`). Whoever creates a collection's pool sets its pick fee per piece
+ *         in IMD and in INFER (0 = not offered; both 0 = free picks), fixed forever; each offered fee must be at least
+ *         the vault's minimum contribution for that token. Pick fees go to `vault` as the picker's contribution.
+ *         Pools deploy with CREATE2 from (collection, kind, fees) and read the vault and its tokens from this factory,
+ *         so with the factory at the same address on every chain, a collection's pool address is the same everywhere
+ *         for the same fees.
  */
 contract MiyaPoolFactory {
     bytes4 internal constant ERC721_ID = 0x80ac58cd;
     bytes4 internal constant ERC1155_ID = 0xd9b67a26;
 
-    /// @notice The alignment vault every pool's premium goes to. address(0) on a chain without one: premiums must be 0.
+    /// @notice The alignment vault every pool's pick fees go to. address(0) on a chain without one: picks are free.
     address public immutable vault;
+    /// @notice The vault's IMD and INFER, the tokens pick fees can be paid in (address(0) without a vault).
+    address public immutable imd;
+    address public immutable infer;
 
     mapping(address collection => address pool) public poolOf;
     address[] public allPools;
@@ -26,7 +35,8 @@ contract MiyaPoolFactory {
         address indexed collection,
         address indexed pool,
         MiyaPool.Kind kind,
-        uint16 premiumBps,
+        uint256 imdFee,
+        uint256 inferFee,
         bool randomEnabled,
         address creator
     );
@@ -38,23 +48,34 @@ contract MiyaPoolFactory {
     constructor(address vault_) {
         if (vault_ != address(0) && vault_.code.length == 0) revert InvalidVault();
         vault = vault_;
+        if (vault_ != address(0)) {
+            imd = IVaultTokens(vault_).imd();
+            infer = IVaultTokens(vault_).infer();
+            if (imd == address(0) || infer == address(0)) revert InvalidVault();
+        }
     }
 
-    /// @notice Create `collection`'s pool with a targeted-redeem premium of `premiumBps` (basis points of one token).
-    function createPool(address collection, uint16 premiumBps) external returns (address pool) {
+    /// @notice Create `collection`'s pool with a pick fee per piece of `imdFee` IMD and/or `inferFee` INFER (token wei;
+    ///         0 = not offered in that token; both 0 = free picks). Fixed forever.
+    function createPool(address collection, uint256 imdFee, uint256 inferFee) external returns (address pool) {
         if (poolOf[collection] != address(0)) revert PoolExists(poolOf[collection]);
         MiyaPool.Kind kind = _detectKind(collection);
-        MiyaPool p = new MiyaPool{ salt: _salt(collection) }(collection, kind, premiumBps);
+        MiyaPool p = new MiyaPool{ salt: _salt(collection) }(collection, kind, imdFee, inferFee);
         pool = address(p);
         poolOf[collection] = pool;
         allPools.push(pool);
-        emit PoolCreated(collection, pool, kind, premiumBps, p.randomEnabled(), msg.sender);
+        emit PoolCreated(collection, pool, kind, imdFee, inferFee, p.randomEnabled(), msg.sender);
     }
 
-    /// @notice Address `collection`'s pool has, or will have if created with this kind and premium.
-    function predictPool(address collection, MiyaPool.Kind kind, uint16 premiumBps) external view returns (address) {
-        bytes32 initHash =
-            keccak256(abi.encodePacked(type(MiyaPool).creationCode, abi.encode(collection, kind, premiumBps)));
+    /// @notice Address `collection`'s pool has, or will have if created with this kind and these fees.
+    function predictPool(address collection, MiyaPool.Kind kind, uint256 imdFee, uint256 inferFee)
+        external
+        view
+        returns (address)
+    {
+        bytes32 initHash = keccak256(
+            abi.encodePacked(type(MiyaPool).creationCode, abi.encode(collection, kind, imdFee, inferFee))
+        );
         return address(
             uint160(uint256(keccak256(abi.encodePacked(bytes1(0xff), address(this), _salt(collection), initHash))))
         );

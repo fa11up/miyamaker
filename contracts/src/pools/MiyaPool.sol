@@ -22,15 +22,28 @@ interface IERC1155Pool {
     ) external;
 }
 
-/// @dev The pool reads its vault from the factory that deploys it, so a pool's init code (and its CREATE2 address)
-///      does not depend on which vault a chain has.
+/// @dev The pool reads its vault and the vault's tokens from the factory that deploys it, so a pool's init code (and
+///      its CREATE2 address) does not depend on which vault a chain has.
 interface IMiyaPoolDeployer {
     function vault() external view returns (address);
+    function imd() external view returns (address);
+    function infer() external view returns (address);
 }
 
-/// @dev `UniAlignmentVault.receiveContribution(Currency, uint256, address)`: `Currency` is an address in the ABI.
-interface IVaultContribution {
+/// @dev The parts of UniAlignmentVault a pool uses. `receiveContribution(Currency, uint256, address)`: `Currency` is
+///      an address in the ABI.
+interface IPoolVault {
     function receiveContribution(address currency, uint256 amount, address benefactor) external payable;
+    function config() external view returns (address);
+    function registry() external view returns (address);
+}
+
+interface IPoolVaultConfig {
+    function minContribution(address token) external view returns (uint256);
+}
+
+interface IPoolRegistry {
+    function isPaymentToken(address token) external view returns (bool);
 }
 
 /**
@@ -38,19 +51,19 @@ interface IVaultContribution {
  * @notice NFT pool in the style of NFTX v2, one per collection, with both redeem paths. No admin, no pause, no upgrade.
  *         Each NFT (or ERC1155 unit) the pool holds backs exactly 1e18 pool tokens. The accounting invariant is
  *
- *             totalSupply() + premiumReserve + UNIT * pendingUnits == UNIT * heldUnits()
+ *             totalSupply() + UNIT * pendingUnits == UNIT * heldUnits()
  *
  *         - Deposit: 1 NFT in, 1e18 tokens out.
- *         - Random redeem (ERC721 only, not on Robinhood Chain): burn exactly 1e18 per piece now, receive random ids
- *           later, chosen with the hash of a block mined after the commit. Anyone can reveal, oldest commit first.
- *         - Targeted redeem: burn 1e18 per piece plus the premium, and pick the ids. The premium is a share of 1e18 set
- *           by the pool's creator (at most MAX_PREMIUM_BPS) and fixed forever.
+ *         - Random redeem (ERC721 only, not on Robinhood Chain): burn exactly 1e18 per piece now, no fee, and receive
+ *           random ids later, chosen with the hash of a block mined after the commit. Anyone can reveal, oldest first.
+ *         - Targeted (pick) redeem: burn 1e18 per piece and pay the pick fee per piece, in IMD or INFER (the picker
+ *           chooses among the tokens the pool offers). The creator sets `imdFee` and `inferFee` at creation, fixed
+ *           forever: 0 means that token is not offered; both 0 means picks are free. Each offered fee is at least the
+ *           vault's minimum contribution for its token when the pool is created.
  *
- *         The premium goes to the alignment vault. The vault only takes ETH and registry payment tokens, and pool
- *         tokens are neither, so the pool keeps the premium as `premiumReserve` (tokens burned from the redeemer and
- *         not yet re-minted: still backed by NFTs in the pool) and sells it one whole token (LOT) at a time for ETH in
- *         a falling-price auction (`buyLot`). The ETH goes straight into `vault.receiveContribution` in the same call;
- *         the pool never holds ETH. Selling whole tokens means every lot can be redeemed for a piece right away.
+ *         The fee goes to the INFER/IMD alignment vault in the same call: the pool pulls it from the picker (who
+ *         approves the pool) and hands it to `vault.receiveContribution(token, fee, picker)`, so the vault books it as
+ *         the picker's contribution. The pool never keeps fee tokens (checked by balance after the call).
  *
  * @dev Random and targeted redeems on one pool:
  *      - Each commit draws only from ids deposited before it (its queue range), and reveals run in commit order, so
@@ -86,9 +99,6 @@ contract MiyaPool is ERC20, ReentrancyGuard {
     }
 
     uint256 public constant UNIT = 1e18;
-    /// @notice Highest targeted-redeem premium a pool can have: 20% of a token.
-    uint16 public constant MAX_PREMIUM_BPS = 2000;
-    uint256 internal constant BPS = 10_000;
     uint256 internal constant ROBINHOOD_CHAIN_ID = 4663;
 
     /// @dev EIP-2935 block-hash history contract, same address on every chain that supports it.
@@ -100,22 +110,17 @@ contract MiyaPool is ERC20, ReentrancyGuard {
     ///         commit fits in one transaction under mainnet's gas cap even if every transfer burns all of it.
     uint256 public constant REVEAL_TRANSFER_GAS = 200_000;
 
-    /// @notice Premium tokens are sold this many at a time (one whole token: one piece).
-    uint256 public constant LOT = UNIT;
-    /// @notice Where the first lot's price starts.
-    uint256 public constant FIRST_LOT_PRICE = 10 ether;
-    /// @notice A lot's price never falls below this: the vault's least ETH contribution.
-    uint256 public constant MIN_LOT_PRICE = 0.001 ether;
-    /// @notice A lot's price halves every LOT_HALF_LIFE while a lot is for sale (linear within each half-life).
-    uint256 public constant LOT_HALF_LIFE = 1 days;
-
     address public immutable factory;
     address public immutable collection;
     Kind public immutable kind;
-    /// @notice The alignment vault the premium's ETH goes to (address(0) only when premiumBps is 0).
+    /// @notice The alignment vault pick fees go to (address(0) on a chain without one: picks are then free).
     address public immutable vault;
-    /// @notice Targeted-redeem premium, in basis points of one token. Fixed at creation.
-    uint16 public immutable premiumBps;
+    /// @notice The vault's IMD and INFER (address(0) without a vault).
+    address public immutable imd;
+    address public immutable infer;
+    /// @notice Pick fee per piece in IMD / in INFER (token wei). 0 = not offered in that token. Fixed at creation.
+    uint256 public immutable imdFee;
+    uint256 public immutable inferFee;
     /// @notice Random redeems: ERC721 pools, except on Robinhood Chain.
     bool public immutable randomEnabled;
 
@@ -144,16 +149,9 @@ contract MiyaPool is ERC20, ReentrancyGuard {
     uint256 internal _queueHead;
     uint256 internal _queueTail;
 
-    /// @notice Premium burned from targeted redeemers and not yet sold (token wei).
-    uint256 public premiumReserve;
-    /// @notice The current (or next) lot's starting price: FIRST_LOT_PRICE, then twice the last sale.
-    uint128 public lotStartPrice;
-    /// @notice When the current lot went on sale (the reserve reached LOT, or the previous lot sold).
-    uint64 public lotStartTime;
-
     event Deposited(address indexed from, address indexed to, uint256[] ids, uint256[] amounts);
     event Redeemed(address indexed by, address indexed to, uint256[] ids, uint256[] amounts);
-    event PremiumPaid(address indexed by, uint256 amount);
+    event PickFeePaid(address indexed by, address indexed token, uint256 amount);
     event RedeemCommitted(
         uint256 indexed commitId, address indexed by, address indexed to, uint256 amount, uint256 targetBlock
     );
@@ -161,7 +159,6 @@ contract MiyaPool is ERC20, ReentrancyGuard {
     event RedeemRevealed(uint256 indexed commitId, uint256[] ids);
     event RedeemEscrowed(uint256 indexed commitId, address indexed recipient, uint256 id);
     event EscrowClaimed(address indexed recipient, address indexed to, uint256 id);
-    event LotSold(address indexed buyer, address indexed to, address indexed benefactor, uint256 price);
 
     error NotCollection();
     error RandomUnavailable();
@@ -179,23 +176,35 @@ contract MiyaPool is ERC20, ReentrancyGuard {
     error RevealGasTooLow();
     error TransferNotReceived(uint256 id);
     error LockedForRandomRedeem(uint256 id);
-    error PremiumTooHigh();
     error NoVault();
-    error NoLot();
-    error PriceNotMet(uint256 price);
+    error FeeBelowVaultMinimum(address token, uint256 minimum);
+    error FeeTokenNotAccepted(address token);
+    error FeeTokenNotOffered(address token);
+    error FeeNotReceived();
+    error FeeNotForwarded();
 
-    constructor(address _collection, Kind _kind, uint16 _premiumBps) {
-        if (_premiumBps > MAX_PREMIUM_BPS) revert PremiumTooHigh();
-        address v = IMiyaPoolDeployer(msg.sender).vault();
-        if (_premiumBps != 0 && v.code.length == 0) revert NoVault();
+    constructor(address _collection, Kind _kind, uint256 _imdFee, uint256 _inferFee) {
+        IMiyaPoolDeployer f = IMiyaPoolDeployer(msg.sender);
+        address v = f.vault();
+        address imd_;
+        address infer_;
+        if (_imdFee != 0 || _inferFee != 0) {
+            if (v.code.length == 0) revert NoVault();
+            imd_ = f.imd();
+            infer_ = f.infer();
+            if (_imdFee != 0) _checkFeeToken(v, imd_, _imdFee);
+            if (_inferFee != 0) _checkFeeToken(v, infer_, _inferFee);
+        }
         factory = msg.sender;
         collection = _collection;
         kind = _kind;
         vault = v;
-        premiumBps = _premiumBps;
+        imd = imd_;
+        infer = infer_;
+        imdFee = _imdFee;
+        inferFee = _inferFee;
         // Robinhood Chain's block hashes come from its sequencer, so a random draw there could be steered.
         randomEnabled = _kind == Kind.ERC721 && block.chainid != ROBINHOOD_CHAIN_ID;
-        lotStartPrice = uint128(FIRST_LOT_PRICE);
     }
 
     // ┌─────────────────────────┐
@@ -210,7 +219,7 @@ contract MiyaPool is ERC20, ReentrancyGuard {
         return string.concat("m", _collectionString(0x95d89b41, "NFT"));
     }
 
-    /// @notice Units currently backing tokens, the premium reserve or pending commits.
+    /// @notice Units currently backing tokens or pending commits.
     function heldUnits() public view returns (uint256) {
         return kind == Kind.ERC721 ? _ids.length() : _units1155;
     }
@@ -234,14 +243,21 @@ contract MiyaPool is ERC20, ReentrancyGuard {
         return _ids.contains(id);
     }
 
-    /// @notice Pool tokens a targeted redeem burns per piece, on top of the UNIT.
-    function premiumPerUnit() public view returns (uint256) {
-        return UNIT * premiumBps / BPS;
+    /// @notice True when picks cost only the pool tokens (neither fee token is offered).
+    function picksFree() public view returns (bool) {
+        return imdFee == 0 && inferFee == 0;
     }
 
-    /// @notice Pool tokens a targeted redeem of `units` pieces burns in all (UNIT + premium each).
-    function targetedCost(uint256 units) external view returns (uint256) {
-        return units * (UNIT + premiumPerUnit());
+    /// @notice The pick fee for `units` pieces paid in `token` (IMD or INFER). Reverts for a token not offered; 0 when
+    ///         picks are free (pass address(0) as the fee token then).
+    function pickFee(address token, uint256 units) public view returns (uint256) {
+        if (picksFree()) {
+            if (token != address(0)) revert FeeTokenNotOffered(token);
+            return 0;
+        }
+        uint256 per = token == address(0) ? 0 : token == imd ? imdFee : token == infer ? inferFee : 0;
+        if (per == 0) revert FeeTokenNotOffered(token);
+        return per * units;
     }
 
     /// @notice True while a pending random redeem could draw `id`, so a targeted redeem of it would revert.
@@ -265,22 +281,6 @@ contract MiyaPool is ERC20, ReentrancyGuard {
         uint256 pos = _positionOf[id];
         if (pos == 0) revert NotHeld(id);
         return pos - 1;
-    }
-
-    /// @notice True when a whole lot of premium tokens is for sale.
-    function lotAvailable() external view returns (bool) {
-        return premiumReserve >= LOT;
-    }
-
-    /// @notice What a lot costs now in ETH (if none is for sale: what the next one will start at).
-    function lotPrice() public view returns (uint256) {
-        if (premiumReserve < LOT) return _floorPrice(lotStartPrice);
-        uint256 elapsed = block.timestamp - lotStartTime;
-        uint256 halvings = elapsed / LOT_HALF_LIFE;
-        if (halvings >= 128) return MIN_LOT_PRICE;
-        uint256 p = uint256(lotStartPrice) >> halvings;
-        p -= p * (elapsed % LOT_HALF_LIFE) / (2 * LOT_HALF_LIFE);
-        return _floorPrice(p);
     }
 
     // ┌─────────────────────────┐
@@ -356,18 +356,24 @@ contract MiyaPool is ERC20, ReentrancyGuard {
     // │    Targeted redeems     │
     // └─────────────────────────┘
 
-    /// @notice Burn UNIT + the premium per unit and withdraw the chosen ids to `to`.
+    /// @notice Burn UNIT per unit, pay the pick fee per unit in `feeToken` (IMD or INFER, whichever the pool offers;
+    ///         address(0) when picks are free), and withdraw the chosen ids to `to`. Approve the pool for the fee first.
+    ///         The fee goes to the alignment vault as the caller's contribution.
     /// @dev ERC721 in a random pool: reverts with `LockedForRandomRedeem` for an id a pending commit could draw.
-    function redeem(uint256[] calldata ids, uint256[] calldata amounts, address to) external nonReentrant {
+    function redeem(uint256[] calldata ids, uint256[] calldata amounts, address to, address feeToken)
+        external
+        nonReentrant
+    {
         if (to == address(this)) revert InvalidRecipient();
         if (ids.length == 0) revert EmptyRequest();
         if (kind == Kind.ERC721) {
-            _payTargeted(ids.length);
+            _burn(msg.sender, UNIT * ids.length);
             uint256 locked = randomEnabled ? _lockedEnd() : 0;
             for (uint256 i; i < ids.length; ++i) {
                 if (!_ids.remove(ids[i])) revert NotHeld(ids[i]);
                 if (randomEnabled) _dequeue(ids[i], locked);
             }
+            _payPickFee(feeToken, ids.length);
             uint256[] memory ones = new uint256[](ids.length);
             for (uint256 i; i < ids.length; ++i) {
                 ones[i] = 1;
@@ -387,7 +393,8 @@ contract MiyaPool is ERC20, ReentrancyGuard {
                 total += amounts[i];
             }
             _units1155 -= total;
-            _payTargeted(total);
+            _burn(msg.sender, UNIT * total);
+            _payPickFee(feeToken, total);
             IERC1155Pool(collection).safeBatchTransferFrom(address(this), to, ids, amounts, "");
             emit Redeemed(msg.sender, to, ids, amounts);
         }
@@ -397,7 +404,7 @@ contract MiyaPool is ERC20, ReentrancyGuard {
     // │     Random redeems      │
     // └─────────────────────────┘
 
-    /// @notice Burn `amount` * UNIT tokens now (no premium); `amount` random ids go to `to` once revealed.
+    /// @notice Burn `amount` * UNIT tokens now (no fee); `amount` random ids go to `to` once revealed.
     function commitRedeem(uint256 amount, address to) external nonReentrant returns (uint256 commitId) {
         if (!randomEnabled) revert RandomUnavailable();
         if (amount == 0) revert EmptyRequest();
@@ -472,41 +479,31 @@ contract MiyaPool is ERC20, ReentrancyGuard {
     }
 
     // ┌─────────────────────────┐
-    // │      Premium lots       │
-    // └─────────────────────────┘
-
-    /// @notice Buy one whole pool token from the premium reserve at `lotPrice()`, paid in ETH that goes straight to
-    ///         the alignment vault as a contribution for `benefactor` (the vault's shares in it are theirs). Send at
-    ///         least the price you saw: the price only falls, and anything above the price at inclusion is refunded.
-    function buyLot(address to, address benefactor) external payable nonReentrant returns (uint256 price) {
-        if (to == address(0) || to == address(this) || benefactor == address(0)) revert InvalidRecipient();
-        if (premiumReserve < LOT) revert NoLot();
-        price = lotPrice();
-        if (msg.value < price) revert PriceNotMet(price);
-        premiumReserve -= LOT;
-        uint256 next = price * 2;
-        lotStartPrice = uint128(next > type(uint128).max ? type(uint128).max : next);
-        lotStartTime = uint64(block.timestamp);
-        _mint(to, LOT);
-        IVaultContribution(vault).receiveContribution{ value: price }(address(0), price, benefactor);
-        emit LotSold(msg.sender, to, benefactor, price);
-        if (msg.value > price) SafeTransferLib.safeTransferETH(msg.sender, msg.value - price);
-    }
-
-    // ┌─────────────────────────┐
     // │        Internals        │
     // └─────────────────────────┘
 
-    /// @dev Burns UNIT + the premium per unit from the caller; the premium joins the reserve.
-    function _payTargeted(uint256 units) internal {
-        uint256 premium = units * premiumPerUnit();
-        _burn(msg.sender, units * UNIT + premium);
-        if (premium == 0) return;
-        uint256 before = premiumReserve;
-        premiumReserve = before + premium;
-        // A lot goes on sale (its price starts falling) only once a whole token has built up.
-        if (before < LOT && before + premium >= LOT) lotStartTime = uint64(block.timestamp);
-        emit PremiumPaid(msg.sender, premium);
+    /// @dev Pulls the pick fee for `units` from the caller and hands it to the vault as the caller's contribution.
+    ///      Exact amounts both ways: what arrives must be the fee (no fee-on-transfer), and the pool's balance must be
+    ///      back where it started once the vault has pulled it, so the pool never keeps fee tokens.
+    function _payPickFee(address token, uint256 units) internal {
+        uint256 fee = pickFee(token, units);
+        if (fee == 0) return;
+        uint256 before = SafeTransferLib.balanceOf(token, address(this));
+        SafeTransferLib.safeTransferFrom(token, msg.sender, address(this), fee);
+        if (SafeTransferLib.balanceOf(token, address(this)) - before != fee) revert FeeNotReceived();
+        SafeTransferLib.safeApprove(token, vault, fee);
+        IPoolVault(vault).receiveContribution(token, fee, msg.sender);
+        if (SafeTransferLib.balanceOf(token, address(this)) != before) revert FeeNotForwarded();
+        emit PickFeePaid(msg.sender, token, fee);
+    }
+
+    /// @dev A fee token must be one the vault takes now, at no less than its minimum contribution.
+    function _checkFeeToken(address v, address token, uint256 fee) private view {
+        if (token == address(0) || !IPoolRegistry(IPoolVault(v).registry()).isPaymentToken(token)) {
+            revert FeeTokenNotAccepted(token);
+        }
+        uint256 minimum = IPoolVaultConfig(IPoolVault(v).config()).minContribution(token);
+        if (fee < minimum) revert FeeBelowVaultMinimum(token, minimum);
     }
 
     /// @dev Positions [0, end) are locked: the newest pending commit's range (each older one's is a prefix of it).
@@ -552,10 +549,6 @@ contract MiyaPool is ERC20, ReentrancyGuard {
         if (to == address(0)) to = from;
         // address(0): a safe mint straight into the pool. address(this): a transfer from the pool to itself.
         if (to == address(0) || to == address(this)) revert InvalidRecipient();
-    }
-
-    function _floorPrice(uint256 p) internal pure returns (uint256) {
-        return p < MIN_LOT_PRICE ? MIN_LOT_PRICE : p;
     }
 
     function _blockHash(uint256 n) internal view returns (bytes32 h) {

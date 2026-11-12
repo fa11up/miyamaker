@@ -46,7 +46,7 @@ import { TestAlignmentToken } from "./mocks/TestAlignmentToken.sol";
  *         Keys: never read here except `DEPLOYER_PRIVATE_KEY` (optional). Prefer `--account <keystore>` or
  *         `--ledger` with `--sender <addr>`: then vm.startBroadcast() is called without a key.
  */
-/// @dev CREATE3 label of the pool factory. v2 (both redeem paths, premiums to the vault) takes a new label: v1's
+/// @dev CREATE3 label of the pool factory. v2 (both redeem paths, pick fees to the vault) takes a new label: v1's
 ///      "MiyaPoolFactory" salt is spent on mainnet. script/DeployMiyaPoolV2.s.sol uses the same label.
 string constant POOL_FACTORY_LABEL = "MiyaPoolFactoryV2";
 
@@ -326,8 +326,8 @@ contract DeployMiyamints is Script {
         d.defaultVault = vaultFactory.deployVault(vaultSalt, d.alignmentTargetId);
 
         // 10b. Pool factory v2 (ownerless, CREATE3 → same address on every chain for the same deployer/namespace; the
-        //      constructor's vault doesn't change it). Targeted-redeem premiums are sold for ETH that goes to the default
-        //      vault. The label differs from v1's "MiyaPoolFactory", whose salt is spent on mainnet.
+        //      constructor's vault doesn't change it). Pick fees (IMD/INFER) go to the default vault as the
+        //      picker's contribution. The label differs from v1's "MiyaPoolFactory", whose salt is spent on mainnet.
         d.poolFactory = _create3(
             deployer,
             c.saltNamespace,

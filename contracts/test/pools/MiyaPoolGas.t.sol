@@ -4,28 +4,36 @@ pragma solidity ^0.8.24;
 import { Test } from "forge-std/Test.sol";
 import { MiyaPool } from "../../src/pools/MiyaPool.sol";
 import { MiyaPoolFactory } from "../../src/pools/MiyaPoolFactory.sol";
-import { Mock721, MockVault } from "./MiyaPool.t.sol";
+import { Mock721, MockVault, MockToken } from "./MiyaPool.t.sol";
 
-/// @notice Gas of single operations on a warm ERC721 pool (both paths, 5% premium), printed with -vv. Each number is
+/// @notice Gas of single operations on a warm ERC721 pool (both paths, pick fee in IMD or INFER), printed with -vv. Each number is
 ///         one external call measured from the test (includes the call overhead, not the 21k transaction base).
 contract MiyaPoolGasTest is Test {
     uint256 constant UNIT = 1e18;
     Mock721 nft;
     MiyaPool pool;
     MockVault vault;
+    MockToken imd;
+    MockToken infer;
     address alice = makeAddr("alice");
 
     function setUp() public {
-        vault = new MockVault();
+        imd = new MockToken("IMD");
+        infer = new MockToken("INFER");
+        vault = new MockVault(address(imd), address(infer));
         MiyaPoolFactory factory = new MiyaPoolFactory(address(vault));
         nft = new Mock721();
         for (uint256 id = 1; id <= 60; ++id) {
             nft.mint(alice, id);
         }
         uint256 g = gasleft();
-        pool = MiyaPool(factory.createPool(address(nft), 2000));
+        pool = MiyaPool(factory.createPool(address(nft), 1e18, 3500e18));
         emit log_named_uint("createPool", g - gasleft());
+        imd.mint(alice, 100e18);
+        infer.mint(alice, 100_000e18);
         vm.startPrank(alice);
+        imd.approve(address(pool), type(uint256).max);
+        infer.approve(address(pool), type(uint256).max);
         nft.setApprovalForAll(address(pool), true);
         uint256[] memory ids = new uint256[](40);
         for (uint256 i; i < 40; ++i) {
@@ -53,12 +61,16 @@ contract MiyaPoolGasTest is Test {
         emit log_named_uint("deposit 1 (ERC721, queued)", g - gasleft());
 
         g = gasleft();
-        pool.redeem(_one(41), new uint256[](0), alice);
-        emit log_named_uint("targeted redeem 1 (tail id, with premium)", g - gasleft());
+        pool.redeem(_one(41), new uint256[](0), alice, address(imd));
+        emit log_named_uint("pick 1 (tail id, fee in IMD, first contribution)", g - gasleft());
 
         g = gasleft();
-        pool.redeem(_one(7), new uint256[](0), alice);
-        emit log_named_uint("targeted redeem 1 (middle id, swap with tail)", g - gasleft());
+        pool.redeem(_one(7), new uint256[](0), alice, address(imd));
+        emit log_named_uint("pick 1 (middle id, fee in IMD, repeat contributor)", g - gasleft());
+
+        g = gasleft();
+        pool.redeem(_one(8), new uint256[](0), alice, address(infer));
+        emit log_named_uint("pick 1 (fee in INFER)", g - gasleft());
 
         g = gasleft();
         uint256 c = pool.commitRedeem(1, alice);
@@ -76,18 +88,5 @@ contract MiyaPoolGasTest is Test {
         g = gasleft();
         pool.revealRedeem(c);
         emit log_named_uint("revealRedeem 10", g - gasleft());
-
-        // build a lot: 20% premium, 5 redeems
-        vm.startPrank(alice);
-        for (uint256 id = 20; id < 40 && pool.premiumReserve() < UNIT; ++id) {
-            if (pool.isHeld(id)) pool.redeem(_one(id), new uint256[](0), alice);
-        }
-        vm.stopPrank();
-        uint256 price = pool.lotPrice();
-        vm.deal(alice, price);
-        vm.prank(alice);
-        g = gasleft();
-        pool.buyLot{ value: price }(alice, alice);
-        emit log_named_uint("buyLot (mock vault)", g - gasleft());
     }
 }

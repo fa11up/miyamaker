@@ -598,35 +598,46 @@ gas for the multi-pass loop, real zRouter on a fork, on-chain config addresses.
 
 ---
 
-## MiyaPool v2: one pool per collection, random + targeted, premium to the vault (2026-11-12, not yet reviewed)
+## MiyaPool v2: one pool per collection, random + targeted, pick fee to the vault (2026-11-12, not yet reviewed)
 
 Branch `contracts/miyapool-v2`. Replaces `MiyaPool` / `MiyaPoolFactory` in place. The live v1 factory (mainnet
 `0x0513…efF3`) has no pools and nothing references it, so v2 is a new factory (CREATE3 label `MiyaPoolFactoryV2`,
-`script/DeployMiyaPoolV2.s.sol`), with nothing to migrate. Owner decisions 2026-11-12: one pool per collection with both
-redeem paths; random costs exactly 1 token per piece; targeted costs 1 token + a premium set per pool by its creator
-(cap `MAX_PREMIUM_BPS` = 2000, 20%), fixed forever; the premium goes to the INFER/IMD alignment vault; no admin, pause or
-upgrade; random stays off on Robinhood Chain (4663); ERC1155 targeted only.
+`script/DeployMiyaPoolV2.s.sol`), with nothing to migrate. Owner decisions 2026-11-12 (second round): pool creation open
+to anyone; one pool per collection with both redeem paths; random redeem = exactly 1 pool token, no fee; targeted (pick)
+redeem = 1 pool token plus a fixed pick fee in IMD and/or INFER set by the creator, paid by the picker to the INFER/IMD
+vault as the picker's contribution; no pool-token premium, reserve or auction; no admin, pause or upgrade; random off on
+Robinhood Chain (4663) and for ERC1155. (A first draft with a pool-token premium sold for ETH in a Dutch auction was
+dropped by the owner before review.)
 
-**Premium route (why a pool-side sale).** The vault books only ETH and registry payment tokens
-(`receiveContribution`: `isPaymentToken`, at most 15 ERC-20s, per-token minimums), and converts them through
-keeper-built swaps. Pool tokens are neither, have no market the keeper could quote, and an unbooked transfer would be
-stranded (the vault only accounts for INFER, IMD and ETH beyond what it owes). Listing each pool token in the registry is
-a per-pool Safe action against a 15-slot cap and still needs a market. A premium paid directly in ETH needs a price for a
-pool token, which no on-chain source gives. So the pool burns `UNIT + premium` per targeted unit, books the premium as
-`premiumReserve` (still backed: the NFTs stay in the pool), and sells it one whole token (`LOT` = 1e18) at a time for ETH
-in a falling-price auction. `buyLot(to, benefactor)` mints the lot to `to` and forwards exactly the price to
-`vault.receiveContribution{value: price}(ETH, price, benefactor)` in the same call (any excess is refunded; the pool never
-holds ETH). The live vault and registry are unchanged; the mainnet fork test sells a lot into the live default vault and
-checks `pendingOf(buyer, ETH)`.
+**Accounting**, exact: `totalSupply + UNIT * pendingUnits == UNIT * heldUnits`. Pool tokens are never charged beyond 1 per
+piece on either path.
 
-- Price: the first lot starts at `FIRST_LOT_PRICE` (10 ETH), each later one at twice the last sale; it halves every
-  `LOT_HALF_LIFE` (1 day, linear within each half-life), never below `MIN_LOT_PRICE` (0.001 ETH = the vault's ETH
-  minimum, so a sale can't be refused for size). The clock runs only while a whole lot is in the reserve (it starts when
-  the reserve reaches `LOT`, or at the previous sale if a lot is still there), so an idle pool doesn't sell its next lot
-  for the floor. Only targeted redeems add to the reserve (pool tokens sent to the pool are not counted), so dust can't
-  start or hold the clock.
-- Accounting, exact: `totalSupply + premiumReserve + UNIT * pendingUnits == UNIT * heldUnits`.
-- `benefactor` (who gets the vault shares for the ETH) is chosen by the buyer; the app passes the buyer.
+**Pick fee.** `createPool(collection, imdFee, inferFee)`: per piece, token wei; 0 = that token not offered; both 0 = free
+picks. The pool reads the vault, IMD and INFER from the factory (the factory reads `vault.imd()` / `vault.infer()` at
+construction) and, at creation, requires each nonzero fee's token to be a registry payment token
+(`vault.registry().isPaymentToken`) and the fee to be at least `vault.config().minContribution(token)` (mainnet today:
+1 IMD, 3,500 INFER). Fixed forever. `redeem(ids, amounts, to, feeToken)`: burns 1e18 per piece, then (state already
+updated) pulls `fee × pieces` of `feeToken` from the picker, checks the pool's balance grew by exactly that (no
+fee-on-transfer), approves the vault for exactly that, calls `vault.receiveContribution(feeToken, fee, msg.sender)`, and
+checks the pool's balance is back where it started (the vault pulled all of it; the allowance is then 0). NFT transfers
+come last. The vault books the fee as the picker's pending contribution, converted with the next keeper batch into
+INFER/IMD liquidity whose shares (and fees) are the picker's. A token not offered reverts `FeeTokenNotOffered`; with free
+picks the fee token must be address(0). No change to the live vault or registry; the mainnet fork test pays fees in IMD
+and in INFER into the live default vault and checks `pendingOf(picker, token)`.
+
+Consequences the owner accepted or should know:
+- The vault's minimums and payment-token list are owner-settable (Safe). Raising `minContribution(token)` above a
+  pool's fixed fee, or delisting IMD/INFER, makes picks in that token revert forever for that pool (random redeems and
+  the other fee token are unaffected; a pool offering only that token becomes random-only). Nothing in the pool can
+  adapt, by design (fixed fees).
+- Anyone can create a collection's pool first and fix its fees for everyone (squatting). An absurd fee makes picks
+  impossible in practice; random redeems still work.
+- A pick now costs the vault's contribution path: about 430-540k gas on the live vault (fork), against ~80-90k for a v1
+  targeted redeem. Free picks don't touch the vault.
+- Random is free and picks cost a fee, so re-rolling random redeems (deposit, commit, reveal) to fish for a piece costs
+  only gas; with a small pool and a meaningful fee that can be cheaper than the fee.
+- The vault limits each benefactor to 16 distinct pending tokens; IMD and INFER are two of them, so a picker can't be
+  blocked by that.
 
 **Random and targeted on one pool.** Every held id of a random-enabled pool sits in the deposit-order queue, with its
 position (`_positionOf`). A commit draws from `[head, queueEnd)`; reveals run in commit order and swap the picked id
@@ -638,28 +649,26 @@ take only ids past that point, and removes them by swapping with the tail, so no
   taking their own pick; a commit's range never shrinks, so a reveal can't run short (no stranding), and an id leaves
   `_ids` and the queue exactly once (reveal or targeted; escrowed ids are in neither, so no double spend);
 - the lock lasts from the commit (the target block isn't mined yet) until the reveal, which anyone can send from the
-  block after the target block. Ids deposited after the newest pending commit stay free.
+  block after the target block. Ids deposited after the newest pending commit stay free. A locked pick reverts before
+  any fee is pulled.
 
 Also new: a hook for an escrowed id reverts `AlreadyHeld` (in v1 a collection calling `onERC721Received` for an escrowed
 id could mint a token against an NFT already owed to its recipient).
 
-Tests: `test/pools/MiyaPool.t.sol` (v1's ported; premium, cap, no-vault, 4663, the lock in the commit block and after,
-fuzzed "targeted redeems can't steer a pick", committer re-roll, full-range commit settles, lot price curve and
-monotonicity (fuzz), sale into a mock vault with the vault's checks, refund, vault refusal, back-to-back lots),
-`test/invariant/MiyaPoolInvariant.t.sol` (a both-paths 721 pool at 20%, a 1155 pool at 10%, a 721 pool made on 4663 at
-5%: exact accounting, custody, queue is a bijection onto held ids, no targeted redeem of a drawable id, every draw
-deposited before its commit, vault ETH == lot sales, no ETH held), `test/pools/MiyaPoolGas.t.sol`,
-`test/fork/MiyaPoolV2Fork.t.sol` (the live Miyamaker drop's holders, the live default vault).
+Tests: `test/pools/MiyaPool.t.sol` (v1's ported; fees at and below the vault minimums, a minimum raised later, a
+delisted token, no vault, free picks, IMD and INFER picks booked to the picker, token choice, token not offered, no
+approval, a vault pulling less (`FeeNotForwarded`), a fee-on-transfer token (`FeeNotReceived`), vault refusal blocks
+picks but not random, ERC1155 fee per unit, 4663, the lock in the commit block and after, fuzzed "targeted redeems can't
+steer a pick", committer re-roll, full-range commit settles), `test/invariant/MiyaPoolInvariant.t.sol` (a both-paths
+721 pool with both fee tokens, a 1155 pool with an INFER fee, a free 721 pool made on 4663: exact accounting, custody,
+queue is a bijection onto held ids, no targeted redeem of a drawable id, every draw deposited before its commit, the
+vault booked every fee to the picker who paid it, pools hold no fee tokens; fail-on-revert), `test/pools/MiyaPoolGas.t.sol`,
+`test/fork/MiyaPoolV2Fork.t.sol` (the live Miyamaker drop's holders, the live default vault, fees at its live minimums).
 
 Review focus:
-- The lock rule and queue bookkeeping (`_dequeue`, the reveal swap, `_positionOf`): the invariant suite checks the
-  bijection and the eligibility of draws; a reviewer should try to make a commit's range shrink or a position collide.
-- The lot auction: price math (`lotPrice`), the clock rules (`_payTargeted` crossing, `buyLot` restart), the 2x restart,
-  `FIRST_LOT_PRICE` for very valuable collections (the first lot can sell below value once), and the refund path.
-- `buyLot`'s external calls (the vault, then the refund to `msg.sender`) under `nonReentrant`; the receiver hooks are not
-  guarded (as in v1) but only the collection can call them.
-- Squatting: the first creator of a collection's pool fixes its premium for everyone, forever (0% or 20% alike).
-- Griefing the lock: a 1-unit commit in front of a targeted redeem makes it revert until someone reveals (about 2 blocks;
-  the griefer pays a commit and gets a random piece). Random redeems are free of premium, so re-rolling random redeems
-  (deposit, commit, reveal) to fish for a piece costs only gas: for small pools at a low premium that can be cheaper than
-  the premium. Both are accepted consequences of the owner's decisions, not bugs.
+- The lock rule and queue bookkeeping (`_dequeue`, the reveal swap, `_positionOf`): try to make a commit's range shrink
+  or a position collide.
+- `_payPickFee`: the pull, approve and vault call; the two balance checks; that no fee can stay in the pool or be paid
+  for someone else; reentrancy (`redeem` is `nonReentrant`; IMD and INFER are plain ERC-20s; the vault is trusted code;
+  NFT transfers happen after the fee).
+- `_checkFeeToken` at creation (live reads of the vault's registry and config) and what happens when those change later.

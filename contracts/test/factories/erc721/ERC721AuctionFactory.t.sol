@@ -877,7 +877,7 @@ contract ERC721AuctionFactoryTest is Test {
         vm.warp(inst.getAuction(1).endTime);
         inst.settleAuction(1);
 
-        MiyaPool pool = MiyaPool(new MiyaPoolFactory(address(0)).createPool(address(inst), 0));
+        MiyaPool pool = MiyaPool(new MiyaPoolFactory(address(0)).createPool(address(inst), 0, 0));
         bidder.claim(address(inst), 1, address(pool));
         assertEq(pool.balanceOf(address(bidder)), 1e18);
         assertEq(pool.balanceOf(address(inst)), 0);

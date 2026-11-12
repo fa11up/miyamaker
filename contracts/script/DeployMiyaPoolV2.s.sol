@@ -14,7 +14,7 @@ interface IRegistryVaults {
 /**
  * @title DeployMiyaPoolV2
  * @notice Deploys MiyaPoolFactory v2 next to an existing miyamints system: one pool per collection with random and
- *         targeted redeems, the targeted premium sold for ETH that goes to the system's default vault. Replaces the v1
+ *         targeted (pick) redeems whose IMD/INFER fee goes to the system's default vault. Replaces the v1
  *         factory outright (v1 has no pools on mainnet and nothing references it); there is nothing to migrate.
  *
  *         Reads deployments/<chainId>.json (registry, defaultVault, deployer). The factory goes to CreateX CREATE3 with

@@ -4,6 +4,7 @@ pragma solidity ^0.8.24;
 import { Test } from "forge-std/Test.sol";
 import { ERC721 } from "solady/tokens/ERC721.sol";
 import { ERC1155 } from "solady/tokens/ERC1155.sol";
+import { ERC20 } from "solady/tokens/ERC20.sol";
 import { MiyaPool } from "../../src/pools/MiyaPool.sol";
 import { MiyaPoolFactory } from "../../src/pools/MiyaPoolFactory.sol";
 
@@ -48,25 +49,91 @@ contract Mock1155 is ERC1155 {
     }
 }
 
-/// @dev The checks UniAlignmentVault.receiveContribution makes on an ETH contribution, and a record of what arrived.
+contract MockToken is ERC20 {
+    string internal _n;
+
+    constructor(string memory n) {
+        _n = n;
+    }
+
+    function name() public view override returns (string memory) {
+        return _n;
+    }
+
+    function symbol() public view override returns (string memory) {
+        return _n;
+    }
+
+    function mint(address to, uint256 amount) external {
+        _mint(to, amount);
+    }
+}
+
+/// @dev A fee-on-transfer token, to show the pool refuses a short pull.
+contract TaxToken is MockToken("TAX") {
+    function _afterTokenTransfer(address from, address to, uint256 amount) internal override {
+        if (from != address(0) && to != address(0) && to != address(0xdead)) {
+            _transfer(to, address(0xdead), amount / 100);
+        }
+    }
+}
+
+/// @dev The checks UniAlignmentVault.receiveContribution makes, its config (minContribution) and registry
+///      (isPaymentToken) in one, and a record of what each benefactor contributed.
 contract MockVault {
-    uint256 public constant MIN_CONTRIBUTION = 0.001 ether;
-    mapping(address benefactor => uint256) public ethOf;
-    uint256 public totalEth;
+    address public imd;
+    address public infer;
+    mapping(address token => uint256) public minContribution;
+    mapping(address token => bool) public isPaymentToken;
+    mapping(address benefactor => mapping(address token => uint256)) public pendingOf;
+    mapping(address token => uint256) public totalOf;
     bool public refuse;
+    bool public pullLess;
+
+    constructor(address imd_, address infer_) {
+        (imd, infer) = (imd_, infer_);
+        isPaymentToken[imd_] = true;
+        isPaymentToken[infer_] = true;
+        minContribution[imd_] = 1e18;
+        minContribution[infer_] = 3500e18;
+    }
+
+    function config() external view returns (address) {
+        return address(this);
+    }
+
+    function registry() external view returns (address) {
+        return address(this);
+    }
 
     function setRefuse(bool r) external {
         refuse = r;
     }
 
+    function setPullLess(bool r) external {
+        pullLess = r;
+    }
+
+    function setPaymentToken(address token, bool ok) external {
+        isPaymentToken[token] = ok;
+    }
+
+    function setMin(address token, uint256 m) external {
+        minContribution[token] = m;
+    }
+
     function receiveContribution(address currency, uint256 amount, address benefactor) external payable {
         require(!refuse, "vault refused");
-        require(currency == address(0), "eth only here");
-        require(amount != 0 && msg.value == amount, "AmountMismatch");
-        require(amount >= MIN_CONTRIBUTION, "ContributionBelowMinimum");
+        require(amount != 0, "AmountMustBePositive");
         require(benefactor != address(0), "InvalidAddress");
-        ethOf[benefactor] += amount;
-        totalEth += amount;
+        require(msg.value == 0, "AmountMismatch");
+        require(isPaymentToken[currency], "TokenNotAllowed");
+        require(amount >= minContribution[currency], "ContributionBelowMinimum");
+        uint256 before = ERC20(currency).balanceOf(address(this));
+        ERC20(currency).transferFrom(msg.sender, address(this), pullLess ? amount - 1 : amount);
+        if (!pullLess) require(ERC20(currency).balanceOf(address(this)) - before == amount, "ReceivedLess");
+        pendingOf[benefactor][currency] += amount;
+        totalOf[currency] += amount;
     }
 }
 
@@ -77,13 +144,17 @@ contract MiyaPoolTest is Test {
 
     MiyaPoolFactory factory;
     MockVault vault;
+    MockToken imd;
+    MockToken infer;
     Mock721 nft;
     Mock1155 editions;
     address alice = makeAddr("alice");
     address bob = makeAddr("bob");
 
     function setUp() public {
-        vault = new MockVault();
+        imd = new MockToken("IMD");
+        infer = new MockToken("INFER");
+        vault = new MockVault(address(imd), address(infer));
         factory = new MiyaPoolFactory(address(vault));
         nft = new Mock721();
         editions = new Mock1155();
@@ -96,18 +167,22 @@ contract MiyaPoolTest is Test {
 
     // ── helpers ──────────────────────────────────────────────────────────────
 
-    function _pool721(uint16 premiumBps) internal returns (MiyaPool pool) {
-        pool = MiyaPool(factory.createPool(address(nft), premiumBps));
+    function _pool721(uint256 imdFee, uint256 inferFee) internal returns (MiyaPool pool) {
+        pool = MiyaPool(factory.createPool(address(nft), imdFee, inferFee));
         vm.prank(alice);
         nft.setApprovalForAll(address(pool), true);
     }
 
     function _pool721() internal returns (MiyaPool) {
-        return _pool721(0);
+        return _pool721(0, 0);
     }
 
-    function _pool1155(uint16 premiumBps) internal returns (MiyaPool pool) {
-        pool = MiyaPool(factory.createPool(address(editions), premiumBps));
+    function _pool1155() internal returns (MiyaPool) {
+        return _pool1155(0, 0);
+    }
+
+    function _pool1155(uint256 imdFee, uint256 inferFee) internal returns (MiyaPool pool) {
+        pool = MiyaPool(factory.createPool(address(editions), imdFee, inferFee));
         vm.prank(alice);
         editions.setApprovalForAll(address(pool), true);
     }
@@ -148,11 +223,9 @@ contract MiyaPoolTest is Test {
     function _none() internal pure returns (uint256[] memory r) { }
 
     function _assertBacked(MiyaPool pool) internal view {
-        assertEq(
-            pool.totalSupply() + pool.premiumReserve() + UNIT * pool.pendingUnits(),
-            UNIT * pool.heldUnits(),
-            "accounting"
-        );
+        assertEq(pool.totalSupply() + UNIT * pool.pendingUnits(), UNIT * pool.heldUnits(), "accounting");
+        assertEq(imd.balanceOf(address(pool)), 0, "pool kept IMD");
+        assertEq(infer.balanceOf(address(pool)), 0, "pool kept INFER");
         if (pool.randomEnabled()) {
             (uint256 head, uint256 tail) = pool.queueBounds();
             assertEq(tail - head, pool.heldUnits(), "queue length");
@@ -177,51 +250,77 @@ contract MiyaPoolTest is Test {
     // ── factory ──────────────────────────────────────────────────────────────
 
     function test_factory_createsAndPredicts() public {
-        address predicted = factory.predictPool(address(nft), MiyaPool.Kind.ERC721, 500);
-        address pool = factory.createPool(address(nft), 500);
+        address predicted = factory.predictPool(address(nft), MiyaPool.Kind.ERC721, 2e18, 5000e18);
+        address pool = factory.createPool(address(nft), 2e18, 5000e18);
         assertEq(pool, predicted);
         assertEq(factory.poolOf(address(nft)), pool);
         assertEq(factory.allPoolsLength(), 1);
-        assertEq(uint8(MiyaPool(pool).kind()), uint8(MiyaPool.Kind.ERC721));
-        assertEq(MiyaPool(pool).collection(), address(nft));
-        assertEq(MiyaPool(pool).premiumBps(), 500);
-        assertEq(MiyaPool(pool).vault(), address(vault));
-        assertEq(MiyaPool(pool).factory(), address(factory));
-        assertTrue(MiyaPool(pool).randomEnabled());
-        assertEq(MiyaPool(pool).premiumPerUnit(), 0.05e18);
-        assertEq(MiyaPool(pool).targetedCost(3), 3.15e18);
+        assertEq(factory.imd(), address(imd));
+        assertEq(factory.infer(), address(infer));
+        MiyaPool p = MiyaPool(pool);
+        assertEq(uint8(p.kind()), uint8(MiyaPool.Kind.ERC721));
+        assertEq(p.collection(), address(nft));
+        assertEq(p.vault(), address(vault));
+        assertEq(p.imd(), address(imd));
+        assertEq(p.infer(), address(infer));
+        assertEq(p.imdFee(), 2e18);
+        assertEq(p.inferFee(), 5000e18);
+        assertEq(p.factory(), address(factory));
+        assertTrue(p.randomEnabled());
+        assertFalse(p.picksFree());
+        assertEq(p.pickFee(address(imd), 3), 6e18);
+        assertEq(p.pickFee(address(infer), 2), 10_000e18);
     }
 
-    function test_factory_predictDependsOnPremium() public view {
-        assertTrue(
-            factory.predictPool(address(nft), MiyaPool.Kind.ERC721, 0)
-                != factory.predictPool(address(nft), MiyaPool.Kind.ERC721, 1)
-        );
+    function test_factory_predictDependsOnFees() public view {
+        address a = factory.predictPool(address(nft), MiyaPool.Kind.ERC721, 0, 0);
+        assertTrue(a != factory.predictPool(address(nft), MiyaPool.Kind.ERC721, 1e18, 0));
+        assertTrue(a != factory.predictPool(address(nft), MiyaPool.Kind.ERC721, 0, 3500e18));
     }
 
     function test_factory_onePoolPerCollection() public {
-        address a = factory.createPool(address(nft), 0);
+        address a = factory.createPool(address(nft), 0, 0);
         vm.expectRevert(abi.encodeWithSelector(MiyaPoolFactory.PoolExists.selector, a));
-        factory.createPool(address(nft), 0);
+        factory.createPool(address(nft), 0, 0);
         vm.expectRevert(abi.encodeWithSelector(MiyaPoolFactory.PoolExists.selector, a));
-        factory.createPool(address(nft), 2000);
+        factory.createPool(address(nft), 1e18, 3500e18);
     }
 
-    function test_factory_premiumCap() public {
-        uint16 cap = MiyaPool(factory.createPool(address(editions), 0)).MAX_PREMIUM_BPS();
-        assertEq(cap, 2000);
-        vm.expectRevert(MiyaPool.PremiumTooHigh.selector);
-        factory.createPool(address(nft), cap + 1);
-        address pool = factory.createPool(address(nft), cap);
-        assertEq(MiyaPool(pool).premiumPerUnit(), 0.2e18);
+    /// Each offered fee must be at least the vault's minimum contribution for its token, read from the vault's config.
+    function test_factory_feesAtLeastTheVaultMinimums() public {
+        vm.expectRevert(abi.encodeWithSelector(MiyaPool.FeeBelowVaultMinimum.selector, address(imd), 1e18));
+        factory.createPool(address(nft), 1e18 - 1, 0);
+        vm.expectRevert(abi.encodeWithSelector(MiyaPool.FeeBelowVaultMinimum.selector, address(infer), 3500e18));
+        factory.createPool(address(nft), 0, 3500e18 - 1);
+        vm.expectRevert(abi.encodeWithSelector(MiyaPool.FeeBelowVaultMinimum.selector, address(infer), 3500e18));
+        factory.createPool(address(nft), 5e18, 1);
+        // exactly the minimums
+        MiyaPool p = MiyaPool(factory.createPool(address(nft), 1e18, 3500e18));
+        assertEq(p.imdFee(), 1e18);
+        // a minimum raised later binds only new pools
+        vault.setMin(address(imd), 2e18);
+        vm.expectRevert(abi.encodeWithSelector(MiyaPool.FeeBelowVaultMinimum.selector, address(imd), 2e18));
+        factory.createPool(address(editions), 1e18, 0);
     }
 
-    function test_factory_premiumNeedsAVault() public {
+    function test_factory_feeTokenMustBeAVaultPaymentToken() public {
+        vault.setPaymentToken(address(infer), false);
+        vm.expectRevert(abi.encodeWithSelector(MiyaPool.FeeTokenNotAccepted.selector, address(infer)));
+        factory.createPool(address(nft), 0, 3500e18);
+        // IMD alone is fine
+        factory.createPool(address(nft), 1e18, 0);
+    }
+
+    function test_factory_feesNeedAVault() public {
         MiyaPoolFactory bare = new MiyaPoolFactory(address(0));
+        assertEq(bare.imd(), address(0));
         vm.expectRevert(MiyaPool.NoVault.selector);
-        bare.createPool(address(nft), 1);
-        address pool = bare.createPool(address(nft), 0);
-        assertEq(MiyaPool(pool).vault(), address(0));
+        bare.createPool(address(nft), 1e18, 0);
+        vm.expectRevert(MiyaPool.NoVault.selector);
+        bare.createPool(address(nft), 0, 3500e18);
+        MiyaPool p = MiyaPool(bare.createPool(address(nft), 0, 0));
+        assertEq(p.vault(), address(0));
+        assertTrue(p.picksFree());
     }
 
     function test_factory_rejectsVaultWithoutCode() public {
@@ -230,7 +329,7 @@ contract MiyaPoolTest is Test {
     }
 
     function test_factory_detects1155() public {
-        address pool = factory.createPool(address(editions), 100);
+        address pool = factory.createPool(address(editions), 1e18, 0);
         assertEq(uint8(MiyaPool(pool).kind()), uint8(MiyaPool.Kind.ERC1155));
         assertFalse(MiyaPool(pool).randomEnabled(), "random is ERC721 only");
     }
@@ -238,39 +337,40 @@ contract MiyaPoolTest is Test {
     function test_factory_rejectsNonNFT() public {
         address junk = address(new NotAnNFT());
         vm.expectRevert(MiyaPoolFactory.UnsupportedCollection.selector);
-        factory.createPool(junk, 0);
+        factory.createPool(junk, 0, 0);
         vm.expectRevert(MiyaPoolFactory.UnsupportedCollection.selector);
-        factory.createPool(makeAddr("eoa"), 0);
+        factory.createPool(makeAddr("eoa"), 0, 0);
     }
 
     function test_factory_rejectsCollectionThatClaimsEverything() public {
         ClaimsEverything c = new ClaimsEverything();
         vm.expectRevert(MiyaPoolFactory.UnsupportedCollection.selector);
-        factory.createPool(address(c), 0);
+        factory.createPool(address(c), 0, 0);
     }
 
     function test_factory_rejectsCollectionFailingTheErc165Probe() public {
         Claims721AndInvalidId c = new Claims721AndInvalidId();
         vm.expectRevert(MiyaPoolFactory.UnsupportedCollection.selector);
-        factory.createPool(address(c), 0);
+        factory.createPool(address(c), 0, 0);
     }
 
     // ── chains ───────────────────────────────────────────────────────────────
 
     function test_robinhoodChain_poolOpensWithoutRandomRedeems() public {
         vm.chainId(4663);
-        MiyaPool pool = _pool721(500);
+        MiyaPool pool = _pool721(1e18, 0);
         assertFalse(pool.randomEnabled());
-        deal(address(pool), alice, 0); // nothing yet
+        imd.mint(alice, 1e18);
         vm.startPrank(alice);
         pool.deposit(_ids(1, 2, 3), _none(), alice);
         vm.expectRevert(MiyaPool.RandomUnavailable.selector);
         pool.commitRedeem(1, alice);
-        // targeted still works, premium included
-        pool.redeem(_ids(2), _none(), bob);
+        // picks still work, fee included
+        imd.approve(address(pool), 1e18);
+        pool.redeem(_ids(2), _none(), bob, address(imd));
         vm.stopPrank();
         assertEq(nft.ownerOf(2), bob);
-        assertEq(pool.premiumReserve(), 0.05e18);
+        assertEq(vault.pendingOf(alice, address(imd)), 1e18);
         (uint256 head, uint256 tail) = pool.queueBounds();
         assertEq(head + tail, 0, "no queue kept without random redeems");
         assertFalse(pool.isLocked(1));
@@ -283,7 +383,7 @@ contract MiyaPoolTest is Test {
     }
 
     function test_1155_commitReverts() public {
-        MiyaPool pool = _pool1155(0);
+        MiyaPool pool = _pool1155();
         vm.startPrank(alice);
         pool.deposit(_ids(1), _ids(2), alice);
         vm.expectRevert(MiyaPool.RandomUnavailable.selector);
@@ -295,7 +395,7 @@ contract MiyaPoolTest is Test {
 
     function test_safeMintIntoPoolReverts() public {
         SafeMint721 m = new SafeMint721();
-        MiyaPool p2 = MiyaPool(factory.createPool(address(m), 0));
+        MiyaPool p2 = MiyaPool(factory.createPool(address(m), 0, 0));
         vm.expectRevert(MiyaPool.InvalidRecipient.selector);
         m.safeMint(address(p2), 7);
         assertEq(p2.totalSupply(), 0);
@@ -317,7 +417,7 @@ contract MiyaPoolTest is Test {
         address stuck = makeAddr("stuck");
         blocking.setBlocked(stuck);
         blocking.mint(alice, 1);
-        MiyaPool pool = MiyaPool(factory.createPool(address(blocking), 0));
+        MiyaPool pool = MiyaPool(factory.createPool(address(blocking), 0, 0));
         vm.startPrank(alice);
         blocking.setApprovalForAll(address(pool), true);
         pool.deposit(_ids(1), _none(), alice);
@@ -333,11 +433,11 @@ contract MiyaPoolTest is Test {
     }
 
     function test_poolCannotBeTheRecipient() public {
-        MiyaPool pool = _pool721(500);
+        MiyaPool pool = _pool721();
         vm.startPrank(alice);
         pool.deposit(_ids(1, 2), _none(), alice);
         vm.expectRevert(MiyaPool.InvalidRecipient.selector);
-        pool.redeem(_ids(1), _none(), address(pool));
+        pool.redeem(_ids(1), _none(), address(pool), address(0));
         vm.expectRevert(MiyaPool.InvalidRecipient.selector);
         pool.commitRedeem(1, address(pool));
         vm.stopPrank();
@@ -360,7 +460,7 @@ contract MiyaPoolTest is Test {
     // ── ERC721 deposits ──────────────────────────────────────────────────────
 
     function test_721_depositMintsOneUnitEach() public {
-        MiyaPool pool = _pool721(500);
+        MiyaPool pool = _pool721();
         vm.prank(alice);
         pool.deposit(_ids(1, 2, 3), _none(), alice);
         assertEq(pool.balanceOf(alice), 3 * UNIT);
@@ -419,49 +519,171 @@ contract MiyaPoolTest is Test {
 
     // ── targeted redeems ─────────────────────────────────────────────────────
 
-    function test_721_targetedRedeemWithoutPremium() public {
+    function test_721_freePick() public {
         MiyaPool pool = _pool721();
         vm.prank(alice);
         pool.deposit(_ids(1, 2, 3), _none(), alice);
         vm.prank(alice);
         pool.transfer(bob, UNIT);
         vm.prank(bob);
-        pool.redeem(_ids(3), _none(), bob);
+        pool.redeem(_ids(3), _none(), bob, address(0));
         assertEq(nft.ownerOf(3), bob);
         assertEq(pool.balanceOf(bob), 0);
         assertFalse(pool.isHeld(3));
         assertEq(pool.heldUnits(), 2);
-        assertEq(pool.premiumReserve(), 0);
         _assertBacked(pool);
     }
 
-    function test_721_targetedRedeemPaysPremium() public {
-        MiyaPool pool = _pool721(500);
+    function test_721_freePickRefusesAFeeToken() public {
+        MiyaPool pool = _pool721();
+        vm.startPrank(alice);
+        pool.deposit(_ids(1), _none(), alice);
+        vm.expectRevert(abi.encodeWithSelector(MiyaPool.FeeTokenNotOffered.selector, address(imd)));
+        pool.redeem(_ids(1), _none(), alice, address(imd));
+        vm.stopPrank();
+    }
+
+    function _bobWithTokens(MiyaPool pool, uint256 units) internal {
+        vm.prank(alice);
+        pool.transfer(bob, units * UNIT);
+    }
+
+    function test_721_pickPaysTheFeeInImdToTheVaultForThePicker() public {
+        MiyaPool pool = _pool721(2e18, 0);
         vm.prank(alice);
         pool.deposit(_ids(1, 2, 3, 4), _none(), alice);
-        vm.prank(alice);
-        pool.transfer(bob, 2.1e18);
+        _bobWithTokens(pool, 2);
+        imd.mint(bob, 4e18);
+        vm.startPrank(bob);
+        imd.approve(address(pool), 4e18);
         vm.expectEmit(address(pool));
-        emit MiyaPool.PremiumPaid(bob, 0.1e18);
-        vm.prank(bob);
-        pool.redeem(_ids(4, 1), _none(), bob);
-        assertEq(nft.ownerOf(1), bob);
-        assertEq(nft.ownerOf(4), bob);
-        assertEq(pool.balanceOf(bob), 0);
-        assertEq(pool.premiumReserve(), 0.1e18);
-        assertEq(pool.totalSupply(), 1.9e18, "the premium is out of circulation");
+        emit MiyaPool.PickFeePaid(bob, address(imd), 4e18);
+        pool.redeem(_ids(4, 1), _none(), makeAddr("elsewhere"), address(imd));
+        vm.stopPrank();
+        assertEq(nft.ownerOf(1), makeAddr("elsewhere"));
+        assertEq(pool.balanceOf(bob), 0, "exactly 1 token per piece");
+        assertEq(imd.balanceOf(bob), 0, "fee x count");
+        assertEq(vault.pendingOf(bob, address(imd)), 4e18, "booked to the picker");
+        assertEq(imd.balanceOf(address(vault)), 4e18);
+        assertEq(imd.allowance(address(pool), address(vault)), 0, "no allowance left");
         _assertBacked(pool);
     }
 
-    function test_721_targetedRedeemShortOfPremiumReverts() public {
-        MiyaPool pool = _pool721(500);
+    function test_721_pickerChoosesAmongOfferedTokens() public {
+        MiyaPool pool = _pool721(1e18, 3500e18);
         vm.prank(alice);
         pool.deposit(_ids(1, 2), _none(), alice);
+        _bobWithTokens(pool, 2);
+        imd.mint(bob, 1e18);
+        infer.mint(bob, 3500e18);
+        vm.startPrank(bob);
+        imd.approve(address(pool), type(uint256).max);
+        infer.approve(address(pool), type(uint256).max);
+        pool.redeem(_ids(1), _none(), bob, address(infer));
+        pool.redeem(_ids(2), _none(), bob, address(imd));
+        vm.stopPrank();
+        assertEq(vault.pendingOf(bob, address(infer)), 3500e18);
+        assertEq(vault.pendingOf(bob, address(imd)), 1e18);
+        _assertBacked(pool);
+    }
+
+    function test_721_pickRefusesATokenNotOffered() public {
+        MiyaPool pool = _pool721(0, 3500e18); // INFER only
         vm.prank(alice);
-        pool.transfer(bob, UNIT);
-        vm.prank(bob);
-        vm.expectRevert(); // InsufficientBalance: 1e18 doesn't cover 1.05e18
-        pool.redeem(_ids(1), _none(), bob);
+        pool.deposit(_ids(1), _none(), alice);
+        imd.mint(alice, 10e18);
+        vm.startPrank(alice);
+        imd.approve(address(pool), 10e18);
+        vm.expectRevert(abi.encodeWithSelector(MiyaPool.FeeTokenNotOffered.selector, address(imd)));
+        pool.redeem(_ids(1), _none(), alice, address(imd));
+        vm.expectRevert(abi.encodeWithSelector(MiyaPool.FeeTokenNotOffered.selector, address(0)));
+        pool.redeem(_ids(1), _none(), alice, address(0));
+        address other = address(new MockToken("OTHER"));
+        vm.expectRevert(abi.encodeWithSelector(MiyaPool.FeeTokenNotOffered.selector, other));
+        pool.redeem(_ids(1), _none(), alice, other);
+        vm.stopPrank();
+        assertEq(nft.ownerOf(1), address(pool));
+    }
+
+    function test_721_pickWithoutFeeApprovalOrBalanceReverts() public {
+        MiyaPool pool = _pool721(1e18, 0);
+        vm.prank(alice);
+        pool.deposit(_ids(1), _none(), alice);
+        vm.prank(alice);
+        vm.expectRevert(); // no IMD
+        pool.redeem(_ids(1), _none(), alice, address(imd));
+        imd.mint(alice, 1e18);
+        vm.prank(alice);
+        vm.expectRevert(); // no approval
+        pool.redeem(_ids(1), _none(), alice, address(imd));
+        assertEq(nft.ownerOf(1), address(pool));
+        _assertBacked(pool);
+    }
+
+    /// The pool never keeps fee tokens: a vault that pulls less than the fee makes the pick revert.
+    function test_721_vaultPullingLessReverts() public {
+        MiyaPool pool = _pool721(1e18, 0);
+        vm.prank(alice);
+        pool.deposit(_ids(1), _none(), alice);
+        imd.mint(alice, 1e18);
+        vault.setPullLess(true);
+        vm.startPrank(alice);
+        imd.approve(address(pool), 1e18);
+        vm.expectRevert(MiyaPool.FeeNotForwarded.selector);
+        pool.redeem(_ids(1), _none(), alice, address(imd));
+        vm.stopPrank();
+    }
+
+    /// The vault refusing (here: the token delisted, or a minimum raised past the pool's fee) blocks picks in that
+    /// token only; random redeems never touch the vault.
+    function test_721_vaultRefusalBlocksPicksNotRandom() public {
+        MiyaPool pool = _pool721(1e18, 0);
+        vm.prank(alice);
+        pool.deposit(_ids(1, 2), _none(), alice);
+        imd.mint(alice, 1e18);
+        vault.setMin(address(imd), 5e18);
+        vm.startPrank(alice);
+        imd.approve(address(pool), 1e18);
+        vm.expectRevert(bytes("ContributionBelowMinimum"));
+        pool.redeem(_ids(1), _none(), alice, address(imd));
+        uint256 c = pool.commitRedeem(1, bob);
+        vm.stopPrank();
+        _mined(pool, c, keccak256("r"));
+        pool.revealRedeem(c);
+        assertEq(nft.balanceOf(bob), 1);
+        _assertBacked(pool);
+    }
+
+    function test_721_feeOnTransferTokenRefused() public {
+        // A vault that listed a taxed token: the pool sees less than the fee arrive and reverts.
+        TaxToken tax = new TaxToken();
+        MockVault v2 = new MockVault(address(tax), address(infer));
+        v2.setMin(address(tax), 1e18);
+        MiyaPoolFactory f2 = new MiyaPoolFactory(address(v2));
+        MiyaPool pool = MiyaPool(f2.createPool(address(nft), 1e18, 0));
+        vm.startPrank(alice);
+        nft.setApprovalForAll(address(pool), true);
+        pool.deposit(_ids(1), _none(), alice);
+        vm.stopPrank();
+        tax.mint(alice, 2e18);
+        vm.startPrank(alice);
+        tax.approve(address(pool), 2e18);
+        vm.expectRevert(MiyaPool.FeeNotReceived.selector);
+        pool.redeem(_ids(1), _none(), alice, address(tax));
+        vm.stopPrank();
+    }
+
+    function test_721_pickShortOfPoolTokensReverts() public {
+        MiyaPool pool = _pool721(1e18, 0);
+        vm.prank(alice);
+        pool.deposit(_ids(1, 2), _none(), alice);
+        imd.mint(bob, 2e18);
+        _bobWithTokens(pool, 1);
+        vm.startPrank(bob);
+        imd.approve(address(pool), 2e18);
+        vm.expectRevert(); // InsufficientBalance: 2 pieces need 2e18 pool tokens
+        pool.redeem(_ids(1, 2), _none(), bob, address(imd));
+        vm.stopPrank();
     }
 
     function test_721_redeemNotHeldReverts() public {
@@ -470,7 +692,7 @@ contract MiyaPoolTest is Test {
         pool.deposit(_ids(1, 2), _none(), alice);
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(MiyaPool.NotHeld.selector, 9));
-        pool.redeem(_ids(9), _none(), alice);
+        pool.redeem(_ids(9), _none(), alice, address(0));
     }
 
     function test_721_redeemDuplicateReverts() public {
@@ -479,7 +701,7 @@ contract MiyaPoolTest is Test {
         pool.deposit(_ids(1, 2), _none(), alice);
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(MiyaPool.NotHeld.selector, 1));
-        pool.redeem(_ids(1, 1), _none(), alice);
+        pool.redeem(_ids(1, 1), _none(), alice, address(0));
     }
 
     function test_721_redeemWithoutTokensReverts() public {
@@ -488,14 +710,14 @@ contract MiyaPoolTest is Test {
         pool.deposit(_ids(1), _none(), alice);
         vm.prank(bob);
         vm.expectRevert();
-        pool.redeem(_ids(1), _none(), bob);
+        pool.redeem(_ids(1), _none(), bob, address(0));
     }
 
     function test_721_targetedRedeemKeepsQueueConsistent() public {
         MiyaPool pool = _pool721();
         vm.startPrank(alice);
         pool.deposit(_range(1, 6), _none(), alice);
-        pool.redeem(_ids(2), _none(), alice); // id 6 moves into 2's place
+        pool.redeem(_ids(2), _none(), alice, address(0)); // id 6 moves into 2's place
         vm.stopPrank();
         assertEq(pool.queuePositionOf(6), 1);
         vm.expectRevert(abi.encodeWithSelector(MiyaPool.NotHeld.selector, 2));
@@ -506,7 +728,7 @@ contract MiyaPoolTest is Test {
     // ── ERC1155 ──────────────────────────────────────────────────────────────
 
     function test_1155_depositAndPartialRedeem() public {
-        MiyaPool pool = _pool1155(0);
+        MiyaPool pool = _pool1155();
         vm.prank(alice);
         pool.deposit(_ids(1, 2), _ids(4, 3), alice);
         assertEq(pool.balanceOf(alice), 7 * UNIT);
@@ -514,7 +736,7 @@ contract MiyaPoolTest is Test {
         assertEq(pool.unitsOf(1), 4);
 
         vm.prank(alice);
-        pool.redeem(_ids(1, 2), _ids(1, 3), bob);
+        pool.redeem(_ids(1, 2), _ids(1, 3), bob, address(0));
         assertEq(editions.balanceOf(bob, 1), 1);
         assertEq(editions.balanceOf(bob, 2), 3);
         assertEq(pool.heldUnits(), 3);
@@ -523,19 +745,23 @@ contract MiyaPoolTest is Test {
         _assertBacked(pool);
     }
 
-    function test_1155_targetedRedeemPaysPremiumPerUnit() public {
-        MiyaPool pool = _pool1155(1000);
+    function test_1155_pickFeePerUnit() public {
+        MiyaPool pool = _pool1155(0, 4000e18);
         vm.prank(alice);
         pool.deposit(_ids(1, 2), _ids(5, 3), alice);
-        vm.prank(alice);
-        pool.redeem(_ids(1, 2), _ids(2, 1), bob);
-        assertEq(pool.premiumReserve(), 0.3e18);
-        assertEq(pool.balanceOf(alice), 8e18 - 3.3e18);
+        infer.mint(alice, 12_000e18);
+        vm.startPrank(alice);
+        infer.approve(address(pool), 12_000e18);
+        pool.redeem(_ids(1, 2), _ids(2, 1), bob, address(infer));
+        vm.stopPrank();
+        assertEq(vault.pendingOf(alice, address(infer)), 12_000e18, "3 units x 4,000 INFER");
+        assertEq(pool.balanceOf(alice), 5e18);
+        assertEq(editions.balanceOf(bob, 1), 2);
         _assertBacked(pool);
     }
 
     function test_1155_directTransferDeposits() public {
-        MiyaPool pool = _pool1155(0);
+        MiyaPool pool = _pool1155();
         vm.prank(alice);
         editions.safeTransferFrom(alice, address(pool), 1, 2, "");
         assertEq(pool.balanceOf(alice), 2 * UNIT);
@@ -543,16 +769,16 @@ contract MiyaPoolTest is Test {
     }
 
     function test_1155_overRedeemReverts() public {
-        MiyaPool pool = _pool1155(0);
+        MiyaPool pool = _pool1155();
         vm.prank(alice);
         pool.deposit(_ids(1), _ids(2), alice);
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(MiyaPool.NotHeld.selector, 1));
-        pool.redeem(_ids(1), _ids(3), alice);
+        pool.redeem(_ids(1), _ids(3), alice, address(0));
     }
 
     function test_1155_lengthMismatchReverts() public {
-        MiyaPool pool = _pool1155(0);
+        MiyaPool pool = _pool1155();
         vm.prank(alice);
         vm.expectRevert(MiyaPool.LengthMismatch.selector);
         pool.deposit(_ids(1, 2), _ids(1), alice);
@@ -567,15 +793,15 @@ contract MiyaPoolTest is Test {
 
     // ── random redeems ───────────────────────────────────────────────────────
 
-    function test_random_commitRevealIsFreeOfPremium() public {
-        MiyaPool pool = _pool721(2000);
+    function test_random_commitRevealIsFree() public {
+        MiyaPool pool = _pool721(5e18, 5000e18);
         vm.prank(alice);
         pool.deposit(_ids(1, 2, 3), _none(), alice);
 
         vm.prank(alice);
         uint256 id = pool.commitRedeem(2, bob);
         assertEq(pool.balanceOf(alice), UNIT, "exactly 1e18 per piece");
-        assertEq(pool.premiumReserve(), 0);
+        assertEq(vault.pendingOf(alice, address(imd)) + vault.pendingOf(alice, address(infer)), 0, "no fee");
         assertEq(pool.pendingUnits(), 2);
         _assertBacked(pool);
 
@@ -747,7 +973,7 @@ contract MiyaPoolTest is Test {
     /// Every id a pending commit could draw is locked for targeted redeems, from the commit (before the target block
     /// exists) until the reveal; ids deposited after the newest pending commit stay free.
     function test_mixed_pendingCommitLocksItsRange() public {
-        MiyaPool pool = _pool721(500);
+        MiyaPool pool = _pool721();
         vm.startPrank(alice);
         pool.deposit(_range(1, 4), _none(), alice);
         uint256 c = pool.commitRedeem(1, bob);
@@ -761,16 +987,16 @@ contract MiyaPoolTest is Test {
 
         // the commit's own block, and the target block: the hash isn't known yet, still locked
         vm.expectRevert(abi.encodeWithSelector(MiyaPool.LockedForRandomRedeem.selector, 3));
-        pool.redeem(_ids(3), _none(), alice);
+        pool.redeem(_ids(3), _none(), alice, address(0));
         vm.roll(block.number + 1);
         vm.expectRevert(abi.encodeWithSelector(MiyaPool.LockedForRandomRedeem.selector, 1));
-        pool.redeem(_ids(1), _none(), alice);
+        pool.redeem(_ids(1), _none(), alice, address(0));
         // a mixed request fails whole
         vm.expectRevert(abi.encodeWithSelector(MiyaPool.LockedForRandomRedeem.selector, 2));
-        pool.redeem(_ids(5, 2), _none(), alice);
+        pool.redeem(_ids(5, 2), _none(), alice, address(0));
 
         // a later deposit is free
-        pool.redeem(_ids(6), _none(), alice);
+        pool.redeem(_ids(6), _none(), alice, address(0));
         assertEq(nft.ownerOf(6), alice);
         vm.stopPrank();
         _assertBacked(pool);
@@ -782,7 +1008,7 @@ contract MiyaPoolTest is Test {
         uint256 other = got == 1 ? 2 : 1;
         assertFalse(pool.isLocked(other));
         vm.prank(alice);
-        pool.redeem(_ids(other), _none(), alice);
+        pool.redeem(_ids(other), _none(), alice, address(0));
         assertEq(nft.ownerOf(other), alice);
         _assertBacked(pool);
     }
@@ -810,7 +1036,7 @@ contract MiyaPoolTest is Test {
     /// removing free ids (deposited after the commit) leaves the pick exactly where it was.
     function testFuzz_mixed_targetedRedeemsCannotSteerAPick(bytes32 seed, uint8 takeMask) public {
         vm.assume(seed != 0);
-        MiyaPool pool = _pool721(1000);
+        MiyaPool pool = _pool721();
         for (uint256 id = 11; id <= 14; ++id) {
             nft.mint(alice, id);
         }
@@ -831,9 +1057,9 @@ contract MiyaPoolTest is Test {
         for (uint256 id = 1; id <= 14; ++id) {
             if (id <= 6) {
                 vm.expectRevert(abi.encodeWithSelector(MiyaPool.LockedForRandomRedeem.selector, id));
-                pool.redeem(_ids(id), _none(), alice);
+                pool.redeem(_ids(id), _none(), alice, address(0));
             } else if (takeMask & (1 << (id % 8)) != 0) {
-                pool.redeem(_ids(id), _none(), alice);
+                pool.redeem(_ids(id), _none(), alice, address(0));
             }
         }
         // ...and deposits a couple more for good measure
@@ -864,7 +1090,7 @@ contract MiyaPoolTest is Test {
         vm.revertToState(snap);
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(MiyaPool.LockedForRandomRedeem.selector, pick));
-        pool.redeem(_ids(pick), _none(), alice);
+        pool.redeem(_ids(pick), _none(), alice, address(0));
     }
 
     /// A commit can always settle in full: targeted redeems can't shrink its range below what it reserved.
@@ -876,7 +1102,7 @@ contract MiyaPoolTest is Test {
         pool.deposit(_ids(6, 7), _none(), alice); // tokens to try with; these two stay free
         for (uint256 id = 1; id <= 5; ++id) {
             vm.expectRevert(abi.encodeWithSelector(MiyaPool.LockedForRandomRedeem.selector, id));
-            pool.redeem(_ids(id), _none(), alice);
+            pool.redeem(_ids(id), _none(), alice, address(0));
         }
         vm.stopPrank();
         _mined(pool, c, keccak256("all"));
@@ -943,7 +1169,7 @@ contract MiyaPoolTest is Test {
         for (uint256 id = 1; id <= 6; ++id) {
             n.mint(alice, id);
         }
-        MiyaPool pool = MiyaPool(factory.createPool(address(n), 0));
+        MiyaPool pool = MiyaPool(factory.createPool(address(n), 0, 0));
         vm.startPrank(alice);
         n.setApprovalForAll(address(pool), true);
         pool.deposit(_range(1, 6), _none(), alice);
@@ -967,7 +1193,7 @@ contract MiyaPoolTest is Test {
             ids[i] = i + 1;
             n.mint(alice, i + 1);
         }
-        MiyaPool pool = MiyaPool(factory.createPool(address(n), 0));
+        MiyaPool pool = MiyaPool(factory.createPool(address(n), 0, 0));
         vm.startPrank(alice);
         n.setApprovalForAll(address(pool), true);
         pool.deposit(ids, _none(), alice);
@@ -1005,7 +1231,7 @@ contract MiyaPoolTest is Test {
         for (uint256 tokenId = 1; tokenId <= 2; ++tokenId) {
             blocking.mint(alice, tokenId);
         }
-        MiyaPool pool = MiyaPool(factory.createPool(address(blocking), 0));
+        MiyaPool pool = MiyaPool(factory.createPool(address(blocking), 0, 0));
         vm.startPrank(alice);
         blocking.setApprovalForAll(address(pool), true);
         pool.deposit(_ids(1, 2), _none(), alice);
@@ -1027,7 +1253,7 @@ contract MiyaPoolTest is Test {
         deal(address(pool), alice, UNIT, true);
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(MiyaPool.NotHeld.selector, escrowed));
-        pool.redeem(_ids(escrowed), _none(), alice);
+        pool.redeem(_ids(escrowed), _none(), alice, address(0));
 
         vm.prank(alice);
         vm.expectRevert(MiyaPool.NotEscrowed.selector);
@@ -1040,183 +1266,24 @@ contract MiyaPoolTest is Test {
         assertEq(pool.escrowedTo(escrowed), address(0));
     }
 
-    // ── premium lots: the premium reaches the vault as ETH ───────────────────
-
-    /// Five targeted redeems at 20% build one whole token; the lot goes on sale only then.
-    function _poolWithOneLot() internal returns (MiyaPool pool) {
-        for (uint256 id = 11; id <= 16; ++id) {
-            nft.mint(alice, id);
-        }
-        pool = _pool721(2000);
+    /// Mixed: a pick with a fee between a commit and its reveal (of a free id) leaves the pick where it was.
+    function test_mixed_feePickBetweenCommitAndReveal() public {
+        MiyaPool pool = _pool721(1e18, 0);
+        imd.mint(alice, 10e18);
         vm.startPrank(alice);
-        pool.deposit(_range(1, 16), _none(), alice);
-        pool.redeem(_ids(1, 2, 3, 4), _none(), alice);
-        vm.stopPrank();
-        assertEq(pool.premiumReserve(), 0.8e18);
-        assertFalse(pool.lotAvailable());
-        vm.expectRevert(MiyaPool.NoLot.selector);
-        pool.buyLot(bob, bob);
-        // time passing before a lot exists doesn't lower the first lot's price
-        vm.warp(block.timestamp + 30 days);
-        assertEq(pool.lotPrice(), pool.FIRST_LOT_PRICE());
-        vm.prank(alice);
-        pool.redeem(_ids(5), _none(), alice);
-        assertEq(pool.premiumReserve(), UNIT);
-        assertTrue(pool.lotAvailable());
-    }
-
-    function test_lot_priceFallsByHalfEachHalfLife() public {
-        MiyaPool pool = _poolWithOneLot();
-        uint256 start = pool.FIRST_LOT_PRICE();
-        uint256 h = pool.LOT_HALF_LIFE();
-        assertEq(pool.lotPrice(), start);
-        vm.warp(block.timestamp + h / 2);
-        assertEq(pool.lotPrice(), start * 3 / 4);
-        vm.warp(block.timestamp + h / 2);
-        assertEq(pool.lotPrice(), start / 2);
-        vm.warp(block.timestamp + h);
-        assertEq(pool.lotPrice(), start / 4);
-        vm.warp(block.timestamp + 100 * h);
-        assertEq(pool.lotPrice(), pool.MIN_LOT_PRICE(), "floored at the vault's minimum");
-        vm.warp(block.timestamp + 10_000 * h);
-        assertEq(pool.lotPrice(), pool.MIN_LOT_PRICE());
-    }
-
-    function testFuzz_lot_priceNeverRisesWhileOnSale(uint32 a, uint32 b) public {
-        MiyaPool pool = _poolWithOneLot();
-        (uint256 t1, uint256 t2) = a < b ? (uint256(a), uint256(b)) : (uint256(b), uint256(a));
-        uint256 t0 = block.timestamp;
-        vm.warp(t0 + t1);
-        uint256 p1 = pool.lotPrice();
-        vm.warp(t0 + t2);
-        uint256 p2 = pool.lotPrice();
-        assertLe(p2, p1);
-        assertGe(p2, pool.MIN_LOT_PRICE());
-        assertLe(p1, pool.FIRST_LOT_PRICE());
-    }
-
-    function test_lot_saleSendsEthToTheVaultAndMintsAWholeToken() public {
-        MiyaPool pool = _poolWithOneLot();
-        vm.warp(block.timestamp + 3 * pool.LOT_HALF_LIFE()); // 1.25 ETH
-        uint256 price = pool.lotPrice();
-        assertEq(price, 1.25 ether);
-        address buyer = makeAddr("buyer");
-        address benefactor = makeAddr("benefactor");
-        vm.deal(buyer, 2 ether);
-        uint256 supplyBefore = pool.totalSupply();
-
-        vm.expectEmit(address(pool));
-        emit MiyaPool.LotSold(buyer, bob, benefactor, price);
-        vm.prank(buyer);
-        uint256 paid = pool.buyLot{ value: 2 ether }(bob, benefactor);
-
-        assertEq(paid, price);
-        assertEq(pool.balanceOf(bob), UNIT);
-        assertEq(pool.totalSupply(), supplyBefore + UNIT);
-        assertEq(pool.premiumReserve(), 0);
-        assertEq(vault.ethOf(benefactor), price, "the premium's ETH is the benefactor's contribution");
-        assertEq(buyer.balance, 2 ether - price, "excess refunded");
-        assertEq(address(pool).balance, 0, "the pool never holds ETH");
-        assertEq(pool.lotStartPrice(), 2 * price, "the next lot starts at twice this sale");
-        _assertBacked(pool);
-
-        // the lot is a whole token: it redeems a piece at once (random: free of premium)
-        vm.prank(bob);
+        imd.approve(address(pool), 10e18);
+        pool.deposit(_range(1, 4), _none(), alice);
         uint256 c = pool.commitRedeem(1, bob);
-        _mined(pool, c, keccak256("lot"));
+        pool.deposit(_ids(5, 6), _none(), alice);
+        vm.expectRevert(abi.encodeWithSelector(MiyaPool.LockedForRandomRedeem.selector, 2));
+        pool.redeem(_ids(2), _none(), alice, address(imd));
+        pool.redeem(_ids(6), _none(), alice, address(imd));
+        vm.stopPrank();
+        assertEq(imd.balanceOf(alice), 9e18, "only the successful pick paid");
+        _mined(pool, c, keccak256("m"));
         pool.revealRedeem(c);
-        assertEq(pool.balanceOf(bob), 0);
+        assertEq(nft.balanceOf(bob), 1);
         _assertBacked(pool);
-    }
-
-    function test_lot_underpaymentReverts() public {
-        MiyaPool pool = _poolWithOneLot();
-        uint256 price = pool.lotPrice();
-        vm.deal(bob, price);
-        vm.prank(bob);
-        vm.expectRevert(abi.encodeWithSelector(MiyaPool.PriceNotMet.selector, price));
-        pool.buyLot{ value: price - 1 }(bob, bob);
-    }
-
-    function test_lot_badRecipientsRevert() public {
-        MiyaPool pool = _poolWithOneLot();
-        vm.deal(bob, 20 ether);
-        vm.startPrank(bob);
-        vm.expectRevert(MiyaPool.InvalidRecipient.selector);
-        pool.buyLot{ value: 10 ether }(address(0), bob);
-        vm.expectRevert(MiyaPool.InvalidRecipient.selector);
-        pool.buyLot{ value: 10 ether }(address(pool), bob);
-        vm.expectRevert(MiyaPool.InvalidRecipient.selector);
-        pool.buyLot{ value: 10 ether }(bob, address(0));
-        vm.stopPrank();
-    }
-
-    function test_lot_vaultRefusalRevertsTheWholeSale() public {
-        MiyaPool pool = _poolWithOneLot();
-        vault.setRefuse(true);
-        vm.deal(bob, 10 ether);
-        vm.prank(bob);
-        vm.expectRevert(bytes("vault refused"));
-        pool.buyLot{ value: 10 ether }(bob, bob);
-        assertEq(pool.premiumReserve(), UNIT);
-        assertEq(pool.balanceOf(bob), 0);
-        // targeted redeems never touch the vault, so they keep working
-        vm.prank(alice);
-        pool.redeem(_ids(6), _none(), alice);
-        _assertBacked(pool);
-    }
-
-    function test_lot_refusedRefundReverts() public {
-        MiyaPool pool = _poolWithOneLot();
-        RejectsEth buyer = new RejectsEth();
-        vm.deal(address(buyer), 20 ether);
-        vm.prank(address(buyer));
-        vm.expectRevert();
-        pool.buyLot{ value: 20 ether }(bob, bob);
-        // exact payment needs no refund
-        uint256 price = pool.lotPrice();
-        vm.prank(address(buyer));
-        pool.buyLot{ value: price }(bob, bob);
-        assertEq(pool.balanceOf(bob), UNIT);
-    }
-
-    /// Several lots: each sells in turn; the next starts at twice the last sale, at once if a lot is still there.
-    function test_lot_backToBackLotsAndReserveCarry() public {
-        for (uint256 id = 11; id <= 20; ++id) {
-            nft.mint(alice, id);
-        }
-        MiyaPool pool = _pool721(2000);
-        vm.startPrank(alice);
-        pool.deposit(_range(1, 20), _none(), alice);
-        pool.redeem(_range(1, 11), _none(), alice); // 11 x 0.2 = 2.2 tokens of premium
-        vm.stopPrank();
-        assertEq(pool.premiumReserve(), 2.2e18);
-        vm.warp(block.timestamp + 10 * pool.LOT_HALF_LIFE());
-        uint256 p1 = pool.lotPrice();
-        vm.deal(bob, 1 ether);
-        vm.prank(bob);
-        pool.buyLot{ value: p1 }(bob, bob);
-        assertEq(pool.lotPrice(), 2 * p1, "second lot on sale at once, from twice the first");
-        vm.warp(block.timestamp + pool.LOT_HALF_LIFE());
-        uint256 p2 = pool.lotPrice();
-        assertEq(p2, p1);
-        vm.prank(bob);
-        pool.buyLot{ value: p2 }(bob, bob);
-        assertEq(pool.premiumReserve(), 0.2e18);
-        assertFalse(pool.lotAvailable());
-        assertEq(vault.totalEth(), p1 + p2);
-        _assertBacked(pool);
-    }
-
-    function test_lot_noPremiumNoLots() public {
-        MiyaPool pool = _pool721(0);
-        vm.startPrank(alice);
-        pool.deposit(_range(1, 10), _none(), alice);
-        pool.redeem(_range(1, 10), _none(), alice);
-        vm.stopPrank();
-        assertEq(pool.premiumReserve(), 0);
-        vm.expectRevert(MiyaPool.NoLot.selector);
-        pool.buyLot(bob, bob);
     }
 }
 
@@ -1247,8 +1314,6 @@ contract GasBurner {
         while (true) { }
     }
 }
-
-contract RejectsEth { }
 
 /// @dev Answers true for everything except ERC-1155, so only the ERC-165 probe can catch it.
 contract Claims721AndInvalidId {

@@ -5,11 +5,11 @@ import { Test } from "forge-std/Test.sol";
 import { Vm } from "forge-std/Vm.sol";
 import { MiyaPool } from "../../src/pools/MiyaPool.sol";
 import { MiyaPoolFactory } from "../../src/pools/MiyaPoolFactory.sol";
-import { Mock721, Mock1155, MockVault } from "../pools/MiyaPool.t.sol";
+import { Mock721, Mock1155, MockVault, MockToken } from "../pools/MiyaPool.t.sol";
 
-/// @dev Interleaves deposits, targeted redeems (with premium), random commits and reveals, lot sales and transfers on
-///      three pools: an ERC721 pool with both paths, an ERC1155 pool and an ERC721 pool made on Robinhood Chain
-///      (targeted only). Breaches of the random/targeted rules are counted as `violations`, not reverted, so the
+/// @dev Interleaves deposits, picks (paying the fee in IMD or INFER), random commits and reveals, and transfers on
+///      three pools: an ERC721 pool with both paths and both fee tokens, an ERC1155 pool with an INFER fee, and an
+///      ERC721 pool made on Robinhood Chain (picks only, free). Breaches of the random/targeted rules are counted as `violations`, not reverted, so the
 ///      invariant reports them.
 contract MiyaPoolHandler is Test {
     uint256 constant UNIT = 1e18;
@@ -18,6 +18,8 @@ contract MiyaPoolHandler is Test {
     Mock721 public nftHood;
     Mock1155 public editions;
     MockVault public vault;
+    MockToken public imd;
+    MockToken public infer;
     MiyaPool public both;
     MiyaPool public pool1155;
     MiyaPool public hood;
@@ -34,25 +36,31 @@ contract MiyaPoolHandler is Test {
     uint256 public lockedRejections;
     uint256 public reveals;
     uint256 public targetedRedeems;
-    uint256 public lotEth;
-    mapping(address pool => uint256) public lotsSold;
+    mapping(address token => uint256) public feesPaid;
+    mapping(address actor => mapping(address token => uint256)) public feesPaidBy;
 
     constructor(MockVault vault_, MiyaPoolFactory factory) {
         vault = vault_;
+        imd = MockToken(vault_.imd());
+        infer = MockToken(vault_.infer());
         nft = new Mock721();
         nftHood = new Mock721();
         editions = new Mock1155();
-        both = MiyaPool(factory.createPool(address(nft), 2000));
-        pool1155 = MiyaPool(factory.createPool(address(editions), 1000));
+        both = MiyaPool(factory.createPool(address(nft), 1e18, 3500e18));
+        pool1155 = MiyaPool(factory.createPool(address(editions), 0, 4000e18));
         uint256 chain = block.chainid;
         vm.chainId(4663);
-        hood = MiyaPool(factory.createPool(address(nftHood), 500));
+        hood = MiyaPool(factory.createPool(address(nftHood), 0, 0));
         vm.chainId(chain);
         for (uint256 i; i < 3; ++i) {
             address a = makeAddr(string(abi.encodePacked("actor", i)));
             actors.push(a);
-            vm.deal(a, 1_000_000 ether);
+            imd.mint(a, 1e30);
+            infer.mint(a, 1e30);
             vm.startPrank(a);
+            imd.approve(address(both), type(uint256).max);
+            infer.approve(address(both), type(uint256).max);
+            infer.approve(address(pool1155), type(uint256).max);
             nft.setApprovalForAll(address(both), true);
             nftHood.setApprovalForAll(address(hood), true);
             editions.setApprovalForAll(address(pool1155), true);
@@ -113,12 +121,16 @@ contract MiyaPoolHandler is Test {
         address a = _actor(actorSeed);
         if (n == 0) return;
         uint256 id = both.heldIds(pick % n, 1)[0];
-        if (both.balanceOf(a) < both.targetedCost(1)) return;
+        if (both.balanceOf(a) < UNIT) return;
         bool locked = both.isLocked(id);
+        address token = pick % 2 == 0 ? address(imd) : address(infer);
+        uint256 fee = both.pickFee(token, 1);
         vm.prank(a);
-        try both.redeem(_one(id), new uint256[](0), a) {
+        try both.redeem(_one(id), new uint256[](0), a, token) {
             if (locked) ++violations; // took an id a pending commit could draw
             ++targetedRedeems;
+            feesPaid[token] += fee;
+            feesPaidBy[a][token] += fee;
         } catch (bytes memory err) {
             if (!locked || bytes4(err) != MiyaPool.LockedForRandomRedeem.selector) ++violations;
             ++lockedRejections;
@@ -128,10 +140,10 @@ contract MiyaPoolHandler is Test {
     function redeemHood(uint256 actorSeed, uint256 pick) external {
         uint256 n = hood.heldIdsCount();
         address a = _actor(actorSeed);
-        if (n == 0 || hood.balanceOf(a) < hood.targetedCost(1)) return;
+        if (n == 0 || hood.balanceOf(a) < UNIT) return;
         uint256 id = hood.heldIds(pick % n, 1)[0];
         vm.prank(a);
-        hood.redeem(_one(id), new uint256[](0), a);
+        hood.redeem(_one(id), new uint256[](0), a, address(0));
     }
 
     function redeem1155(uint256 actorSeed, uint256 pick, uint256 amount) external {
@@ -140,12 +152,15 @@ contract MiyaPoolHandler is Test {
         if (n == 0) return;
         uint256 id = pool1155.heldIds(pick % n, 1)[0];
         uint256 max = pool1155.unitsOf(id);
-        uint256 affordable = pool1155.balanceOf(a) / pool1155.targetedCost(1);
+        uint256 affordable = pool1155.balanceOf(a) / UNIT;
         if (affordable < max) max = affordable;
         if (max == 0) return;
         amount = bound(amount, 1, max);
+        uint256 fee = pool1155.pickFee(address(infer), amount);
         vm.prank(a);
-        pool1155.redeem(_one(id), _one(amount), a);
+        pool1155.redeem(_one(id), _one(amount), a, address(infer));
+        feesPaid[address(infer)] += fee;
+        feesPaidBy[a][address(infer)] += fee;
     }
 
     // ── random ───────────────────────────────────────────────────────────────
@@ -184,20 +199,6 @@ contract MiyaPoolHandler is Test {
         }
     }
 
-    // ── lots ─────────────────────────────────────────────────────────────────
-
-    function buyLot(uint256 actorSeed, uint256 which, uint256 wait) external {
-        MiyaPool p = which % 3 == 0 ? both : which % 3 == 1 ? pool1155 : hood;
-        if (!p.lotAvailable()) return;
-        vm.warp(block.timestamp + bound(wait, 0, 20 days));
-        address a = _actor(actorSeed);
-        uint256 price = p.lotPrice();
-        vm.prank(a);
-        p.buyLot{ value: price + 1 ether }(a, a);
-        lotEth += price;
-        ++lotsSold[address(p)];
-    }
-
     function transferTokens(uint256 fromSeed, uint256 toSeed, uint256 which, uint256 amount) external {
         MiyaPool p = which % 3 == 0 ? both : which % 3 == 1 ? pool1155 : hood;
         address from = _actor(fromSeed);
@@ -216,20 +217,16 @@ contract MiyaPoolInvariantTest is Test {
     MockVault vault;
 
     function setUp() public {
-        vault = new MockVault();
+        vault = new MockVault(address(new MockToken("IMD")), address(new MockToken("INFER")));
         handler = new MiyaPoolHandler(vault, new MiyaPoolFactory(address(vault)));
         targetContract(address(handler));
     }
 
     function _check(MiyaPool p) internal view {
-        assertEq(
-            p.totalSupply() + p.premiumReserve() + UNIT * p.pendingUnits(),
-            UNIT * p.heldUnits(),
-            "supply + reserve + pending != backing"
-        );
+        assertEq(p.totalSupply() + UNIT * p.pendingUnits(), UNIT * p.heldUnits(), "supply + pending != backing");
         assertLe(p.pendingUnits(), p.heldUnits(), "pending exceeds held");
-        assertEq(address(p).balance, 0, "pool holds ETH");
-        assertGe(p.lotStartPrice(), p.MIN_LOT_PRICE(), "lot start price below the floor");
+        assertEq(handler.imd().balanceOf(address(p)), 0, "pool kept IMD");
+        assertEq(handler.infer().balanceOf(address(p)), 0, "pool kept INFER");
     }
 
     function invariant_tokensExactlyBacked() public view {
@@ -265,8 +262,17 @@ contract MiyaPoolInvariantTest is Test {
         assertEq(handler.violations(), 0, "a targeted redeem took a drawable id, or a draw took a later deposit");
     }
 
-    function invariant_vaultGotEveryLotsEth() public view {
-        assertEq(vault.totalEth(), handler.lotEth(), "vault ETH != lot sales");
+    /// Every pick fee reached the vault, booked to the picker who paid it.
+    function invariant_vaultBookedEveryFeeToItsPicker() public view {
+        address[2] memory tokens = [address(handler.imd()), address(handler.infer())];
+        for (uint256 t; t < 2; ++t) {
+            assertEq(vault.totalOf(tokens[t]), handler.feesPaid(tokens[t]), "vault total != fees paid");
+            assertEq(handler.imd().balanceOf(address(vault)), vault.totalOf(tokens[0]));
+            for (uint256 i; i < 3; ++i) {
+                address a = handler.actors(i);
+                assertEq(vault.pendingOf(a, tokens[t]), handler.feesPaidBy(a, tokens[t]), "booked to someone else");
+            }
+        }
     }
 
     function invariant_noRandomOnRobinhoodPool() public view {
@@ -280,8 +286,7 @@ contract MiyaPoolInvariantTest is Test {
         emit log_named_uint("reveals", handler.reveals());
         emit log_named_uint("targeted redeems (random pool)", handler.targetedRedeems());
         emit log_named_uint("targeted redeems refused as locked", handler.lockedRejections());
-        emit log_named_uint("lots sold (721 both)", handler.lotsSold(address(handler.both())));
-        emit log_named_uint("lots sold (1155)", handler.lotsSold(address(handler.pool1155())));
-        emit log_named_uint("lots sold (4663)", handler.lotsSold(address(handler.hood())));
+        emit log_named_uint("IMD fees", handler.feesPaid(address(handler.imd())));
+        emit log_named_uint("INFER fees", handler.feesPaid(address(handler.infer())));
     }
 }

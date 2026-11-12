@@ -106,7 +106,7 @@ What is in `contracts/src`:
 - `factories/erc721drop`: fixed-price ERC721 drops with phases, allowlists, an owner reserve and ERC-2981 royalties (at most 10%).
 - `factories/erc721`: 1/1 auctions. `factories/erc1155`: editions (music drops) and `DynamicPricingModule`.
 - `vaults/uni`: Uniswap v4 alignment vaults and their factory; `peripherals/UniswapVaultPriceValidator.sol`.
-- `pools`: `MiyaPoolFactory` / `MiyaPool` (v2), NFT pools in the NFTX v2 style, one per collection: random redeems at 1 token per piece, targeted redeems at 1 token plus a creator-set premium (0-20%, fixed) that is sold for ETH into the alignment vault.
+- `pools`: `MiyaPoolFactory` / `MiyaPool` (v2), NFT pools in the NFTX v2 style, one per collection: random redeems at 1 token per piece, picks at 1 token plus a creator-set fee in IMD and/or INFER (fixed, at least the vault minimum) that goes to the alignment vault as the picker's contribution.
 - `gating/PasswordTierGatingModule.sol` (off by default), `markets/` (prediction markets, deployed separately).
 
 Dropped from ms2fun: ERC404, ZAMM and Cypher vaults and liquidity modules, promotion, featured queue, frontend registry, the separate registries. Deploying is documented in [`contracts/DEPLOY.md`](contracts/DEPLOY.md) and runs from `main` through `script/deploy.sh`.
