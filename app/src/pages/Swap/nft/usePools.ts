@@ -16,7 +16,7 @@ import { resolveUri } from '@/utils/resolveUri'
 
 import { erc721Abi, erc1155Abi, poolAbi, poolFactoryAbi } from './abi'
 import type { CommitRow, PoolKind, PoolSummary } from './pool'
-import { asKind, asMode, freeModesFrom, heldAmount, KIND, modesOn, pendingFor, poolIndexes } from './pool'
+import { asKind, heldAmount, KIND, pendingFor, poolIndexes, poolLookup } from './pool'
 
 /** The MiyaPoolFactory on a chain, from env or contracts/deployments (undefined = not deployed there yet). */
 export const poolFactoryFor = (chainId: number): Address | undefined => miyamintsAddresses(chainId).miyaPoolFactory
@@ -35,9 +35,18 @@ const ok = <T>(r: { status: string; result?: unknown } | undefined) =>
 
 export type Pool = PoolSummary & { address: Address; collection: Address; supply?: bigint }
 
-const fields = ['collection', 'kind', 'mode', 'name', 'symbol', 'heldUnits', 'totalSupply'] as const
+const fields = [
+  'collection',
+  'kind',
+  'premiumBps',
+  'randomEnabled',
+  'name',
+  'symbol',
+  'heldUnits',
+  'totalSupply',
+] as const
 
-/** Reads the summary of each pool address (collection, kind, mode, names, NFTs held). */
+/** Reads the summary of each pool address (collection, kind, premium, random redeems, names, NFTs held). */
 function usePoolSummaries(chainId: SupportedChainId, addresses: Address[]) {
   const reads = useReadContracts({
     allowFailure: true,
@@ -64,17 +73,20 @@ function usePoolSummaries(chainId: SupportedChainId, addresses: Address[]) {
       const r = (k: number) => reads.data?.[i * fields.length + k]
       const collection = ok<Address>(r(0))
       const kind = asKind(ok<number>(r(1)))
-      const mode = asMode(ok<number>(r(2)))
-      if (!collection || kind === undefined || mode === undefined) return
+      if (!collection || kind === undefined) return
+      // A failed premium or random read stays unknown: the pool is still shown, and what needs it waits for a re-read.
+      const premium = ok<number>(r(2))
+      const random = ok<boolean>(r(3))
       out.push({
         address,
         collection,
         kind,
-        mode,
-        name: cleanText(ok<string>(r(3)), 80),
-        symbol: cleanText(ok<string>(r(4)), 24) || 'mNFT',
-        held: ok<bigint>(r(5)),
-        supply: ok<bigint>(r(6)),
+        premiumBps: typeof premium === 'number' ? premium : undefined,
+        randomEnabled: typeof random === 'boolean' ? random : undefined,
+        name: cleanText(ok<string>(r(4)), 80),
+        symbol: cleanText(ok<string>(r(5)), 24) || 'mNFT',
+        held: ok<bigint>(r(6)),
+        supply: ok<bigint>(r(7)),
         collectionName: cleanText(ok<string>(names.data?.[i]), 80) || undefined,
       })
     })
@@ -124,41 +136,47 @@ export function usePools(chainId: SupportedChainId, factory: Address | undefined
   }
 }
 
-/** Pools for one collection address (both modes), for finding a pool past the list or offering to create one. */
+/**
+ * The factory's alignment vault on `chainId`: where pick premiums are sold to. address(0) means this chain has none, so
+ * a new pool's premium must be 0. Undefined while loading or when the read failed.
+ */
+export function useFactoryVault(chainId: SupportedChainId, factory: Address | undefined) {
+  const q = useReadContract({
+    address: factory,
+    abi: poolFactoryAbi,
+    functionName: 'vault',
+    chainId,
+    query: { enabled: !!factory, staleTime: Infinity },
+  })
+  return { vault: q.data as Address | undefined, loading: q.isLoading, failed: q.isError, refetch: q.refetch }
+}
+
+/** A collection address's pool (one per collection), for finding a pool past the list or offering to create one. */
 export function usePoolsForCollection(chainId: SupportedChainId, factory: Address | undefined, query: string) {
   const collection = isAddress(query.trim()) ? (query.trim() as Address) : undefined
-  const reads = useReadContracts({
-    allowFailure: true,
-    contracts: [0, 1].map((mode) => ({
-      address: factory,
-      abi: poolFactoryAbi,
-      functionName: 'poolOf' as const,
-      args: [collection || zeroAddress, mode] as const,
-      chainId,
-    })),
+  const read = useReadContract({
+    address: factory,
+    abi: poolFactoryAbi,
+    functionName: 'poolOf',
+    args: [collection || zeroAddress],
+    chainId,
     query: { enabled: !!factory && !!collection },
   })
-  const addresses = useMemo(
-    () => (reads.data || []).map((r) => ok<Address>(r)).filter((a): a is Address => !!a && a !== zeroAddress),
-    [reads.data]
-  )
+  const found = poolLookup(read.data as string | undefined)
+  const foundAddress = found.state === 'found' ? (found.address as Address) : undefined
+  const addresses = useMemo(() => (foundAddress ? [foundAddress] : []), [foundAddress])
   const summaries = usePoolSummaries(chainId, addresses)
-  const modes = reads.data
-    ? freeModesFrom(
-        reads.data.map((r) => ok<Address>(r)),
-        modesOn(chainId)
-      )
-    : undefined
   return {
     collection,
+    /** The collection's pool, as a one-item list (empty when it has none, or while it loads). */
     pools: summaries.pools,
-    /** Modes the factory says have no pool yet (empty until the lookup is done; a failed read is never free). */
-    freeModes: modes?.free ?? [],
-    /** The lookup failed for at least one mode, so "no pool" can't be told apart from "couldn't check". */
-    checkFailed: !!collection && !!factory && (!!reads.error || (modes?.unknown.length ?? 0) > 0),
-    loading: reads.isLoading || summaries.loading,
+    /** The factory says this collection has no pool yet (false until the lookup is done; a failed read is never free). */
+    free: !!collection && !!factory && found.state === 'none' && !read.isError,
+    /** The lookup failed, so "no pool" can't be told apart from "couldn't check". */
+    checkFailed: !!collection && !!factory && (read.isError || (!read.isLoading && found.state === 'unknown')),
+    loading: read.isLoading || summaries.loading,
     refetch: () => {
-      reads.refetch()
+      read.refetch()
       summaries.refetch()
     },
   }
@@ -176,10 +194,11 @@ export function usePool(chainId: SupportedChainId, pool: Address | undefined, ow
       { address: pool, abi: poolAbi, functionName: 'nextCommitId', chainId },
       { address: pool, abi: poolAbi, functionName: 'nextRevealId', chainId },
       { address: pool, abi: poolAbi, functionName: 'balanceOf', args: [owner || zeroAddress], chainId },
+      { address: pool, abi: poolAbi, functionName: 'premiumPerUnit', chainId },
     ],
     query: { enabled: !!pool },
   })
-  const [count, pending, nextCommit, nextReveal, balance] = extra.data || []
+  const [count, pending, nextCommit, nextReveal, balance, perUnit] = extra.data || []
   return {
     pool: summary.pools[0],
     /** Undefined when the read failed: the held list can't be paged without it. */
@@ -189,6 +208,8 @@ export function usePool(chainId: SupportedChainId, pool: Address | undefined, ow
     nextCommitId: ok<bigint>(nextCommit),
     nextRevealId: ok<bigint>(nextReveal),
     balance: owner ? ok<bigint>(balance) : undefined,
+    /** Pool-token base units a pick burns per piece on top of the 1 token; undefined when the read failed. */
+    premiumPerUnit: ok<bigint>(perUnit),
     loading: summary.loading || extra.isLoading,
     missing: !summary.loading && !extra.isLoading && !summary.pools[0],
     refetch: () => {
@@ -226,9 +247,24 @@ export function useHeldIds(
     })),
     query: { enabled: !!pool && pool.kind === KIND.ERC1155 && list.length > 0 },
   })
+  // A pending random redeem locks the ids it could draw against picking. Only random pools have locks.
+  const locks = useReadContracts({
+    allowFailure: true,
+    contracts: list.map((id) => ({
+      address: pool?.address,
+      abi: poolAbi,
+      functionName: 'isLocked' as const,
+      args: [id] as const,
+      chainId,
+    })),
+    query: { enabled: !!pool && pool.randomEnabled === true && list.length > 0 },
+  })
   return {
     ids: list,
     unitsOf: (i: number) => (pool?.kind === KIND.ERC1155 ? ok<bigint>(units.data?.[i]) : 1n),
+    /** Whether a pending random redeem has locked the id at `i` (undefined: the read failed or is loading). */
+    lockedAt: (i: number): boolean | undefined =>
+      pool?.randomEnabled === false ? false : ok<boolean>(locks.data?.[i]),
     loading: ids.isLoading,
     /** The list couldn't be read (count or ids), so an empty list is not "the pool is empty". */
     failed: count === undefined || ids.isError,
@@ -236,6 +272,7 @@ export function useHeldIds(
     refetch: () => {
       ids.refetch()
       units.refetch()
+      locks.refetch()
     },
   }
 }
@@ -395,4 +432,63 @@ export function useApprovedForAll(
     query: { enabled: !!collection && !!owner && !!operator },
   })
   return { approved: q.data as boolean | undefined, refetch: q.refetch }
+}
+
+/** How often the premium-lot price is re-read: it falls continuously while a lot is for sale. */
+const LOT_REFRESH_MS = 30_000
+
+/**
+ * A pool's premium lots: the reserve of premium tokens, whether a whole token is for sale, and its ETH price now.
+ * Every field is undefined when its read failed.
+ */
+export function usePremiumLots(chainId: SupportedChainId, pool: Address | undefined, enabled = true) {
+  const reads = useReadContracts({
+    allowFailure: true,
+    contracts: [
+      { address: pool, abi: poolAbi, functionName: 'premiumReserve', chainId },
+      { address: pool, abi: poolAbi, functionName: 'lotAvailable', chainId },
+      { address: pool, abi: poolAbi, functionName: 'lotPrice', chainId },
+    ],
+    query: { enabled: !!pool && enabled, refetchInterval: LOT_REFRESH_MS },
+  })
+  const [reserve, available, price] = reads.data || []
+  return {
+    reserve: ok<bigint>(reserve),
+    available: ok<boolean>(available),
+    /** Wei. When no lot is for sale: what the next one will start at. */
+    price: ok<bigint>(price),
+    loading: reads.isLoading,
+    failed: !!reads.error || (reads.data?.some((r) => r.status !== 'success') ?? false),
+    refetch: reads.refetch,
+  }
+}
+
+/**
+ * The oldest unrevealed random draw (anyone's): while it is pending, the NFTs it could get are locked against picking.
+ * Anyone can reveal it from the block after its target block. `none` when no draw is pending.
+ */
+export function useNextDraw(
+  chainId: SupportedChainId,
+  pool: Address | undefined,
+  nextRevealId: bigint | undefined,
+  nextCommitId: bigint | undefined
+) {
+  const pending = nextRevealId !== undefined && nextCommitId !== undefined && nextRevealId < nextCommitId
+  const q = useReadContract({
+    address: pool,
+    abi: poolAbi,
+    functionName: 'commits',
+    args: [nextRevealId ?? 0n],
+    chainId,
+    query: { enabled: !!pool && pending },
+  })
+  const r = q.data as readonly [Address, bigint, number, number] | undefined
+  const draw: CommitRow | undefined =
+    pending && r && r[2] > 0 ? { id: nextRevealId!, recipient: r[0], targetBlock: r[1], amount: r[2] } : undefined
+  return {
+    none: nextRevealId !== undefined && nextCommitId !== undefined && !pending,
+    draw,
+    failed: q.isError,
+    refetch: q.refetch,
+  }
 }

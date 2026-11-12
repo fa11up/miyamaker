@@ -43,11 +43,16 @@ const FRIENDLY: Record<string, string> = {
   AlreadyHeld: 'The pool already holds that NFT.',
   RevealGasTooLow: 'The wallet set the network fee limit too low for this reveal. Raise it and try again.',
   SettlementGasTooLow: 'The wallet set the network fee limit too low to settle this auction. Raise it and try again.',
-  WrongMode: 'This pool does not work that way. Reload the pool.',
   TransferNotReceived: 'The NFT did not arrive in the pool.',
-  PoolExists: 'A pool for this collection and mode already exists.',
+  PoolExists: 'This collection already has a pool. Reload to open it.',
   UnsupportedCollection: 'That address is not an ERC-721 or ERC-1155 collection.',
-  RandomRequiresERC721: 'Random pools work only for ERC-721 collections.',
+  RandomUnavailable: 'This pool has no random buys (ERC-1155, or Robinhood Chain). Pick the NFT you want instead.',
+  LockedForRandomRedeem:
+    'A random draw is waiting to be revealed, and that NFT could be in it. Reveal the draw first, or pick another NFT.',
+  PremiumTooHigh: 'The premium can be at most 20%.',
+  NoVault: 'This network has no alignment vault yet, so the premium must be 0%.',
+  NoLot: 'There is no pool token for sale right now. Someone may have just bought it.',
+  PriceNotMet: 'Someone bought the lot first, so the next one costs more. Look at the new price and try again.',
 }
 
 /** The contract's own error name in a viem error (`ExceedsMaxCost`), or undefined. */

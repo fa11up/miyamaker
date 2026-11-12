@@ -6,6 +6,7 @@ import { test } from 'node:test'
 
 import { bestQuote, formatPrice, priceDecimals } from '../src/pages/Swap/nft/markets.ts'
 import type { PriceAnswer, PriceRequest } from '../src/pages/Swap/nft/pairs.ts'
+import { poolBuyPrice } from '../src/pages/Swap/nft/pool.ts'
 import {
   askFromProbe,
   DEFAULT_PAIR_SYMBOL,
@@ -104,13 +105,29 @@ test('a bid without an ask probe still prices the sell side; service errors are 
 
 test('a pool priced in ETH competes with OpenSea in the cheapest line', () => {
   const os = { venue: 'OpenSea', price: { amount: (72n * E18) / 100n, decimals: 18, symbol: 'ETH' } }
-  const pool = { venue: 'MiyaPool (Pick)', price: { amount: (71n * E18) / 100n, decimals: 18, symbol: 'ETH' } }
-  assert.equal(bestQuote([os, pool])!.venue, 'MiyaPool (Pick)')
+  const pool = { venue: 'MiyaPool (random)', price: { amount: (71n * E18) / 100n, decimals: 18, symbol: 'ETH' } }
+  assert.equal(bestQuote([os, pool])!.venue, 'MiyaPool (random)')
   assert.equal(bestQuote([os, { ...pool, price: undefined }])!.venue, 'OpenSea')
   // Offers are WETH on OpenSea; a pool bid in ETH compares with them.
   const offer = { venue: 'OpenSea', price: { amount: (65n * E18) / 100n, decimals: 18, symbol: 'WETH' } }
-  const bid = { venue: 'MiyaPool (Pick)', price: { amount: (69n * E18) / 100n, decimals: 18, symbol: 'ETH' } }
-  assert.equal(bestQuote([offer, bid], 'highest')!.venue, 'MiyaPool (Pick)')
+  const bid = { venue: 'MiyaPool', price: { amount: (69n * E18) / 100n, decimals: 18, symbol: 'ETH' } }
+  assert.equal(bestQuote([offer, bid], 'highest')!.venue, 'MiyaPool')
+})
+
+test('a pick-only pool competes at 1 token + its premium, not at the token price', () => {
+  const os = { venue: 'OpenSea', price: { amount: (72n * E18) / 100n, decimals: 18, symbol: 'ETH' } }
+  const token = (70n * E18) / 100n
+  // ERC-1155 or Robinhood Chain: no random, so the cheapest way out is a pick at 5% more (0.735 ETH).
+  const pick = poolBuyPrice(token, { premiumBps: 500, randomEnabled: false })!
+  assert.deepEqual(pick, { amount: (735n * E18) / 1000n, how: 'pick' })
+  const pool = { venue: `MiyaPool (${pick.how})`, price: { amount: pick.amount, decimals: 18, symbol: 'ETH' } }
+  assert.equal(bestQuote([os, pool])!.venue, 'OpenSea')
+  // With random on, the same pool is 0.70 ETH and wins.
+  assert.deepEqual(poolBuyPrice(token, { premiumBps: 500, randomEnabled: true }), { amount: token, how: 'random' })
+  // A premium or random read that failed gives no price, never the token price.
+  assert.equal(poolBuyPrice(token, { premiumBps: undefined, randomEnabled: false }), undefined)
+  assert.equal(poolBuyPrice(token, { premiumBps: 500, randomEnabled: undefined }), undefined)
+  assert.equal(poolBuyPrice(undefined, { premiumBps: 500, randomEnabled: true }), undefined)
 })
 
 test('prices show sensible decimals: dollars to the cent, big amounts whole', () => {

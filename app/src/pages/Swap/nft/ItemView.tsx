@@ -15,10 +15,11 @@ import { erc721Abi } from './abi'
 import FillReview from './FillReview'
 import type { OsOrder } from './markets'
 import { formatPrice, itemUrl, venuesFor } from './markets'
-import { KIND, MODE_LABEL } from './pool'
+import { KIND, POOL_UNIT, premiumPerUnitOf, unitsText } from './pool'
 import { goneHashes, sessionStore } from './sweep'
 import { Action, Card, Chips, Head, Hint, LinkButton, Mono, PushButton } from './ui'
 import { useOpenSeaCollection, useOpenSeaItem } from './useMarkets'
+import type { Pool } from './usePools'
 import { poolFactoryFor, useNftMeta, usePoolsForCollection } from './usePools'
 import { OutLink, VenueList, VenueRow } from './venueUi'
 
@@ -47,7 +48,7 @@ const same = (a?: string, b?: string) => !!a && !!b && a.toLowerCase() === b.toL
 
 /**
  * One NFT across venues: its OpenSea listing (buy here) and best offer (accept here when you hold it), whether a
- * MiyaPool holds it (take it for 1 pool token) and links to it on every venue.
+ * MiyaPool holds it (pick it for 1 pool token + the pool's premium) and links to it on every venue.
  */
 export default function ItemView({
   chainId,
@@ -95,6 +96,15 @@ export default function ItemView({
   const listingIsMine = !!listing && mine
   const unverified = !isFeatured(chainId, contract) && os.info?.verified !== true
   const openSeaHref = itemUrl('opensea', chainId, contract, tokenId)
+  // A picked NFT costs 1 pool token + the pool's premium.
+  const pickWords = (p: Pool) =>
+    p.premiumBps === undefined
+      ? `1 ${p.symbol} plus the pool's premium`
+      : `${unitsText(POOL_UNIT + premiumPerUnitOf(p.premiumBps))} ${p.symbol} (1 + the premium)`
+  let noPoolNote = 'No pool for this collection yet.'
+  if (pools.loading) noPoolNote = 'Looking for a pool…'
+  if (pools.checkFailed) noPoolNote = "Couldn't check for a pool."
+  if (pools.pools.length) noPoolNote = 'Not in the pool right now.'
 
   return (
     <>
@@ -122,7 +132,7 @@ export default function ItemView({
               {mine ? (
                 'you'
               ) : inPool ? (
-                `the ${MODE_LABEL[inPool.mode]} pool`
+                'the MiyaPool'
               ) : ownerAddress ? (
                 <a href={`${explorerUrl(chainId)}/address/${ownerAddress}`} target="_blank" rel="noreferrer">
                   <Mono>{shortAddress(ownerAddress)}</Mono>
@@ -180,11 +190,7 @@ export default function ItemView({
               if (!factory) return <VenueRow key={v.id} venue={v} note={'MiyaPool opens soon.'} />
               if (inPool)
                 return (
-                  <VenueRow
-                    key={v.id}
-                    venue={v}
-                    note={`It is in the ${MODE_LABEL[inPool.mode]} pool. Take it out for 1 ${inPool.symbol}.`}
-                  >
+                  <VenueRow key={v.id} venue={v} note={`It is in the pool. Pick it for ${pickWords(inPool)}.`}>
                     <PushButton type="button" disabled={busy} onClick={() => onOpenPool(inPool.address)}>
                       Open the pool
                     </PushButton>
@@ -192,21 +198,15 @@ export default function ItemView({
                 )
               if (mine && pools.pools.length)
                 return (
-                  <VenueRow key={v.id} venue={v} note={`Sell it into a pool for 1 ${pools.pools[0]!.symbol}, no fees.`}>
+                  <VenueRow key={v.id} venue={v} note={`Sell it into the pool for 1 ${pools.pools[0]?.symbol}.`}>
                     {pools.pools.map((p) => (
                       <PushButton key={p.address} type="button" disabled={busy} onClick={() => onOpenPool(p.address)}>
-                        Open {MODE_LABEL[p.mode]} pool
+                        Open the pool
                       </PushButton>
                     ))}
                   </VenueRow>
                 )
-              return (
-                <VenueRow
-                  key={v.id}
-                  venue={v}
-                  note={pools.pools.length ? 'Not in a pool right now.' : 'No pool for this collection yet.'}
-                />
-              )
+              return <VenueRow key={v.id} venue={v} note={noPoolNote} />
             }
 
             const href = itemUrl(v.id, chainId, contract, tokenId)

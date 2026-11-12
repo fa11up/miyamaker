@@ -3,7 +3,7 @@ import styled from 'styled-components/macro'
 import { useElementSize } from 'usehooks-ts'
 import type { Address } from 'viem'
 import { parseEventLogs } from 'viem'
-import { useBlockNumber, useTransactionReceipt } from 'wagmi'
+import { useBalance, useBlockNumber, useTransactionReceipt } from 'wagmi'
 
 import LoadingHourglass from '@/assets/loading_hourglass.gif'
 import NftImage from '@/components/NftImage'
@@ -23,7 +23,6 @@ import { DEFAULT_PAIR_SYMBOL, pairWords, pickPair } from './pairs'
 import type { CommitRow } from './pool'
 import {
   directSendOnly,
-  modesOn,
   blocksToReveal,
   commitPhase,
   freeUnits,
@@ -31,14 +30,17 @@ import {
   KIND,
   KIND_LABEL,
   MAX_DRAW_UNITS,
-  MODE,
-  MODE_HINT,
-  MODE_LABEL,
+  noRandomWhy,
   parseTokenIds,
+  pickLocks,
   poolTitle,
+  POOL_UNIT,
+  premiumText,
   redeemCost,
   revealWords,
+  targetedCostOf,
   unitsText,
+  wholePicks,
   wholeUnits,
 } from './pool'
 import {
@@ -68,10 +70,10 @@ import {
   useHeldIds,
   useMyCommits,
   useOwnedInCollection,
+  useNextDraw,
   useOwnership,
   usePool,
-  poolFactoryFor,
-  usePoolsForCollection,
+  usePremiumLots,
 } from './usePools'
 import { PairSwitch } from './venueUi'
 
@@ -174,7 +176,6 @@ export default function PoolView({
   chainId,
   address: poolAddress,
   onBack,
-  onOpenPool,
   onSwapToken,
   wallet,
   onBusy,
@@ -182,7 +183,6 @@ export default function PoolView({
   chainId: SupportedChainId
   address: Address
   onBack: () => void
-  onOpenPool: (pool: Address) => void
   onSwapToken: (p: { chainId: SwapChainId; sell?: SwapToken; buy?: SwapToken }) => void
   wallet: Wallet
   /** Told while a transaction is in flight, when the page must not change. */
@@ -199,14 +199,22 @@ export default function PoolView({
   // Room for both: the pool's NFTs next to yours, and tapping either one says which you're doing.
   const bothSides = sidesWidth >= BOTH_SIDES_WIDTH
   const os = useOpenSeaCollection(chainId, pool?.collection)
-  const siblings = usePoolsForCollection(chainId, poolFactoryFor(chainId), pool?.collection ?? '')
   const ethPair = pickPair(pairsFor(chainId), 'ETH')
   const nowPrice = usePoolPrices(chainId, pool ? [poolAddress] : [], ethPair)[poolAddress.toLowerCase()]
   const [pages, setPages] = useState(1)
   const held = useHeldIds(chainId, pool, info.heldIdsCount, pages)
-  const random = pool?.mode === MODE.RANDOM
-  const myCommits = useMyCommits(chainId, random ? poolAddress : undefined, info.nextCommitId, me, info.nextRevealId)
-  const block = useBlockNumber({ chainId, watch: random && myCommits.commits.length > 0 })
+  // Random redeems: ERC-721 pools, except on Robinhood Chain. Pick works on every pool.
+  const randomOk = pool?.randomEnabled === true
+  const [how, setHow] = useState<'pick' | 'random'>('pick')
+  const random = randomOk && how === 'random'
+  // Open draws are shown unless the pool surely has none: a failed randomEnabled read must not hide a draw to reveal.
+  const drawsOk = !!pool && pool.randomEnabled !== false
+  const myCommits = useMyCommits(chainId, drawsOk ? poolAddress : undefined, info.nextCommitId, me, info.nextRevealId)
+  // The oldest pending draw, anyone's: it locks NFTs against picking until it is revealed.
+  const nextDraw = useNextDraw(chainId, drawsOk ? poolAddress : undefined, info.nextRevealId, info.nextCommitId)
+  const block = useBlockNumber({ chainId, watch: drawsOk && (myCommits.commits.length > 0 || !!nextDraw.draw) })
+  const lots = usePremiumLots(chainId, poolAddress, !!pool && (pool.premiumBps ?? 0) > 0)
+  const ethBalance = useBalance({ address: me, chainId, query: { enabled: !!me && lots.available === true } })
 
   // Buy (pick): ids chosen from the pool. Buy (random): how many.
   const [picked, setPicked] = useState<string[]>([])
@@ -243,6 +251,9 @@ export default function PoolView({
     info.refetch()
     held.refetch()
     myCommits.refetch()
+    nextDraw.refetch()
+    lots.refetch()
+    ethBalance.refetch()
     ownership.refetch()
     approval.refetch()
     owned.refetch()
@@ -278,6 +289,7 @@ export default function PoolView({
   useEffect(() => {
     setPicked([])
     setCount(1)
+    setHow('pick')
     setSide('buy')
     setSelling([])
     setManualIds([])
@@ -327,6 +339,17 @@ export default function PoolView({
   const { symbol } = pool
   const { balance } = info
   const affordable = wholeUnits(balance)
+  const affordablePicks = wholePicks(balance, info.premiumPerUnit)
+  const premium = pool.premiumBps
+  const premiumWords = premium === undefined ? undefined : premiumText(premium)
+  // What one picked NFT costs in pool tokens, e.g. "1.05"; undefined when the premium read failed.
+  const pickEach = info.premiumPerUnit === undefined ? undefined : unitsText(POOL_UNIT + info.premiumPerUnit)
+  const premiumNote =
+    premium === undefined
+      ? '.'
+      : premium > 0
+      ? ` (1 + a ${premiumWords} premium that goes to the INFER/IMD alignment vault).`
+      : ' (this pool has no premium).'
   const free = freeUnits(pool.held, info.pendingUnits) // ERC721: NFTs not promised to an open draw
   const maxDraw = Math.max(1, Math.min(free ?? 0, MAX_DRAW_UNITS))
   const is1155 = pool.kind === KIND.ERC1155
@@ -342,8 +365,17 @@ export default function PoolView({
   }
 
   const buyUnits = random ? count : picked.length
-  const cost = redeemCost(buyUnits)
-  const short = balance !== undefined && balance < cost
+  // Random: exactly 1 token each. Pick: 1 token + the premium each (MiyaPool.targetedCost).
+  const pickCost = info.premiumPerUnit === undefined ? undefined : targetedCostOf(buyUnits, info.premiumPerUnit)
+  const cost = random ? redeemCost(buyUnits) : pickCost
+  const short = balance !== undefined && cost !== undefined && balance < cost
+  // Picked NFTs a pending random draw has locked since they were chosen, or whose lock couldn't be read.
+  const lockIndex = new Map(held.ids.map((id, i) => [id.toString(), i]))
+  const locks = pickLocks(picked, (id) => {
+    const i = lockIndex.get(id)
+    return i === undefined ? undefined : held.lockedAt(i)
+  })
+  const lockedShown = held.ids.filter((_, i) => held.lockedAt(i) === true).length
 
   const redeem = () =>
     me &&
@@ -369,6 +401,18 @@ export default function PoolView({
       abi: poolAbi,
       functionName: 'revealRedeem',
       args: [id],
+      chainId,
+    })
+  const buyLot = () =>
+    me &&
+    lots.price !== undefined &&
+    // The price only falls while a lot is for sale: the price read here covers it, and any excess is refunded.
+    tx.run('buy-lot', {
+      address: poolAddress,
+      abi: poolAbi,
+      functionName: 'buyLot',
+      args: [me, me],
+      value: lots.price,
       chainId,
     })
   const reveal = (c: CommitRow) => {
@@ -533,8 +577,25 @@ export default function PoolView({
       }
 
       if (!picked.length) return { label: 'Pick NFTs to buy', disabled: true }
+      if (cost === undefined)
+        return { label: 'Check again', step: "We couldn't read this pool's premium.", onClick: refresh }
+      if (locks.locked.length)
+        return {
+          label: `#${locks.locked[0]} is locked`,
+          disabled: true,
+          step: 'A random draw is waiting to be revealed. Reveal it above, or pick NFTs that are not locked.',
+        }
+      if (locks.unknown.length)
+        return { label: 'Check again', step: "We couldn't check whether these NFTs are locked.", onClick: refresh }
       if (short) return { label: `Not enough ${symbol}`, disabled: true }
-      return { label: `Buy ${nfts(picked.length)} for ${picked.length} ${symbol}`, onClick: redeem }
+      return {
+        label: `Buy ${nfts(picked.length)} for ${unitsText(cost)} ${symbol}`,
+        step:
+          premium && premium > 0
+            ? `${picked.length} × (1 + ${premiumWords} premium). The premium goes to the INFER/IMD alignment vault.`
+            : undefined,
+        onClick: redeem,
+      }
     }
 
     if (!selling.length) return { label: 'Choose NFTs to sell', disabled: true }
@@ -577,6 +638,7 @@ export default function PoolView({
 
   const doneWords: Record<string, string> = {
     redeem: 'Bought. The NFTs are in your wallet.',
+    'buy-lot': `Bought 1 ${symbol}. Your ETH went to the alignment vault, credited to you.`,
     commit: 'Paid. Reveal your NFT below once the next block is in.',
     approve: 'Allowed. Now press Sell.',
     deposit: `Sold. The ${symbol} is in your wallet.`,
@@ -605,20 +667,24 @@ export default function PoolView({
         <Head>
           <h2>{title}</h2>
           <Chips>
-            <Chip tone={random ? 'warn' : 'ok'} title={MODE_HINT[pool.mode]}>
-              {MODE_LABEL[pool.mode]}
+            <Chip tone="ok" title="Choose the NFT you get">
+              Pick +{premiumWords ?? '?'}
             </Chip>
+            {randomOk && <Chip title="A future block picks the NFT">Random</Chip>}
             <Chip>{KIND_LABEL[pool.kind]}</Chip>
           </Chips>
         </Head>
-        <Prose>
-          {MODE_HINT[pool.mode]} 1 NFT = 1 {symbol}. No fees.
+        <Prose data-pool-rules>
+          Sell an NFT in: get 1 {symbol}. {pool.randomEnabled === false ? '' : `Random NFT out: 1 ${symbol} each. `}
+          Pick the NFT you want: {pickEach ?? '1 + the premium'} {symbol} each{premiumNote}
+          {pool.randomEnabled === false && ` ${noRandomWhy(pool.kind, chainId)}`}
         </Prose>
+        {premium !== undefined && <Hint>Whoever started the pool set the premium. It can never be changed.</Hint>}
         <Stat>
           <span>In the pool</span>
           <strong>{pool.held === undefined ? '–' : nfts(pool.held)}</strong>
         </Stat>
-        {random && info.pendingUnits !== undefined && info.pendingUnits > 0n && (
+        {drawsOk && info.pendingUnits !== undefined && info.pendingUnits > 0n && (
           <Stat>
             <span>In open draws</span>
             <strong>{nfts(info.pendingUnits)}</strong>
@@ -630,7 +696,11 @@ export default function PoolView({
             <strong>
               {unitsText(balance)} {symbol}
               {balance !== undefined && balance > 0n && (
-                <span style={{ fontWeight: 400, color: color.inkMuted }}> (enough for {nfts(affordable)})</span>
+                <span style={{ fontWeight: 400, color: color.inkMuted }}>
+                  {' '}
+                  (enough to pick {affordablePicks}
+                  {randomOk ? `, or ${affordable} at random` : ''})
+                </span>
               )}
             </strong>
           </Stat>
@@ -643,27 +713,6 @@ export default function PoolView({
         </Hint>
       </Card>
 
-      {modesOn(chainId).length > 1 && (
-        <Segmented role="group" aria-label="Which NFT you get" data-pool-modes>
-          {modesOn(chainId).map((m) => {
-            const there = m === pool.mode ? pool : siblings.pools.find((p) => p.mode === m)
-            return (
-              <button
-                key={m}
-                type="button"
-                aria-pressed={m === pool.mode}
-                disabled={busy || !there}
-                title={there ? MODE_HINT[m] : `This collection has no ${MODE_LABEL[m]} pool yet`}
-                onClick={() => there && m !== pool.mode && onOpenPool(there.address)}
-              >
-                {m === MODE.TARGETED ? 'Pick yours' : 'Random'}
-                {!there && ' (no pool yet)'}
-              </button>
-            )
-          })}
-        </Segmented>
-      )}
-
       <Segmented role="group" aria-label="Buy or sell">
         <button type="button" aria-pressed={side === 'buy'} onClick={() => setSide('buy')} disabled={busy}>
           Buy NFTs
@@ -673,7 +722,18 @@ export default function PoolView({
         </button>
       </Segmented>
 
-      {side === 'buy' && random && myCommits.commits.length > 0 && (
+      {side === 'buy' && randomOk && (
+        <Segmented role="group" aria-label="Which NFT you get" data-pool-how>
+          <button type="button" aria-pressed={how === 'pick'} onClick={() => setHow('pick')} disabled={busy}>
+            Pick yours · {pickEach ?? '?'} {symbol} each
+          </button>
+          <button type="button" aria-pressed={how === 'random'} onClick={() => setHow('random')} disabled={busy}>
+            Random · 1 {symbol} each
+          </button>
+        </Segmented>
+      )}
+
+      {side === 'buy' && drawsOk && myCommits.commits.length > 0 && (
         <Card aria-label="Your draws">
           <Eyebrow>Your draws</Eyebrow>
           <Draws>
@@ -721,9 +781,39 @@ export default function PoolView({
         </StatusBox>
       )}
 
-      {side === 'buy' && random && (
+      {side === 'buy' && drawsOk && (
         <EscrowClaim pool={poolAddress} chainId={chainId} me={me} busy={busy} disabled={wrongChain} tx={tx} />
       )}
+
+      {side === 'buy' &&
+        drawsOk &&
+        nextDraw.draw &&
+        !myCommits.commits.some((c) => c.id === nextDraw.draw!.id) &&
+        (() => {
+          const d = nextDraw.draw
+          const left = blocksToReveal(d.targetBlock, block.data)
+          return (
+            <Card aria-label="Pending random draw" data-pool-next-draw>
+              <Eyebrow>A random draw is waiting</Eyebrow>
+              <Hint>
+                Someone paid for {nfts(d.amount)} at random. Until it is revealed, the NFTs that were in the pool then
+                are locked and can&apos;t be picked. Anyone can reveal it, from the block after it was made: the NFTs go
+                to whoever paid, and you pay only the network fee.
+              </Hint>
+              <PushButton
+                type="button"
+                disabled={busy || wrongChain || !isConnected || block.data === undefined || left > 0}
+                onClick={() => settleOlderDraw(d.id)}
+              >
+                {block.data === undefined
+                  ? 'Checking the block…'
+                  : left > 0
+                  ? `Reveal in ${left} block${left === 1 ? '' : 's'}…`
+                  : 'Reveal it to unlock'}
+              </PushButton>
+            </Card>
+          )
+        })()}
 
       <Sides ref={sidesRef} data-both={bothSides || undefined}>
         {(bothSides || side === 'buy') && (
@@ -731,9 +821,18 @@ export default function PoolView({
             <Eyebrow>{random ? 'What is in the pool' : `Pick NFTs · ${picked.length} chosen`}</Eyebrow>
             <Hint>
               {random
-                ? `You cannot choose: a block picks for you. Each costs 1 ${symbol}.`
-                : `Tap the NFTs you want. Each costs 1 ${symbol}.`}
+                ? `You cannot choose: a block picks for you. Each costs 1 ${symbol}, no premium.`
+                : `Tap the NFTs you want. Each costs ${pickEach ?? '1 + the premium'} ${symbol}${
+                    premium ? ` (1 + ${premiumWords})` : ''
+                  }.${randomOk ? ` Random costs 1 ${symbol}.` : ''}`}
             </Hint>
+            {!random && lockedShown > 0 && (
+              <Hint style={{ color: color.warning }} data-pool-locked>
+                {lockedShown === 1 ? '1 NFT is' : `${lockedShown} NFTs are`} locked: a random draw could get{' '}
+                {lockedShown === 1 ? 'it' : 'them'}, so {lockedShown === 1 ? 'it' : 'they'} can&apos;t be picked until
+                the draw is revealed. Anyone can reveal it, above.
+              </Hint>
+            )}
             {held.loading || info.loading ? (
               <Grid>
                 {Array.from({ length: 6 }, (_, i) => (
@@ -742,18 +841,24 @@ export default function PoolView({
               </Grid>
             ) : held.ids.length ? (
               <Grid>
-                {held.ids.map((id, i) => (
-                  <NftTile
-                    key={id.toString()}
-                    chainId={chainId}
-                    collection={pool.collection}
-                    kind={pool.kind}
-                    id={id}
-                    units={held.unitsOf(i)}
-                    selected={picked.includes(id.toString())}
-                    onToggle={random || busy ? undefined : () => toggleBuy(id)}
-                  />
-                ))}
+                {held.ids.map((id, i) => {
+                  // A locked NFT can still be un-picked, never picked.
+                  const isPicked = picked.includes(id.toString())
+                  const locked = !random && held.lockedAt(i) === true
+                  return (
+                    <NftTile
+                      key={id.toString()}
+                      chainId={chainId}
+                      collection={pool.collection}
+                      kind={pool.kind}
+                      id={id}
+                      units={held.unitsOf(i)}
+                      selected={isPicked}
+                      note={locked ? 'locked' : undefined}
+                      onToggle={random || busy || (locked && !isPicked) ? undefined : () => toggleBuy(id)}
+                    />
+                  )
+                })}
               </Grid>
             ) : held.failed ? (
               <Prose>Couldn&apos;t load the NFTs in this pool. Try again later.</Prose>
@@ -800,7 +905,7 @@ export default function PoolView({
             )}
             {short && buyUnits > 0 && (
               <Hint style={{ color: color.warning }}>
-                You need {buyUnits} {symbol} and have {unitsText(balance)}.{' '}
+                You need {unitsText(cost)} {symbol} and have {unitsText(balance)}.{' '}
                 {swapChain
                   ? 'Get more on the Tokens tab, or sell an NFT into the pool.'
                   : 'Sell an NFT into the pool to get some.'}
@@ -916,11 +1021,72 @@ export default function PoolView({
         </StatusBox>
       )}
 
+      {premium !== undefined && premium > 0 && (
+        <Card aria-label="Premium lots" data-pool-lots>
+          <Eyebrow>Premium lots</Eyebrow>
+          <Prose>
+            Pick premiums stay in the pool until they add up to 1 whole {symbol}. That token is then sold for ETH, and
+            the ETH goes to the INFER/IMD alignment vault.
+          </Prose>
+          <Stat>
+            <span>Premiums built up</span>
+            <strong>
+              {unitsText(lots.reserve)} {symbol}
+            </strong>
+          </Stat>
+          <Stat>
+            <span>{lots.available ? 'For sale now' : 'Next lot starts at'}</span>
+            <strong data-pool-lot-price>
+              {lots.price === undefined ? '–' : formatPrice({ amount: lots.price, decimals: 18, symbol: 'ETH' })}
+            </strong>
+          </Stat>
+          <Hint>
+            While a lot is for sale its price halves every day, never below 0.001 ETH. After a sale the next lot starts
+            at twice the last price.
+          </Hint>
+          {lots.failed && !lots.loading ? (
+            <Hint>
+              Couldn&apos;t read the lot.{' '}
+              <LinkButton type="button" onClick={() => lots.refetch()}>
+                Check again
+              </LinkButton>
+            </Hint>
+          ) : lots.available && lots.price !== undefined ? (
+            <>
+              <PushButton
+                type="button"
+                data-pool-buy-lot
+                disabled={
+                  busy ||
+                  !isConnected ||
+                  wrongChain ||
+                  (ethBalance.data !== undefined && ethBalance.data.value < lots.price)
+                }
+                onClick={buyLot}
+              >
+                {ethBalance.data !== undefined && ethBalance.data.value < lots.price
+                  ? 'Not enough ETH'
+                  : `Buy 1 ${symbol} for ${formatPrice({ amount: lots.price, decimals: 18, symbol: 'ETH' })}`}
+              </PushButton>
+              <Hint>
+                You get 1 {symbol} (enough to take out an NFT). Your ETH goes to the vault, credited to you as a
+                contribution; contributors share the vault&apos;s trading fees. If the price drops before it lands, the
+                difference comes back to you.
+                {!isConnected || wrongChain ? ` Connect on ${chain.name} first (the button below).` : ''}
+              </Hint>
+            </>
+          ) : (
+            lots.reserve !== undefined && <Hint>No lot for sale yet.</Hint>
+          )}
+        </Card>
+      )}
+
       {swapChain && pair && (
         <Card aria-label={`${symbol} token`} data-pool-token>
           <Eyebrow>The {symbol} token</Eyebrow>
           <Prose>
-            {symbol} is a normal token: 1 {symbol} takes one NFT out of the pool. If it has a market, buy or sell it for{' '}
+            {symbol} is a normal token: {randomOk ? `1 ${symbol} takes a random NFT out of the pool, and ` : ''}
+            {pickEach ?? '1 + the premium'} {symbol} picks one. If it has a market, buy or sell it for{' '}
             {pairWords(pairs.map((t) => t.symbol))} on the Tokens tab.
           </Prose>
           <PairSwitch

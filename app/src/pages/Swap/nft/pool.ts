@@ -1,12 +1,15 @@
 /* eslint-disable no-restricted-syntax -- parseTokenIds reads clearer as a loop with early returns */
 /**
- * Pure logic for trading NFTs through MiyaPool (contracts/src/pools). No runtime imports, so `node --test` can load
+ * Pure logic for trading NFTs through MiyaPool v2 (contracts/src/pools). No runtime imports, so `node --test` can load
  * it (tests/trade.test.mts).
  *
- * A pool holds NFTs of one collection. Each NFT (or ERC1155 unit) in it backs exactly 1 pool token (1e18 base units).
- * Deposit an NFT: get 1 token. Burn 1 token: take one back. No fees. The redeem mode is fixed per pool:
- *   TARGETED: pick the NFT you want.
- *   RANDOM (ERC721 only): pay now, a future block picks the NFT, then anyone reveals it.
+ * One pool per collection. Each NFT (or ERC1155 unit) in it backs exactly 1 pool token (1e18 base units).
+ * Deposit an NFT: get 1 token. Two ways to take one out:
+ *   Random (ERC721 only, not on Robinhood Chain): burn exactly 1 token per piece now; a future block picks the NFT,
+ *     then anyone reveals it.
+ *   Pick: choose the NFT and burn 1 token + the pool's premium per piece. The premium (0-20% of a token) is set by
+ *     whoever creates the pool and fixed forever. It builds up in the pool and is sold for ETH, one token at a time,
+ *     with the ETH going to the INFER/IMD alignment vault.
  */
 
 /** 1 NFT = 1e18 pool-token base units. Mirrors MiyaPool.UNIT. */
@@ -16,25 +19,87 @@ export const POOL_UNIT = 10n ** 18n
 export const KIND = { ERC721: 0, ERC1155: 1 } as const
 export type PoolKind = (typeof KIND)[keyof typeof KIND]
 
-/** MiyaPool.RedeemMode */
-export const MODE = { TARGETED: 0, RANDOM: 1 } as const
-export type PoolMode = (typeof MODE)[keyof typeof MODE]
-
-export const MODE_LABEL: Record<PoolMode, string> = { 0: 'Pick', 1: 'Random' }
-export const MODE_HINT: Record<PoolMode, string> = {
-  0: 'You choose which NFT you get.',
-  1: 'You get a random NFT from the pool.',
-}
 export const KIND_LABEL: Record<PoolKind, string> = { 0: 'ERC-721', 1: 'ERC-1155' }
 
 export const asKind = (v: unknown): PoolKind | undefined => (v === 0 || v === 1 ? v : undefined)
-/** Robinhood Chain's block hashes come from its sequencer, so the factory refuses Random pools there. */
-export const modesOn = (chainId: number): PoolMode[] =>
-  chainId === 4663 ? [MODE.TARGETED] : [MODE.TARGETED, MODE.RANDOM]
 
-export const asMode = (v: unknown): PoolMode | undefined => (v === 0 || v === 1 ? v : undefined)
+/** Robinhood Chain's block hashes come from its sequencer, so its pools have no random redeems (MiyaPool.randomEnabled). */
+export const ROBINHOOD_CHAIN_ID = 4663
+/** Whether a new ERC-721 pool on this chain will have random redeems. ERC-1155 pools never do. */
+export const randomOn = (chainId: number) => chainId !== ROBINHOOD_CHAIN_ID
 
-/** Pool tokens needed to take `units` NFTs out. */
+/** Why a pool has no random redeems, in a few words (only asked when `randomEnabled` is false). */
+export function noRandomWhy(kind: PoolKind | undefined, chainId: number): string {
+  if (kind === KIND.ERC1155) return 'ERC-1155 pools have pick only.'
+  if (!randomOn(chainId))
+    return 'Robinhood Chain has pick only: its block hashes come from one sequencer, so a draw there would not be fair.'
+  return 'This pool has pick only.'
+}
+
+/* ---------- the pick premium ---------- */
+
+/** Basis points in 100%. */
+export const BPS = 10_000
+/** MiyaPool.MAX_PREMIUM_BPS: 20% of a token. */
+export const MAX_PREMIUM_BPS = 2_000
+/** What the create form suggests. */
+export const DEFAULT_PREMIUM_BPS = 500
+
+/** MiyaPool.premiumPerUnit: pool-token base units a pick burns per piece on top of the 1 token. */
+export const premiumPerUnitOf = (premiumBps: number) => (POOL_UNIT * BigInt(premiumBps)) / BigInt(BPS)
+
+/** MiyaPool.targetedCost(units), from the pool's premiumPerUnit read: units * (1 token + premium). */
+export const targetedCostOf = (units: number | bigint, premiumPerUnit: bigint) =>
+  BigInt(units) * (POOL_UNIT + premiumPerUnit)
+
+/** How many pieces a balance can pick, at 1 token + premium each. */
+export function wholePicks(balance: bigint | undefined, premiumPerUnit: bigint | undefined): number {
+  if (!balance || balance <= 0n || premiumPerUnit === undefined) return 0
+  return Number(balance / (POOL_UNIT + premiumPerUnit))
+}
+
+/** A premium in basis points as a percent: 500 → "5%", 525 → "5.25%", 1 → "0.01%". */
+export function premiumText(premiumBps: number): string {
+  const whole = Math.floor(premiumBps / 100)
+  const frac = (premiumBps % 100).toString().padStart(2, '0').replace(/0+$/, '')
+  return frac ? `${whole}.${frac}%` : `${whole}%`
+}
+
+/**
+ * The premium typed into the create form, as basis points. Takes "5", "5%", "0.25", "12.5 %"; at most two decimals
+ * (one basis point), from 0 to `max` (20%, or 0 on a chain whose factory has no vault).
+ */
+export function parsePremium(input: string, max = MAX_PREMIUM_BPS): { bps?: number; error?: string } {
+  const t = input.trim().replace(/\s*%$/, '').trim()
+  if (!t) return { error: 'Enter a premium, for example 5.' }
+  const m = /^(\d{1,3})(?:\.(\d*))?$|^\.(\d+)$/.exec(t)
+  if (!m) return { error: `"${input.trim()}" is not a percent. Use a number like 5 or 2.5.` }
+  const whole = m[1] ?? '0'
+  const frac = m[2] ?? m[3] ?? ''
+  if (frac.replace(/0+$/, '').length > 2) return { error: 'Use at most two decimals, e.g. 2.25.' }
+  const bps = Number(whole) * 100 + Number(frac.padEnd(2, '0').slice(0, 2) || '0')
+  if (bps > max && max === 0) return { error: 'Pools on this network must have a 0% premium.' }
+  if (bps > max) return { error: `The premium can be at most ${premiumText(max)}.` }
+  return { bps }
+}
+
+/** An amount for 1 pool token, scaled to what a pick costs: amount * (1 + premium). */
+export const withPremium = (amount: bigint, premiumBps: number) => (amount * BigInt(BPS + premiumBps)) / BigInt(BPS)
+
+/**
+ * The cheapest way to take one NFT out of a pool, given the price of 1 pool token (`tokenAsk`): random at 1 token
+ * where the pool has it, else pick at 1 token + premium. Undefined when a read it needs failed.
+ */
+export function poolBuyPrice(
+  tokenAsk: bigint | undefined,
+  pool: { premiumBps?: number; randomEnabled?: boolean }
+): { amount: bigint; how: 'random' | 'pick' } | undefined {
+  if (tokenAsk === undefined || pool.randomEnabled === undefined) return undefined
+  if (pool.randomEnabled) return { amount: tokenAsk, how: 'random' }
+  return pool.premiumBps === undefined ? undefined : { amount: withPremium(tokenAsk, pool.premiumBps), how: 'pick' }
+}
+
+/** Pool tokens a random redeem of `units` NFTs burns: exactly 1 each, no premium. */
 export const redeemCost = (units: number | bigint) => POOL_UNIT * BigInt(units)
 
 /** How many whole NFTs a pool-token balance can take out. */
@@ -162,7 +227,10 @@ export type PoolSummary = {
   address: string
   collection: string
   kind: PoolKind
-  mode: PoolMode
+  /** The pick premium in basis points, fixed at creation; undefined when the read failed. */
+  premiumBps?: number
+  /** Random redeems on this pool; undefined when the read failed. */
+  randomEnabled?: boolean
   symbol: string
   name: string
   collectionName?: string
@@ -192,23 +260,33 @@ export function revealWords(ids: readonly bigint[], held: readonly bigint[] = []
   return sent.length ? `You got ${list(sent)}, now in your wallet. ${keep}` : keep
 }
 
+export type PoolLookup = { state: 'unknown' } | { state: 'none' } | { state: 'found'; address: string }
+
 /**
- * Which redeem modes still have no pool, from the factory's poolOf reads per mode. A mode whose read gave no answer
- * (`undefined`) is neither free nor taken: it goes in `unknown`, so a failed read never offers a duplicate pool.
+ * A collection's pool from the factory's poolOf read. A read that gave no answer (`undefined`) is `unknown`, never
+ * `none`, so a failed read never offers to start a pool that already exists.
  */
-export function freeModesFrom(
-  poolOf: readonly (string | undefined)[],
-  modes: readonly PoolMode[],
+export function poolLookup(
+  poolOf: string | undefined,
   zero = '0x0000000000000000000000000000000000000000'
-): { free: PoolMode[]; unknown: PoolMode[] } {
-  const free: PoolMode[] = []
-  const unknown: PoolMode[] = []
-  for (const m of modes) {
-    const a = poolOf[m]
-    if (a === undefined) unknown.push(m)
-    else if (a.toLowerCase() === zero) free.push(m)
+): PoolLookup {
+  if (poolOf === undefined) return { state: 'unknown' }
+  return poolOf.toLowerCase() === zero ? { state: 'none' } : { state: 'found', address: poolOf }
+}
+
+/**
+ * Picked ids a pending random redeem has locked (MiyaPool.isLocked), and picked ids whose lock read failed. Picks
+ * can go ahead only when both are empty.
+ */
+export function pickLocks(picked: readonly string[], lockOf: (id: string) => boolean | undefined) {
+  const locked: string[] = []
+  const unknown: string[] = []
+  for (const id of picked) {
+    const l = lockOf(id)
+    if (l === undefined) unknown.push(id)
+    else if (l) locked.push(id)
   }
-  return { free, unknown }
+  return { locked, unknown }
 }
 
 /** NFTs in a pool not promised to an open draw; undefined when either read failed. */

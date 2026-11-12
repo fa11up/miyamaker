@@ -1,25 +1,35 @@
 // Trade window pure logic: src/pages/Swap/tradePath.ts (paths, /swap → /trade) and src/pages/Swap/nft/pool.ts
-// (MiyaPool maths, id parsing, deposit plans, random-redeem commits). Run: yarn test
+// (MiyaPool v2 maths and the pick premium, id parsing, deposit plans, random-redeem commits). Run: yarn test
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
 import {
   blocksToReveal,
+  BPS,
   commitPhase,
+  DEFAULT_PREMIUM_BPS,
   depositPlan,
   directSendOnly,
   filterPools,
   KIND,
-  MODE,
+  MAX_PREMIUM_BPS,
+  noRandomWhy,
+  parsePremium,
   parseTokenIds,
   pendingFor,
   POOL_UNIT,
   poolIndexes,
   poolTitle,
+  premiumPerUnitOf,
+  premiumText,
+  randomOn,
   redeemCost,
-  unitsText,
-  wholeUnits,
   revealWords,
+  targetedCostOf,
+  unitsText,
+  wholePicks,
+  wholeUnits,
+  withPremium,
 } from '../src/pages/Swap/nft/pool.ts'
 import { canonicalPath, parseTradePath, tradePath } from '../src/pages/Swap/tradePath.ts'
 
@@ -60,6 +70,76 @@ test('1 NFT is 1e18 pool tokens', () => {
   assert.equal(unitsText(POOL_UNIT * 1234n), '1,234')
   assert.equal(unitsText((POOL_UNIT * 5n) / 2n), '2.5')
   assert.equal(unitsText(1n), '0.0001')
+})
+
+test('random costs exactly 1 token per NFT; pick costs 1 token + the premium (MiyaPool.targetedCost)', () => {
+  assert.equal(BPS, 10_000)
+  assert.equal(MAX_PREMIUM_BPS, 2_000)
+  assert.ok(DEFAULT_PREMIUM_BPS > 0 && DEFAULT_PREMIUM_BPS <= MAX_PREMIUM_BPS)
+  // premiumPerUnit = UNIT * bps / 10_000
+  assert.equal(premiumPerUnitOf(0), 0n)
+  assert.equal(premiumPerUnitOf(500), 5n * 10n ** 16n)
+  assert.equal(premiumPerUnitOf(1), 10n ** 14n)
+  assert.equal(premiumPerUnitOf(2_000), 2n * 10n ** 17n)
+  // targetedCost(units) = units * (UNIT + premiumPerUnit)
+  assert.equal(targetedCostOf(1, premiumPerUnitOf(500)), 105n * 10n ** 16n)
+  assert.equal(targetedCostOf(3, premiumPerUnitOf(500)), 315n * 10n ** 16n)
+  assert.equal(targetedCostOf(0, premiumPerUnitOf(500)), 0n)
+  assert.equal(targetedCostOf(2, 0n), redeemCost(2))
+  assert.equal(unitsText(targetedCostOf(1, premiumPerUnitOf(500))), '1.05')
+  assert.equal(unitsText(targetedCostOf(1, premiumPerUnitOf(1))), '1.0001')
+  // The random path never pays the premium.
+  assert.equal(redeemCost(3), 3n * POOL_UNIT)
+  // How many a balance can pick.
+  assert.equal(wholePicks(undefined, 0n), 0)
+  assert.equal(wholePicks(POOL_UNIT * 2n, undefined), 0)
+  assert.equal(wholePicks(POOL_UNIT * 2n, premiumPerUnitOf(500)), 1)
+  assert.equal(wholePicks(targetedCostOf(2, premiumPerUnitOf(500)), premiumPerUnitOf(500)), 2)
+  assert.equal(wholePicks(targetedCostOf(2, premiumPerUnitOf(500)) - 1n, premiumPerUnitOf(500)), 1)
+  assert.equal(wholePicks(POOL_UNIT * 2n, 0n), 2)
+  // A token price scaled to a pick.
+  assert.equal(withPremium(100n, 500), 105n)
+  assert.equal(withPremium(100n, 0), 100n)
+})
+
+test('premium as a percent: shown, and parsed from the create form with plain errors', () => {
+  assert.equal(premiumText(500), '5%')
+  assert.equal(premiumText(525), '5.25%')
+  assert.equal(premiumText(1250), '12.5%')
+  assert.equal(premiumText(1), '0.01%')
+  assert.equal(premiumText(0), '0%')
+  assert.equal(premiumText(2_000), '20%')
+  assert.deepEqual(parsePremium('5'), { bps: 500 })
+  assert.deepEqual(parsePremium(' 5 % '), { bps: 500 })
+  assert.deepEqual(parsePremium('0.25'), { bps: 25 })
+  assert.deepEqual(parsePremium('.5'), { bps: 50 })
+  assert.deepEqual(parsePremium('12.5'), { bps: 1250 })
+  assert.deepEqual(parsePremium('0.01'), { bps: 1 })
+  assert.deepEqual(parsePremium('1.230'), { bps: 123 })
+  assert.deepEqual(parsePremium('0'), { bps: 0 })
+  assert.deepEqual(parsePremium('20'), { bps: 2_000 })
+  assert.match(parsePremium('20.01').error!, /at most 20%/)
+  assert.match(parsePremium('100').error!, /at most 20%/)
+  assert.match(parsePremium('1.234').error!, /two decimals/)
+  assert.match(parsePremium('-1').error!, /not a percent/)
+  assert.match(parsePremium('5e1').error!, /not a percent/)
+  assert.match(parsePremium('abc').error!, /not a percent/)
+  assert.match(parsePremium('').error!, /Enter a premium/)
+  // A chain whose factory has no vault takes only 0.
+  assert.deepEqual(parsePremium('0', 0), { bps: 0 })
+  assert.match(parsePremium('5', 0).error!, /must have a 0% premium/)
+  // Every value the form accepts is one the contract accepts, and shows back as typed.
+  for (let bps = 0; bps <= MAX_PREMIUM_BPS; bps += 7) {
+    assert.deepEqual(parsePremium(premiumText(bps)), { bps })
+  }
+})
+
+test('random redeems: off on Robinhood Chain and for ERC-1155, with the reason in words', () => {
+  assert.equal(randomOn(1), true)
+  assert.equal(randomOn(11155111), true)
+  assert.equal(randomOn(4663), false)
+  assert.match(noRandomWhy(KIND.ERC1155, 1), /ERC-1155/)
+  assert.match(noRandomWhy(KIND.ERC721, 4663), /Robinhood Chain/)
 })
 
 test('token ids: lists, ranges, # prefixes, dedupe, and plain errors', () => {
@@ -121,7 +201,8 @@ test('pool list: newest first, filtered by name, ticker or address', () => {
       address: POOL,
       collection: '0x2222222222222222222222222222222222222222',
       kind: KIND.ERC721,
-      mode: MODE.TARGETED,
+      premiumBps: 500,
+      randomEnabled: true,
       symbol: 'mMIL',
       name: 'miya pool: Milady',
       collectionName: 'Milady',
@@ -131,7 +212,8 @@ test('pool list: newest first, filtered by name, ticker or address', () => {
       address: '0x3333333333333333333333333333333333333333',
       collection: '0x4444444444444444444444444444444444444444',
       kind: KIND.ERC1155,
-      mode: MODE.RANDOM,
+      premiumBps: 0,
+      randomEnabled: false,
       symbol: 'mSONG',
       name: 'miya pool: Song',
       held: 1n,

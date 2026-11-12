@@ -304,6 +304,9 @@ const TileBox = styled.button`
     overflow: hidden;
     text-overflow: ellipsis;
   }
+  .note {
+    color: ${color.warning};
+  }
 `
 
 /** One NFT: picture, number and (ERC1155) how many. Selectable when `onToggle` is given. */
@@ -317,6 +320,7 @@ export function NftTile({
   name,
   selected,
   onToggle,
+  note,
 }: {
   chainId: SupportedChainId
   collection: Address
@@ -328,6 +332,8 @@ export function NftTile({
   name?: string
   selected?: boolean
   onToggle?: () => void
+  /** A word on the tile saying why it can't be chosen, e.g. "locked". */
+  note?: string
 }) {
   const meta = useNftMeta(chainId, image ? undefined : collection, kind, id)
   // Many collections' metadata hosts refuse browsers, so a token's own link can come back empty. OpenSea has a copy.
@@ -344,13 +350,16 @@ export function NftTile({
       aria-pressed={onToggle ? !!selected : undefined}
       disabled={!onToggle}
       onClick={onToggle}
-      title={title}
-      aria-label={`${title}${units !== undefined && units > 1n ? `, ${units} in the pool` : ''}`}
+      title={note ? `${title}: ${note}` : title}
+      aria-label={`${title}${units !== undefined && units > 1n ? `, ${units} in the pool` : ''}${
+        note ? `, ${note}` : ''
+      }`}
     >
       <NftImage src={image || meta.image || fallback} alt="" variant="thumb" />
       <span className="label">
         <span>{label}</span>
         {units !== undefined && units > 1n && <span>×{units.toString()}</span>}
+        {note && <span className="note">{note}</span>}
       </span>
     </TileBox>
   )

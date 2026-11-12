@@ -4,13 +4,11 @@ import styled from 'styled-components/macro'
 import type { Address } from 'viem'
 import { useAccount, useSwitchChain } from 'wagmi'
 
-import LoadingHourglass from '@/assets/loading_hourglass.gif'
 import NftImage from '@/components/NftImage'
 import type { SupportedChainId } from '@/config/wagmi'
 import { chains, mainnet } from '@/config/wagmi'
 import { groupByCollection } from '@/desktop/files/indexer/parse'
 import { useWalletNfts } from '@/desktop/files/useWalletFiles'
-import { txWords, useTx } from '@/miyamints/useTx'
 
 import type { Sort } from '../board'
 import { isFeaturedSlug, verifiedFirst } from '../board'
@@ -21,15 +19,14 @@ import { Body } from '../layout'
 import type { CollectionColumn } from '../MarketBoard'
 import { CollectionTable, Section } from '../MarketBoard'
 import type { CollectionRef } from '../tradePath'
-import { poolFactoryAbi } from './abi'
 import type { CollectionPlace } from './CollectionView'
 import CollectionView from './CollectionView'
+import { CreatePool } from './CreatePool'
 import ItemView from './ItemView'
 import { OPENSEA_CHAIN } from './markets'
-import type { PoolMode } from './pool'
-import { filterPools, MODE, MODE_HINT, MODE_LABEL, poolTitle } from './pool'
+import { filterPools, poolTitle, premiumText } from './pool'
 import PoolView from './PoolView'
-import { Card, Field, Head, Hint, LinkButton, Prose, PushButton, SwitchNote } from './ui'
+import { Card, Field, Head, Hint, LinkButton, Prose } from './ui'
 import {
   contractForSlug,
   useCollectionRow,
@@ -122,12 +119,6 @@ const Soon = styled.div`
   border: 1px dashed ${color.dark};
   font-size: ${text.sm};
   color: ${color.inkMuted};
-`
-
-const CreateRow = styled.div`
-  display: flex;
-  gap: ${space[2]};
-  flex-wrap: wrap;
 `
 
 const Footer = styled.p`
@@ -229,7 +220,10 @@ function PoolRow({ chainId, pool, onOpen }: { chainId: number; pool: Pool; onOpe
           {pool.held === undefined ? '– NFTs' : `${pool.held.toLocaleString('en-US')} NFT${pool.held === 1n ? '' : 's'}`}
         </span>
         <span className="meta">
-          <Chip tone={pool.mode === MODE.TARGETED ? 'ok' : 'warn'}>{MODE_LABEL[pool.mode]}</Chip>
+          <Chip title="Random: 1 token. Pick: 1 token plus this premium.">
+            {pool.premiumBps === undefined ? 'Pick +?' : `Pick +${premiumText(pool.premiumBps)}`}
+          </Chip>
+          {pool.randomEnabled && <Chip tone="ok">Random</Chip>}
           <span>{pool.symbol}</span>
         </span>
       </Row>
@@ -355,13 +349,10 @@ export default function NftTrade({
   const search = useOpenSeaSearch(chainId, query)
   const owned = useOpenSeaOwned(chainId, address)
   const walletNfts = useWalletNfts(chainId === mainnet.id && owned.needsKey ? address : undefined)
-  const create = useTx(() => {
-    lookup.refetch()
-    list.refetch()
-  })
   // The page open below this one, whose own reviews report here.
   const [pageBusy, setPageBusy] = useState(false)
-  const busy = create.busy || pageBusy
+  const [creating, setCreating] = useState(false)
+  const busy = creating || pageBusy
   useEffect(() => onBusy?.(busy), [busy])
 
   // A chosen place survives going back: each page's settings and scroll, and the table's order.
@@ -487,7 +478,6 @@ export default function NftTrade({
           chainId={chainId}
           address={pool}
           onBack={() => onOpenPool(undefined)}
-          onOpenPool={onOpenPool}
           onSwapToken={onSwapToken}
           onBusy={setPageBusy}
           wallet={{
@@ -503,17 +493,6 @@ export default function NftTrade({
       </Body>
     )
   }
-
-  const createPool = (mode: PoolMode) =>
-    lookup.collection &&
-    factory &&
-    create.run(`create-${mode}`, {
-      address: factory,
-      abi: poolFactoryAbi,
-      functionName: 'createPool',
-      args: [lookup.collection, mode],
-      chainId,
-    })
 
   const marketsHere = !!OPENSEA_CHAIN[chainId]
   const nameQuery = query.trim().length >= 2 && !lookup.collection
@@ -603,15 +582,16 @@ export default function NftTrade({
       {!factory ? (
         <Soon role="status" data-pools-not-deployed>
           <Chip tone="warn">Opens soon</Chip>
-          <span>NFT pools: sell an NFT for a token and buy one back, with no fees.</span>
+          <span>NFT pools: sell an NFT for a token and buy one back.</span>
         </Soon>
       ) : (
         <>
           <Card aria-label="How NFT pools work">
-            <Eyebrow>MiyaPool · 0% fees</Eyebrow>
+            <Eyebrow>MiyaPool</Eyebrow>
             <Prose>
-              A pool holds NFTs from one collection. Each NFT in it is worth exactly 1 pool token. Sell an NFT to the
-              pool and you get 1 token. Pay 1 token and you take an NFT out. No fees.
+              A pool holds NFTs from one collection. Each NFT in it is backed by exactly 1 pool token. Sell an NFT to
+              the pool and you get 1 token. To take one out: pay 1 token for a random NFT, or 1 token plus the
+              pool&apos;s premium to pick the one you want. The premium goes to the INFER/IMD alignment vault.
             </Prose>
           </Card>
 
@@ -657,49 +637,31 @@ export default function NftTrade({
             </StatusBox>
           )}
 
-          {lookup.collection && lookup.freeModes.length > 0 && (
+          {lookup.collection && lookup.free && (
             <Card aria-label="Start a pool">
               <Head>
                 <h2>Start a pool for this collection</h2>
               </Head>
-              <Prose>Anyone can start one. There is one pool per collection for each way of buying.</Prose>
-              <CreateRow>
-                {lookup.freeModes.map((m) => (
-                  <PushButton
-                    key={m}
-                    type="button"
-                    disabled={create.busy || !isConnected || wrongChain}
-                    onClick={() => createPool(m)}
-                    title={MODE_HINT[m]}
-                  >
-                    Start a {MODE_LABEL[m]} pool
-                  </PushButton>
-                ))}
-              </CreateRow>
-              <Hint>
-                {MODE_LABEL[MODE.TARGETED]}: {MODE_HINT[MODE.TARGETED]} {MODE_LABEL[MODE.RANDOM]}:{' '}
-                {MODE_HINT[MODE.RANDOM]} Random pools work only for ERC-721.
-              </Hint>
-              {!isConnected ? (
-                <PushButton type="button" onClick={() => openConnectModal?.()}>
-                  Connect wallet
-                </PushButton>
-              ) : wrongChain ? (
-                <>
-                  <SwitchNote chainName={chain.name} failed={!!switchError} />
-                  <PushButton type="button" onClick={() => switchChain({ chainId })} disabled={switching}>
-                    {switching ? 'Switching…' : `Switch to ${chain.name}`}
-                  </PushButton>
-                </>
-              ) : null}
-              {create.tx.phase !== 'idle' && (
-                <StatusBox tone={create.tx.phase === 'error' ? 'error' : create.tx.phase === 'done' ? 'ok' : 'info'}>
-                  {create.busy && <img src={LoadingHourglass} alt="" />}
-                  <span>
-                    {create.tx.phase === 'done' ? 'Pool started. It is in the list above.' : txWords(create.tx)}
-                  </span>
-                </StatusBox>
-              )}
+              <CreatePool
+                key={`${chainId}-${lookup.collection}`}
+                chainId={chainId}
+                factory={factory}
+                collection={lookup.collection}
+                onCreated={() => {
+                  lookup.refetch()
+                  list.refetch()
+                }}
+                onBusy={setCreating}
+                doneWords="Pool started. It is in the list above."
+                wallet={{
+                  isConnected,
+                  wrongChain,
+                  switching,
+                  switchChain,
+                  switchFailed: !!switchError,
+                  openConnectModal,
+                }}
+              />
             </Card>
           )}
 
@@ -712,7 +674,9 @@ export default function NftTrade({
         </>
       )}
       <Footer>
-        {factory ? `Pools on ${chain.name}: no fees, no owner, the contracts cannot be changed or paused. ` : ''}
+        {factory
+          ? `Pools on ${chain.name}: no owner, the contracts cannot be changed or paused. Selling in is free; a random NFT costs 1 token; picking one costs 1 token plus the pool's premium. `
+          : ''}
       </Footer>
     </Body>
   )

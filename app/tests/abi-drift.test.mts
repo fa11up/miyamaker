@@ -182,3 +182,16 @@ test('the drift check catches a renamed field of the same type', () => {
     'function commits(uint256): output snapshot is queueEnd on the contract',
   ])
 })
+
+test('the drift check catches the v1 pool lookup and create (a mode argument)', () => {
+  // MiyaPool v1 had one pool per (collection, mode); v2 has one per collection, created with a premium.
+  const stale = structuredClone(nft.poolFactoryAbi) as unknown as Item[]
+  const poolOf = stale.find((i) => i.name === 'poolOf')!
+  ;(poolOf as unknown as { inputs: Param[] }).inputs = [...poolOf.inputs!, { type: 'uint8', name: 'mode' }]
+  const create = stale.find((i) => i.name === 'createPool')!
+  ;(create as unknown as { inputs: Param[] }).inputs = [create.inputs![0]!, { type: 'uint8', name: 'mode' }]
+  assert.deepEqual(drift(stale, contracts.MiyaPoolFactory!), [
+    'function poolOf(address,uint8): not on the contract (contract has poolOf(address))',
+    'function createPool(address,uint8): not on the contract (contract has createPool(address,uint16))',
+  ])
+})
