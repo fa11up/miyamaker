@@ -797,6 +797,8 @@ export type CronDeps = {
   refresh?: (c: Collection, tokenId: number) => Promise<RefreshResult>
   /** The wait between two refreshes (REFRESH_GAP_MS; tests set 0). */
   refreshGapMs?: number
+  /** Widest getLogs range to try, in blocks (FIRST_SPAN when unset): raise it for an RPC that allows wider reads. */
+  logSpan?: number
 }
 
 /** One run over every attached collection. A collection's error is logged and kept on its row; the others go on. */
@@ -820,7 +822,7 @@ export async function runRevealCron(deps: CronDeps): Promise<void> {
         const chain = deps.chain(c.chainId)
         if (!chain) throw new Error(`no RPC for chain ${c.chainId}`)
         const budget = { calls: RPC_BUDGET }
-        const scanned = await scan(deps.db, chain, c.slug, budget, log)
+        const scanned = await scan(deps.db, chain, c.slug, budget, log, deps.logSpan ?? FIRST_SPAN)
         // Draws wait (they come out the same later: they depend on the chain alone) until every piece can be served.
         const missing = await missingPieces(c, deps.db, deps.bucket)
         if (missing) log(`reveal ${c.slug}: not drawing, ${missing}`)
@@ -887,7 +889,14 @@ export function parseMintLog(log: RawLog, address: string, from: number, to: num
  * Reads mints forward from last_scanned_block + 1 up to head - CONFIRMATIONS. Each chunk is written only when it is
  * whole: its mints are exactly tokens minted+1 .. totalSupply() at the chunk's last block. Returns the mints stored.
  */
-async function scan(db: RevealDb, chain: RevealChain, slug: string, budget: Budget, log: (l: string) => void) {
+async function scan(
+  db: RevealDb,
+  chain: RevealChain,
+  slug: string,
+  budget: Budget,
+  log: (l: string) => void,
+  maxSpan: number
+) {
   let stored = 0
   if (!spend(budget)) return 0
   const head = await chain.blockNumber()
@@ -898,7 +907,7 @@ async function scan(db: RevealDb, chain: RevealChain, slug: string, budget: Budg
     const from = c.lastScannedBlock + 1
     if (from > safe) return stored
 
-    let span = spans.get(slug) ?? FIRST_SPAN
+    let span = Math.min(spans.get(slug) ?? maxSpan, maxSpan)
     let logs: RawLog[] | undefined
     let to = from
     while (!logs) {
@@ -917,7 +926,7 @@ async function scan(db: RevealDb, chain: RevealChain, slug: string, budget: Budg
         )
       }
     }
-    spans.set(slug, Math.min(FIRST_SPAN, span * 2)) // the next read tries wider again: one bad moment isn't forever
+    spans.set(slug, Math.min(maxSpan, span * 2)) // the next read tries wider again: one bad moment isn't forever
 
     const mints = logs.map((l) => parseMintLog(l, c.address!, from, to, c.supply)).sort((a, b) => a.tokenId - b.tokenId)
     mints.forEach((m, i) => {
