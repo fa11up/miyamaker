@@ -38,6 +38,10 @@ jobs:
         run: yarn typecheck:tests
       - name: Tests
         run: yarn test
+      # The production bundle (desktop + embed/miyakeys), so a broken import in either shows here, not at deploy.
+      # No .env.production.local in CI: VITE_ values are unset, which builds the same code.
+      - name: Build
+        run: yarn vite build
 
   chat:
     runs-on: ubuntu-latest
