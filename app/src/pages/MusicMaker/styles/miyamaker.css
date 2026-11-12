@@ -2107,14 +2107,24 @@ button.mix-insert-title {
 
 .tracker-bar .pattern-pick { flex: 0 1 168px; min-width: 96px; }
 
+.tracker-fit {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  font-size: calc(12px * var(--track-zoom, 1));
+}
 .tracker {
+  position: absolute;
+  inset: 0;
   overflow: hidden;
   background: var(--well);
   box-shadow: var(--sunken);
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: inherit;
   flex: 1 1 auto;
   min-height: 0;
+  min-width: 0;
   touch-action: none;
   overscroll-behavior: none;
   user-select: none;
@@ -2122,9 +2132,33 @@ button.mix-insert-title {
 }
 .tracker:focus { outline: none; }
 .tracker td .pair { background: var(--highlight); color: var(--ink); }
+/* SL is four digits and LP is eight. The cursor is only the two digits it can edit. */
+.tracker td:has(.pair.here) {
+  position: relative;
+  z-index: 1;
+  overflow: visible;
+}
+.tracker .pair.here {
+  display: inline-block;
+  position: relative;
+  z-index: 2;
+  line-height: calc(16px * var(--track-zoom, 1));
+  outline: 2px solid #ffffff;
+  outline-offset: -1px;
+  background: transparent;
+  box-shadow:
+    inset 0 0 0 1px #ffffff,
+    0 0 0 1px #ffffff,
+    0 0 6px 1px #ffffff,
+    0 0 14px 4px rgba(255, 255, 255, 0.9);
+}
+.tracker .pair.here.edit {
+  background: #ff1a1a;
+  color: #ffffff;
+}
 
 .tracker table { border-collapse: separate; border-spacing: 0; width: max-content; }
-.tracker tbody tr { height: 18px; }
+.tracker tbody tr { height: calc(18px * var(--track-zoom, 1)); }
 .tracker th, .tracker td {
   border-right: 1px solid var(--light);
   border-bottom: 1px solid var(--light);
@@ -2134,8 +2168,8 @@ button.mix-insert-title {
   white-space: nowrap;
 }
 .tracker tbody td {
-  height: 18px;
-  line-height: 18px;
+  height: calc(18px * var(--track-zoom, 1));
+  line-height: calc(18px * var(--track-zoom, 1));
   overflow: hidden;
 }
 .tracker thead th {
@@ -2144,15 +2178,15 @@ button.mix-insert-title {
   color: #000000;
   z-index: 1;
 }
-.tracker thead tr:first-child th { top: 0; height: 20px; line-height: 20px; }
-.tracker thead tr:nth-child(2) th { top: 20px; height: 15px; line-height: 15px; }
+.tracker thead tr:first-child th { top: 0; height: calc(20px * var(--track-zoom, 1)); line-height: calc(20px * var(--track-zoom, 1)); }
+.tracker thead tr:nth-child(2) th { top: calc(20px * var(--track-zoom, 1)); height: calc(15px * var(--track-zoom, 1)); line-height: calc(15px * var(--track-zoom, 1)); }
 .tracker th.track {
   text-align: left;
   padding: 0 4px;
   box-shadow: inset 3px 0 0 var(--shadow);
 }
 .tracker th.sub {
-  font-size: 10px;
+  font-size: calc(10px * var(--track-zoom, 1));
   font-weight: 400;
   letter-spacing: 0.04em;
   color: var(--ink-muted);
@@ -2165,12 +2199,12 @@ button.mix-insert-title {
   min-width: 0;
 }
 .tracker .track-title b {
-  font-size: 13px;
+  font-size: calc(13px * var(--track-zoom, 1));
   letter-spacing: 0.04em;
 }
 .tracker .track-title span {
   font-family: var(--mono);
-  font-size: 13px;
+  font-size: calc(13px * var(--track-zoom, 1));
   font-weight: 700;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2199,7 +2233,7 @@ button.mix-insert-title {
 .tracker td.st,
 .tracker tr.beat td.st,
 .tracker tr.bar td.st,
-.tracker tr.play td.st { background: #8873b3; color: #000000; }
+.tracker tr.play td.st { background: #8873b3; color: #f8b29c; }
 .tracker tr.beat td.st { background: #7d68ae; }
 .tracker tr.bar td.st { background: #766eb8; }
 .tracker tr.play td.st { background: #9c2f58; color: #ffffff; }
@@ -2249,7 +2283,7 @@ button.mix-insert-title {
   left: 0;
   z-index: 2;
   text-align: right;
-  color: #000000;
+  color: #f8b29c;
   background: #8873b3;
   min-width: 2.4em;
 }
@@ -2268,30 +2302,53 @@ button.mix-insert-title {
 }
 .tracker-tools .field.num { width: 42px; }
 
-.row-vu {
+/* The cursor cross. Bottom right of the tracker, in the same pink and purple as the buttons. */
+.track-pad {
   position: absolute;
-  z-index: 6;
-  left: var(--vu-left, 50%);
-  top: var(--vu-top, 50%);
-  display: flex;
-  align-items: stretch;
-  gap: 1px;
-  width: 64px;
-  height: 6px;
-  padding: 1px;
-  transform: translate(-50%, 3px);
-  background: rgba(36, 20, 63, 0.55);
-  opacity: var(--vu-show, 0);
+  z-index: 8;
+  right: 10px;
+  bottom: 10px;
+  width: 118px;
+  height: 118px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 18px;
+  background-image: var(--glass-sheen), var(--btn-fill);
+  background-color: transparent;
+  box-shadow: var(--glass-edge);
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: pointer;
+}
+.track-pad-cross {
+  position: absolute;
+  left: 12px;
+  top: 12px;
+  width: 94px;
+  height: 94px;
   pointer-events: none;
 }
-.row-vu i {
-  flex: 1 1 0;
-  background: rgba(255, 255, 255, 0.28);
+.track-pad .plus { fill: #5a4a96; }
+.track-pad .tri { fill: #fff6f2; }
+.track-pad .nub { fill: #3d2a6b; }
+.track-pad.held-up .tri.up,
+.track-pad.held-down .tri.down,
+.track-pad.held-left .tri.left,
+.track-pad.held-right .tri.right { fill: #ffffff; }
+.mmm.theme-k3 .track-pad {
+  background-image: none;
+  background: #000000;
+  box-shadow: inset 0 0 0 1px #ffffff;
 }
-.row-vu i.on { background: #24143f; }
-.mmm.theme-k3 .row-vu { background: rgba(0, 0, 0, 0.35); }
-.mmm.theme-k3 .row-vu i { background: rgba(255, 255, 255, 0.35); }
-.mmm.theme-k3 .row-vu i.on { background: #000000; }
+.mmm.theme-k3 .track-pad .plus { fill: #ffffff; }
+.mmm.theme-k3 .track-pad .tri { fill: #000000; }
+.mmm.theme-k3 .track-pad .nub { fill: #000000; stroke: #ffffff; stroke-width: 1.5; }
+.mmm.theme-k3 .track-pad.held-up .tri.up,
+.mmm.theme-k3 .track-pad.held-down .tri.down,
+.mmm.theme-k3 .track-pad.held-left .tri.left,
+.mmm.theme-k3 .track-pad.held-right .tri.right { fill: #ffffff; }
 
 .track-status {
   margin: 0;
@@ -2388,6 +2445,25 @@ button.mix-insert-title {
 .mmm.theme-k3 .tracker td.edit .id,
 .mmm.theme-k3 .tracker tr.play td.edit .id { color: #000000; }
 .mmm.theme-k3 .tracker td .pair { background: #000000; color: #ffffff; }
+.mmm.theme-k3 .tracker .pair.here:not(.edit) {
+  background: transparent;
+  color: inherit;
+}
+.mmm.theme-k3 .tracker .pair.here.edit {
+  background: #ffffff;
+  color: #000000;
+}
+.mmm.theme-k3 .tracker tr.play .pair.here {
+  outline-color: #000000;
+  box-shadow:
+    inset 0 0 0 1px #000000,
+    0 0 0 1px #000000,
+    0 0 8px 2px rgba(0, 0, 0, 0.9);
+}
+.mmm.theme-k3 .tracker tr.play .pair.here.edit {
+  background: #000000;
+  color: #ffffff;
+}
 .mmm.theme-k3 .tracker td.block {
   box-shadow: inset 0 0 0 1px #ffffff;
 }
@@ -3010,13 +3086,14 @@ button.mix-insert-title {
   .edit-screen .synth-grid > .group:nth-child(2) { grid-column: auto; order: 0; }
   .mix {
     flex-wrap: wrap;
-    overflow-y: auto;
+    overflow-x: hidden;
+    overflow-y: visible;
   }
   .strip {
-    flex: 0 0 52px;
-    width: 52px;
-    min-width: 52px;
-    max-width: 52px;
+    flex: 1 1 22%;
+    width: auto;
+    min-width: 0;
+    max-width: 25%;
   }
   .seq-top { flex-wrap: wrap; overflow: visible; }
   .seq-top .pattern-bar { flex: 1 1 100%; max-width: 100%; }
@@ -3124,6 +3201,51 @@ button.mix-insert-title {
 
 .rail-slot:empty { display: none; }
 
+.dock-rail .seq-tools,
+.dock-rail .seq-snap {
+  width: 100%;
+}
+
+.dock-rail .seq-tools {
+  flex: 0 0 auto;
+  flex-direction: column;
+  flex-wrap: nowrap;
+  align-items: stretch;
+  gap: 2px;
+}
+
+.dock-rail .zoom-ctl {
+  flex-direction: column;
+  align-items: stretch;
+  width: 100%;
+  gap: 2px;
+}
+
+.dock-rail .seq-tools .btn,
+.dock-rail .zoom-ctl .btn {
+  writing-mode: horizontal-tb;
+  text-orientation: mixed;
+  transform: none;
+  flex: 0 0 auto;
+  width: 100%;
+  height: auto;
+  min-height: max(28px, var(--touch-sm));
+  padding: 3px 2px;
+  font-size: 11px;
+  line-height: 1.05;
+  letter-spacing: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.dock-rail .zoom-ctl > span {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}
+
 .dock-rail .shift-hold {
   margin-top: auto;
   padding: 20px 0;
@@ -3131,6 +3253,22 @@ button.mix-insert-title {
   font-size: 12px;
   touch-action: none;
 }
+
+.dock-rail .rail-wheel {
+  margin-top: auto;
+  flex: 0 0 96px;
+  width: 100%;
+  height: 96px;
+  min-height: 72px;
+}
+
+.dock-rail .rail-wheel.pitch-wheel::before,
+.dock-rail .rail-wheel .pitch-thumb {
+  left: 2px;
+  right: 2px;
+}
+
+.dock-rail .rail-wheel + .shift-hold { margin-top: 2px; }
 
 .shift-hold { position: relative; }
 
@@ -3700,27 +3838,7 @@ input[type="range"]:focus-visible {
     min-height: 96px;
     pointer-events: auto;
   }
-  .dock-rail .seq-tools {
-    flex-direction: column;
-    flex-wrap: nowrap;
-    align-items: stretch;
-    gap: 2px;
-    width: 100%;
-  }
-  .dock-rail .zoom-ctl {
-    flex-direction: column;
-    align-items: stretch;
-    width: 100%;
-    gap: 2px;
-  }
   .dock-rail .help-btn { min-height: 36px; }
-  .dock-rail .zoom-ctl > span {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip: rect(0 0 0 0);
-  }
 
   /* Phone tracker: the step numbers sit in the left rail, which otherwise only holds Tabs and Shift.
      A wide window keeps them inside the grid so the browser and the docks stay where they are. */
@@ -3728,6 +3846,7 @@ input[type="range"]:focus-visible {
   .mmm.screen-track .tracker-screen { overflow: visible; }
   .mmm.screen-track .mmm-rest { position: relative; z-index: 9; }
   .mmm.screen-track .tracker {
+    right: auto;
     margin-left: -52px;
     width: calc(100% + 52px);
   }
@@ -3754,6 +3873,54 @@ input[type="range"]:focus-visible {
 .tracker td.block {
   outline: 1px solid #ffffff;
   outline-offset: -2px;
+}
+
+/* Pattern wrap. Row 00 is the start again, so a dark line sits on top of it.
+   Track 01 of the repeated pattern is thicker, so it separates from track 16. */
+.mmm .tracker tr.loop > td {
+  background-image: linear-gradient(#24143f, #24143f);
+  background-size: 100% 3px;
+  background-repeat: no-repeat;
+  background-position: top;
+}
+.mmm .tracker tr.loop > td.edit.edge {
+  background-image:
+    linear-gradient(#24143f, #24143f),
+    linear-gradient(90deg, #5a4a96 0 3px, transparent 3px);
+  background-size: 100% 3px, auto;
+  background-repeat: no-repeat;
+}
+.tracker td.wrap,
+.tracker th.wrap {
+  border-left: 6px solid #24143f;
+}
+.tracker td.wrap.edge:not(.here):not(.edit),
+.tracker th.wrap {
+  box-shadow: none;
+}
+.mmm.theme-k3 .tracker tr.loop > td {
+  background-image: linear-gradient(#ffffff, #ffffff);
+  background-size: 100% 3px;
+  background-repeat: no-repeat;
+  background-position: top;
+}
+.mmm.theme-k3 .tracker tr.loop.play > td,
+.mmm.theme-k3 .tracker tr.loop > td.edit {
+  background-image: linear-gradient(#000000, #000000);
+  background-size: 100% 3px;
+  background-repeat: no-repeat;
+  background-position: top;
+}
+.mmm.theme-k3 .tracker td.wrap,
+.mmm.theme-k3 .tracker th.wrap {
+  border-left-color: #ffffff;
+}
+.mmm.theme-k3 .tracker tr.play td.wrap {
+  border-left-color: #000000;
+}
+.mmm.theme-k3 .tracker td.wrap.edge:not(.here):not(.edit),
+.mmm.theme-k3 .tracker th.wrap {
+  box-shadow: none;
 }
 
 .coach-line,
@@ -4328,6 +4495,98 @@ input[type="range"]:focus-visible {
   font-weight: 700;
 }
 
+.strum-bar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  min-width: 0;
+  z-index: 4;
+}
+
+.strum-screen {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  min-height: 0;
+}
+
+.strum-bar > .btn {
+  flex: 0 0 auto;
+  min-width: 64px;
+  min-height: 28px;
+  padding: 0 8px;
+}
+
+.strum-picker {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+}
+
+.strum-roots {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 3px;
+  flex: 0 0 auto;
+}
+
+.strum-bank {
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-rows: repeat(5, minmax(40px, auto));
+  gap: 3px;
+  min-height: 0;
+}
+
+.mmm.surface-strum .perf-surface.for-strum:has(.strum-picker) {
+  height: auto !important;
+}
+
+.strum-banks {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 3px;
+  flex: 0 0 auto;
+}
+
+.strum-picker .btn {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 40px;
+  padding: 0 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.strum-roots .btn,
+.strum-banks .btn {
+  height: auto;
+  min-height: 28px;
+}
+
+@container mmm (max-width: 600px) {
+  .strum-roots { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+}
+
+@media (pointer: coarse) {
+  .strum-roots .btn,
+  .strum-banks .btn,
+  .strum-bank .btn { min-height: 32px; }
+}
+
 .mmm.surface-strum .piano-strum {
   flex: 1 1 auto;
   height: auto;
@@ -4506,20 +4765,39 @@ input[type="range"]:focus-visible {
 }
 
 .piano-strum {
+  display: flex;
   height: 48px;
   min-height: 36px;
   border-radius: 3px;
   touch-action: none;
   cursor: pointer;
-  background-color: #f3c3b4;
-  background-image: repeating-linear-gradient(
-    90deg,
-    rgba(255, 255, 255, 0.55) 0,
-    rgba(255, 255, 255, 0.55) calc(100% / var(--stripes)),
-    #f9bba6 0,
-    #f9bba6 calc(200% / var(--stripes))
-  );
+  overflow: hidden;
+  background: #f3c3b4;
   box-shadow: var(--sunken);
+}
+
+.piano-strum i {
+  flex: 1 1 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  min-width: 0;
+  padding-bottom: 3px;
+  font-style: normal;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  color: #000000;
+  pointer-events: none;
+  background: #f9bba6;
+  box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.7);
+}
+
+.piano-strum i:nth-child(odd) { background: #fff1ea; }
+
+.piano-strum i.is-root {
+  background: #fe9ca1;
+  box-shadow: inset 0 0 0 1px #2a1848;
 }
 
 .chord-panel {
@@ -4563,32 +4841,6 @@ input[type="range"]:focus-visible {
   left: calc(100% + 2px);
   top: 0;
   min-width: 148px;
-}
-
-.chord-side:has(.chord-shift) {
-  display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr) minmax(0, 1fr);
-}
-.chord-side:has(.chord-shift) .pitch-wheel,
-.chord-shift {
-  height: auto;
-  min-height: 0;
-  min-inline-size: 0;
-  overflow: hidden;
-}
-
-.chord-shift {
-  min-width: 0;
-  width: 100%;
-  margin: 0;
-  writing-mode: vertical-rl;
-  text-orientation: sideways;
-  transform: rotate(180deg);
-  padding: 12px 0;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  touch-action: none;
 }
 
 .chord-settings .file-menu {
@@ -4904,8 +5156,6 @@ input[type="range"]:focus-visible {
   min-height: 0;
   padding: 0 1px;
 }
-.mmm.chord-hand.surface-chords .dock-rail .shift-hold { display: none; }
-
 .mmm.theme-k3 .pitch-wheel {
   background: #000000;
   box-shadow: inset 0 0 0 1px #ffffff;
@@ -4926,6 +5176,9 @@ input[type="range"]:focus-visible {
 .mmm.theme-k3 .chord-white.on {
   background: radial-gradient(ellipse at 50% 18%, #ffffff, #fe9ca1 48%, #e07088);
 }
+
+.mmm.theme-k3 .piano-strum i { color: #000000; background: #ffffff; }
+.mmm.theme-k3 .piano-strum i.is-root { background: #fe9ca1; }
 
 .piano-more .file-menu {
   top: auto;
@@ -4948,6 +5201,18 @@ input[type="range"]:focus-visible {
 .file-menu button.on {
   background: var(--accent);
   color: #000000;
+}
+
+.snap-menu {
+  z-index: 40;
+  min-width: 96px;
+}
+
+.snap-menu p {
+  margin: 2px 4px 1px;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--ink-muted);
 }
 
 .mmm.theme-k3 .piano-white { background: #ffffff; color: #000000; }

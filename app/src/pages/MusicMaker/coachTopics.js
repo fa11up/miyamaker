@@ -27,10 +27,12 @@ export const COACH = {
   sequence: {
     title: 'Sequence',
     screen: 'seq',
-    blurb: 'This page is the beat. The rows are the pads, and the tracker shows the same hits.',
+    blurb: 'This page is the beat. The rows are the pads, and the tracker shows the same hits. On a wide window the tools stay above the grid. On a narrow window they stack in the left rail when it has room.',
     steps: [
-      { text: 'Draw paints a hit on a pad row. The note on the hit is the same note the tracker shows.', chip: { label: 'Draw', kind: 'btn' }, target: 'draw', screen: 'seq' },
+      { text: 'Draw places one note as long as the grid. Drag along the row to hold it. Click again beside it and that note stays separate, down to a 128th.', chip: { label: 'Draw', kind: 'btn' }, target: 'draw', screen: 'seq' },
       { text: 'Erase clears a hit.', chip: { label: 'Erase', kind: 'btn' }, target: 'erase', screen: 'seq' },
+      { text: 'Snap keeps a dragged note on the grid. Click it to turn Snap off. Hold it, right-click it, or Shift-click it for 1/4, 1/8, 1/16, 1/32, 1/64, or 1/128.', chip: { label: 'Snap', kind: 'btn' }, target: 'snap', screen: 'seq' },
+      { text: 'Snap on lands the note and its end on that division. Snap off lets it sit between steps, and End finishes it inside a step. The start is the MOVE column in the tracker.', chip: { label: 'End', kind: 'btn' } },
       { text: 'Note, Vel, and Bus FX choose what a drag changes. Bus FX is shared by the whole pad row.', chip: { label: 'Vel', kind: 'btn' }, target: 'vel', screen: 'seq' },
       { text: 'Select a hit. The handles sit inside the grid, just above the scrollbars. The bottom ones move it in time and change its length. The right one moves it to another pad. Add keeps the hits you already chose. Copy puts them on a paste line. Drag that line, then Paste.', chip: { label: 'Select', kind: 'btn' }, target: 'select', screen: 'seq' },
       { text: 'Pinch, or scroll the mouse wheel, to zoom the notes under the pointer. Shift-scroll still moves the grid. Drag a pad name, or the bar numbers, to scroll.', chip: { label: 'Zoom', kind: 'btn' }, target: 'zoom', screen: 'seq' },
@@ -41,7 +43,7 @@ export const COACH = {
     screen: 'mix',
     blurb: 'This page balances the buses. Tap a channel before you change it.',
     steps: [
-      { text: 'All sixteen buses sit in this row. On a phone, scroll the row sideways.', target: 'mix-row', screen: 'mix' },
+      { text: 'All sixteen buses sit in this row. On a phone they wrap, four to a row, and the page scrolls down.', target: 'mix-row', screen: 'mix' },
       { text: 'Tap a channel. Its five effect slots open under the strips. Tap another channel and those slots change. Empty slots stay off.', target: 'mix-fx', screen: 'mix' },
       { text: 'The EQ follows the channel you tap. The menu in its header can also choose Output. Drag a point to tune it. Right-click a point, or hold SHIFT and tap it, to choose low cut, bell, or high cut, and to make that band duck when it gets loud.', target: 'mix-eq', screen: 'mix' },
       { text: 'The limiter after the master compressor keeps the output from passing 0 dBFS.', chip: { label: 'Limit', kind: 'btn' } },
@@ -54,7 +56,8 @@ export const COACH = {
     steps: [
       { text: 'Rec on: the marked cell is where edits land, and the pattern can change. Rec off: the pattern does not change, stopped or playing.', chip: { label: 'Rec', kind: 'rec' }, target: 'rec', screen: 'track' },
       { text: 'Space plays and stops.', chip: { label: 'Play', kind: 'btn' }, target: 'play' },
-      { text: 'Drag empty grid space. The cursor walks the way your finger points.', target: 'tracker', screen: 'track' },
+      { text: 'Drag empty grid space. The cursor walks the way your finger points, and letting go stops it there.', target: 'tracker', screen: 'track' },
+      { text: 'The cross at the bottom right is the arrow keys. Tap a direction for one step. Drag away from the center to go faster, and let go to stop. Pinch, or scroll the wheel, to make the notes bigger or smaller.', target: 'track-pad', screen: 'track' },
       { text: 'Hold SHIFT at the lower left and drag with the other thumb to edit the cell.', chip: { label: 'SHIFT', kind: 'btn' }, target: 'shift', screen: 'track' },
       { text: 'Shift+Alt and the arrows mark a block from the cursor. Copy and paste that block. Delete and Shift+arrows change only the columns inside it.', chip: { label: 'NOTE', kind: 'btn' }, target: 'tracker', screen: 'track' },
     ],

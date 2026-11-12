@@ -56,6 +56,10 @@ export const model = {
   pattern: 0,
   patterns: [],
   recNatural: false,
+  /** Sequencer drags land on the grid. Off lets the note sit between steps, stored as MOVE. */
+  seqSnap: true,
+  /** Straight snap division: 4, 8, 16, 32, 64, or 128. A bar is 16 steps, so 16 is one step. */
+  seqDiv: 16,
   seqHit: null,
   playhead: 0,
   pads: [],
@@ -99,7 +103,7 @@ export const model = {
   pianoHeight: 240,
   help: false,
   about: false,
-  tracker: { row: 0, col: 0, pair: 0, focus: false, hex: '', sign: 1, edit: false, step: 1, follow: true, grains: false },
+  tracker: { row: 0, col: 0, pair: 0, focus: false, hex: '', sign: 1, edit: false, step: 1, follow: true, grains: false, zoom: 1 },
   library: null,
   wallet: '',
   fileWindow: '',
@@ -440,7 +444,11 @@ export function normalizeEvent(ev) {
     vel: num(ev?.vel, 0.9, 0, 1),
     pitch: num(ev?.pitch, 0, -96, 96),
     nudge: int(ev?.nudge, 0, -50, 50),
+    tail: 0,
+    cut: false,
   }
+  delete out.tail
+  delete out.cut
   if (ev?.off) out.off = true
   else {
     if (Number.isFinite(ev?.sl)) out.sl = Math.max(0, Math.min(65535, ev.sl | 0))
@@ -448,6 +456,13 @@ export function normalizeEvent(ev) {
       out.len = Math.max(0, Math.min(65535, ev.len | 0))
       out.move = Math.max(-32768, Math.min(32767, ev.move | 0))
     }
+    // How much of the last step the sequencer note fills. 100 is a full step and is not stored.
+    if (Number.isFinite(ev?.tail)) {
+      const tail = Math.round(Number(ev.tail))
+      if (tail >= 1 && tail <= 99) out.tail = tail
+    }
+    // A new attack. The sequencer does not join this hit onto the previous step.
+    if (ev?.cut) out.cut = true
   }
   return out
 }
@@ -740,31 +755,58 @@ export function hitsFor(col, pad) {
   return out
 }
 
+function runTail(ev) {
+  const t = Math.round(Number(ev?.tail))
+  if (!Number.isFinite(t) || t < 1 || t >= 100) return 100
+  return t
+}
+
 /**
  * Bars on one sequence row. Each pitch is its own bar, so a chord shows every note.
- * Consecutive steps of one pitch join. Two notes of the same pitch on one step stay apart.
+ * Consecutive steps of one pitch join into a held note.
+ * A hit with `cut` starts its own note, so two chops can sit against each other.
+ * Two notes of the same pitch on one step stay apart.
  */
 export function noteRuns(steps, pad) {
   const n = steps?.length || 0
   const open = []
   const runs = []
+  const take = (run, hit, s) => {
+    run.end = s
+    run.tail = runTail(hit.ev)
+    run.slots.push({ step: s, lane: hit.lane })
+  }
   for (let s = 0; s < n; s++) {
     const hits = hitsFor(steps[s], pad)
     const used = new Set()
     for (const run of open) {
       if (run.end !== s - 1) continue
-      const idx = hits.findIndex((hit, i) => !used.has(i) && (hit.ev.pitch | 0) === run.pitch)
+      const idx = hits.findIndex((hit, i) => !used.has(i) && !hit.ev.cut && (hit.ev.pitch | 0) === run.pitch && hit.lane === run.lane)
       if (idx < 0) continue
       used.add(idx)
-      run.end = s
-      run.ev = hits[idx].ev
+      take(run, hits[idx], s)
+    }
+    for (const run of open) {
+      if (run.end === s || run.end !== s - 1) continue
+      const idx = hits.findIndex((hit, i) => !used.has(i) && !hit.ev.cut && (hit.ev.pitch | 0) === run.pitch)
+      if (idx < 0) continue
+      used.add(idx)
+      take(run, hits[idx], s)
     }
     for (let i = open.length - 1; i >= 0; i--) {
       if (open[i].end !== s) open.splice(i, 1)
     }
     hits.forEach((hit, i) => {
       if (used.has(i)) return
-      const run = { start: s, end: s, pitch: hit.ev.pitch | 0, ev: hit.ev }
+      const run = {
+        start: s,
+        end: s,
+        pitch: hit.ev.pitch | 0,
+        ev: hit.ev,
+        lane: hit.lane,
+        tail: runTail(hit.ev),
+        slots: [{ step: s, lane: hit.lane }],
+      }
       open.push(run)
       runs.push(run)
     })
@@ -931,6 +973,7 @@ export function commitTrackerNote({ pad = 0, vel = TRACK_VEL, pitch = 0, off = f
     model.tracker.focus = true
     writeLane(writeRow, lane, ev)
   })
+  return { row: writeRow, lane }
 }
 
 export function patchTrackerEvent(row, lane, patch, { step = true } = {}) {
@@ -1067,6 +1110,8 @@ export function loadFactoryKit() {
   model.patterns = Array.from({ length: 256 }, () => null)
   model.pattern = 0
   model.recNatural = false
+  model.seqSnap = true
+  model.seqDiv = 16
   model.seqHit = null
   const demo = ensurePattern(0)
   demo.name = 'Demo'
@@ -1423,6 +1468,8 @@ export function save() {
     master: model.master,
     pattern: model.pattern,
     recNatural: !!model.recNatural,
+    seqSnap: model.seqSnap !== false,
+    seqDiv: [4, 8, 16, 32, 64, 128].includes(Number(model.seqDiv)) ? Number(model.seqDiv) : 16,
     editStep: editStep(),
     grainCols: !!model.tracker.grains,
     dockOpen: model.dockOpen !== false,
@@ -1725,6 +1772,8 @@ export function boot() {
       metroVol: num(data.metroVol, 0.55, 0, 1),
       master: num(data.master, 0.9, 0, 1),
       recNatural: !!data.recNatural,
+      seqSnap: data.seqSnap !== false,
+      seqDiv: [4, 8, 16, 32, 64, 128].includes(Number(data.seqDiv)) ? Number(data.seqDiv) : 16,
       settings: {
         ...model.settings,
         ...settings,

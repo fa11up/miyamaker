@@ -99,6 +99,7 @@ export const changeTone = (n: number | undefined): 'up' | 'down' | 'flat' =>
  * Robinhood Chain's list is hand-approved: most of what is there is unverified or copies of something else.
  */
 export const FEATURED_COLLECTIONS = [
+  { chainId: 1, slug: 'miyamaker', name: 'Miyamaker', address: '0xb86b68bca287afd48f81d1f792db69368664a120' },
   { chainId: 1, slug: 'miyamaker-mini', name: 'miyamaker mini', address: '0x375a1911c0c2982f59826c227b7830e5d5985d59' },
   { chainId: 1, slug: 'milady', name: 'Milady Maker', address: '0x5Af0D9827E0c53E4799BB226655A1de152A425a5' },
   { chainId: 1, slug: 'identitymd', name: 'Identity MD', address: '0x0000ec93127baa929e58e97dd0095a2bfb38ec1d' },

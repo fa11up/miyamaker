@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { noteOff, noteOn, shapeHeld } from '../audio/engine.js'
+import { noteOff, noteOn, setPerformBend, shapeHeld } from '../audio/engine.js'
 import {
   CHORD_BANKS,
   CHORDS,
@@ -12,6 +12,7 @@ import {
   clampBank,
   clampBend,
   clampLead,
+  fingerVelocity,
   harmonyAt,
   isWhite,
   leadNotes,
@@ -20,10 +21,8 @@ import {
   tunedPitch,
 } from '../audio/piano.js'
 import { noteName } from '../keys.js'
-import { TRACK_VEL, model, touch, trackerFields } from '../model.js'
+import { model, touch, trackerFields } from '../model.js'
 import { useModel } from '../useModel.js'
-import { ShiftHold } from './ShiftHold.jsx'
-
 let liveBend = 0
 
 function trackExtra() {
@@ -36,8 +35,7 @@ function placeY(event, rect) {
 }
 
 function velocityAt(y) {
-  if (clampAxis(model.pianoAxis) !== 'velocity') return TRACK_VEL
-  return 0.12 + y * 0.88
+  return fingerVelocity(y, clampAxis(model.pianoAxis))
 }
 
 function playNote(midi, hold, velocity, rootPc) {
@@ -179,7 +177,7 @@ function ChordSettings() {
   )
 }
 
-function PitchWheel() {
+export function PitchWheel({ className = '' }) {
   const [bend, setBend] = useState(0)
   const [live, setLive] = useState(false)
   const range = clampBend(model.pianoBend)
@@ -196,6 +194,7 @@ function PitchWheel() {
       const semi = (0.5 - y) * 2 * clampBend(model.pianoBend)
       liveBend = semi
       setBend(semi)
+      setPerformBend(semi)
       applyShape(y)
     }
     const up = (ev) => {
@@ -206,6 +205,7 @@ function PitchWheel() {
       liveBend = 0
       setBend(0)
       setLive(false)
+      setPerformBend(0, { live: false })
       applyShape(0.8)
     }
     window.addEventListener('pointermove', at)
@@ -222,6 +222,7 @@ function PitchWheel() {
     liveBend = semi
     setBend(semi)
     setLive(true)
+    setPerformBend(semi)
     applyShape(dir > 0 ? 0.15 : 0.85)
   }
   const release = (event) => {
@@ -229,12 +230,13 @@ function PitchWheel() {
     liveBend = 0
     setBend(0)
     setLive(false)
+    setPerformBend(0, { live: false })
     applyShape(0.8)
   }
   const shown = range ? bend / range : 0
   return (
     <div
-      className={`pitch-wheel ${live ? 'live' : ''}`}
+      className={`pitch-wheel ${className} ${live ? 'live' : ''}`}
       style={{ '--bend': Math.max(-1, Math.min(1, shown)) }}
       onPointerDown={down}
       onKeyDown={key}
@@ -564,7 +566,6 @@ export function ChordPanel() {
         <ChordSettings />
         {phone && <BankTab />}
         <PitchWheel />
-        {phone && <ShiftHold className="chord-shift" mark />}
       </div>
       <ChordGrid banks={!phone} />
       <div className="chord-stage">

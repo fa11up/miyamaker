@@ -6,6 +6,7 @@ import { mainnet } from 'viem/chains'
 
 import { ALLOWLIST_BODY_LIMIT, ALLOWLIST_PATH, d1AllowlistStore, handleAllowlistRequest } from './_lib/allowlist'
 import { jsonReply, noSniff, readCappedText } from './_lib/body'
+import { handleLayersRequest, LAYERS_PROXY_PATH } from './_lib/layers'
 import { edgeCache, handleMarketRequest, MARKET_PREFIX, openSeaReader } from './_lib/market'
 import {
   embedResponse,
@@ -71,6 +72,10 @@ type Env = {
   REVEAL_DEV?: string
   /** With REVEAL_DEV=1 only, and only a local host (an anvil fork): the reveal reads the chain here, not RPC_URL_1. */
   REVEAL_RPC_URL?: string
+  /** Production: a keyed https Ethereum node for the reveal's reads only (e.g. Chainstack); RPC_URL_1 when unset. */
+  REVEAL_RPC_URL_1?: string
+  /** Widest eth_getLogs range the reveal tries, in blocks (default 10, the Alchemy free plan's cap). */
+  REVEAL_LOG_SPAN?: string
   /** The origin a reveal drop's baseURI must start with (default https://www.miyamaker.com). */
   REVEAL_ORIGIN?: string
   /** Wallets that can remove any station track, comma-separated. */
@@ -134,9 +139,17 @@ const revealListLimiter = createRateLimiter({ capacity: 10, perSecond: 0.2 })
  * The reveal's chain reads: Ethereum only, from the keyed RPC_URL_1 (archive: the cron reads totalSupply at past
  * blocks), or a local anvil fork with REVEAL_DEV=1. Each call is a new client, which checks eth_chainId once.
  */
+/** REVEAL_LOG_SPAN as a whole number of blocks, 1 to 10,000; anything else leaves the default. */
+const logSpanFrom = (raw?: string) => {
+  const n = Number(raw?.trim())
+  return Number.isInteger(n) && n >= 1 && n <= 10_000 ? n : undefined
+}
+
 const revealChain = (env: Env) => (chainId: number) => {
   if (chainId !== REVEAL_CHAIN_ID) return undefined
-  const url = revealSettings(env).devRpc ?? upstreamFor(String(chainId), { RPC_URL_1: env.RPC_URL_1 })
+  const url =
+    revealSettings(env).devRpc ??
+    upstreamFor(String(chainId), { RPC_URL_1: env.REVEAL_RPC_URL_1?.trim() || env.RPC_URL_1 })
   return url ? rpcChain(url, chainId) : undefined
 }
 
@@ -163,6 +176,9 @@ export default {
     // miyakeys's page and files: its CSP, and CORS for its sandboxed (opaque-origin) frame. Its hashed scripts and
     // styles under /assets/* skip the Worker: public/_headers gives those CORS.
     if (isEmbedPath(url.pathname)) return embedResponse(await env.ASSETS.fetch(request))
+    if (url.pathname === LAYERS_PROXY_PATH || url.pathname.startsWith(`${LAYERS_PROXY_PATH}/`)) {
+      return handleLayersRequest(request)
+    }
 
     if (url.pathname.startsWith('/commercials/')) {
       // Asked for without its range, because the asset store answers those whole anyway.
@@ -181,6 +197,7 @@ export default {
         chain: revealChain(env),
         bucket: env.REVEAL,
         refresh: openSeaRefresher(env.OPENSEA_API_KEY),
+        logSpan: logSpanFrom(env.REVEAL_LOG_SPAN),
       }).catch(
         (e) =>
           // Before migrations/0004_reveal.sql there is no table to read: nothing to do yet.

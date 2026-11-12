@@ -87,7 +87,8 @@ const Info = styled.div`
     font-size: 14px;
     overflow-wrap: anywhere;
   }
-  input:not([type='checkbox']) {
+  /* Low weight, so a themed field (handheld/Options) can dress itself. */
+  :where(input:not([type='checkbox']):not([type='radio'])) {
     width: 100%;
     min-height: 36px;
     padding: 0 8px;

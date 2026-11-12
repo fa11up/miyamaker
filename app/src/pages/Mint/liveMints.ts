@@ -140,6 +140,22 @@ export const LIVE_MINTS: LiveMintEntry[] = [
     artistLogo: '/artists/koolskull.png',
     artistUrl: 'https://koolskull.com/',
     view: 'miyamini',
+    pin: 1,
+  },
+  {
+    slug: 'miyamaker',
+    name: 'Miyamaker',
+    kind: 'drop',
+    chainId: 1,
+    address: '0xb86b68bca287afd48f81d1f792db69368664a120',
+    // The cover every token shows until its piece is drawn (ar://DBeq…nvFu), served from this site at 768px: the
+    // Arweave copy loads slowly until it settles.
+    image: 'https://www.miyamaker.com/covers/miyamaker.webp',
+    blurb: '10,000 miyamakers, each piece drawn at random when it is minted.',
+    artist: 'koolskull.eth',
+    artistLogo: '/artists/koolskull.png',
+    artistUrl: 'https://koolskull.com/',
+    // The live drop: first on the Mint home.
     pin: 0,
   },
 ]
@@ -206,7 +222,7 @@ const STATUS_ORDER: Record<LiveMintStatus, number> = { open: 0, unknown: 1, clos
 /**
  * Merges curated entries and registry-discovered collections into the ordered card list:
  * - one card per chain+address (curated wins over registry, so overrides stick);
- * - pinned curated entries first (MIYAMINI at 0) - except "coming soon" entries, which always sit at the end;
+ * - pinned curated entries first (the Miyamaker drop at 0, MIYAMINI at 1) - except "coming soon" entries, which always sit at the end;
  * - then open before closed before sold out; registry entries keep their discovery order within a status.
  * Slugs are made unique so every card has its own deep link.
  */

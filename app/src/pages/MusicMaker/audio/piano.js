@@ -312,6 +312,13 @@ export function clampAxis(value) {
   return TOUCH_AXES.some((item) => item.id === value) ? value : 'velocity'
 }
 
+/** Higher on a key is quieter. Filter and pan keep a plain velocity. */
+export function fingerVelocity(y, axis = 'velocity') {
+  if (axis !== 'velocity') return 128 / 255
+  const t = Math.max(0, Math.min(1, Number(y) || 0))
+  return 0.12 + t * 0.88
+}
+
 function leadSteps(chordId, scaleId) {
   if (scaleId) {
     const scale = SCALES.find((item) => item.id === scaleId)
