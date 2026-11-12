@@ -286,6 +286,7 @@ export default function FillReview({
     if (tokenFailed) tokenReads.refetch()
     if (nftApprovedAll.isError) nftApprovedAll.refetch()
   }
+
   const batches = useCanBatch(chainId)
 
   const fillCall = ok && {

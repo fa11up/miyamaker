@@ -9,8 +9,9 @@ import { chains, explorerUrl, mainnet } from '@/config/wagmi'
 import { cleanText } from '@/desktop/files/sanitize'
 
 import { isFeatured } from '../board'
-import { Chip, Eyebrow, Skeleton, StatusBox } from '../floor/retro'
+import { Chip, Eyebrow, Skeleton } from '../floor/retro'
 import { color, space } from '../floor/tokens'
+import { useTicket } from '../terminal/ticket'
 import { erc721Abi } from './abi'
 import FillReview from './FillReview'
 import type { OsOrder } from './markets'
@@ -21,7 +22,6 @@ import { Action, Card, Chips, Head, Hint, LinkButton, Mono, PushButton } from '.
 import { useOpenSeaCollection, useOpenSeaItem } from './useMarkets'
 import { poolFactoryFor, useNftMeta, usePoolsForCollection } from './usePools'
 import { OutLink, VenueList, VenueRow } from './venueUi'
-import { useTicket } from '../terminal/ticket'
 import Viewer from './Viewer'
 
 const Layout = styled.div`
@@ -107,6 +107,7 @@ export default function ItemView({
       setReview({ side, order })
       return
     }
+
     ticket.open({
       kind: 'fill',
       side,
@@ -119,6 +120,7 @@ export default function ItemView({
       unverified: side === 'buy' ? unverified : undefined,
     })
   }
+
   // Read once on mount: the flag is used up as soon as this page opens.
   const wantsBuy = useRef(autoBuy)
   const autoBought = useRef(false)
@@ -142,7 +144,14 @@ export default function ItemView({
               type="button"
               onClick={() => setViewing(true)}
               aria-label={`View ${title} full screen`}
-              style={{ display: 'block', width: '100%', padding: 0, border: 'none', background: 'none', cursor: 'zoom-in' }}
+              style={{
+                display: 'block',
+                width: '100%',
+                padding: 0,
+                border: 'none',
+                background: 'none',
+                cursor: 'zoom-in',
+              }}
             >
               <NftImage src={item.nft?.image || meta.image} alt={title} fit="contain" />
             </button>
