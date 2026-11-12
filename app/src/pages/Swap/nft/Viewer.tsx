@@ -382,6 +382,7 @@ export default function Viewer({
       onOpen(id, true)
       return
     }
+
     ticket.open({
       kind: 'fill',
       side: 'buy',
@@ -395,11 +396,13 @@ export default function Viewer({
     })
     onClose()
   }
+
   const sell = () => {
     if (!os.offer || !ticket) return
     ticket.open({ kind: 'fill', side: 'sell', order: os.offer, chainId, contract, tokenId: id, title: collectionName })
     onClose()
   }
+
   const image = item?.image || os.nft?.image || meta.image
   const title = cleanText(item?.name || os.nft?.name || meta.name, 80) || `${collectionName} #${id}`
   const traits: OsTrait[] = os.nft?.traits.length
