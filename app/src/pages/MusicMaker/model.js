@@ -56,6 +56,10 @@ export const model = {
   pattern: 0,
   patterns: [],
   recNatural: false,
+  /** Sequencer drags land on the grid. Off lets the note sit between steps, stored as MOVE. */
+  seqSnap: true,
+  /** Straight snap division: 4, 8, 16, 32, 64, or 128. A bar is 16 steps, so 16 is one step. */
+  seqDiv: 16,
   seqHit: null,
   playhead: 0,
   pads: [],
@@ -440,13 +444,20 @@ export function normalizeEvent(ev) {
     vel: num(ev?.vel, 0.9, 0, 1),
     pitch: num(ev?.pitch, 0, -96, 96),
     nudge: int(ev?.nudge, 0, -50, 50),
+    tail: 0,
   }
+  delete out.tail
   if (ev?.off) out.off = true
   else {
     if (Number.isFinite(ev?.sl)) out.sl = Math.max(0, Math.min(65535, ev.sl | 0))
     if (Number.isFinite(ev?.len) && Number.isFinite(ev?.move)) {
       out.len = Math.max(0, Math.min(65535, ev.len | 0))
       out.move = Math.max(-32768, Math.min(32767, ev.move | 0))
+    }
+    // How much of the last step the sequencer note fills. 100 is a full step and is not stored.
+    if (Number.isFinite(ev?.tail)) {
+      const tail = Math.round(Number(ev.tail))
+      if (tail >= 1 && tail <= 99) out.tail = tail
     }
   }
   return out
@@ -931,6 +942,7 @@ export function commitTrackerNote({ pad = 0, vel = TRACK_VEL, pitch = 0, off = f
     model.tracker.focus = true
     writeLane(writeRow, lane, ev)
   })
+  return { row: writeRow, lane }
 }
 
 export function patchTrackerEvent(row, lane, patch, { step = true } = {}) {
@@ -1067,6 +1079,8 @@ export function loadFactoryKit() {
   model.patterns = Array.from({ length: 256 }, () => null)
   model.pattern = 0
   model.recNatural = false
+  model.seqSnap = true
+  model.seqDiv = 16
   model.seqHit = null
   const demo = ensurePattern(0)
   demo.name = 'Demo'
@@ -1423,6 +1437,8 @@ export function save() {
     master: model.master,
     pattern: model.pattern,
     recNatural: !!model.recNatural,
+    seqSnap: model.seqSnap !== false,
+    seqDiv: [4, 8, 16, 32, 64, 128].includes(Number(model.seqDiv)) ? Number(model.seqDiv) : 16,
     editStep: editStep(),
     grainCols: !!model.tracker.grains,
     dockOpen: model.dockOpen !== false,
@@ -1725,6 +1741,8 @@ export function boot() {
       metroVol: num(data.metroVol, 0.55, 0, 1),
       master: num(data.master, 0.9, 0, 1),
       recNatural: !!data.recNatural,
+      seqSnap: data.seqSnap !== false,
+      seqDiv: [4, 8, 16, 32, 64, 128].includes(Number(data.seqDiv)) ? Number(data.seqDiv) : 16,
       settings: {
         ...model.settings,
         ...settings,

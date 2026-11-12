@@ -8,6 +8,8 @@ It is a drum machine, a little keyboard, and a pattern writer that live in the b
 
 You do not need to read music. You do not need a controller. The computer keyboard is enough to finish a song. A Launchpad, an MPC, an MPD, an MPK, or almost any other USB MIDI controller can play it too.
 
+Version 1.0.0 also runs as its own program. On a Mac, download the GitHub release `MiyaMusicMaker-v1.0.0`, unzip it, and the first time right-click the app and choose Open. Windows and Linux build from the same source. The steps are in [the desktop guide](../../../../desktop/miyamusicmaker/README.md).
+
 ## What the pages are
 
 These are the parts of the instrument. The keys come after, once the pages make sense.
@@ -18,7 +20,7 @@ These are the parts of the instrument. The keys come after, once the pages make 
 
 **Chords** chooses a harmony. The buttons do not play. The piano plays that chord, and the strip above it plays one note.
 
-**Sequence** is the beat, painted on the pad rows. **Tracker** is the same pattern as a spreadsheet. The row in the middle is the one you are hearing or editing.
+**Sequence** is the beat, painted on the pad rows. Its tools sit in the left rail when that rail has room. **Tracker** is the same pattern as a spreadsheet. The row in the middle is the one you are hearing or editing.
 
 **Arranger** chains patterns into a song. A new part waits until the one that is playing finishes.
 
@@ -77,7 +79,7 @@ A small mark on the strip is an octave of the root. **Set** can move the low end
 
 The piano under the strip is an ordinary keyboard, with rounded keys and a shine on the face. On a wide window, and on a large tablet, it runs C3 through C5. On a phone, including landscape, it is one octave, C3 through C4. The harmony buttons stop at the left third of the panel, and that one octave fills the rest. The key you touch becomes the root, and it sounds the whole chord in that octave: the chord button you lit, or degrees 1, 3, and 5 of a scale, or a major chord if nothing is lit. The lead strip is the single notes. Touch higher on a key and the note is quieter. Touch lower and it is louder. That up-and-down position is velocity unless you change it. **Set** can point it at the filter or the pan instead. Those choices stay in the menu.
 
-On a phone the pitch wheel and SHIFT share a slim left column. The wheel is the upper key. SHIFT is the lower key, and a coral bar marks it. Hold SHIFT and drag the tracker with the other thumb to edit the cell. Hold it with a numpad slot, then − or +, and the knobs on that slot bend. Shift-click the surface button to open its list. The bank letter above the wheel opens the three harmony banks, so that row stays off the phone face. The left strip itself is only a Tabs button. Browser, Arranger, Manual, and MIDI stay inside it, so the strip stays narrow.
+SHIFT stays in the left strip, and a coral bar marks it, on the chord panel as well as the other pages. Hold SHIFT and drag the tracker with the other thumb to edit the cell. Hold it with a numpad slot, then − or +, and the knobs on that slot bend. Shift-click the surface button to open its list. The bank letter above the wheel opens the three harmony banks, so that row stays off the phone face. The left strip itself is only a Tabs button, plus SHIFT. Browser, Arranger, Manual, and MIDI stay inside Tabs, so the strip stays narrow. Keys keeps a pitch wheel in that strip, above SHIFT. Strum has a Scale button. It marks the root, the chord, and the scale on the strings, the same ones chosen here, and it does not play them.
 
 **Set** also holds the tuning (Equal, Just, Pythagorean, meantone, Werckmeister) and the inversion of a chord.
 
@@ -117,7 +119,11 @@ There are 256 patterns, numbered `00` through `FF` in hex. Pattern length is the
 
 On the Pads page, `Y U I O` and `H J K L` jump between eight patterns. `{` and `}` change which group of eight you are in.
 
-Record quantizes to the grid. There is a natural-feel option on the Sequence page when you want the hit to sit a little early or late.
+Quantize, in the top bar, records MOVE when it is on: how far a hit sits from its step. Off leaves that movement out. Velocity and a pitch bend still write.
+
+Snap, on the Sequence page, is the grid those notes land on. Click it to turn Snap off. Hold it, right-click it, or Shift-click it for the division: 1/4, 1/8, 1/16, 1/32, 1/64, or 1/128. A bar is sixteen steps, so 1/16 is one step. Snap on lands the note and its end on that division. Snap off lets the note sit between steps, and End lets it finish anywhere inside a step. The start is the MOVE column in the tracker, and it stays when you go from one page to the other.
+
+Draw, Erase, Snap, − bar, + bar, Double, and the note tools sit in the left rail when that rail has room. The pattern, the step count, and Swing stay on top. SHIFT stays at the bottom of the rail.
 
 ## Arrange the song
 
@@ -129,13 +135,13 @@ The bar along the bottom of a cell is the loop position. Only the cell that is a
 
 ## The mixer
 
-All sixteen buses sit in one row. On a phone, scroll that row sideways. Tap a channel and its five effect slots follow. Soloing a channel lights the red mute button on every other channel. Those lights go out when the solo does. The EQ under the slots follows that channel too. Its header can point the EQ at another channel or at the output.
+All sixteen buses sit in one row. On a phone they wrap, four to a row, and the page scrolls down. Tap a channel and its five effect slots follow. Soloing a channel lights the red mute button on every other channel. Those lights go out when the solo does. The EQ under the slots follows that channel too. Its header can point the EQ at another channel or at the output.
 
 The graph runs from low cut on the left to high cut on the right. Drag a point to tune it. Right-click a point, or hold SHIFT and tap it, to choose low cut, bell, or high cut, and to make that band duck when it gets loud. Tap the channel name above the effect slots to hide those knobs. The compressor after the EQ draws the gain it is taking off. MB at the end of its header turns that compressor into four bands. Drag a divider to move the split, or drag inside a band to set its threshold. A limiter sits after the master compressor and does not pass 0 dBFS.
 
 ## On a phone
 
-A narrow window keeps one row: Menu, Play, Rec, the tempo, the surface, one bank, and one screen. Menu holds the file commands, save, export, and mint. The surface button cycles Off, Pads, Keys, Chords, Strum, and FX. Hold it, right-click it, or Shift-click it, and that list opens. Pads and keys sit at the bottom, where a thumb can reach them. The left strip is narrow. Tabs at the top of it keeps Browser, Arranger, Manual, and MIDI. SHIFT sits at the lower left, marked with a coral bar. On the chord panel that strip is only Tabs, and SHIFT moves under the pitch wheel. The root piano there is one octave. Hold SHIFT and drag the tracker with the other thumb.
+A narrow window keeps one row: Menu, Play, Rec, Quantize, the tempo, the surface, one bank, and one screen. Quantize on records MOVE, how far a note sits from the step. Quantize off does not record movement. Velocity and pitch bend still write. Menu holds the file commands, save, export, and mint. The surface button cycles Off, Pads, Keys, Chords, Strum, and FX. Hold it, right-click it, or Shift-click it, and that list opens. Pads and keys sit at the bottom, where a thumb can reach them. The left strip is narrow. Tabs at the top of it keeps Browser, Arranger, Manual, and MIDI. The sequence tools stack in that strip when it has room. The pattern, the step count, and Swing stay on top. SHIFT sits at the lower left, marked with a coral bar, on every page including chords. The root piano there is one octave. Hold SHIFT and drag the tracker with the other thumb.
 
 Hold Shift and Ctrl, then an arrow, to change page. One press moves one screen. On a PlayStation pad hold R1 and Triangle, on Switch hold R and X, on Xbox hold RB and Y, then press the d-pad or the left stick. The d-pad alone moves like the arrow keys.
 

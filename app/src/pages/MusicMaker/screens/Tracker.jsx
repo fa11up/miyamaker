@@ -19,14 +19,13 @@ import {
   writeTrackerField,
 } from '../model.js'
 import { useModel } from '../useModel.js'
-import { cuePatternStep, getMeters } from '../audio/engine.js'
+import { cuePatternStep } from '../audio/engine.js'
 import { PatternBar } from './PatternBar.jsx'
 import { HelpButton } from '../widgets.jsx'
 
 const HEADS = ['NOTE', 'INST', 'VEL', 'MOVE', 'SL', 'LP']
 const STICK_DEAD = 16
 const COPIES = [0, 1, 2]
-const VU_BARS = 8
 
 /** Held by the lower-left SHIFT control. The trackpad edits instead of moving while this is set. */
 export const finger = { shift: false, kbShift: false }
@@ -155,7 +154,7 @@ export function Tracker() {
             <tr>
               <th className="st" rowSpan={2}>STEP</th>
               {COPIES.map((copy) => Array.from({ length: LANES }, (_, lane) => (
-                <th key={`${copy}-${lane}`} colSpan={fields} className="track">
+                <th key={`${copy}-${lane}`} colSpan={fields} className={`track${copy > 0 && lane === 0 ? ' wrap' : ''}`}>
                   <span className="track-title">
                     <b>{trackNo(lane)}</b>
                     <span>{laneInstrument(seq, lane)}</span>
@@ -169,7 +168,7 @@ export function Tracker() {
                   {HEADS.slice(0, fields).map((label, field) => (
                     <th
                       key={label}
-                      className={`sub${field === 0 ? ' edge' : ''}${field === 4 ? ' sl' : ''}${field === 5 ? ' lp' : ''}`}
+                      className={`sub${field === 0 ? ' edge' : ''}${copy > 0 && lane === 0 && field === 0 ? ' wrap' : ''}${field === 4 ? ' sl' : ''}${field === 5 ? ' lp' : ''}`}
                       title={field === 4 ? 'Play offset. 0000 is the start, 8000 the middle, FFFF the last step.' : field === 5 ? 'Move then length. 00000100 holds a grain. 01000100 walks forward. FFFF0100 crawls backward.' : undefined}
                     >
                       {label}
@@ -192,15 +191,19 @@ export function Tracker() {
                   {COPIES.map((copy) => Array.from({ length: LANES * fields }, (_, col) => {
                     const lane = Math.floor(col / fields)
                     const field = col % fields
+                    const seam = copy > 0 && lane === 0 && field === 0
                     const ev = events[lane]
                     const rect = blockOf(t)
                     const cursor = slot === cursorSlot && t.col === col && copy === 1
                     const blockAnchor = !!(rect && row === t.block.ar && col === t.block.ac)
                     const inside = !!(rect && row >= rect.r0 && row <= rect.r1 && col >= rect.c0 && col <= rect.c1)
+                    // SL and LP are wider than two digits. The cursor sits on one pair, not the whole cell.
+                    const pairCursor = cursor && (field === 4 || field === 5)
                     const cls = [
                       field === 0 ? 'note edge' : field === 1 ? 'inst' : field === 2 ? 'vel' : field === 3 ? 'move' : field === 4 ? 'sl' : 'lp',
-                      cursor || blockAnchor ? (armed ? 'edit' : 'mark') : '',
-                      cursor ? 'here' : '',
+                      seam ? 'wrap' : '',
+                      (cursor || blockAnchor) && !pairCursor ? (armed ? 'edit' : 'mark') : '',
+                      cursor && !pairCursor ? 'here' : '',
                       inside && !cursor && !blockAnchor ? 'block' : '',
                     ].filter(Boolean).join(' ')
                     return (
@@ -229,7 +232,7 @@ export function Tracker() {
                           touch(false)
                         }}
                       >
-                        {renderCell(ev, field, cursor && armed, t)}
+                        {renderCell(ev, field, cursor, armed, t)}
                       </td>
                     )
                   }))}
@@ -239,7 +242,6 @@ export function Tracker() {
           </tbody>
         </table>
       </div>
-      {model.playing ? <RowMeter /> : null}
       {menu && (
         <div className="ctx-menu" style={{ left: menu.x, top: menu.y, minWidth: 220 }} role="menu">
           <button
@@ -407,59 +409,6 @@ function centerTracker(grid) {
   if (!cell) return
   const cellRect = cell.getBoundingClientRect()
   grid.scrollLeft += (cellRect.left + cellRect.width / 2) - noteMid
-  placeMeter(grid)
-}
-
-function placeMeter(grid) {
-  const screen = grid.closest('.tracker-screen')
-  if (!screen) return
-  const playing = [...grid.querySelectorAll('tr.play')]
-  if (!playing.length) {
-    screen.style.setProperty('--vu-show', '0')
-    return
-  }
-  const s = screen.getBoundingClientRect()
-  const g = grid.getBoundingClientRect()
-  const headH = grid.querySelector('thead')?.getBoundingClientRect().height || 0
-  const bodyMid = g.top + headH + (g.height - headH) / 2
-  let row = playing[0]
-  let best = Infinity
-  for (const el of playing) {
-    const rect = el.getBoundingClientRect()
-    const dist = Math.abs(rect.top + rect.height / 2 - bodyMid)
-    if (dist < best) {
-      best = dist
-      row = el
-    }
-  }
-  const r = row.getBoundingClientRect()
-  const st = grid.querySelector('th.st')?.getBoundingClientRect()
-  const left = ((st ? st.right : g.left) + g.right) / 2 - s.left
-  const top = r.top + r.height / 2 - s.top
-  screen.style.setProperty('--vu-left', `${left}px`)
-  screen.style.setProperty('--vu-top', `${top}px`)
-  screen.style.setProperty('--vu-show', '1')
-}
-
-function RowMeter() {
-  const [level, setLevel] = useState(0)
-  const peak = useRef(0)
-  useEffect(() => {
-    const id = window.setInterval(() => {
-      const now = getMeters().master || 0
-      peak.current = Math.max(now, peak.current * 0.72)
-      setLevel(peak.current)
-    }, 80)
-    return () => window.clearInterval(id)
-  }, [])
-  const lit = Math.round(Math.min(1, level * 1.6) * VU_BARS)
-  return (
-    <div className="row-vu" aria-hidden="true">
-      {Array.from({ length: VU_BARS }, (_, i) => (
-        <i key={i} className={i < lit ? 'on' : ''} />
-      ))}
-    </div>
-  )
 }
 
 function trackNo(lane) {
@@ -468,7 +417,7 @@ function trackNo(lane) {
 
 function rowClass(row, play) {
   const band = row % 16 === 0 ? 'bar' : row % 4 === 0 ? 'beat' : ''
-  return [band, play ? 'play' : ''].filter(Boolean).join(' ')
+  return [band, row === 0 ? 'loop' : '', play ? 'play' : ''].filter(Boolean).join(' ')
 }
 
 function laneInstrument(seq, lane) {
@@ -520,16 +469,17 @@ function cellText(ev, field, active, t) {
   return formatLp(ev.move, ev.len)
 }
 
-function renderCell(ev, field, active, t) {
-  const text = cellText(ev, field, active, t)
+function renderCell(ev, field, cursor, armed, t) {
+  const text = cellText(ev, field, cursor && armed, t)
   const pairs = pairCount(field)
-  if (!active || pairs < 2) return text
+  if (!cursor || pairs < 2) return text
   const pair = Math.max(0, Math.min(pairs - 1, t.pair | 0))
   const at = pair * 2
+  const mark = armed ? 'edit' : 'mark'
   return (
     <>
       {text.slice(0, at)}
-      <span className="pair">{text.slice(at, at + 2)}</span>
+      <span className={`pair here ${mark}`}>{text.slice(at, at + 2)}</span>
       {text.slice(at + 2)}
     </>
   )
