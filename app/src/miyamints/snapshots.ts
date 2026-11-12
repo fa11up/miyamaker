@@ -18,7 +18,7 @@ export type Snapshot = {
   root: string
   /** Unique holders on the list. */
   count: number
-  /** Holders that were contracts at the block (kept: a Safe can claim, a pool or vault can't). */
+  /** Holders that were contracts at the block, kept: a Safe can claim; a pool, vault or escrow can't, so its spots go unused. */
   contracts: number
 }
 

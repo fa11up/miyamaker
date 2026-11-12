@@ -2,8 +2,9 @@
 //
 //   node scripts/phase-prices.mts [--eth 0.01] [--block <n>]
 //
-// Spot values (scripts/lib/prices.mts), cut to 4 significant digits. The V4Quoter's figures (what the ETH would buy
-// after pool fees and impact) are printed beside them as a check.
+// Spot values (scripts/lib/prices.mts), cut down to 4 significant digits. The V4Quoter's figures (what the ETH would
+// buy after pool fees and impact) are printed beside them; if the quoter fails or is more than 5% off spot on a hop,
+// the script stops. A warning is printed when imdUSD is off $1 in its own pool.
 import { parseEther } from 'viem'
 
 import { args, client, rpcHost, rpcUrl, short } from './lib/chain.mts'

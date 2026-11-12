@@ -6,7 +6,11 @@
 //   INFER   that IMD at the spot price of the alignment pool, whose key the default vault reports (alignmentPoolKey()).
 //
 // Spot prices are mid prices, before pool fees and price impact: "the same value as the ETH price", not "what that ETH
-// would buy". The V4Quoter's figure for the same ETH (fees and impact included) is read alongside, as a check.
+// would buy". The V4Quoter's figure for the same ETH (fees and impact included) is read alongside, as a check: if it
+// fails, or falls more than MAX_QUOTE_GAP short of spot on either hop, a pool is thin or moved and nothing is priced.
+// imdUSD is priced at $1; its own pool (imdUSD/USDC, the peg hook's) is read too, and a price off $1 by more than
+// PEG_WARN is said loudly. Prices are rounded DOWN to 4 significant digits (at most 0.1% under), and drift with the
+// market: re-price with setPhasePrices when IMD or INFER move more than REPRICE_AT.
 import type { Address, PublicClient } from 'viem'
 import { encodeAbiParameters, formatUnits, getAddress, hexToBigInt, keccak256, parseAbi, zeroAddress } from 'viem'
 
@@ -17,7 +21,36 @@ const POOL_MANAGER: Address = '0x000000000004444c5dc75cB358380D2e3dE08A90'
 const V4_QUOTER: Address = '0x52f0e24d1c21c8a0cb1e5a5dd6198556bd9e1203'
 const ETH_USD: Address = '0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419'
 const DEFAULT_VAULT: Address = '0x34bE8C25C7922B3052D1955b8E63fB97F778AA08'
+const USDC: Address = '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'
+const PEG_HOOK: Address = '0x33ca5c16208ec08ac97d4f6315aafa792a916044'
 const Q192 = 1n << 192n
+
+/** Most the quoter's figure may fall short of spot on one hop (pool fee plus impact) before the prices are refused. */
+export const MAX_QUOTE_GAP = 0.05
+/** imdUSD this far from $1 in its own pool is a warning: a phase's imdUSD price is off by as much. */
+export const PEG_WARN = 0.02
+/** Re-price a phase (setPhasePrices) once IMD or INFER have moved this much from when it was priced. */
+export const REPRICE_AT = 0.05
+
+/** How far `quoted` is from `spot`, as a fraction of spot (0.012 = 1.2%). */
+export function quoteGap(spot: bigint, quoted: bigint): number {
+  if (spot <= 0n) return Infinity
+  const d = spot > quoted ? spot - quoted : quoted - spot
+  return Number((d * 1_000_000n) / spot) / 1_000_000
+}
+
+/** Throws when the quoter's figure is too far from spot on a hop: a thin or moved pool, so the spot price isn't safe. */
+export function assertQuotes(hops: readonly { name: string; spot: bigint; quoted: bigint }[], max = MAX_QUOTE_GAP) {
+  for (const h of hops) {
+    const g = quoteGap(h.spot, h.quoted)
+    if (!(g <= max)) {
+      throw new Error(
+        `${h.name}: the V4Quoter gives ${(g * 100).toFixed(2)}% off the spot price (more than ${max * 100}%): the pool is ` +
+          'thin or moving, so these prices are not safe to set. Try again later.'
+      )
+    }
+  }
+}
 
 type PoolKey = { currency0: Address; currency1: Address; fee: number; tickSpacing: number; hooks: Address }
 const KEY = '(address currency0, address currency1, uint24 fee, int24 tickSpacing, address hooks)'
@@ -69,12 +102,16 @@ export type Equivalents = {
   imd: bigint
   infer: bigint
   ethUsd: number
-  /** What the V4Quoter says the ETH would actually buy, fees and impact included (undefined if it failed). */
-  quoted: { imd?: bigint; infer?: bigint }
+  /** What the V4Quoter says the ETH would actually buy, fees and impact included. */
+  quoted: { imd: bigint; infer: bigint }
+  /** imdUSD's price in USD in its own pool (undefined when it couldn't be read). */
+  imdUsdPrice?: number
   notes: string[]
 }
 
 export const IMD_ETH_POOL: PoolKey = { currency0: zeroAddress, currency1: IMD, fee: 10000, tickSpacing: 200, hooks: zeroAddress }
+/** imdUSD's own pool: imdUSD/USDC, fee 0.01%, tick spacing 1, the peg hook. */
+const PEG_POOL: PoolKey = { currency0: IMDUSD, currency1: USDC, fee: 100, tickSpacing: 1, hooks: getAddress(PEG_HOOK) }
 
 /** `wei` of ETH in imdUSD, IMD and INFER at `block` (default: latest). */
 export async function ethEquivalents(c: PublicClient, wei: bigint, block?: bigint): Promise<Equivalents> {
@@ -90,15 +127,37 @@ export async function ethEquivalents(c: PublicClient, wei: bigint, block?: bigin
   const key = (await c.readContract({ address: DEFAULT_VAULT, abi, functionName: 'alignmentPoolKey', blockNumber: block })) as PoolKey
   const inferSqrt = await sqrtPrice(c, key, block)
   const infer = atSpot(imd, inferSqrt, key, IMD)
-  const quoted: Equivalents['quoted'] = {}
+  let quoted: Equivalents['quoted']
   try {
-    quoted.imd = await quote(c, IMD_ETH_POOL, zeroAddress, wei, block)
-    quoted.infer = await quote(c, key, IMD, quoted.imd, block)
+    const qImd = await quote(c, IMD_ETH_POOL, zeroAddress, wei, block)
+    quoted = { imd: qImd, infer: await quote(c, key, IMD, qImd, block) }
   } catch (e) {
-    notes.push(`V4Quoter check failed: ${String((e as Error).message).split('\n')[0]}`)
+    throw new Error(`The V4Quoter check failed, so the spot prices can't be checked: ${String((e as Error).message).split('\n')[0]}`)
   }
+  // Hop by hop: ETH -> IMD, then the IMD actually quoted -> INFER.
+  const hops = [
+    { name: 'ETH -> IMD', spot: imd, quoted: quoted.imd },
+    { name: 'IMD -> INFER', spot: atSpot(quoted.imd, inferSqrt, key, IMD), quoted: quoted.infer },
+  ]
+  assertQuotes(hops)
+  notes.push(`quoter vs spot (pool fees and impact): ${hops.map((h) => `${h.name} ${(quoteGap(h.spot, h.quoted) * 100).toFixed(2)}%`).join(', ')}`)
   notes.push('imdUSD is taken as 1 USD (Chainlink ETH/USD), as the keeper does.')
-  return { wei, imdUSD, imd, infer, ethUsd: Number(answer) / 1e8, quoted, notes }
+  let imdUsdPrice: number | undefined
+  try {
+    const p = await sqrtPrice(c, PEG_POOL, block)
+    // USDC (6 decimals) per imdUSD (18): price x 10^12 is dollars per imdUSD.
+    imdUsdPrice = Number((p * p * 10n ** 12n * 1_000_000n) / Q192) / 1_000_000
+    if (Math.abs(imdUsdPrice - 1) > PEG_WARN) {
+      notes.push(
+        `WARNING: imdUSD trades at $${imdUsdPrice.toFixed(4)} in its own pool, more than ${PEG_WARN * 100}% off $1: ` +
+          `the imdUSD price above is worth ${((imdUsdPrice - 1) * 100).toFixed(1)}% ${imdUsdPrice > 1 ? 'more' : 'less'} than the ETH price.`
+      )
+    } else notes.push(`imdUSD in its own pool: $${imdUsdPrice.toFixed(4)}.`)
+  } catch (e) {
+    notes.push(`WARNING: imdUSD's own pool couldn't be read (${String((e as Error).message).split('\n')[0]}): its peg is not checked.`)
+  }
+  notes.push(`Prices are cut down to 4 significant digits (at most 0.1% under). Re-price with setPhasePrices when IMD or INFER move more than ${REPRICE_AT * 100}%.`)
+  return { wei, imdUSD, imd, infer, ethUsd: Number(answer) / 1e8, quoted, imdUsdPrice, notes }
 }
 
 /** A price cut to `sig` significant digits (rounded down), so it reads like 25.31 rather than 25.3104912… */

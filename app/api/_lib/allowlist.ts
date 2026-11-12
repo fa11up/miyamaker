@@ -55,10 +55,10 @@ export type AllowlistSource = {
   contract: Address
   block: number
   blockTime: number
-  /** Token ids read (ownerOf over each) and how many had an owner. */
+  /** Token ids read (ownerOf over each) and how many had an owner, those at the burn address included (it is left off). */
   idsRead: string
   tokens: number
-  /** Holders that had contract code at the block (not 7702 delegations): kept, but a pool or vault can't claim. */
+  /** Holders with contract code at the block (not 7702 delegations), kept: a Safe can claim; a pool, vault or escrow can't. */
   contracts: number
 }
 
