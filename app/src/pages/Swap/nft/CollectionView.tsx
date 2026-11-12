@@ -551,7 +551,9 @@ export default function CollectionView({
 
   // The gallery: every piece, for sale or not (OpenSea), else by number from the contract (ids 1 up) when OpenSea is
   // offline. The viewer steps through whichever list it was opened from.
-  const gallery = useCollectionGallery(os.slug)
+  // With pieces for sale, those tiles are the art: the gallery shows only once listings answer with none (or fail).
+  const showGallery = !listings.loading && listed.length === 0
+  const gallery = useCollectionGallery(showGallery ? os.slug : undefined)
   const supplyRead = useReadContract({
     address,
     abi: SUPPLY_ABI,
@@ -788,7 +790,133 @@ export default function CollectionView({
           ) : null)}
       </Card>
 
-      {/* The art first: what you hold, then every piece. Prices, pools and markets follow. */}
+      {/* What's for sale first, then what you hold, then every piece (only when none is for sale). Prices, pools and
+          markets follow. */}
+      {os.needsKey && !os.missing && (
+        <StatusBox tone="error" role="status" data-market-offline>
+          <span>
+            Buying here is offline right now. Try again later, or buy it on OpenSea.{' '}
+            {openSeaHref && (
+              <a href={openSeaHref} target="_blank" rel="noreferrer">
+                Open on OpenSea ↗
+              </a>
+            )}
+          </span>
+        </StatusBox>
+      )}
+
+      {os.slug && (
+        <Card aria-label="Cheapest for sale">
+          <Eyebrow>For sale{listed.length ? ` · ${listed.length}` : ''}</Eyebrow>
+          {listed.length > 0 && (
+            <Hint>
+              Cheapest first. Press one to see it and buy it right here.
+              {listings.stale ? ' These prices may be a few minutes old.' : ''}
+            </Hint>
+          )}
+          {!listings.listings && !listings.loading ? (
+            listings.needsKey ? (
+              <Hint data-listings-offline>
+                Buying here is offline right now. Try again later, or buy it on OpenSea.{' '}
+                {openSeaHref && (
+                  <a href={openSeaHref} target="_blank" rel="noreferrer">
+                    Open on OpenSea ↗
+                  </a>
+                )}
+              </Hint>
+            ) : (
+              <Hint data-listings-failed>
+                Could not load listings.{' '}
+                <LinkButton type="button" onClick={() => listings.refetch()}>
+                  Try again
+                </LinkButton>
+              </Hint>
+            )
+          ) : !listings.loading && !listed.length ? (
+            <Hint data-listings-empty>Nothing for sale right now. Hold one? Enter its number below to see offers.</Hint>
+          ) : listings.loading ? (
+            <Tiles>
+              {[0, 1, 2].map((i) => (
+                <li key={i}>
+                  <Skeleton h="140px" />
+                </li>
+              ))}
+            </Tiles>
+          ) : (
+            <Tiles>
+              {shownListings.map((l) => (
+                <ListingTile
+                  picked={!sweepSet && pickedListings.some((p) => p.hash === l.hash)}
+                  disabled={busy}
+                  key={l.hash}
+                  chainId={chainId}
+                  contract={address}
+                  listing={l}
+                  onOpen={() => setViewing({ list: 'listed', tokenId: l.tokenId! })}
+                />
+              ))}
+            </Tiles>
+          )}
+          {!listings.loading && listed.length > shownListings.length && (
+            <PushButton type="button" onClick={() => setTileLimit((n) => n + TILE_PAGE)}>
+              Show more ({listed.length - shownListings.length} left)
+            </PushButton>
+          )}
+        </Card>
+      )}
+
+      {sweepSet ? (
+        <SweepReview
+          key="sweep"
+          listings={sweepSet}
+          chainId={chainId}
+          contract={address}
+          title={name}
+          unverified={unverified}
+          onClose={() => setSweepSet(undefined)}
+          onDone={() => listings.refetch()}
+          onBusy={setSweepBusy}
+        />
+      ) : (
+        canSweep.length >= 2 && (
+          <SweepBar aria-label="Sweep the floor">
+            <label htmlFor="sweep-count">
+              <b>Sweep:</b> buy the {pickedListings.length} cheapest
+              {sweepAsk && sweepAsk.count > pickedListings.length ? ` (asked ${sweepAsk.count})` : ''}
+            </label>
+            <input
+              id="sweep-count"
+              type="range"
+              min={2}
+              max={Math.min(MAX_SWEEP, canSweep.length)}
+              value={sweepCount}
+              onChange={(e) => setSweepCount(Number(e.target.value))}
+            />
+            <strong title={ethInUsd(sumPrices(pickedListings), ethUsd)}>
+              {formatAmount(sumPrices(pickedListings), 18, 4)} ETH
+            </strong>
+            <PushButton
+              type="button"
+              disabled={!!ticket?.busy}
+              onClick={() =>
+                ticket
+                  ? ticket.open({
+                      kind: 'sweep',
+                      listings: pickedListings,
+                      chainId,
+                      contract: address,
+                      title: name,
+                      unverified,
+                    })
+                  : setSweepSet(pickedListings)
+              }
+            >
+              {ticket ? `Sweep ${pickedListings.length}` : 'Review sweep'}
+            </PushButton>
+          </SweepBar>
+        )
+      )}
+
       {ticket && mineHere.length > 0 && (
         <Card aria-label="Yours" data-yours>
           <Eyebrow>
@@ -812,53 +940,55 @@ export default function CollectionView({
         </Card>
       )}
 
-      <Card aria-label="Gallery" data-gallery>
-        <Eyebrow>
-          Gallery
-          {gallery.items.length ? ` · ${gallery.items.length}${gallery.done ? '' : '+'}` : ''}
-          {!gallery.items.length && onchainSupply ? ` · ${onchainSupply.toLocaleString()} minted` : ''}
-        </Eyebrow>
-        {galleryItems.length > 0 ? (
-          <>
-            <Hint>
-              {gallery.items.length
-                ? 'Every piece, for sale or not. Press one to view it full screen.'
-                : `OpenSea is offline, so these are numbered #1 up to the minted count; a collection that starts at #0 or has burned pieces will differ. Press one to view it full screen.`}
-            </Hint>
-            <ArtGrid>
-              {galleryItems.map((g) => (
-                <GalleryTile
-                  key={g.tokenId}
-                  chainId={chainId}
-                  contract={address}
-                  item={g}
-                  onOpen={() => setViewing({ list: 'gallery', tokenId: g.tokenId })}
-                />
+      {showGallery && (
+        <Card aria-label="Gallery" data-gallery>
+          <Eyebrow>
+            Gallery
+            {gallery.items.length ? ` · ${gallery.items.length}${gallery.done ? '' : '+'}` : ''}
+            {!gallery.items.length && onchainSupply ? ` · ${onchainSupply.toLocaleString()} minted` : ''}
+          </Eyebrow>
+          {galleryItems.length > 0 ? (
+            <>
+              <Hint>
+                {gallery.items.length
+                  ? 'Every piece, for sale or not. Press one to view it full screen.'
+                  : `OpenSea is offline, so these are numbered #1 up to the minted count; a collection that starts at #0 or has burned pieces will differ. Press one to view it full screen.`}
+              </Hint>
+              <ArtGrid>
+                {galleryItems.map((g) => (
+                  <GalleryTile
+                    key={g.tokenId}
+                    chainId={chainId}
+                    contract={address}
+                    item={g}
+                    onOpen={() => setViewing({ list: 'gallery', tokenId: g.tokenId })}
+                  />
+                ))}
+              </ArtGrid>
+              {gallery.items.length > 0 && !gallery.done && (
+                <PushButton type="button" disabled={gallery.loading} onClick={() => gallery.more()}>
+                  {gallery.loading ? 'Loading…' : 'Show more'}
+                </PushButton>
+              )}
+              {!gallery.items.length && onchainSupply !== undefined && onchainSupply > galleryLimit && (
+                <PushButton type="button" onClick={() => setGalleryLimit((n) => n + GALLERY_PAGE)}>
+                  Show more ({(onchainSupply - galleryLimit).toLocaleString()} left)
+                </PushButton>
+              )}
+            </>
+          ) : gallery.loading || supplyRead.isLoading ? (
+            <Tiles>
+              {[0, 1, 2, 3].map((i) => (
+                <li key={i}>
+                  <Skeleton h="140px" />
+                </li>
               ))}
-            </ArtGrid>
-            {gallery.items.length > 0 && !gallery.done && (
-              <PushButton type="button" disabled={gallery.loading} onClick={() => gallery.more()}>
-                {gallery.loading ? 'Loading…' : 'Show more'}
-              </PushButton>
-            )}
-            {!gallery.items.length && onchainSupply !== undefined && onchainSupply > galleryLimit && (
-              <PushButton type="button" onClick={() => setGalleryLimit((n) => n + GALLERY_PAGE)}>
-                Show more ({(onchainSupply - galleryLimit).toLocaleString()} left)
-              </PushButton>
-            )}
-          </>
-        ) : gallery.loading || supplyRead.isLoading ? (
-          <Tiles>
-            {[0, 1, 2, 3].map((i) => (
-              <li key={i}>
-                <Skeleton h="140px" />
-              </li>
-            ))}
-          </Tiles>
-        ) : (
-          <Hint>Couldn&apos;t list its pieces right now. Enter a number below to see one.</Hint>
-        )}
-      </Card>
+            </Tiles>
+          ) : (
+            <Hint>Couldn&apos;t list its pieces right now. Enter a number below to see one.</Hint>
+          )}
+        </Card>
+      )}
 
       {viewing && viewingIndex >= 0 && (
         <Viewer
@@ -951,131 +1081,6 @@ export default function CollectionView({
           <Chips>{startButtons}</Chips>
           {createStatus}
           {pools.freeModes.includes(MODE.RANDOM) && isConnected && <Hint>Random pools work only for ERC-721.</Hint>}
-        </Card>
-      )}
-
-      {sweepSet ? (
-        <SweepReview
-          key="sweep"
-          listings={sweepSet}
-          chainId={chainId}
-          contract={address}
-          title={name}
-          unverified={unverified}
-          onClose={() => setSweepSet(undefined)}
-          onDone={() => listings.refetch()}
-          onBusy={setSweepBusy}
-        />
-      ) : (
-        canSweep.length >= 2 && (
-          <SweepBar aria-label="Sweep the floor">
-            <label htmlFor="sweep-count">
-              <b>Sweep:</b> buy the {pickedListings.length} cheapest
-              {sweepAsk && sweepAsk.count > pickedListings.length ? ` (asked ${sweepAsk.count})` : ''}
-            </label>
-            <input
-              id="sweep-count"
-              type="range"
-              min={2}
-              max={Math.min(MAX_SWEEP, canSweep.length)}
-              value={sweepCount}
-              onChange={(e) => setSweepCount(Number(e.target.value))}
-            />
-            <strong title={ethInUsd(sumPrices(pickedListings), ethUsd)}>
-              {formatAmount(sumPrices(pickedListings), 18, 4)} ETH
-            </strong>
-            <PushButton
-              type="button"
-              disabled={!!ticket?.busy}
-              onClick={() =>
-                ticket
-                  ? ticket.open({
-                      kind: 'sweep',
-                      listings: pickedListings,
-                      chainId,
-                      contract: address,
-                      title: name,
-                      unverified,
-                    })
-                  : setSweepSet(pickedListings)
-              }
-            >
-              {ticket ? `Sweep ${pickedListings.length}` : 'Review sweep'}
-            </PushButton>
-          </SweepBar>
-        )
-      )}
-
-      {os.needsKey && !os.missing && (
-        <StatusBox tone="error" role="status" data-market-offline>
-          <span>
-            Buying here is offline right now. Try again later, or buy it on OpenSea.{' '}
-            {openSeaHref && (
-              <a href={openSeaHref} target="_blank" rel="noreferrer">
-                Open on OpenSea ↗
-              </a>
-            )}
-          </span>
-        </StatusBox>
-      )}
-
-      {os.slug && (
-        <Card aria-label="Cheapest for sale">
-          <Eyebrow>For sale{listed.length ? ` · ${listed.length}` : ''}</Eyebrow>
-          {listed.length > 0 && (
-            <Hint>
-              Cheapest first. Press one to see it and buy it right here.
-              {listings.stale ? ' These prices may be a few minutes old.' : ''}
-            </Hint>
-          )}
-          {!listings.listings && !listings.loading ? (
-            listings.needsKey ? (
-              <Hint data-listings-offline>
-                Buying here is offline right now. Try again later, or buy it on OpenSea.{' '}
-                {openSeaHref && (
-                  <a href={openSeaHref} target="_blank" rel="noreferrer">
-                    Open on OpenSea ↗
-                  </a>
-                )}
-              </Hint>
-            ) : (
-              <Hint data-listings-failed>
-                Could not load listings.{' '}
-                <LinkButton type="button" onClick={() => listings.refetch()}>
-                  Try again
-                </LinkButton>
-              </Hint>
-            )
-          ) : !listings.loading && !listed.length ? (
-            <Hint data-listings-empty>Nothing for sale right now. Hold one? Enter its number below to see offers.</Hint>
-          ) : listings.loading ? (
-            <Tiles>
-              {[0, 1, 2].map((i) => (
-                <li key={i}>
-                  <Skeleton h="140px" />
-                </li>
-              ))}
-            </Tiles>
-          ) : (
-            <Tiles>
-              {shownListings.map((l) => (
-                <ListingTile
-                  picked={!sweepSet && pickedListings.some((p) => p.hash === l.hash)}
-                  disabled={busy}
-                  key={l.hash}
-                  chainId={chainId}
-                  contract={address}
-                  listing={l}
-                  onOpen={() => setViewing({ list: 'listed', tokenId: l.tokenId! })}
-                />
-              ))}
-            </Tiles>
-          )}
-          {!listings.loading && listed.length > shownListings.length && (
-            <PushButton type="button" onClick={() => setTileLimit((n) => n + TILE_PAGE)}>
-              Show more ({listed.length - shownListings.length} left)
-            </PushButton>
-          )}
         </Card>
       )}
 
