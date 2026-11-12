@@ -148,8 +148,9 @@ export const LIVE_MINTS: LiveMintEntry[] = [
     kind: 'drop',
     chainId: 1,
     address: '0xb86b68bca287afd48f81d1f792db69368664a120',
-    // The cover every token shows until its piece is drawn (ar://DBeq…nvFu).
-    image: 'https://gateway.irys.xyz/DBeqbmiTS7mCmbvMFLuUcMy4XkgCwDQMVkDv9pY8nvFu',
+    // The cover every token shows until its piece is drawn (ar://DBeq…nvFu), served from this site at 768px: the
+    // Arweave copy loads slowly until it settles.
+    image: 'https://www.miyamaker.com/covers/miyamaker.webp',
     blurb: '10,000 miyamakers, each piece drawn at random when it is minted.',
     artist: 'koolskull.eth',
     artistLogo: '/artists/koolskull.png',
