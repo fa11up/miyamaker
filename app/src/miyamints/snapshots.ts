@@ -39,8 +39,8 @@ export const SNAPSHOTS: readonly Snapshot[] = /* snapshots:start */[
     "contract": "0x5Af0D9827E0c53E4799BB226655A1de152A425a5",
     "block": 26397157,
     "blockTime": 1794466007,
-    "root": "0x24f828abb825666bfa5dc13daeca0b19c166f5fb71ee508eaad1e0da5e8c0308",
-    "count": 4505,
+    "root": "0x68e60a6d39291cec8621b2199869a15bcd7d25456434c91662ca721d0595111c",
+    "count": 4504,
     "contracts": 64
   }
 ]/* snapshots:end */
