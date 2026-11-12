@@ -757,11 +757,17 @@ async function recordArweave(request: Request, c: Collection, db: RevealDb) {
 
 export const TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef'
 export const ZERO_TOPIC = `0x${'0'.repeat(64)}`
-/** Widest getLogs span tried; halved on errors (RPCs cap ranges), doubled back after each success, kept per isolate. */
-const FIRST_SPAN = 2000
+/**
+ * Widest getLogs span tried; halved on errors (RPCs cap ranges), doubled back after each success, kept per isolate.
+ * 10 blocks: the keyed Alchemy plan refuses wider eth_getLogs ranges, and a wider first try spent most of a run's
+ * budget halving down to it, so draws never got their turn (2026-11-12).
+ */
+const FIRST_SPAN = 10
 const spans = new Map<string, number>()
-/** RPC requests per collection per run. A header batch is one. */
-const RPC_BUDGET = 40
+/** RPC requests per collection per run for reading new mints, and a separate allowance for drawing them, so a long
+ *  catch-up never starves the draws. A header batch is one request. */
+const RPC_BUDGET = 120
+const DRAW_BUDGET = 30
 const HEADERS_PER_CALL = 50
 /** Draws written per run: a few thousand rows in one transaction at most. */
 const MAX_DRAWS_PER_RUN = 2000
@@ -818,7 +824,7 @@ export async function runRevealCron(deps: CronDeps): Promise<void> {
         // Draws wait (they come out the same later: they depend on the chain alone) until every piece can be served.
         const missing = await missingPieces(c, deps.db, deps.bucket)
         if (missing) log(`reveal ${c.slug}: not drawing, ${missing}`)
-        const drawn = missing ? 0 : await assign(deps.db, chain, c.slug, budget, now)
+        const drawn = missing ? 0 : await assign(deps.db, chain, c.slug, { calls: DRAW_BUDGET }, now)
         if (scanned || drawn) log(`reveal ${c.slug}: ${scanned} mint(s) stored, ${drawn} drawn`)
       }
       if (deps.refresh && deps.bucket) {
