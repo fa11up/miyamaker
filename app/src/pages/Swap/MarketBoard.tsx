@@ -277,6 +277,20 @@ export const Section = styled.section`
 const Table = styled.table`
   width: 100%;
   border-collapse: collapse;
+  /* The house collection (Miyamaker): amber, with a bar down its edge. */
+  tr.house td {
+    background: #140e00;
+  }
+  tr.house td:first-child {
+    box-shadow: inset 3px 0 0 ${color.accent};
+  }
+  tr.house .words {
+    color: ${color.accent};
+    font-weight: 700;
+  }
+  tr.house .words::before {
+    content: '★ ';
+  }
   font-size: ${text.sm};
   font-variant-numeric: tabular-nums;
   th {
@@ -501,6 +515,24 @@ export function TokenTable({
 type CollectionColumn = 'floor' | 'sales' | 'volume'
 type CollectionFigures = Partial<Record<CollectionColumn, number>> & { nothingForSale?: boolean }
 
+/** One collection's floor (the lower of OpenSea's stats and the live listings), its picture and name, for the watchlist. */
+export function useCollectionFloor(slug: string) {
+  const { info, stats, loading, error } = useCollectionRow(slug)
+  const market = useMarketListings(slug)
+  const floor = lowerPrice(stats?.floor, market.floor)
+  const waiting = loading || market.loading
+  const failed = !!error || !!market.error
+  return {
+    image: info?.image,
+    name: info?.name,
+    floor,
+    /** Words for the floor cell: the price, or why there is none. */
+    floorWords: floor ? formatPrice(floor) : waiting ? '…' : failed ? 'n/a' : 'none',
+    sales7d: stats?.sales7d,
+    volume7d: stats?.volume7d,
+  }
+}
+
 function CollectionRow({
   slug,
   name,
@@ -529,7 +561,7 @@ function CollectionRow({
   const ethUsd = useEthUsd()
   const dash = loading ? '…' : '–'
   return (
-    <tr onClick={() => onOpen(address)}>
+    <tr onClick={() => onOpen(address)} className={slug === 'miyamaker' ? 'house' : undefined}>
       <td>
         <button
           type="button"

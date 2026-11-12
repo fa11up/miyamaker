@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate, useNavigationType } from 'react-router-dom'
-import styled, { css } from 'styled-components/macro'
+import styled from 'styled-components/macro'
 import { useElementSize } from 'usehooks-ts'
 import { useAccount } from 'wagmi'
 
@@ -12,19 +12,23 @@ import { useAppDispatch } from '@/store/hooks'
 import { closeWindow, minimizeWindow } from '@/store/windows/actions'
 import { useFullscreen } from '@/store/windows/hooks'
 
+import { featuredOn } from './board'
 import type { SwapChainId, SwapToken } from './constants'
 import { isSwapChain, PINNED_TOKENS, sameAddress, SWAP_CHAINS } from './constants'
 import { Chip } from './floor/retro'
-import { PRICE_STATUS_WORDS } from './board'
 import { color, font, space, text } from './floor/tokens'
-import { ChainTabs } from './layout'
 import { Tape, TokenTable, useBoard } from './MarketBoard'
 import NftTrade from './nft/NftTrade'
-import { Field } from './nft/ui'
+import type { ActivityRow } from './terminal/activity'
+import { ActivityPanel, ActivityTape } from './terminal/ActivityView'
+import type { Command, TerminalTab } from './terminal/command'
+import { tabForKey } from './terminal/command'
+import { AMBER, CommandLine, FunctionKeys, StatusLine, Watchlist } from './terminal/parts'
+import { useActivity } from './terminal/useActivity'
 import TokenPage, { TokenResults } from './TokenPage'
 import type { SwapPreset } from './TokenSwap'
-import type { CollectionRef, TokenRef, TradeMode } from './tradePath'
-import { parseTradePath, TRADE_PATH, tradePath } from './tradePath'
+import type { CollectionRef, TokenRef } from './tradePath'
+import { parseTradePath, tabPath, TRADE_PATH, tradePath } from './tradePath'
 import { useCustomToken, useTokenList } from './useTokens'
 
 const page = Pages.swap
@@ -35,16 +39,19 @@ const Root = styled.div`
   display: flex;
   flex-direction: column;
   min-height: 0;
-  background: ${color.well};
+  background: #000;
   color: ${color.ink};
   font-family: ${font.mono};
   font-size: ${text.sm};
-  /* miyaOS sets its pixel font on every element; the floor is all one mono face. */
+  /* miyaOS sets its pixel font on every element; the terminal is all one mono face. */
   * {
     font-family: inherit;
   }
   a {
     color: ${color.link};
+  }
+  &:focus {
+    outline: none;
   }
   /* Trade's own scrollbars: no grey Win95 buttons in the middle of a dark window. */
   *::-webkit-scrollbar {
@@ -52,7 +59,7 @@ const Root = styled.div`
     height: 10px;
   }
   *::-webkit-scrollbar-track {
-    background: ${color.well};
+    background: #000;
     box-shadow: none;
   }
   *::-webkit-scrollbar-thumb {
@@ -69,124 +76,127 @@ const Root = styled.div`
     height: 0;
   }
   *::-webkit-scrollbar-corner {
-    background: ${color.well};
+    background: #000;
   }
 `
 
-const Bar = styled.header`
+const Net = styled.span`
+  display: inline-flex;
+  gap: 2px;
+  button {
+    padding: 1px 8px;
+    border: 1px solid ${color.dark};
+    background: #000;
+    color: ${color.inkMuted};
+    font: inherit;
+    font-size: ${text.xs};
+    cursor: pointer;
+  }
+  button[aria-pressed='true'] {
+    border-color: ${AMBER};
+    color: ${AMBER};
+  }
+  button:disabled {
+    cursor: default;
+    opacity: 0.6;
+  }
+`
+
+/** The rail beside the main panel: the watchlist, or the trade ticket in its place. */
+const Body = styled.div`
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 290px minmax(0, 1fr);
+  .slim & {
+    grid-template-columns: 240px minmax(0, 1fr);
+  }
+  .narrow & {
+    display: flex;
+    flex-direction: column;
+  }
+`
+
+const Rail = styled.aside`
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid ${color.dark};
+  background: #000;
+  > .scroll {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+  }
+  [hidden] {
+    display: none !important;
+  }
+  /* A phone: the rail is a sheet over the bottom of the screen, opened by WATCH or a ticket. */
+  .narrow & {
+    position: absolute;
+    z-index: 30;
+    left: 0;
+    right: 0;
+    /* Above the tab bar (the function keys), which stays reachable. */
+    bottom: 49px;
+    height: min(74%, 600px);
+    border-right: none;
+    border-top: 2px solid ${AMBER};
+    box-shadow: 0 -12px 30px rgba(0, 0, 0, 0.7);
+  }
+  .narrow &.closed {
+    display: none;
+  }
+`
+
+const RailHead = styled.div`
   flex: none;
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: ${space[1]} ${space[3]};
-  padding: ${space[2]} ${space[3]};
-  background:
-    repeating-linear-gradient(0deg, rgba(0, 0, 0, 0.22) 0 1px, transparent 1px 3px),
-    linear-gradient(180deg, #1b2630, ${color.face});
-  border-bottom: 1px solid ${color.dark};
-  /* Chrome lettering, in amber instead of miyanet's pink. */
-  h1 {
-    margin: 0;
-    font-family: 'Revalia', ${font.mono};
-    font-size: 26px;
-    font-weight: 400;
-    line-height: 1;
-    letter-spacing: 0.08em;
-    background: linear-gradient(
-      180deg,
-      #fff 0%,
-      #ffe3a0 38%,
-      ${color.accent} 52%,
-      #fff4d6 66%,
-      ${color.accentDark} 100%
-    );
-    -webkit-background-clip: text;
-    background-clip: text;
-    color: transparent;
-    filter: drop-shadow(1px 1px 0 #000);
-  }
-  p {
-    margin: 0;
-    font-size: ${text.xs};
-    color: ${color.inkMuted};
-  }
-  .readout {
-    margin-left: auto;
-    display: flex;
-    align-items: center;
-    gap: ${space[2]};
-  }
-  .chains {
-    flex: 0 1 300px;
-    min-width: 0;
-  }
-  .chains button {
-    height: 28px;
-    font-size: ${text.xs};
-    white-space: nowrap;
-  }
-  .lcd {
-    padding: 2px ${space[2]};
+  gap: ${space[2]};
+  padding: 6px ${space[3]};
+  background: ${AMBER};
+  color: #000;
+  font-size: ${text.xs};
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  button {
+    padding: 2px 6px;
+    border: 1px solid #000;
     background: #000;
-    box-shadow: inset 0 0 0 1px ${color.dark};
+    color: ${AMBER};
+    font: inherit;
     font-size: ${text.xs};
-    font-variant-numeric: tabular-nums;
-    color: ${color.success};
-    text-shadow: 0 0 5px rgba(53, 208, 127, 0.7);
+    cursor: pointer;
+  }
+  .title {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .lcd.off {
-    color: ${color.danger};
-    text-shadow: none;
-  }
-  .lcd.some,
-  .lcd.loading {
-    color: ${color.warning};
-    text-shadow: none;
-  }
-  /* The title bar already says Trade, and a phone needs the rows. */
-  .narrow & h1 {
-    display: none;
-  }
-  .narrow & .chains {
-    flex: 1 1 100%;
-  }
-  .narrow & .chains button {
-    height: 44px;
-  }
-  .narrow & .readout {
-    margin-left: 0;
+  .narrow & button {
+    min-height: 36px;
   }
 `
 
-/** A little LCD clock, in UTC, the time the market keeps. */
-function Clock() {
-  const [now, setNow] = useState(() => new Date())
-  useEffect(() => {
-    const t = setInterval(() => setNow(new Date()), 1000)
-    return () => clearInterval(t)
-  }, [])
-  return (
-    <span className="lcd" aria-hidden>
-      {now.toISOString().slice(11, 19)} UTC
-    </span>
-  )
-}
+/* The ticket holds the token page's own swap panel: give it the rail's width. */
+const Ticket = styled.div`
+  > * {
+    max-width: 100%;
+  }
+`
 
-const Floor = styled.div`
-  flex: 1 1 auto;
+const Main = styled.main`
+  position: relative;
+  min-width: 0;
   min-height: 0;
   display: flex;
-  &.home {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    grid-template-rows: auto minmax(0, 1fr);
-  }
-  /* No room for two columns: NFTs, then tokens, on one long page. */
-  &.home.stack {
-    display: block;
-    overflow-y: auto;
-    scrollbar-gutter: stable;
+  flex-direction: column;
+  background: ${color.well};
+  .narrow & {
+    flex: 1 1 auto;
   }
 `
 
@@ -200,77 +210,44 @@ const Pane = styled.div`
   &[hidden] {
     display: none;
   }
-  .stack > & {
-    overflow: visible;
-  }
 `
 
-const Search = styled.div`
-  grid-column: 1 / -1;
-  padding: ${space[3]} ${space[4]} 0;
-  input {
-    box-sizing: border-box;
-    width: 100%;
-  }
+const Padded = styled.div`
+  padding: ${space[3]} ${space[4]};
   .narrow & {
-    padding: ${space[2]} ${space[3]} 0;
-  }
-`
-
-/* Half a page each: tighter cells, so the sort arrows don't come out of the names. */
-const tightCells = css`
-  && th,
-  && td {
-    padding-left: ${space[2]};
-    padding-right: ${space[2]};
-  }
-  && th:first-child,
-  && td:first-child {
-    padding-left: ${space[3]};
-    width: 34%;
-  }
-  && .name {
-    width: 100%;
-  }
-  /* One figure beside the name on a slim window: the name takes the room, instead of breaking mid-word. */
-  .slim && th:first-child,
-  .slim && td:first-child {
-    width: 100%;
-  }
-`
-
-const NftsPane = styled(Pane)`
-  ${tightCells}
-  /* Half the page: a long collection name takes a second line rather than losing its end. */
-  tbody .words {
-    white-space: normal;
-    line-height: 1.2;
-  }
-`
-
-const TokensPane = styled(Pane)`
-  ${tightCells}
-  padding: ${space[3]} ${space[4]} ${space[3]} 0;
-  .stack > & {
-    padding: ${space[3]} ${space[4]};
-  }
-  .narrow .stack > & {
     padding: ${space[2]} ${space[3]};
   }
-  /* The NFTs' header mirrored: dark at the middle of the page, its colour and title at the outer edge. */
-  section > h2 {
-    text-align: right;
-    background:
-      repeating-linear-gradient(0deg, rgba(0, 0, 0, 0.25) 0 1px, transparent 1px 3px),
-      linear-gradient(270deg, #4a3408, ${color.face} 70%);
+`
+
+const SearchHead = styled.div`
+  display: flex;
+  align-items: center;
+  gap: ${space[3]};
+  padding: ${space[2]} ${space[4]};
+  border-bottom: 1px solid ${color.dark};
+  color: ${color.inkMuted};
+  b {
+    color: #fff;
+  }
+  button {
+    margin-left: auto;
+    border: none;
+    background: none;
+    color: ${color.link};
+    font: inherit;
+    cursor: pointer;
   }
 `
 
+type View = TerminalTab | 'search'
+
 /**
- * Trade under one header. Home is NFTs on the left and tokens on the right; each opens its own page: a collection with its
- * listings, or a token with its chart, market and swap. Pages stay mounted once opened so nothing loses a trade in progress.
- * The view lives in the path (/trade, /trade/tokens/<chain>/<address>, /trade/nfts/<pool>,
- * /trade/nfts/collection/<chain>/<address>[/<id>]) so it can be shared and Back works.
+ * Trade as one terminal (2026-11-12). A status line, the command line and the function keys on top; the rail on the left
+ * (the watchlist, which turns into the trade ticket when a token is opened); the main panel on the right, switched by
+ * F1 NFT, F2 TOKENS, F3 POOLS, F4 ACTIVITY; the price tape across the bottom. On a phone the function keys are the tab
+ * bar and the rail is a sheet. Pages stay mounted once opened so nothing loses a trade in progress. The view lives in
+ * the path (/trade, /trade/tokens/<chain>/<address>, /trade/nfts/collection/<chain>/<address>[/<id>], /trade/pools,
+ * /trade/nfts/<pool>, /trade/activity) so it can be shared and Back works.
  */
 export default function TradePage() {
   const [fullscreen, toggleFullscreen] = useFullscreen('swap')
@@ -278,8 +255,9 @@ export default function TradePage() {
   const close = () => dispatch(closeWindow({ value: 'swap' }))
   const minimize = () => dispatch(minimizeWindow({ value: 'swap' }))
 
-  const [rootRef, { width }] = useElementSize()
-  const narrow = width > 0 && width <= 440
+  const [sizeRef, { width }] = useElementSize()
+  const rootRef = useRef<HTMLDivElement | null>(null)
+  const narrow = width > 0 && width <= 640
   const slim = width > 0 && width < 980
   const location = useLocation()
   const navigationType = useNavigationType()
@@ -289,29 +267,36 @@ export default function TradePage() {
   const [collection, setCollection] = useState<CollectionRef | undefined>(initial.current.collection)
   const [offline, setOffline] = useState(false)
   const [preset, setPreset] = useState<SwapPreset>()
-  const [mode, setMode] = useState<TradeMode>(initial.current.mode)
   const [tokenRef, setTokenRef] = useState<TokenRef | undefined>(initial.current.token)
-  // Where a token page was opened from inside Trade, so its back button returns there. Empty for a link from outside.
-  const [tokenFrom, setTokenFrom] = useState<string>()
+  // NFT first: /trade opens on the collections.
+  const tabFor = (p: ReturnType<typeof parseTradePath>): TerminalTab => p.tab ?? (p.token ? 'tokens' : 'nft')
+  const [view, setView] = useState<View>(tabFor(initial.current))
+  const [query, setQuery] = useState('')
+  const [sweepAsk, setSweepAsk] = useState<{ key: number; count: number }>()
 
-  // One network for the whole floor: the market and the swap can't disagree about where you are trading.
+  // The rail: the watchlist or the ticket. On a phone it is a sheet, open or closed.
+  const [rail, setRail] = useState<'watch' | 'ticket'>(initial.current.token ? 'ticket' : 'watch')
+  const [sheetOpen, setSheetOpen] = useState(false)
+  const [ticketEl, setTicketEl] = useState<HTMLDivElement | null>(null)
+  const commandRef = useRef<HTMLInputElement>(null)
+
+  // One network for the whole terminal: the market and the swap can't disagree about where you are trading.
   const { chainId: walletChainId } = useAccount()
   const linked = initial.current.collection?.chainId ?? initial.current.token?.chainId
   const [chainId, setChainId] = useState<SwapChainId>(
-    isSwapChain(linked) ? linked : isSwapChain(walletChainId) ? walletChainId : mainnet.id,
+    isSwapChain(linked) ? linked : isSwapChain(walletChainId) ? walletChainId : mainnet.id
   )
+  const chainName = SWAP_CHAINS.find((c) => c.id === chainId)?.name ?? 'Ethereum'
   const [marketBusy, setMarketBusy] = useState(false)
   const [swapBusy, setSwapBusy] = useState(false)
   const tradeBusy = marketBusy || swapBusy
   const board = useBoard(chainId)
-  // One search for the whole home page. A pasted token's address isn't a collection, so the NFT side leaves it alone.
-  const [query, setQuery] = useState('')
+  const activity = useActivity(chainId)
   const list = useTokenList(chainId)
   const custom = useCustomToken(chainId, query, list.tokens)
   const pastedToken = custom.listed || custom.token
 
-  // Follow the wallet onto a supported chain, unless a link to one thing is open.
-  // Not during a trade: changing the floor's network would take the screen with it. It catches up when the trade ends.
+  // Follow the wallet onto a supported chain, unless a link to one thing is open. Not during a trade.
   const followedChain = useRef(walletChainId)
   useEffect(() => {
     if (tradeBusy || followedChain.current === walletChainId) return
@@ -326,68 +311,133 @@ export default function TradePage() {
     if (isSwapChain(tokenRef?.chainId)) setChainId(tokenRef!.chainId as SwapChainId)
   }, [tokenRef?.chainId])
 
-  const view = mode === 'tokens' ? (tokenRef ? 'token' : 'home') : pool || collection ? 'nft' : 'home'
   // The token page opens the first time it is wanted, then keeps its place (and any swap in flight) behind the others.
   const lastToken = useRef(tokenRef)
   if (tokenRef) lastToken.current = tokenRef
 
-  const go = (nextMode: TradeMode, nextPool?: `0x${string}`, nextCollection?: CollectionRef, nextToken?: TokenRef) => {
-    setMode(nextMode)
-    if (nextMode === 'nfts') {
-      setPool(nextPool)
-      setCollection(nextPool ? undefined : nextCollection)
-    } else {
-      setTokenRef(nextToken)
-      if (!nextToken) {
-        setPool(undefined)
-        setCollection(undefined)
-      }
-    }
-
-    const path =
-      nextMode === 'nfts'
-        ? tradePath(nextMode, nextPool, nextPool ? undefined : nextCollection)
-        : tradePath(nextMode, undefined, undefined, nextToken)
+  const push = (path: string) => {
     if (location.pathname !== path) navigate(path)
   }
 
-  const openToken = (t: SwapToken) => {
-    setPreset(undefined)
-    setTokenFrom(location.pathname)
-    go('tokens', undefined, undefined, { chainId: t.chainId, address: t.address })
+  const showTab = (t: TerminalTab) => {
+    setQuery('')
+    if (t === 'watch') {
+      setRail('watch')
+      if (narrow) setSheetOpen((o) => !o)
+      return
+    }
+
+    setView(t)
+    setSheetOpen(false)
+    if (t === 'nft') push(collection ? tradePath('nfts', undefined, collection) : TRADE_PATH)
+    if (t === 'pools') push(pool ? tradePath('nfts', pool) : tabPath('pools'))
+    if (t === 'activity') push(tabPath('activity'))
+    if (t === 'tokens') push(tokenRef ? tradePath('tokens', undefined, undefined, tokenRef) : TRADE_PATH)
   }
 
-  const leaveToken = () => {
-    const from = tokenFrom ? parseTradePath(tokenFrom) : undefined
-    setTokenFrom(undefined)
-    if (from?.token) go('tokens', undefined, undefined, from.token)
-    else if (from?.mode === 'nfts') go('nfts', from.pool, from.collection)
-    else go('tokens')
+  const openCollection = (c: CollectionRef | undefined, buy?: number) => {
+    setQuery('')
+    setCollection(c)
+    setView('nft')
+    setSheetOpen(false)
+    setSweepAsk(buy ? { key: Date.now(), count: buy } : undefined)
+    // Back to the watchlist, unless a swap is in flight on the ticket (it stays one press away either way).
+    if (!swapBusy) setRail('watch')
+    push(c ? tradePath('nfts', undefined, c) : TRADE_PATH)
+  }
+
+  const openPool = (p: `0x${string}` | undefined) => {
+    setQuery('')
+    setPool(p)
+    setView('pools')
+    push(p ? tradePath('nfts', p) : tabPath('pools'))
+  }
+
+  const openToken = (t: SwapToken | TokenRef, keepPreset = false) => {
+    if (!keepPreset) setPreset(undefined)
+    const ref = { chainId: t.chainId, address: t.address }
+    setQuery('')
+    setTokenRef(ref)
+    setView('tokens')
+    setRail('ticket')
+    if (narrow) setSheetOpen(true)
+    push(tradePath('tokens', undefined, undefined, ref))
+  }
+
+  // A sale or mint opens that NFT's page in the NFT tab.
+  const openActivity = (r: ActivityRow) =>
+    openCollection({ chainId: r.chainId, address: r.address as `0x${string}`, tokenId: r.tokenId })
+
+  const run = (c: Command) => {
+    if (c.kind === 'tab') showTab(c.tab)
+    else if (c.kind === 'collection')
+      openCollection({ chainId: c.collection.chainId, address: c.collection.address as `0x${string}` }, c.buy)
+    else if (c.kind === 'token') openToken({ chainId: c.token.chainId, address: c.token.address as `0x${string}` })
+    else if (c.kind === 'address' || c.kind === 'search') {
+      setQuery(c.kind === 'address' ? c.address : c.query)
+      setView('search')
+    }
   }
 
   // Back/forward and links into a sub-path drive the view. A plain push to /trade is the OS re-focusing the window,
-  // which must not throw away the open tab, so only POP navigations return to Tokens. A trade in flight keeps its
-  // screen: Back during one takes effect when it ends.
+  // which must not throw away the open tab, so only POP navigations return home. A trade in flight keeps its screen.
   const syncedPath = useRef<string>()
   useEffect(() => {
     const here = `${navigationType} ${location.pathname}`
     if (tradeBusy || syncedPath.current === here) return
     syncedPath.current = here
     if (!location.pathname.startsWith(TRADE_PATH)) return
-    const next = parseTradePath(location.pathname)
     if (location.pathname === TRADE_PATH && navigationType !== 'POP') return
-    setMode(next.mode)
-    if (next.mode === 'nfts') {
+    const next = parseTradePath(location.pathname)
+    if (next.tab === 'activity') setView('activity')
+    else if (next.tab === 'pools') {
       setPool(next.pool)
-      setCollection(next.collection)
-    } else {
+      setView('pools')
+    } else if (next.token) {
       setTokenRef(next.token)
-      if (!next.token) {
-        setPool(undefined)
-        setCollection(undefined)
-      }
+      setView('tokens')
+    } else {
+      setCollection(next.collection)
+      setView('nft')
     }
   }, [location.pathname, navigationType, tradeBusy])
+
+  // Keys while the terminal has focus: F1–F5 (and Alt+1–5) switch, / goes to the command line, Esc closes the ticket.
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    const typing = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement
+    const t = tabForKey(e)
+    if (t) {
+      e.preventDefault()
+      showTab(t)
+      return
+    }
+
+    if (typing) return
+    if (e.key === '/') {
+      e.preventDefault()
+      commandRef.current?.focus()
+    } else if (e.key === 'Escape') {
+      if (narrow && sheetOpen) setSheetOpen(false)
+      else if (rail === 'ticket') setRail('watch')
+    }
+  }
+
+  const commandCollections = useMemo(() => featuredOn(chainId), [chainId])
+  const commandTokens = useMemo(() => {
+    const seen = new Set<string>()
+    return [...board.rows.map((r) => r.token), ...list.tokens].filter((t) => {
+      const k = t.symbol.toLowerCase()
+      if (seen.has(k)) return false
+      seen.add(k)
+      return true
+    })
+  }, [board.rows, list.tokens])
+
+  const ticketToken = lastToken.current
+  const ticketSymbol =
+    ticketToken &&
+    (commandTokens.find((t) => sameAddress(t.address, ticketToken.address))?.symbol ??
+      `${ticketToken.address.slice(0, 6)}…`)
 
   return (
     <WindowWrapper skin="floor">
@@ -409,101 +459,187 @@ export default function TradePage() {
       >
         {page?.label}
       </TitleBar>
-      <Root ref={rootRef} className={[narrow && 'narrow', slim && 'slim'].filter(Boolean).join(' ') || undefined}>
-        <Bar>
-          <h1>trade</h1>
-          <span className="chains">
-            <ChainTabs role="group" aria-label="Network">
-              {SWAP_CHAINS.map((c) => (
-                <button
-                  key={c.id}
-                  type="button"
-                  aria-pressed={c.id === chainId}
-                  disabled={tradeBusy}
-                  onClick={() => {
-                    setChainId(c.id)
-                    go('tokens')
-                  }}
-                >
-                  {c.name}
+      <Root
+        ref={(el) => {
+          rootRef.current = el
+          sizeRef(el)
+        }}
+        tabIndex={-1}
+        onKeyDown={onKeyDown}
+        className={[narrow && 'narrow', slim && 'slim'].filter(Boolean).join(' ') || undefined}
+      >
+        <StatusLine
+          chainId={chainId}
+          chainName={chainName}
+          priceStatus={board.status}
+          extra={
+            <>
+              <Net role="group" aria-label="Network">
+                {SWAP_CHAINS.map((c) => (
+                  <button
+                    key={c.id}
+                    type="button"
+                    aria-pressed={c.id === chainId}
+                    disabled={tradeBusy}
+                    onClick={() => {
+                      setChainId(c.id)
+                      showTab('nft')
+                    }}
+                  >
+                    {c.id === 1 ? 'ETH' : 'RH'}
+                  </button>
+                ))}
+              </Net>
+              {offline && <Chip tone="warn">Swap offline</Chip>}
+            </>
+          }
+        />
+        <CommandLine
+          inputRef={commandRef}
+          collections={commandCollections}
+          tokens={commandTokens}
+          disabled={tradeBusy}
+          onCommand={run}
+        />
+        <FunctionKeys tab={view === 'search' ? 'nft' : view} railOpen={narrow ? sheetOpen : false} onTab={showTab} />
+        <Tape rows={board.rows} loading={board.loading} disabled={tradeBusy} onTrade={(t) => openToken(t)} />
+
+        <Body>
+          <Rail
+            className={narrow && !sheetOpen ? 'closed' : undefined}
+            aria-label={rail === 'ticket' ? 'Trade ticket' : 'Watchlist'}
+          >
+            {rail === 'ticket' && ticketToken ? (
+              <RailHead>
+                <button type="button" onClick={() => setRail('watch')} title="Back to the watchlist (Esc)">
+                  ◀ WATCH
                 </button>
-              ))}
-            </ChainTabs>
-          </span>
-          <span className="readout">
-            {offline && <Chip tone="warn">Swap offline</Chip>}
-            <span
-              className={board.status === 'live' ? 'lcd' : `lcd ${board.status}`}
-              data-price-status={board.status}
-            >
-              {PRICE_STATUS_WORDS[board.status]}
-            </span>
-            {!narrow && <Clock />}
-          </span>
-        </Bar>
-        <Tape rows={board.rows} loading={board.loading} disabled={tradeBusy} onTrade={openToken} />
-        <Floor className={view === 'home' ? (slim ? 'home stack' : 'home') : undefined}>
-          {view === 'home' && (
-            <Search>
-              <Field
-                type="search"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search or paste an address"
-                aria-label="Search NFTs and tokens by name, or paste an address"
-                spellCheck={false}
-              />
-            </Search>
-          )}
-          <NftsPane hidden={view === 'token'} data-trade-nfts>
-            <NftTrade
-              query={pastedToken ? '' : query}
-              chainId={chainId}
-              onBusy={setMarketBusy}
-              pool={pool}
-              collection={collection}
-              visible={view !== 'token'}
-              onOpenPool={(p) => go('nfts', p)}
-              onOpenCollection={(c) => go('nfts', undefined, c)}
-              onSwapToken={(p) => {
-                // Pool tokens are the only ones here that aren't on the list, and the page is about them.
-                const pinned = (t?: SwapToken) =>
-                  PINNED_TOKENS[p.chainId].some((x) => sameAddress(x.address, t?.address))
-                const subject = pinned(p.buy) ? p.sell : p.buy
-                setPreset({ ...p, key: Date.now() })
-                setTokenFrom(location.pathname)
-                if (subject) go('tokens', undefined, undefined, { chainId: p.chainId, address: subject.address })
-              }}
-            />
-          </NftsPane>
-          <TokensPane hidden={view !== 'home'} data-trade-home-tokens>
-            {query.trim() ? (
-              <TokenResults
-                query={query}
-                tokens={list.tokens}
-                pasted={pastedToken}
-                loading={list.isLoading || custom.isLoading}
-                onOpen={openToken}
-              />
+                <span className="title">TICKET · {ticketSymbol}</span>
+                {narrow && (
+                  <button type="button" onClick={() => setSheetOpen(false)} aria-label="Close">
+                    ✕
+                  </button>
+                )}
+              </RailHead>
             ) : (
-              <TokenTable rows={board.rows} failed={board.failed} loading={board.loading} onTrade={openToken} />
+              <RailHead>
+                <span className="title">WATCHLIST · {chainName.toUpperCase()}</span>
+                {ticketToken && (
+                  <button type="button" onClick={() => setRail('ticket')} title="Back to the open ticket">
+                    TICKET ▶
+                  </button>
+                )}
+                {narrow && (
+                  <button type="button" onClick={() => setSheetOpen(false)} aria-label="Close">
+                    ✕
+                  </button>
+                )}
+              </RailHead>
             )}
-          </TokensPane>
-          {lastToken.current && (
-            <Pane hidden={view !== 'token'} data-trade-tokens>
-              <TokenPage
+            <div className="scroll">
+              <div hidden={rail === 'ticket' && !!ticketToken}>
+                <Watchlist
+                  chainId={chainId}
+                  rows={board.rows}
+                  activeCollection={view === 'nft' ? collection?.address : undefined}
+                  activeToken={view === 'tokens' ? tokenRef?.address : undefined}
+                  onCollection={(address) => openCollection({ chainId, address: address as `0x${string}` })}
+                  onToken={(t) => openToken(t)}
+                />
+              </div>
+              <Ticket ref={setTicketEl} hidden={rail !== 'ticket' || !ticketToken} data-trade-ticket />
+            </div>
+          </Rail>
+
+          <Main>
+            {view === 'search' && (
+              <Pane>
+                <SearchHead>
+                  <span>
+                    SEARCH <b>{query}</b>
+                  </span>
+                  <button type="button" onClick={() => showTab('nft')}>
+                    Clear ✕
+                  </button>
+                </SearchHead>
+                <Padded>
+                  <TokenResults
+                    query={query}
+                    tokens={list.tokens}
+                    pasted={pastedToken}
+                    loading={list.isLoading || custom.isLoading}
+                    onOpen={(t) => openToken(t)}
+                  />
+                </Padded>
+              </Pane>
+            )}
+
+            <Pane hidden={!(view === 'nft' || view === 'pools' || view === 'search')} data-trade-nfts>
+              <NftTrade
+                query={view === 'search' && !pastedToken ? query : ''}
                 chainId={chainId}
-                onChain={setChainId}
-                onBusy={setSwapBusy}
-                address={lastToken.current.chainId === chainId ? lastToken.current.address : undefined}
-                preset={preset}
-                onBack={leaveToken}
-                backLabel={tokenFrom ? 'Back' : 'All tokens'}
-                onOffline={setOffline}
+                onBusy={setMarketBusy}
+                section={view === 'pools' ? 'pools' : 'collections'}
+                pool={view === 'pools' ? pool : undefined}
+                collection={view === 'nft' ? collection : undefined}
+                sweepAsk={sweepAsk}
+                visible={view === 'nft' || view === 'pools' || view === 'search'}
+                onOpenPool={openPool}
+                onOpenCollection={(c) => openCollection(c)}
+                onSwapToken={(p) => {
+                  // Pool tokens are the only ones here that aren't on the list, and the ticket is about them.
+                  const pinned = (t?: SwapToken) =>
+                    PINNED_TOKENS[p.chainId].some((x) => sameAddress(x.address, t?.address))
+                  const subject = pinned(p.buy) ? p.sell : p.buy
+                  setPreset({ ...p, key: Date.now() })
+                  if (subject) openToken({ chainId: p.chainId, address: subject.address }, true)
+                }}
               />
             </Pane>
-          )}
-        </Floor>
+
+            <Pane hidden={view !== 'tokens' || !!tokenRef} data-trade-home-tokens>
+              <Padded>
+                <TokenTable
+                  rows={board.rows}
+                  failed={board.failed}
+                  loading={board.loading}
+                  onTrade={(t) => openToken(t)}
+                />
+              </Padded>
+            </Pane>
+
+            {lastToken.current && (
+              <Pane hidden={view !== 'tokens' || !tokenRef} data-trade-tokens>
+                <TokenPage
+                  chainId={chainId}
+                  onChain={setChainId}
+                  onBusy={setSwapBusy}
+                  address={lastToken.current.chainId === chainId ? lastToken.current.address : undefined}
+                  preset={preset}
+                  onBack={() => {
+                    setTokenRef(undefined)
+                    push(TRADE_PATH)
+                  }}
+                  backLabel="All tokens"
+                  onOffline={setOffline}
+                  ticket={ticketEl}
+                />
+              </Pane>
+            )}
+
+            {view === 'activity' && (
+              <Pane>
+                <ActivityPanel
+                  rows={activity.rows}
+                  loading={activity.loading}
+                  failed={activity.failed}
+                  onOpen={openActivity}
+                />
+              </Pane>
+            )}
+          </Main>
+        </Body>
+        {!narrow && <ActivityTape rows={activity.rows} onOpen={openActivity} />}
       </Root>
     </WindowWrapper>
   )

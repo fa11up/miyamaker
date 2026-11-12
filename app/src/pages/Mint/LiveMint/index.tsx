@@ -28,10 +28,12 @@ import { useTx } from '@/miyamints/useTx'
 import ArtistTag from '@/pages/Mint/ArtistTag'
 import type { ListStanding, LiveMintCard } from '@/pages/Mint/liveMints'
 import {
+  COMMUNITY_WORDS,
   defaultPhase,
   formatEthShort,
   listStanding,
   mintableNow,
+  shelfOf,
   STANDING_BUTTON,
   standingWords,
   toCard,
@@ -366,6 +368,7 @@ function useListPhases(card: LiveMintCard, reads: ReturnType<typeof readsFromRes
 }
 
 export default function LiveMintView({ card }: { card: LiveMintCard }) {
+  const community = shelfOf(card) === 'community'
   const { reads, live, isLoading, isError, refetch } = useCollection(card)
   const { address: account } = useAccount()
   const lists = useListPhases(card, reads, account)
@@ -562,9 +565,20 @@ export default function LiveMintView({ card }: { card: LiveMintCard }) {
     <MintCart
       name={live.name}
       caption={
-        // More than one phase running: say on the screen which one the button mints in (Info lists them all).
-        card.kind === 'drop' && phase && lists.phases.length > 1
-          ? `${phase.isList ? lists.byPhase[phase.phaseId]?.name ?? 'Allowlist' : 'Public sale'} · Info: all sales`
+        // A community mint says so on the art, before anything else. More than one phase running: say which one the
+        // button mints in (Info lists them all).
+        [
+          community ? 'Community mint · not by miyamaker' : '',
+          card.kind === 'drop' && phase && lists.phases.length > 1
+            ? `${phase.isList ? lists.byPhase[phase.phaseId]?.name ?? 'Allowlist' : 'Public sale'} · Info: all sales`
+            : '',
+        ]
+          .filter(Boolean)
+          .join(' · ') || undefined
+      }
+      notice={
+        community
+          ? `${COMMUNITY_WORDS}. Anyone can launch a collection here; check who made it before you mint.`
           : undefined
       }
       artist={

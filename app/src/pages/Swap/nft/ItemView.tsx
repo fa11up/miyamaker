@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import styled from 'styled-components/macro'
 import type { Address } from 'viem'
 import { useAccount, useReadContract } from 'wagmi'
@@ -21,6 +21,7 @@ import { Action, Card, Chips, Head, Hint, LinkButton, Mono, PushButton } from '.
 import { useOpenSeaCollection, useOpenSeaItem } from './useMarkets'
 import { poolFactoryFor, useNftMeta, usePoolsForCollection } from './usePools'
 import { OutLink, VenueList, VenueRow } from './venueUi'
+import Viewer from './Viewer'
 
 const Layout = styled.div`
   display: grid;
@@ -56,10 +57,13 @@ export default function ItemView({
   onBack,
   onOpenPool,
   onBusy,
+  autoBuy,
 }: {
   chainId: SupportedChainId
   contract: Address
   tokenId: string
+  /** Opened from the viewer's BUY: show the buy review as soon as the listing is known. */
+  autoBuy?: boolean
   onBack: () => void
   onOpenPool: (pool: Address) => void
   /** Told while a trade is in flight, when the page must not change. */
@@ -95,6 +99,13 @@ export default function ItemView({
   const listingIsMine = !!listing && mine
   const unverified = !isFeatured(chainId, contract) && os.info?.verified !== true
   const openSeaHref = itemUrl('opensea', chainId, contract, tokenId)
+  const autoBought = useRef(false)
+  useEffect(() => {
+    if (!autoBuy || autoBought.current || !listing || listingIsMine) return
+    autoBought.current = true
+    setReview({ side: 'buy', order: listing })
+  }, [autoBuy, listing, listingIsMine])
+  const [viewing, setViewing] = useState(false)
 
   return (
     <>
@@ -105,7 +116,14 @@ export default function ItemView({
       <Card aria-label={title} data-item-view>
         <Layout>
           <div className="pic">
-            <NftImage src={item.nft?.image || meta.image} alt={title} fit="contain" />
+            <button
+              type="button"
+              onClick={() => setViewing(true)}
+              aria-label={`View ${title} full screen`}
+              style={{ display: 'block', width: '100%', padding: 0, border: 'none', background: 'none', cursor: 'zoom-in' }}
+            >
+              <NftImage src={item.nft?.image || meta.image} alt={title} fit="contain" />
+            </button>
           </div>
           <div className="meta">
             <Head>
@@ -150,6 +168,24 @@ export default function ItemView({
           </div>
         </Layout>
       </Card>
+
+      {viewing && (
+        <Viewer
+          chainId={chainId}
+          contract={contract}
+          slug={os.slug}
+          collectionName={collectionName}
+          supply={os.info?.supply}
+          items={[{ tokenId, image: item.nft?.image || meta.image }]}
+          index={0}
+          onIndex={() => {}}
+          onClose={() => setViewing(false)}
+          onOpen={(_, buy) => {
+            setViewing(false)
+            if (buy && listing && !listingIsMine) setReview({ side: 'buy', order: listing })
+          }}
+        />
+      )}
 
       {review && (
         <FillReview

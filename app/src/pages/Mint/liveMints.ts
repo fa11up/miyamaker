@@ -476,6 +476,15 @@ export function slugFromPath(pathname: string): string | undefined {
 }
 
 /** The card's price words: the ETH price, or the other token's when the phase doesn't sell for ETH. */
+/**
+ * Official mints are the curated list (made by miyamaker); every other card comes from the registry, deployed by anyone
+ * through Launch. Community cards always carry COMMUNITY_WORDS so they can't be taken for a miyamaker drop.
+ */
+export type MintShelf = 'official' | 'community'
+export const shelfOf = (c: Pick<LiveMintCard, 'source'>): MintShelf =>
+  c.source === 'curated' ? 'official' : 'community'
+export const COMMUNITY_WORDS = 'Community mint · not made by miyamaker'
+
 export const cardPrice = (c: Pick<LiveMintCard, 'price' | 'priceLabel'>) =>
   c.price === undefined && c.priceLabel ? c.priceLabel : formatEthShort(c.price)
 

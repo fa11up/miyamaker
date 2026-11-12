@@ -46,6 +46,18 @@ const Tag = styled.span`
   font-size: 13px;
 `
 
+const Notice = styled.p`
+  && {
+    margin: 0;
+    padding: 6px 9px;
+    border: 1px solid #ffd27a;
+    border-radius: 4px;
+    background: rgba(60, 40, 0, 0.55);
+    color: #ffe2a6;
+    font-size: 14px;
+  }
+`
+
 const Info = styled.div`
   position: absolute;
   z-index: 3;
@@ -140,6 +152,7 @@ export default function MintCart({
   supply,
   left,
   notes,
+  notice,
   quantity,
   maxQty,
   busy,
@@ -170,6 +183,8 @@ export default function MintCart({
   supply?: number
   left?: number
   notes?: ReactNode
+  /** Shown first on the Info screen, in a box: e.g. that a community mint is not made by miyamaker. */
+  notice?: ReactNode
   quantity: number
   maxQty: number
   busy: boolean
@@ -260,6 +275,7 @@ export default function MintCart({
                 <h2>{name}</h2>
                 {artist}
               </div>
+              {notice && <Notice role="note">{notice}</Notice>}
               {blurb && <p>{blurb}</p>}
               <HoloButton
                 type="button"

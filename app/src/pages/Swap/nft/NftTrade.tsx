@@ -28,6 +28,7 @@ import ItemView from './ItemView'
 import { OPENSEA_CHAIN } from './markets'
 import type { PoolMode } from './pool'
 import { filterPools, MODE, MODE_HINT, MODE_LABEL, poolTitle } from './pool'
+import House from '../terminal/House'
 import PoolView from './PoolView'
 import { Card, Field, Head, Hint, LinkButton, Prose, PushButton, SwitchNote } from './ui'
 import {
@@ -328,7 +329,13 @@ export default function NftTrade({
   onOpenPool,
   onOpenCollection,
   onSwapToken,
+  section = 'all',
+  sweepAsk,
 }: {
+  /** BUY n from the command line: open the collection's sweep set to n. A new key asks again. */
+  sweepAsk?: { key: number; count: number }
+  /** The terminal's tabs: NFT shows the collections, POOLS the pools; 'all' is both. */
+  section?: 'all' | 'collections' | 'pools'
   /** The home page's search, shared with the tokens. */
   query: string
   /** The floor's one network. */
@@ -367,6 +374,8 @@ export default function NftTrade({
   // A chosen place survives going back: each page's settings and scroll, and the table's order.
   const [tableSort, setTableSort] = useState<Sort<CollectionColumn>>()
   const places = useRef<Record<string, CollectionPlace>>({})
+  // The NFT the viewer's BUY opened: its page opens straight on the buy review.
+  const buyNext = useRef<string>()
   const scrolls = useRef<Record<string, number>>({})
   const bodyRef = useRef<HTMLDivElement>(null)
   const viewKey = collection
@@ -448,6 +457,13 @@ export default function NftTrade({
   }
 
   const wrongChain = isConnected && walletChainId !== chainId
+  if (sweepAsk && collection && !collection.tokenId) {
+    const k = `${collection.address}/`.toLowerCase()
+    if (places.current[`ask:${k}`]?.sweepCount !== sweepAsk.key) {
+      places.current[k] = { ...places.current[k], sweepCount: sweepAsk.count }
+      places.current[`ask:${k}`] = { sweepCount: sweepAsk.key }
+    }
+  }
   if (collection && collection.chainId === chainId) {
     return (
       <Body ref={bodyRef}>
@@ -458,16 +474,20 @@ export default function NftTrade({
             contract={collection.address}
             tokenId={collection.tokenId}
             onBack={() => onOpenCollection({ chainId, address: collection.address })}
+            autoBuy={buyNext.current === `${collection.address}/${collection.tokenId}`.toLowerCase()}
             onOpenPool={(p) => onOpenPool(p)}
             onBusy={setPageBusy}
           />
         ) : (
           <CollectionView
-            key={collection.address}
+            key={`${collection.address}-${sweepAsk?.key ?? ''}`}
             chainId={chainId}
             address={collection.address}
             onBack={() => onOpenCollection(undefined)}
-            onOpenItem={(tokenId) => onOpenCollection({ chainId, address: collection.address, tokenId })}
+            onOpenItem={(tokenId, buy) => {
+              buyNext.current = buy ? `${collection.address}/${tokenId}`.toLowerCase() : undefined
+              onOpenCollection({ chainId, address: collection.address, tokenId })
+            }}
             onOpenPool={(p) => onOpenPool(p)}
             onBusy={setPageBusy}
             place={places.current[viewKey]}
@@ -520,7 +540,7 @@ export default function NftTrade({
 
   return (
     <Body ref={bodyRef}>
-      {lookup.collection && (
+      {section !== 'pools' && lookup.collection && (
         <Picks aria-label="Pasted address">
           <Pick
             name={shortAddress(lookup.collection)}
@@ -530,7 +550,7 @@ export default function NftTrade({
         </Picks>
       )}
 
-      {nameQuery && marketsHere && (search.loading || hits.length > 0 || search.empty) && (
+      {section !== 'pools' && nameQuery && marketsHere && (search.loading || hits.length > 0 || search.empty) && (
         <Section aria-label="Collections on OpenSea">
           <h2>Collections</h2>
           <SectionBody>
@@ -559,7 +579,7 @@ export default function NftTrade({
           </SectionBody>
         </Section>
       )}
-      {nameQuery && marketsHere && (search.needsKey || search.failed) && (
+      {section !== 'pools' && nameQuery && marketsHere && (search.needsKey || search.failed) && (
         <Hint data-search-failed>Search is not working right now. Paste a contract address instead.</Hint>
       )}
       {openError && (
@@ -568,9 +588,10 @@ export default function NftTrade({
         </StatusBox>
       )}
 
-      {!query && <CollectionTable chainId={chainId} onOpen={openCollection} sort={tableSort} onSort={setTableSort} />}
+      {section !== 'pools' && !query && chainId === 1 && <House onOpen={openCollection} />}
+      {section !== 'pools' && !query && <CollectionTable chainId={chainId} onOpen={openCollection} sort={tableSort} onSort={setTableSort} />}
 
-      {!query && yours.length > 0 && (
+      {section !== 'pools' && !query && yours.length > 0 && (
         <Section aria-label="Your collections">
           <h2>Your NFTs on {chain.name}</h2>
           <SectionBody>
@@ -593,14 +614,14 @@ export default function NftTrade({
         </Section>
       )}
 
-      {!query && (owned.error || walletNfts.isError) && (
+      {section !== 'pools' && !query && (owned.error || walletNfts.isError) && (
         <Hint role="status">Couldn&apos;t load your NFTs on {chain.name}. Try again later.</Hint>
       )}
-      {!query && yours.length > 0 && (owned.groups ? owned.partial : !!walletNfts.data?.partial) && (
+      {section !== 'pools' && !query && yours.length > 0 && (owned.groups ? owned.partial : !!walletNfts.data?.partial) && (
         <Hint>This wallet has more NFTs than we could list. Paste a collection address to find one.</Hint>
       )}
 
-      {!factory ? (
+      {section === 'collections' ? null : !factory ? (
         <Soon role="status" data-pools-not-deployed>
           <Chip tone="warn">Opens soon</Chip>
           <span>NFT pools: sell an NFT for a token and buy one back, with no fees.</span>
