@@ -249,8 +249,8 @@ export default function MiyaMakerStudioPage() {
         const source = await traitImage(trait)
         const pixels = source ? await blobToPixels(source, 'letterbox') : blankPixels(CANVAS, CANVAS)
         if (!cancel && activeRef.current === id) canvasRef.current?.load(pixels)
-      } catch (error) {
-        if (!cancel) setStatus(error instanceof Error ? error.message : 'Could not open that picture.')
+      } catch {
+        if (!cancel) setStatus('Could not open that picture.')
       }
     })()
     return () => {
@@ -339,8 +339,8 @@ export default function MiyaMakerStudioPage() {
       await paintStack(mine)
       if (mine !== loadToken.current) return
       setStatus(`${countLabel(next.traits.length)} from koolskull.com/miyamaker/layers. Arrows step through a layer. Random builds another.`)
-    } catch (error) {
-      if (mine === loadToken.current) setStatus(error instanceof Error ? error.message : 'Could not read the published layers.')
+    } catch {
+      if (mine === loadToken.current) setStatus('Could not read the published layers.')
     } finally {
       if (mine === loadToken.current) {
         setBusy(false)
@@ -365,7 +365,7 @@ export default function MiyaMakerStudioPage() {
     } catch (error) {
       if (mine !== loadToken.current) return
       if (error instanceof DOMException && error.name === 'AbortError') setStatus('Open cancelled.')
-      else setStatus(error instanceof Error ? error.message : 'Could not open that folder.')
+      else setStatus('Could not open that folder.')
     } finally {
       if (mine === loadToken.current) {
         setBusy(false)
@@ -411,8 +411,8 @@ export default function MiyaMakerStudioPage() {
       showCharacter(current, randomWorn(current.layers, current.traits), openLayer ?? 'Body')
       await paintStack(mine)
       if (mine === loadToken.current) setStatus('New random character.')
-    } catch (error) {
-      if (mine === loadToken.current) setStatus(error instanceof Error ? error.message : 'Could not build that character.')
+    } catch {
+      if (mine === loadToken.current) setStatus('Could not build that character.')
     } finally {
       if (mine === loadToken.current) {
         setBusy(false)
@@ -515,8 +515,8 @@ export default function MiyaMakerStudioPage() {
       )
       update({ ...current, traits })
       setStatus(`Saved ${diskName}.`)
-    } catch (error) {
-      setStatus(error instanceof Error ? error.message : 'Could not save.')
+    } catch {
+      setStatus('Could not save.')
     } finally {
       setBusy(false)
     }
@@ -543,8 +543,8 @@ export default function MiyaMakerStudioPage() {
       link.click()
       window.setTimeout(() => URL.revokeObjectURL(url), 1500)
       setStatus(`Saved ${fileName}.`)
-    } catch (error) {
-      setStatus(error instanceof Error ? error.message : 'Could not export that picture.')
+    } catch {
+      setStatus('Could not export that picture.')
     } finally {
       setBusy(false)
     }
