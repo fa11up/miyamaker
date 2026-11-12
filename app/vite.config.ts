@@ -15,6 +15,13 @@ import svgr from 'vite-plugin-svgr'
 import { ALLOWLIST_BODY_LIMIT, ALLOWLIST_PATH, handleAllowlistRequest, memoryAllowlistStore } from './api/_lib/allowlist'
 import { BODY_LIMIT } from './api/_lib/body'
 import { handleMarketRequest, MARKET_PREFIX, memoryCache, openSeaReader } from './api/_lib/market'
+import {
+  GALLERY_BODY_LIMIT,
+  GALLERY_READ_RATE,
+  GALLERY_WRITE_RATE,
+  handleMiyakeysGallery,
+  MIYAKEYS_GALLERY_PATH,
+} from './api/_lib/miyakeys'
 import { handleOpenSeaRequest, OPENSEA_PROXY_PATH, quoteBigInts } from './api/_lib/opensea'
 import { handlePublicAccessRequest, memoryTapeStore, PUBLIC_ACCESS_PATH, youtubeLookup } from './api/_lib/publicaccess'
 import { handleNftRequest, handleRpcRequest, NFT_PREFIX, RPC_BODY_LIMIT, RPC_PREFIX } from './api/_lib/rpc'
@@ -315,6 +322,59 @@ function sampleMediaDevProxy(): Plugin {
   }
 }
 
+/**
+ * The PWA plugin adds its manifest link and service-worker registration to every page it builds. miyakeys's page runs
+ * in a sandboxed frame with an opaque origin and a CSP of its own (api/_lib/miyakeys.ts): it can register no service
+ * worker and load no manifest, so both come out of that page.
+ */
+function embedWithoutPwa(): Plugin {
+  return {
+    name: 'miya-embed-without-pwa',
+    // The PWA plugin is enforce: 'post'; this one is too, and comes after it in the list, so it runs after it.
+    enforce: 'post',
+    transformIndexHtml: {
+      order: 'post',
+      handler(html, ctx) {
+        if (!/(^|\/)embed\/miyakeys\/index\.html$/.test(ctx.filename.replace(/\\/g, '/'))) return html
+        return html
+          .replace(/<link rel="manifest"[^>]*>/g, '')
+          .replace(/<script id="vite-plugin-pwa:register-sw"[^>]*><\/script>/g, '')
+      },
+    },
+  }
+}
+
+/** Dev-only stand-in for the Worker's miyakeys gallery route (api/_lib/miyakeys.ts): the same checks, the real gallery. */
+function miyakeysGalleryDevProxy(): Plugin {
+  const guards = {
+    clientKey,
+    readLimiter: createRateLimiter(GALLERY_READ_RATE),
+    writeLimiter: createRateLimiter(GALLERY_WRITE_RATE),
+  }
+  return {
+    name: 'miya-miyakeys-gallery-dev-proxy',
+    configureServer(server) {
+      server.middlewares.use(MIYAKEYS_GALLERY_PATH, async (req, res) => {
+        const body = await devBody(req, res, GALLERY_BODY_LIMIT)
+        if (body === undefined) return
+        const rest = (req.url || '').replace(/^\/(?=\?|$)/, '')
+        const response = await handleMiyakeysGallery(
+          {
+            method: req.method || 'GET',
+            url: `http://${devHost(req)}${MIYAKEYS_GALLERY_PATH}${rest}`,
+            headers: devHeaders(req),
+            body: req.method === 'POST' ? body : undefined,
+          },
+          guards
+        )
+        res.statusCode = response.status
+        response.headers.forEach((value, key) => res.setHeader(key, value))
+        res.end(await response.text())
+      })
+    },
+  }
+}
+
 /** Dev-only stand-in for the Worker's video-audio route. Page hosts are checked in api/_lib/videoaudio.ts. */
 function videoAudioDevProxy(): Plugin {
   const limiter = createRateLimiter(VIDEO_AUDIO_RATE)
@@ -388,6 +448,7 @@ export default defineConfig(({ mode }) => ({
     allowlistDevProxy(),
     publicAccessDevProxy(),
     sampleMediaDevProxy(),
+    miyakeysGalleryDevProxy(),
     videoAudioDevProxy(),
     tvLiveDevProxy(loadEnv(mode, __dirname, ['YOUTUBE_'])),
     marketDevProxy(loadEnv(mode, __dirname, ['OPENSEA_'])),
@@ -548,6 +609,7 @@ export default defineConfig(({ mode }) => ({
         cleanupOutdatedCaches: true,
       },
     }),
+    embedWithoutPwa(),
   ],
   build: {
     // No source maps in the deployed bundle: 'hidden' would still copy the .map files into dist/ (and so publish them).

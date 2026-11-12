@@ -1,4 +1,5 @@
 // Cloudflare Worker: the keyed RPC and NFT index (api/_lib/rpc.ts), the 0x and OpenSea proxies (keys injected server-side, see api/_lib), the apex -> www redirect,
+// miyakeys's gallery and page headers (api/_lib/miyakeys.ts),
 // the per-mint reveal (/reveal/*, and its every-minute cron: api/_lib/reveal.ts), and everything else from the static build in dist/ (wrangler.jsonc).
 import { createPublicClient, http } from 'viem'
 import { mainnet } from 'viem/chains'
@@ -6,6 +7,15 @@ import { mainnet } from 'viem/chains'
 import { ALLOWLIST_BODY_LIMIT, ALLOWLIST_PATH, d1AllowlistStore, handleAllowlistRequest } from './_lib/allowlist'
 import { jsonReply, noSniff, readCappedText } from './_lib/body'
 import { edgeCache, handleMarketRequest, MARKET_PREFIX, openSeaReader } from './_lib/market'
+import {
+  embedResponse,
+  GALLERY_BODY_LIMIT,
+  GALLERY_READ_RATE,
+  GALLERY_WRITE_RATE,
+  handleMiyakeysGallery,
+  isEmbedPath,
+  MIYAKEYS_GALLERY_PATH,
+} from './_lib/miyakeys'
 import { handleOpenSeaRequest, OPENSEA_PROXY_PATH, quoteBigInts } from './_lib/opensea'
 import { d1TapeStore, handlePublicAccessRequest, PUBLIC_ACCESS_PATH, youtubeLookup } from './_lib/publicaccess'
 import { handleSampleMediaRequest, SAMPLE_MEDIA_PATH, SAMPLE_MEDIA_RATE } from './_lib/samplemedia'
@@ -114,6 +124,9 @@ const tvState = (env: Env) => (tvCache ??= sharedCache(env.DB ? d1SharedState(en
 // A kit reads one sample per pad at once. A video link costs more: it makes three or more upstream fetches.
 const sampleMediaLimiter = createRateLimiter(SAMPLE_MEDIA_RATE)
 const videoAudioLimiter = createRateLimiter(VIDEO_AUDIO_RATE)
+// miyakeys's community gallery, forwarded to nuroctane.xyz (api/_lib/miyakeys.ts).
+const miyakeysReadLimiter = createRateLimiter(GALLERY_READ_RATE)
+const miyakeysWriteLimiter = createRateLimiter(GALLERY_WRITE_RATE)
 // assignments.json is every draw (a few MB at sell-out): a verifier reads it once.
 const revealListLimiter = createRateLimiter({ capacity: 10, perSecond: 0.2 })
 
@@ -146,6 +159,10 @@ export default {
         listLimiter: revealListLimiter,
       })
     }
+
+    // miyakeys's page and files: its CSP, and CORS for its sandboxed (opaque-origin) frame. Its hashed scripts and
+    // styles under /assets/* skip the Worker: public/_headers gives those CORS.
+    if (isEmbedPath(url.pathname)) return embedResponse(await env.ASSETS.fetch(request))
 
     if (url.pathname.startsWith('/commercials/')) {
       // Asked for without its range, because the asset store answers those whole anyway.
@@ -309,6 +326,14 @@ async function api(request: Request, env: Env, url: URL): Promise<Response> {
         limiter: allowlistLimiter,
         writeLimiter: allowlistWriteLimiter,
       }
+    )
+  }
+
+  if (url.pathname === MIYAKEYS_GALLERY_PATH) {
+    const body = request.method === 'POST' ? await readCappedText(request, GALLERY_BODY_LIMIT) : undefined
+    return handleMiyakeysGallery(
+      { method: request.method, url: request.url, headers: request.headers, body },
+      { clientKey, readLimiter: miyakeysReadLimiter, writeLimiter: miyakeysWriteLimiter }
     )
   }
 
