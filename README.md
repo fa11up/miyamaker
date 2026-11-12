@@ -55,7 +55,7 @@ Sixty-four pads sit in banks A through D. The Sequence page and the Tracker page
 
 Songs save as `.m1ya`. Kits save as `.k1t`. From the site, or from a local checkout, you can publish a song, a kit, or a bounce to Arweave, and mint it as an edition. Publishing is public and permanent, and storage is paid in real ETH on Ethereum mainnet. The full map of the instrument, including MIDI controllers, the phone layout, the chord panel, and the tracker keys, is [app/src/pages/MusicMaker/README.md](app/src/pages/MusicMaker/README.md). The chord-panel section of that guide is released under the [Source Seppuku License](https://wiki.remilia.org/Source_Seppuku_License).
 
-Version 1.0.0 is also a program you can run without a browser window. The Mac download is the GitHub release `MiyaMusicMaker-v1.0.0`. The same source builds a portable exe on Windows and an AppImage on Linux. The steps are in [desktop/miyamusicmaker/README.md](desktop/miyamusicmaker/README.md).
+Version 1.0.0 is also a program you can run without a browser window. The Mac download is the GitHub release `MiyaMusicMaker-v1.0.0`. The same source builds a portable exe on Windows and an AppImage on Linux. Builds from this source keep songs and kits between launches. The 1.0.0 release did not, so save your work to a file there. Publishing, minting, loading samples from links or videos, and the allowlist need the site's server, so they work on the website and not in the program. The steps are in [desktop/miyamusicmaker/README.md](desktop/miyamusicmaker/README.md).
 
 ## Layout
 
