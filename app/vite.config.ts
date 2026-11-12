@@ -1,4 +1,5 @@
 import react from '@vitejs/plugin-react'
+import fs from 'fs'
 import type { IncomingMessage, ServerResponse } from 'http'
 import path from 'path'
 import type { Plugin } from 'vite'
@@ -11,6 +12,7 @@ import { nodePolyfills } from 'vite-plugin-node-polyfills'
 import { VitePWA } from 'vite-plugin-pwa'
 import svgr from 'vite-plugin-svgr'
 
+import { ALLOWLIST_BODY_LIMIT, ALLOWLIST_PATH, handleAllowlistRequest, memoryAllowlistStore } from './api/_lib/allowlist'
 import { BODY_LIMIT } from './api/_lib/body'
 import { handleMarketRequest, MARKET_PREFIX, memoryCache, openSeaReader } from './api/_lib/market'
 import { handleOpenSeaRequest, OPENSEA_PROXY_PATH, quoteBigInts } from './api/_lib/opensea'
@@ -223,6 +225,44 @@ function stationDevProxy(): Plugin {
   }
 }
 
+/** Dev-only stand-in for the Worker's allowlist route: shipped lists from public/allowlists/, pasted ones in memory. */
+function allowlistDevProxy(): Plugin {
+  const store = memoryAllowlistStore()
+  const limiter = createRateLimiter({ capacity: 600, perSecond: 20 })
+  return {
+    name: 'miya-allowlist-dev-proxy',
+    configureServer(server) {
+      server.middlewares.use(ALLOWLIST_PATH, async (req, res) => {
+        const body = await devBody(req, res, ALLOWLIST_BODY_LIMIT)
+        if (body === undefined) return
+        const rest = req.url && req.url !== '/' ? req.url : ''
+        const response = await handleAllowlistRequest(
+          { method: req.method || 'GET', url: `http://${devHost(req)}${ALLOWLIST_PATH}${rest}`, headers: devHeaders(req), body },
+          {
+            // No file is no list; any other failure throws, as the Worker's does.
+            readStatic: async (root) => {
+              const file = path.resolve(__dirname, 'public/allowlists', `${root}.json`)
+              const text = await fs.promises.readFile(file, 'utf8').catch((e: NodeJS.ErrnoException) => {
+                if (e.code === 'ENOENT') return undefined
+                throw e
+              })
+              return text === undefined ? undefined : JSON.parse(text)
+            },
+            store,
+            sameOrigin,
+            clientKey,
+            limiter,
+            writeLimiter: limiter,
+          }
+        )
+        res.statusCode = response.status
+        response.headers.forEach((value, key) => res.setHeader(key, value))
+        res.end(await response.text())
+      })
+    },
+  }
+}
+
 /** Dev-only stand-in for the Worker's stream lookup. YOUTUBE_API_KEY from the shell or app/.env.local. */
 function tvLiveDevProxy(env: Record<string, string>): Plugin {
   const cache = memoryCache()
@@ -345,6 +385,7 @@ export default defineConfig(({ mode }) => ({
     zeroExDevProxy(loadEnv(mode, __dirname, ['ZEROX_'])),
     openSeaDevProxy(loadEnv(mode, __dirname, ['OPENSEA_'])),
     stationDevProxy(),
+    allowlistDevProxy(),
     publicAccessDevProxy(),
     sampleMediaDevProxy(),
     videoAudioDevProxy(),

@@ -5,7 +5,10 @@
  */
 export const BODY_LIMIT = 4096
 
-/** The body as text, cut at `limit` bytes; undefined when it says it is larger than that. */
+/**
+ * The body as text; undefined when it is larger than `limit` bytes, whether it says so (Content-Length) or runs past
+ * it while being read (no length, or one that lies). A body is never cut short and passed on as if it were whole.
+ */
 export async function readCappedText(request: Request, limit = BODY_LIMIT): Promise<string | undefined> {
   const declared = Number(request.headers.get('content-length') ?? '')
   if (Number.isFinite(declared) && declared > limit) {
@@ -18,12 +21,12 @@ export async function readCappedText(request: Request, limit = BODY_LIMIT): Prom
   const out = new Uint8Array(limit)
   let size = 0
   try {
-    while (size < limit) {
+    for (;;) {
       const { done, value } = await reader.read()
       if (done) break
-      const take = Math.min(value.byteLength, limit - size)
-      out.set(value.subarray(0, take), size)
-      size += take
+      if (size + value.byteLength > limit) return undefined
+      out.set(value, size)
+      size += value.byteLength
     }
   } finally {
     // Stops the upload rather than draining whatever is left of it.

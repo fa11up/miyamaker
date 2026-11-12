@@ -24,6 +24,8 @@ import {
   parseRoyaltyPct,
   parseVault,
   phaseLine,
+  phaseList,
+  snapshotsFor,
   STEP_ORDER,
   txPlan,
   upgradeForm,
@@ -882,7 +884,14 @@ export default function LaunchPage() {
                     />
                   )}
                   {step === 'sale' && (
-                    <SaleStep form={form} set={set} errors={shownErrors} tokens={offeredTokens} note={delisted} />
+                    <SaleStep
+                      form={form}
+                      set={set}
+                      errors={shownErrors}
+                      tokens={offeredTokens}
+                      note={delisted}
+                      chainId={net.chainId}
+                    />
                   )}
                   {step === 'align' && (
                     <AlignStep
@@ -947,7 +956,21 @@ export default function LaunchPage() {
                               // eslint-disable-next-line react/no-array-index-key
                               <Fragment key={i}>
                                 <dt>{form.phases.length > 1 ? `Phase ${i + 1}` : 'Sale'}</dt>
-                                <dd>{phaseLine(p, acceptedTokens.ok ? acceptedTokens.tokens : [])}</dd>
+                                <dd>
+                                  {phaseLine(p, acceptedTokens.ok ? acceptedTokens.tokens : [], snapshotsFor(net.chainId))}
+                                  {p.access === 'list' &&
+                                    (() => {
+                                      const l = phaseList(p, snapshotsFor(net.chainId))
+                                      return l.ok ? (
+                                        <>
+                                          {' '}
+                                          <small>
+                                            List root <code title={l.root}>{`${l.root.slice(0, 10)}…${l.root.slice(-6)}`}</code>.
+                                          </small>
+                                        </>
+                                      ) : null
+                                    })()}
+                                </dd>
                               </Fragment>
                             ))}
                             <dt>Kept back</dt>

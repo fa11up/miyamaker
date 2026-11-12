@@ -24,9 +24,14 @@ import {
   EMPTY_PHASE,
   MAX_PHASES,
   parseAlignmentPct,
+  parseReserve,
   parseWhole,
   phaseFieldsBad,
+  phaseList,
+  freeClaim,
+  readPasted,
   revealLink,
+  snapshotsFor,
 } from '@/miyamints/launch'
 import { pctLabel } from '@/miyamints/split'
 import type { PayToken } from '@/miyamints/tokens'
@@ -512,6 +517,136 @@ function TokenChooser({
   )
 }
 
+/** Biggest list file read in the browser: a 5,000-address CSV with a column or two is well under this. */
+const MAX_LIST_FILE = 1_000_000
+
+const shortRoot = (root: string) => `${root.slice(0, 10)}…${root.slice(-6)}`
+
+/**
+ * Who can mint in one phase: anyone, or only wallets on an allowlist (a holder list this build ships, or addresses
+ * pasted or uploaded). Shows how many wallets are on the list and its root, the value the phase is set to on chain.
+ */
+function PhaseAccess({
+  phase,
+  onChange,
+  error,
+  chainId,
+}: {
+  phase: PhaseForm
+  onChange: (patch: Partial<PhaseForm>) => void
+  error?: boolean
+  /** The chain the drop goes to: only holder lists made there are offered. */
+  chainId: number
+}) {
+  const [fileNote, setFileNote] = useState('')
+  const SNAPSHOTS = snapshotsFor(chainId)
+  const list = phaseList(phase, SNAPSHOTS)
+  const pasted = phase.listSource === 'pasted' ? readPasted(phase.listText || '') : undefined
+  const onFile = async (file: File | undefined) => {
+    setFileNote('')
+    if (!file) return
+    if (file.size > MAX_LIST_FILE) {
+      setFileNote('That file is over 1 MB. Use a .txt or .csv of addresses.')
+      return
+    }
+    onChange({ listText: await file.text(), listSource: 'pasted' })
+    setFileNote(`Read ${file.name}.`)
+  }
+  return (
+    <Field as="div">
+      <span>Who can mint</span>
+      <Segmented role="group" aria-label="Who can mint in this phase">
+        <SmallButton type="button" aria-pressed={phase.access !== 'list'} onClick={() => onChange({ access: 'public' })}>
+          Anyone
+        </SmallButton>
+        <SmallButton type="button" aria-pressed={phase.access === 'list'} onClick={() => onChange({ access: 'list' })}>
+          Only wallets on a list
+        </SmallButton>
+      </Segmented>
+      {phase.access === 'list' && (
+        <>
+          <Segmented role="group" aria-label="Where the list comes from">
+            <SmallButton
+              type="button"
+              aria-pressed={phase.listSource === 'snapshot'}
+              onClick={() => onChange({ listSource: 'snapshot' })}
+            >
+              Holders of a collection
+            </SmallButton>
+            <SmallButton
+              type="button"
+              aria-pressed={phase.listSource === 'pasted'}
+              onClick={() => onChange({ listSource: 'pasted' })}
+            >
+              Paste or upload addresses
+            </SmallButton>
+          </Segmented>
+          {phase.listSource === 'snapshot' ? (
+            <Field>
+              Holder list
+              <select
+                value={phase.snapshotRoot}
+                aria-invalid={!!error && !list.ok}
+                onChange={(e) => onChange({ snapshotRoot: e.target.value })}
+              >
+                <option value="">Pick a list…</option>
+                {SNAPSHOTS.map((s) => (
+                  <option key={s.root} value={s.root}>
+                    {s.name}: {s.count.toLocaleString('en-US')} wallets
+                  </option>
+                ))}
+              </select>
+              <small>
+                {(() => {
+                  const s = SNAPSHOTS.find((x) => x.root === phase.snapshotRoot)
+                  if (!SNAPSHOTS.length) return 'No holder lists in this build yet: paste addresses instead.'
+                  if (!s) return 'Wallets that held at least one piece when the list was made.'
+                  return `Wallets holding at least one at block ${s.block.toLocaleString('en-US')} (${new Date(
+                    s.blockTime * 1000
+                  ).toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}). Who holds one now but didn't then is not on it.`
+                })()}
+              </small>
+            </Field>
+          ) : (
+            <Field>
+              Wallet addresses
+              <textarea
+                value={phase.listText}
+                aria-invalid={!!error && !list.ok}
+                rows={5}
+                spellCheck={false}
+                placeholder={'0x…\n0x…'}
+                onChange={(e) => onChange({ listText: e.target.value })}
+                style={{ fontFamily: 'monospace', fontSize: 12 }}
+              />
+              <input
+                type="file"
+                accept=".txt,.csv,text/plain,text/csv"
+                aria-label="Upload a list of addresses"
+                onChange={(e) => onFile(e.target.files?.[0])}
+              />
+              <small>
+                One per line, or separated by commas. Anything that isn&apos;t an address (a header, an amount) is skipped;
+                a name like x.eth is not looked up. miya saves the list when you create the collection, so it can give
+                each wallet its proof.
+                {pasted && pasted.parsed.duplicates > 0 && ` ${pasted.parsed.duplicates} repeated, counted once.`}
+                {fileNote && ` ${fileNote}`}
+              </small>
+            </Field>
+          )}
+          {list.ok && (
+            <small role="status">
+              {(list.count ?? 0).toLocaleString('en-US')} wallet{list.count === 1 ? '' : 's'} on the list. Root{' '}
+              <code title={list.root}>{shortRoot(list.root)}</code>. Each wallet mints with its own proof, checked
+              against the wallet that pays.
+            </small>
+          )}
+        </>
+      )}
+    </Field>
+  )
+}
+
 /** The accepted tokens, in the order offered. */
 const acceptedOf = (form: LaunchForm, tokens: readonly PayToken[]) =>
   tokens.filter((t) => form.tokens.some((c) => sameToken(c, t.address)))
@@ -522,8 +657,11 @@ export function SaleStep({
   errors,
   tokens: offered,
   note,
+  chainId,
 }: StepProps & {
   tokens: readonly PayToken[]
+  /** The chain the launch goes to. */
+  chainId: number
   /** Something changed in the draft on its own (a token miya dropped was taken off): said at the top. */
   note?: string
 }) {
@@ -717,6 +855,35 @@ export function SaleStep({
               </SmallButton>
             )}
           </legend>
+          <PhaseAccess
+            phase={p}
+            chainId={chainId}
+            error={!!errors.phases}
+            onChange={(patch) =>
+              set(
+                'phases',
+                form.phases.map((x, n) => (n === i ? { ...x, ...patch } : x)),
+              )
+            }
+          />
+          {p.access === 'list' && accepted.length > 0 && (
+            <div>
+              <SmallButton
+                type="button"
+                onClick={() => {
+                  const free = accepted.find((t) => t.address === ETH) ?? accepted[0]!
+                  set(
+                    'phases',
+                    form.phases.map((x, n) =>
+                      n === i ? freeClaim(x, free.address) : x,
+                    ),
+                  )
+                }}
+              >
+                Make it a free claim (1 per wallet)
+              </SmallButton>
+            </div>
+          )}
           <Row2>
             {accepted.map((t) => (
               <Field key={t.address}>
@@ -752,7 +919,23 @@ export function SaleStep({
                 placeholder="No limit"
                 onChange={(e) => setPhase(i, 'supplyCap', e.target.value)}
               />
-              <small>The most this phase can sell.</small>
+              <small>
+                The most this phase can sell.
+                {(() => {
+                  // A public phase running beside capped list phases: say what keeps the list spots for the lists.
+                  if (p.access === 'list') return ''
+                  const listed = form.phases.filter((x, n) => n !== i && x.access === 'list')
+                  const caps = listed.map((x) => parseWhole(x.supplyCap, { min: 1, max: 100_000, label: 'c', blank: 0 }))
+                  const supply = parseWhole(form.supply, { min: 1, max: 100_000, label: 's' })
+                  if (!listed.length || !supply.ok || caps.some((c) => !c.ok || !c.n)) return ''
+                  const reserve = parseReserve(form.ownerReserve, supply.n)
+                  if (!reserve.ok) return ''
+                  const held = caps.reduce((a, c) => a + (c.ok ? c.n : 0), 0)
+                  const left = supply.n - reserve.n - held
+                  if (left < 1) return ''
+                  return ` To keep the ${held.toLocaleString('en-US')} list spots for the lists, set this to ${left.toLocaleString('en-US')} (${supply.n.toLocaleString('en-US')} − ${reserve.n.toLocaleString('en-US')} kept back − ${held.toLocaleString('en-US')}).`
+                })()}
+              </small>
             </Field>
           </Row2>
           <Row2>
