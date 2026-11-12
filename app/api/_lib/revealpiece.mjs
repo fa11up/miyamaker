@@ -6,8 +6,9 @@
  * it as it is.
  *
  *   metadata (stored)   canonical JSON of { description, attributes }: keys sorted at every level, no spaces, UTF-8
- *                       (JSON.stringify's own escaping). The last trait is { "trait_type": "Piece", "value": n }. No
- *                       name (it may be the token id, known only once minted) and no image (known only once uploaded).
+ *                       (JSON.stringify's own escaping: non-ASCII stays raw UTF-8, see HASH_RULE). The last trait is
+ *                       { "trait_type": "Piece", "value": n }. No name (it may be the token id, known only once
+ *                       minted) and no image (known only once uploaded).
  *   salt                32 random bytes per piece, kept private until the piece is drawn, then published (hex) in
  *                       assignments.json. Without it, a piece's traits could be guessed from its hash by trying
  *                       combinations of the traits already revealed.
@@ -23,7 +24,9 @@ export const HASH_RULE = [
   "metadata = sha256(salt || stored), where salt is the piece's 32 random bytes (published as 64 hex characters in",
   'assignments.json once the piece is drawn) and stored is the UTF-8 bytes of the token metadata without its name and',
   'image fields, i.e. { attributes, description } with the last attribute { "trait_type": "Piece", "value": n }, as JSON',
-  'with keys sorted at every level and no spaces.',
+  "with keys sorted at every level and no spaces, strings escaped exactly as JavaScript's JSON.stringify does:",
+  '" and \\ and U+0000..U+001F are escaped (\\b \\t \\n \\f \\r, else \\u00XX), and so is a lone surrogate (\\uXXXX);',
+  'every other character (é, emoji, ...) is raw UTF-8, never a \\u escape.',
   'provenanceHash = sha256 of the lines "n:image:metadata\\n" for n = 1..supply.',
 ].join(' ')
 
@@ -72,12 +75,16 @@ export function canonicalJson(value) {
   return JSON.stringify(sortKeys(value))
 }
 
-/** @param {unknown} v @returns {unknown} */
+/**
+ * A copy with keys sorted. Built on null-prototype objects, so a "__proto__" key stays a key (on a plain {} it would set
+ * the prototype and vanish from the JSON).
+ * @param {unknown} v @returns {unknown}
+ */
 function sortKeys(v) {
   if (Array.isArray(v)) return v.map(sortKeys)
   if (v && typeof v === 'object') {
     /** @type {Record<string, unknown>} */
-    const out = {}
+    const out = Object.create(null)
     for (const k of Object.keys(v).sort()) out[k] = sortKeys(/** @type {Record<string, unknown>} */ (v)[k])
     return out
   }
@@ -140,11 +147,26 @@ export function servedMetadata(stored, { name, image }) {
   return { name, description: m.description, image, attributes: m.attributes }
 }
 
-/** The stored (hashed) form of served metadata: name and image dropped, canonical again. For checking what is served. */
+const SERVED_KEYS = new Set(['name', 'description', 'image', 'attributes'])
+
+/**
+ * The stored (hashed) form of served metadata: name and image dropped, canonical again. For checking what is served.
+ * Anything but { name, description, image, attributes } with { trait_type, value } traits is refused, so a served file
+ * with extra fields can't pass as the piece's.
+ */
 export function storedFromServed(/** @type {unknown} */ served) {
-  if (!served || typeof served !== 'object') throw new Error('Metadata is not an object.')
-  const { name: _name, image: _image, ...rest } = /** @type {Record<string, unknown>} */ (served)
-  return canonicalJson(rest)
+  if (!served || typeof served !== 'object' || Array.isArray(served)) throw new Error('Metadata is not an object.')
+  const m = /** @type {Record<string, unknown>} */ (served)
+  for (const k of Object.keys(m)) if (!SERVED_KEYS.has(k)) throw new Error(`Metadata has an unexpected field "${k}".`)
+  if (typeof m.description !== 'string' || !Array.isArray(m.attributes)) {
+    throw new Error('Metadata has no description or attributes.')
+  }
+  for (const a of m.attributes) {
+    if (!a || typeof a !== 'object' || Object.keys(a).sort().join(',') !== 'trait_type,value') {
+      throw new Error(`Metadata has an odd attribute ${JSON.stringify(a)}.`)
+    }
+  }
+  return canonicalJson({ description: m.description, attributes: m.attributes })
 }
 
 /** The served name: "<collection> #<token id>" or "#<piece>", as the collection is set up. */

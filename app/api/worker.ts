@@ -10,7 +10,15 @@ import { d1TapeStore, handlePublicAccessRequest, PUBLIC_ACCESS_PATH, youtubeLook
 import { handleSampleMediaRequest, SAMPLE_MEDIA_PATH, SAMPLE_MEDIA_RATE } from './_lib/samplemedia'
 import { serveRange } from './_lib/ranges'
 import type { RevealBucket, RevealDb } from './_lib/reveal'
-import { handleRevealRequest, openSeaRefresher, REVEAL_PREFIX, rpcChain, runRevealCron } from './_lib/reveal'
+import {
+  handleRevealRequest,
+  openSeaRefresher,
+  REVEAL_CHAIN_ID,
+  REVEAL_PREFIX,
+  revealSettings,
+  rpcChain,
+  runRevealCron,
+} from './_lib/reveal'
 import { handleNftRequest, handleRpcRequest, NFT_PREFIX, RPC_BODY_LIMIT, RPC_PREFIX, upstreamFor } from './_lib/rpc'
 import type { SharedCache } from './_lib/sharedstate'
 import { d1SharedState, sharedCache } from './_lib/sharedstate'
@@ -48,8 +56,12 @@ type Env = {
   REVEAL?: RevealBucket
   /** Bearer key for /reveal/<slug>/admin/* (scripts/reveal/load.mjs, arweave.mjs). Unset = admin off. */
   REVEAL_ADMIN_KEY?: string
-  /** Local rehearsals only (an anvil fork, http allowed): the reveal reads every chain from here, not RPC_URL_<id>. */
+  /** Local rehearsals only: "1" lets REVEAL_RPC_URL and a local http REVEAL_ORIGIN count. Never set in production. */
+  REVEAL_DEV?: string
+  /** With REVEAL_DEV=1 only, and only a local host (an anvil fork): the reveal reads the chain here, not RPC_URL_1. */
   REVEAL_RPC_URL?: string
+  /** The origin a reveal drop's baseURI must start with (default https://www.miyamaker.com). */
+  REVEAL_ORIGIN?: string
   /** Wallets that can remove any station track, comma-separated. */
   STATION_ADMINS?: string
 }
@@ -89,16 +101,14 @@ const videoAudioLimiter = createRateLimiter(VIDEO_AUDIO_RATE)
 // assignments.json is every draw (a few MB at sell-out): a verifier reads it once.
 const revealListLimiter = createRateLimiter({ capacity: 10, perSecond: 0.2 })
 
-/** The reveal's chain reads: RPC_URL_<chainId> (keyed, archive: the cron reads totalSupply at past blocks). */
+/**
+ * The reveal's chain reads: Ethereum only, from the keyed RPC_URL_1 (archive: the cron reads totalSupply at past
+ * blocks), or a local anvil fork with REVEAL_DEV=1. Each call is a new client, which checks eth_chainId once.
+ */
 const revealChain = (env: Env) => (chainId: number) => {
-  const url =
-    env.REVEAL_RPC_URL?.trim() ||
-    upstreamFor(String(chainId), {
-      RPC_URL_1: env.RPC_URL_1,
-      RPC_URL_11155111: env.RPC_URL_11155111,
-      RPC_URL_4663: env.RPC_URL_4663,
-    })
-  return url ? rpcChain(url) : undefined
+  if (chainId !== REVEAL_CHAIN_ID) return undefined
+  const url = revealSettings(env).devRpc ?? upstreamFor(String(chainId), { RPC_URL_1: env.RPC_URL_1 })
+  return url ? rpcChain(url, chainId) : undefined
 }
 
 export default {
@@ -114,6 +124,7 @@ export default {
         db: env.DB,
         bucket: env.REVEAL,
         adminKey: env.REVEAL_ADMIN_KEY,
+        origin: revealSettings(env).origin,
         chain: revealChain(env),
         clientKey,
         listLimiter: revealListLimiter,
@@ -132,7 +143,12 @@ export default {
   async scheduled(_controller: unknown, env: Env, ctx: { waitUntil: (p: Promise<unknown>) => void }): Promise<void> {
     if (!env.DB) return
     ctx.waitUntil(
-      runRevealCron({ db: env.DB, chain: revealChain(env), refresh: openSeaRefresher(env.OPENSEA_API_KEY) }).catch(
+      runRevealCron({
+        db: env.DB,
+        chain: revealChain(env),
+        bucket: env.REVEAL,
+        refresh: openSeaRefresher(env.OPENSEA_API_KEY),
+      }).catch(
         (e) =>
           // Before migrations/0004_reveal.sql there is no table to read: nothing to do yet.
           console.log(`reveal cron: ${String((e as Error)?.message ?? e).slice(0, 300)}`)

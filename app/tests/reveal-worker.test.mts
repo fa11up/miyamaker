@@ -5,7 +5,14 @@ import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 
 import type { RevealBucket, RevealChain, RevealDb, RevealStmt } from '../api/_lib/reveal.ts'
-import { handleRevealRequest, runRevealCron, TRANSFER_TOPIC, ZERO_TOPIC } from '../api/_lib/reveal.ts'
+import {
+  handleRevealRequest,
+  revealSettings,
+  rpcChain,
+  runRevealCron,
+  TRANSFER_TOPIC,
+  ZERO_TOPIC,
+} from '../api/_lib/reveal.ts'
 import { CONFIRMATIONS, replay } from '../api/_lib/revealdraw.mjs'
 import { canonicalJson, metadataHash, provenanceHash, sha256Hex, storedFromServed } from '../api/_lib/revealpiece.mjs'
 
@@ -154,25 +161,26 @@ async function art() {
   return { files, pieces, hash: await provenanceHash(pieces) }
 }
 
-async function setup({ load = true } = {}) {
+async function setup({ load = true, attach = true } = {}) {
   const db = sqliteD1()
   const bucket = memoryBucket()
   const fake = fakeChain()
   let now = 1_800_000_000_000
-  const deps = { db, bucket, adminKey: KEY, chain: () => fake.chain, now: () => now }
+  const deps = { db, bucket, adminKey: KEY, origin: ORIGIN, chain: () => fake.chain, now: () => now }
+  // A piece's metadata goes up as JSON { salt, metadata } (the salt never in a header).
   const call = (method: string, path: string, body?: BodyInit, key = KEY, salt?: string) =>
     handleRevealRequest(
       new Request(`${ORIGIN}/reveal/${SLUG}/${path}`, {
         method,
-        body,
-        headers: { ...(key ? { authorization: `Bearer ${key}` } : {}), ...(salt ? { 'x-reveal-salt': salt } : {}) },
+        body: salt === undefined ? body : JSON.stringify({ salt, metadata: body }),
+        headers: { ...(key ? { authorization: `Bearer ${key}` } : {}) },
       }),
       deps
     )
   const a = await art()
   const logs: string[] = []
-  const cron = () =>
-    runRevealCron({ db, chain: () => fake.chain, now: () => (now += 60_000), log: (l) => logs.push(l) })
+  const cron = (extra: Partial<Parameters<typeof runRevealCron>[0]> = {}) =>
+    runRevealCron({ db, chain: () => fake.chain, now: () => (now += 60_000), log: (l) => logs.push(l), ...extra })
   if (load) {
     const reg = await call(
       'PUT',
@@ -192,10 +200,12 @@ async function setup({ load = true } = {}) {
       assert.equal((await call('PUT', `admin/piece/${n}.jpg`, f.jpg)).status, 200)
       assert.equal((await call('PUT', `admin/piece/${n}.json`, f.json, KEY, f.salt)).status, 200)
     }
+  }
+  if (load && attach) {
     const at = await call('POST', 'admin/attach', JSON.stringify({ address: ADDRESS, deployBlock: DEPLOY }))
     assert.equal(at.status, 200, await at.clone().text())
   }
-  return { db, bucket, fake, call, art: a, cron, logs, deps }
+  return { db, bucket, fake, call, art: a, cron, logs, deps, clock: { set: (t: number) => (now = t), get: () => now } }
 }
 
 const getJson = async (r: Response | Promise<Response>) => (await r).json() as Promise<Record<string, unknown>>
@@ -217,7 +227,7 @@ test('admin: a key is needed, and the wrong one is refused', async () => {
 })
 
 test('load: provenance must hash to the registered hash; files must match it', async () => {
-  const { call, art: a, bucket } = await setup({ load: false })
+  const { call, art: a, bucket, deps } = await setup({ load: false })
   const reg = {
     chainId: 1,
     supply: SUPPLY,
@@ -240,8 +250,27 @@ test('load: provenance must hash to the registered hash; files must match it', a
 
   assert.equal((await call('PUT', 'admin/piece/1.jpg', a.files.get(2)!.jpg)).status, 422) // piece 2's bytes as piece 1
   assert.equal((await call('PUT', 'admin/piece/1.json', a.files.get(1)!.jpg, KEY, a.files.get(1)!.salt)).status, 422)
-  // Metadata needs its own salt: none, or another piece's, is refused.
+  // Metadata needs its own salt, in the body: none, a header, or another piece's, is refused.
   assert.equal((await call('PUT', 'admin/piece/1.json', a.files.get(1)!.json)).status, 422)
+  const inHeader = await handleRevealRequest(
+    new Request(`${ORIGIN}/reveal/${SLUG}/admin/piece/1.json`, {
+      method: 'PUT',
+      body: a.files.get(1)!.json,
+      headers: { authorization: `Bearer ${KEY}`, 'x-reveal-salt': a.files.get(1)!.salt },
+    }),
+    deps
+  )
+  assert.equal(inHeader.status, 422)
+  assert.equal(
+    (
+      await call(
+        'PUT',
+        'admin/piece/1.json',
+        JSON.stringify({ salt: a.files.get(1)!.salt, metadata: a.files.get(1)!.json, extra: 1 })
+      )
+    ).status,
+    422
+  )
   assert.equal((await call('PUT', 'admin/piece/1.json', a.files.get(1)!.json, KEY, a.files.get(2)!.salt)).status, 422)
   assert.equal((await call('PUT', `admin/piece/${SUPPLY + 1}.jpg`, a.files.get(1)!.jpg)).status, 404)
   assert.equal((await call('PUT', 'admin/piece/1.jpg', a.files.get(1)!.jpg)).status, 200)
@@ -251,29 +280,70 @@ test('load: provenance must hash to the registered hash; files must match it', a
   assert.deepEqual([...bucket.m.keys()].sort(), [`${SLUG}/piece/1.jpg`, `${SLUG}/provenance.json`])
 })
 
-test('attach checks the drop on chain: created in that block, its supply, its baseURI', async () => {
-  const { call, fake } = await setup({ load: false })
-  const a = await art()
-  await call(
-    'PUT',
-    'admin/collection',
-    JSON.stringify({
-      chainId: 1,
-      supply: SUPPLY,
-      provenanceHash: a.hash,
-      name: 'M',
-      description: 'D',
-      coverImage: 'ar://c',
-    })
-  )
+test('attach checks the drop on chain: created in that block, its supply, exactly its baseURI', async () => {
+  const { call, fake } = await setup({ attach: false })
   const attach = (deployBlock: number) =>
     call('POST', 'admin/attach', JSON.stringify({ address: ADDRESS, deployBlock }))
   assert.equal((await attach(DEPLOY + 1)).status, 422) // code was there a block earlier
   assert.equal((await attach(DEPLOY - 1)).status, 422) // no code yet
-  fake.state.baseURI = 'ipfs://somewhere/'
-  assert.match(String((await getJson(attach(DEPLOY))).error), /baseURI/)
-  fake.state.baseURI = `https://www.miyamaker.com/reveal/${SLUG}/`
+  // Only <origin>/reveal/<slug>/ itself: another host or path ending the same way, or no final slash, is refused.
+  for (const uri of [
+    'ipfs://somewhere/',
+    `https://evil.example/reveal/${SLUG}/`,
+    `${ORIGIN}/x/reveal/${SLUG}/`,
+    `${ORIGIN}/reveal/${SLUG}`,
+    `https://www.miyamaker.com/reveal/${SLUG}/`, // the right link for another origin than this site's
+  ]) {
+    fake.state.baseURI = uri
+    assert.match(String((await getJson(attach(DEPLOY))).error), /baseURI/, uri)
+  }
+  fake.state.baseURI = `${ORIGIN}/reveal/${SLUG}/`
   assert.equal((await attach(DEPLOY)).status, 200)
+})
+
+test('attach is refused while provenance or any piece (image, metadata, salt) is missing', async () => {
+  const { call, art: a, db, bucket } = await setup({ load: false })
+  const attach = () => call('POST', 'admin/attach', JSON.stringify({ address: ADDRESS, deployBlock: DEPLOY }))
+  const reg = {
+    chainId: 1,
+    supply: SUPPLY,
+    provenanceHash: a.hash,
+    name: 'Miyamaker',
+    description: 'Soon.',
+    coverImage: 'ar://cover',
+  }
+  assert.equal((await call('PUT', 'admin/collection', JSON.stringify(reg))).status, 200)
+  assert.match(String((await getJson(attach())).error), /provenance/)
+  assert.equal((await call('PUT', 'admin/provenance', JSON.stringify({ pieces: a.pieces }))).status, 200)
+  for (const [n, f] of a.files) {
+    assert.equal((await call('PUT', `admin/piece/${n}.jpg`, f.jpg)).status, 200)
+    if (n !== 7) assert.equal((await call('PUT', `admin/piece/${n}.json`, f.json, KEY, f.salt)).status, 200)
+  }
+  const one = await attach()
+  assert.equal(one.status, 409)
+  assert.match(String((await one.json()).error), /1 of 20 pieces/)
+  assert.equal((await call('PUT', 'admin/piece/7.json', a.files.get(7)!.json, KEY, a.files.get(7)!.salt)).status, 200)
+  // A salt gone, or provenance.json gone from the bucket: still refused.
+  db.raw.exec("UPDATE reveal_pieces SET salt = NULL WHERE piece = 3")
+  assert.equal((await attach()).status, 409)
+  db.raw.exec(`UPDATE reveal_pieces SET salt = '${a.files.get(3)!.salt}' WHERE piece = 3`)
+  const prov = bucket.m.get(`${SLUG}/provenance.json`)!
+  bucket.m.delete(`${SLUG}/provenance.json`)
+  assert.match(String((await getJson(attach())).error), /provenance\.json is not in the bucket/)
+  bucket.m.set(`${SLUG}/provenance.json`, prov)
+  assert.equal((await attach()).status, 200)
+})
+
+test('only Ethereum (chain 1) can be registered', async () => {
+  const { call, art: a } = await setup({ load: false })
+  const reg = (chainId: number) =>
+    call(
+      'PUT',
+      'admin/collection',
+      JSON.stringify({ chainId, supply: SUPPLY, provenanceHash: a.hash, name: 'M', description: 'D', coverImage: 'ar://c' })
+    )
+  for (const id of [11155111, 4663, 0]) assert.equal((await reg(id)).status, 400)
+  assert.equal((await reg(1)).status, 200)
 })
 
 test('a token shows the cover until its block is CONFIRMATIONS deep, then its piece; unminted ones never show art', async () => {
@@ -483,8 +553,8 @@ test('a drawn piece missing from the bucket is a 503, never another file', async
   assert.equal((await call('GET', 'image/1')).status, 503)
 })
 
-test('the marketplace is asked to refresh each drawn token once', async () => {
-  const { fake, db } = await setup()
+test('the marketplace is asked to refresh each drawn token once; a failure waits without holding up the rest', async () => {
+  const { fake, db, bucket, clock } = await setup()
   fake.mint(1010, 3)
   fake.state.head = 1020
   const asked: number[] = []
@@ -493,12 +563,177 @@ test('the marketplace is asked to refresh each drawn token once', async () => {
     asked.push(id)
     return !(fail && id === 2)
   }
-  await runRevealCron({ db, chain: () => fake.chain, refresh, log: () => undefined })
-  assert.deepEqual(asked, [1, 2]) // stops at the first failure
+  const run = () =>
+    runRevealCron({ db, bucket, chain: () => fake.chain, refresh, refreshGapMs: 0, now: clock.get, log: () => {} })
+  await run()
+  assert.deepEqual(asked, [1, 2, 3]) // 2 failed; 3 went ahead anyway
   fail = false
-  await runRevealCron({ db, chain: () => fake.chain, refresh, log: () => undefined })
-  await runRevealCron({ db, chain: () => fake.chain, refresh, log: () => undefined })
-  assert.deepEqual(asked, [1, 2, 2, 3])
+  await run()
+  assert.deepEqual(asked, [1, 2, 3]) // 2 waits its turn (2 minutes after one failure)
+  clock.set(clock.get() + 2 * 60_000)
+  await run()
+  await run()
+  assert.deepEqual(asked, [1, 2, 3, 2])
+  const done = db.raw.prepare('SELECT COUNT(*) AS n FROM reveal_assignments WHERE refreshed_at > 0').get()!
+  assert.equal(done.n, 3)
+})
+
+test('a refresh is asked only once the token serves its piece; a 429 ends the run without blame', async () => {
+  const { fake, db, bucket, clock, logs } = await setup()
+  fake.mint(1010, 3)
+  fake.state.head = 1020
+  await runRevealCron({ db, bucket, chain: () => fake.chain, now: clock.get, log: () => {} })
+  const pieceOf = (t: number) =>
+    Number(db.raw.prepare('SELECT piece FROM reveal_assignments WHERE token_id = ?').get(t)!.piece)
+  const json1 = bucket.m.get(`${SLUG}/piece/${pieceOf(1)}.json`)!
+  bucket.m.delete(`${SLUG}/piece/${pieceOf(1)}.json`) // token 1's metadata can't be served
+  const asked: number[] = []
+  let limited = false
+  const refresh = async (_c: unknown, id: number) => {
+    asked.push(id)
+    return limited ? ('rate-limited' as const) : true
+  }
+  const run = () =>
+    runRevealCron({
+      db,
+      bucket,
+      chain: () => fake.chain,
+      refresh,
+      refreshGapMs: 0,
+      now: clock.get,
+      log: (l) => logs.push(l),
+    })
+  await run()
+  assert.deepEqual(asked, [2, 3])
+  assert.ok(logs.some((l) => /token 1 waits: its piece is not served yet/.test(l)))
+  bucket.m.set(`${SLUG}/piece/${pieceOf(1)}.json`, json1)
+  clock.set(clock.get() + 3 * 60_000)
+  limited = true
+  await run()
+  assert.deepEqual(asked, [2, 3, 1])
+  const row = db.raw.prepare('SELECT refreshed_at, refresh_tries FROM reveal_assignments WHERE token_id = 1').get()!
+  assert.equal(row.refreshed_at, 0) // rate-limited: not done
+  assert.equal(row.refresh_tries, 1) // and not counted as a failure (the one try is from the missing file)
+  limited = false
+  clock.set(clock.get() + 60_000)
+  await run()
+  assert.deepEqual(asked, [2, 3, 1, 1])
+  // Without the bucket nothing can be checked, so nothing is refreshed.
+  fake.mint(1030)
+  fake.state.head = 1040
+  await runRevealCron({ db, chain: () => fake.chain, refresh, refreshGapMs: 0, now: clock.get, log: () => {} })
+  assert.deepEqual(asked, [2, 3, 1, 1])
+})
+
+test('the cron stores mints but draws nothing while a piece is missing, then draws the same pieces', async () => {
+  const twin = await setup()
+  twin.fake.mint(1010, 2)
+  twin.fake.state.head = 1020
+  await twin.cron()
+  const expected = assignments(twin.db)
+  assert.equal(expected.length, 2)
+
+  const { fake, cron, db, logs } = await setup()
+  db.raw.exec('UPDATE reveal_pieces SET image_loaded = 0 WHERE piece = 5')
+  fake.mint(1010, 2)
+  fake.state.head = 1020
+  await cron()
+  assert.equal(db.raw.prepare('SELECT COUNT(*) AS n FROM reveal_mints').get()!.n, 2)
+  assert.equal(assignments(db).length, 0)
+  assert.ok(logs.some((l) => /not drawing, 1 of 20 pieces/.test(l)))
+  db.raw.exec('UPDATE reveal_pieces SET image_loaded = 1 WHERE piece = 5')
+  await cron()
+  assert.deepEqual(assignments(db), expected)
+})
+
+test('sold out and all drawn: the cron reads nothing more from the chain', async () => {
+  const { fake, cron, db } = await setup()
+  fake.mint(1010, SUPPLY)
+  fake.state.head = 1020
+  await cron()
+  assert.equal(assignments(db).length, SUPPLY)
+  const before = fake.state.calls
+  await cron()
+  await cron()
+  assert.equal(fake.state.calls, before)
+})
+
+test('getLogs: after narrowing on errors, the span grows back once reads succeed', async () => {
+  const { fake, cron, db } = await setup()
+  const spans: number[] = []
+  const mintLogs = fake.chain.mintLogs
+  fake.chain.mintLogs = async (address, from, to) => {
+    spans.push(to - from + 1)
+    return mintLogs(address, from, to)
+  }
+  fake.state.head = 9000
+  fake.state.failLogsWiderThan = 300
+  await cron()
+  fake.state.failLogsWiderThan = Infinity
+  spans.length = 0
+  db.raw.exec('UPDATE reveal_collections SET lock_until = 0')
+  await cron()
+  assert.ok(spans.length >= 2)
+  assert.ok(spans[1]! > spans[0]!, spans.join(','))
+})
+
+test('a storage error is a 503 nobody caches, not a crash or a guess', async () => {
+  const { deps } = await setup()
+  const broken = {
+    ...deps,
+    db: {
+      ...deps.db,
+      prepare: () => {
+        throw new Error('D1_ERROR: network connection lost')
+      },
+    },
+  }
+  for (const path of ['1', 'image/1', 'assignments.json', 'provenance.json']) {
+    const res = await handleRevealRequest(new Request(`${ORIGIN}/reveal/${SLUG}/${path}`), broken)
+    assert.equal(res.status, 503, path)
+    assert.equal(res.headers.get('cache-control'), 'no-store')
+    assert.equal(res.headers.get('content-type'), 'application/json; charset=utf-8')
+    assert.ok(!(await res.text()).includes('D1_ERROR'))
+  }
+})
+
+test('settings: a dev RPC and an http origin count only with REVEAL_DEV=1 and a local host', () => {
+  const anvil = 'http://127.0.0.1:8549'
+  assert.equal(revealSettings({ REVEAL_RPC_URL: anvil }).devRpc, undefined)
+  assert.equal(revealSettings({ REVEAL_DEV: '1', REVEAL_RPC_URL: 'https://eth.example/rpc' }).devRpc, undefined)
+  assert.equal(revealSettings({ REVEAL_DEV: '1', REVEAL_RPC_URL: anvil }).devRpc, `${anvil}/`)
+  assert.equal(revealSettings({}).origin, 'https://www.miyamaker.com')
+  assert.equal(revealSettings({ REVEAL_ORIGIN: 'https://miyamaker.com' }).origin, 'https://miyamaker.com')
+  assert.equal(revealSettings({ REVEAL_ORIGIN: 'http://127.0.0.1:8787' }).origin, undefined)
+  assert.equal(revealSettings({ REVEAL_ORIGIN: 'https://x.example/path' }).origin, undefined)
+  assert.equal(revealSettings({ REVEAL_ORIGIN: 'nonsense' }).origin, undefined)
+  assert.equal(
+    revealSettings({ REVEAL_DEV: '1', REVEAL_ORIGIN: 'http://127.0.0.1:8787' }).origin,
+    'http://127.0.0.1:8787'
+  )
+  assert.equal(revealSettings({ REVEAL_DEV: '1', REVEAL_ORIGIN: 'http://evil.example' }).origin, undefined)
+})
+
+test('rpcChain checks eth_chainId once before its first answer, and refuses another chain', async () => {
+  const methods: string[] = []
+  const node = (chain: string) =>
+    (async (_url: unknown, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body))
+      const one = (r: { id: number; method: string }) => {
+        methods.push(r.method)
+        const result = r.method === 'eth_chainId' ? chain : '0x10'
+        return { jsonrpc: '2.0', id: r.id, result }
+      }
+      return new Response(JSON.stringify(Array.isArray(body) ? body.map(one) : one(body)))
+    }) as typeof fetch
+  const good = rpcChain('https://rpc.example', 1, node('0x1'))
+  assert.equal(await good.blockNumber(), 16)
+  assert.equal(await good.blockNumber(), 16)
+  assert.deepEqual(methods, ['eth_chainId', 'eth_blockNumber', 'eth_blockNumber'])
+  const wrong = rpcChain('https://rpc.example', 1, node('0xaa36a7'))
+  await assert.rejects(wrong.blockNumber(), /chain 11155111, not 1/)
+  await assert.rejects(wrong.mintLogs(ADDRESS, 1, 2), /chain 11155111/)
+  assert.ok(!methods.includes('eth_getLogs'))
 })
 
 test('names: "#<token id>" by default, "#<piece>" when the collection says so, fixed once a token is drawn', async () => {

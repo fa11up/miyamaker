@@ -65,9 +65,12 @@ CREATE TABLE IF NOT EXISTS reveal_assignments (
   seed_block_hash TEXT NOT NULL,
   seed TEXT NOT NULL,
   assigned_at INTEGER NOT NULL,
-  -- When OpenSea was asked to fetch the token's metadata again (0 = not yet).
+  -- When OpenSea was asked to fetch the token's metadata again (0 = not yet). A failed ask waits until refresh_after
+  -- (a growing wait, by refresh_tries) while later tokens go ahead.
   refreshed_at INTEGER NOT NULL DEFAULT 0,
+  refresh_tries INTEGER NOT NULL DEFAULT 0,
+  refresh_after INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (slug, token_id),
   UNIQUE (slug, piece)
 );
-CREATE INDEX IF NOT EXISTS reveal_assignments_refresh ON reveal_assignments (slug, refreshed_at);
+CREATE INDEX IF NOT EXISTS reveal_assignments_refresh ON reveal_assignments (slug, refreshed_at, refresh_after);

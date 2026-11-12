@@ -4,12 +4,13 @@
 // sha256 is the provenance's. Safe to stop and run again: it asks the site what is missing first.
 //
 //   REVEAL_ADMIN_KEY=… node scripts/reveal/load.mjs --build ~/miyamaker-reveal-build --cover ar://<cover>
-//       [--site https://www.miyamaker.com] [--slug miyamaker] [--chain 1] [--name Miyamaker]
+//       [--site https://www.miyamaker.com] [--slug miyamaker] [--name Miyamaker]
 //       [--cover-description "…"] [--name-by token|piece] [--concurrency 16] [--register-only]
 //
 // --name-by: drawn tokens are named "<name> #<token id>" (token, the default) or "#<piece number>" (piece); the piece
 // number is always a "Piece" trait. It can change until the first token is drawn. Each piece's salt (<n>.salt) goes
-// with its metadata and stays private on the site until that piece is drawn.
+// with its metadata, in the request body ({ salt, metadata }), and stays private on the site until that piece is drawn.
+// The reveal is for Ethereum (chain 1) only: the site refuses any other chain.
 //
 // A draft build (placeholder description, or --count) only loads into a local site (wrangler dev).
 import { readFile } from 'node:fs/promises'
@@ -22,7 +23,6 @@ const flags = parseArgs(process.argv.slice(2), {
   build: 'value',
   site: 'value',
   slug: 'value',
-  chain: 'value',
   name: 'value',
   cover: 'value',
   'cover-description': 'value',
@@ -52,7 +52,7 @@ run(async () => {
     method: 'PUT',
     key,
     body: JSON.stringify({
-      chainId: Number(flags.chain ?? 1),
+      chainId: 1,
       supply: provenance.supply,
       provenanceHash: provenance.provenanceHash,
       name: flags.name ?? provenance.name,
@@ -87,14 +87,20 @@ run(async () => {
   let sent = 0
   const failed = []
   await pool(todo, Number(flags.concurrency ?? 16), async ({ n, ext }) => {
-    const body = await readFile(join(build, 'piece', `${n}.${ext}`))
+    const file = join(build, 'piece', `${n}.${ext}`)
+    // The metadata goes with its salt in the body (never a header: headers end up in logs).
+    const body =
+      ext === 'jpg'
+        ? await readFile(file)
+        : JSON.stringify({
+            salt: (await readFile(join(build, 'piece', `${n}.salt`), 'utf8')).trim(),
+            metadata: await readFile(file, 'utf8'),
+          })
     const res = await admin(base, `piece/${n}.${ext}`, {
       method: 'PUT',
       key,
       body,
       contentType: ext === 'jpg' ? 'image/jpeg' : 'application/json',
-      headers:
-        ext === 'json' ? { 'x-reveal-salt': (await readFile(join(build, 'piece', `${n}.salt`), 'utf8')).trim() } : {},
     }).catch((e) => ({ status: 0, data: { error: e.message } }))
     const expected = ext === 'jpg' ? want.get(n)?.image : want.get(n)?.metadata
     if (res.status !== 200 || res.data.sha256 !== expected) {

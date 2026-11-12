@@ -10,6 +10,9 @@
  *   GET /reveal/<slug>/provenance.json    every piece's hashes and the rule (published at launch, reveals nothing)
  *   …/admin/*                             Bearer REVEAL_ADMIN_KEY: register, provenance, piece upload, attach, arweave
  *
+ * Nothing is attached or drawn until provenance.json and every piece's image, metadata and salt are loaded and checked:
+ * a drawn piece is always one the site can serve and prove.
+ *
  * The draw (revealdraw.mjs) runs in the cron (runRevealCron, every minute): Transfer-from-zero logs are read forward in
  * chunks from blocks CONFIRMATIONS deep, checked against totalSupply() at the chunk's last block (so an RPC that drops
  * logs is caught, not believed), stored, then drawn in token order. Writes are D1 batches (one transaction each) guarded
@@ -21,7 +24,15 @@
 import { decodeAbiParameters } from 'viem'
 
 import { CONFIRMATIONS, DRAW_RULE, drawFor, hash32, newPool, takePiece } from './revealdraw.mjs'
-import { isJpeg, metadataHash, provenanceHash, servedMetadata, sha256Hex, tokenName } from './revealpiece.mjs'
+import {
+  isJpeg,
+  metadataHash,
+  PIECE_TRAIT,
+  provenanceHash,
+  servedMetadata,
+  sha256Hex,
+  tokenName,
+} from './revealpiece.mjs'
 
 export const REVEAL_PREFIX = '/reveal'
 
@@ -73,6 +84,8 @@ export type RevealDeps = {
   bucket?: RevealBucket
   /** REVEAL_ADMIN_KEY. Unset or shorter than MIN_ADMIN_KEY: the admin routes are off. */
   adminKey?: string
+  /** The site's public origin (revealSettings): a drop attaches only with baseURI exactly <origin>/reveal/<slug>/. */
+  origin?: string
   chain?: (chainId: number) => RevealChain | undefined
   now?: () => number
   /** Public JSON lists (assignments.json): per client. */
@@ -85,6 +98,8 @@ export type RevealDeps = {
 export const MIN_ADMIN_KEY = 32
 const MAX_IMAGE_BYTES = 16 * 1024 * 1024
 const MAX_PIECE_JSON_BYTES = 64 * 1024
+/** A piece's upload body, { salt, metadata }: the metadata as a JSON string can take up to twice its bytes, escaped. */
+const MAX_PIECE_UPLOAD_BYTES = 2 * MAX_PIECE_JSON_BYTES + 1024
 const MAX_PROVENANCE_BYTES = 8 * 1024 * 1024
 const MAX_SMALL_BODY = 4096
 /** Cover JSON (minted but not drawn yet, or not minted): marketplaces should come back soon. */
@@ -94,6 +109,10 @@ const ASSIGNED_CACHE = 'public, max-age=3600'
 const IMMUTABLE = 'public, max-age=31536000, immutable'
 /** Rows per json_each insert: well under D1's 2 MB per bound value. */
 const ROWS_PER_INSERT = 1000
+
+/** The only chain a reveal can be registered on: Ethereum. */
+export const REVEAL_CHAIN_ID = 1
+export const DEFAULT_ORIGIN = 'https://www.miyamaker.com'
 
 const SLUG = /^[a-z0-9][a-z0-9-]{0,39}$/
 const TOKEN = /^[1-9]\d{0,8}$/
@@ -166,9 +185,59 @@ export async function getCollection(db: RevealDb, slug: string): Promise<Collect
   return r ? fromRow(r) : undefined
 }
 
+/* ---------- settings ---------- */
+
+const LOCAL_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]'])
+const isLocal = (u: URL) => LOCAL_HOSTS.has(u.hostname)
+
+/**
+ * The Worker's reveal settings from its env. REVEAL_RPC_URL (an anvil fork) counts only with REVEAL_DEV=1 and a local
+ * host, so a production Worker never reads the chain from anywhere but its keyed RPC_URL_1. REVEAL_ORIGIN (default
+ * https://www.miyamaker.com) is the origin a drop's baseURI must start with: https, or a local http one with REVEAL_DEV=1.
+ * An origin that is neither leaves `origin` unset, and attach refuses.
+ */
+export function revealSettings(env: { REVEAL_DEV?: string; REVEAL_RPC_URL?: string; REVEAL_ORIGIN?: string }): {
+  dev: boolean
+  devRpc?: string
+  origin?: string
+} {
+  const dev = env.REVEAL_DEV?.trim() === '1'
+  const parse = (raw: string | undefined) => {
+    try {
+      return raw?.trim() ? new URL(raw.trim()) : undefined
+    } catch {
+      return undefined
+    }
+  }
+  const rpc = dev ? parse(env.REVEAL_RPC_URL) : undefined
+  const devRpc = rpc && isLocal(rpc) && /^https?:$/.test(rpc.protocol) ? rpc.toString() : undefined
+  const o = env.REVEAL_ORIGIN?.trim() ? parse(env.REVEAL_ORIGIN) : new URL(DEFAULT_ORIGIN)
+  const okOrigin =
+    o &&
+    o.pathname === '/' &&
+    !o.search &&
+    !o.hash &&
+    !o.username &&
+    !o.password &&
+    (o.protocol === 'https:' || (dev && o.protocol === 'http:' && isLocal(o)))
+  return { dev, devRpc, origin: okOrigin ? o.origin : undefined }
+}
+
 /* ---------- public routes ---------- */
 
+/** Every /reveal/* request. Anything that throws (a D1 or R2 hiccup) is a 503 nobody caches, never a guess. */
 export async function handleRevealRequest(request: Request, deps: RevealDeps): Promise<Response> {
+  try {
+    return await routeReveal(request, deps)
+  } catch (e) {
+    console.log(`reveal: ${String((e as Error)?.message ?? e).slice(0, 300)}`)
+    return json(503, { error: 'The reveal could not answer just now. Try again shortly.' }, 'no-store', {
+      'retry-after': '30',
+    })
+  }
+}
+
+async function routeReveal(request: Request, deps: RevealDeps): Promise<Response> {
   const url = new URL(request.url)
   const [slug = '', ...rest] = url.pathname.slice(REVEAL_PREFIX.length + 1).split('/')
   if (!SLUG.test(slug) || !rest.length) return notFound()
@@ -404,7 +473,7 @@ async function handleAdmin(request: Request, deps: RevealDeps, slug: string, pat
     case 'PUT piece':
       return loadPiece(request, c, db, deps.bucket, path[1] ?? '')
     case 'POST attach':
-      return attach(request, c, db, deps.chain?.(c.chainId), now)
+      return attach(request, c, db, deps, now)
     case 'POST arweave':
       return recordArweave(request, c, db)
     default:
@@ -428,7 +497,7 @@ async function registerCollection(request: Request, db: RevealDb, slug: string, 
   const cover = text(b.coverImage, 2048)
   const nameBy = b.nameBy ?? 'token'
   if (nameBy !== 'token' && nameBy !== 'piece') return json(400, { error: 'nameBy is "token" or "piece".' })
-  if (!Number.isInteger(chainId) || chainId < 1) return json(400, { error: 'chainId must be a chain id.' })
+  if (chainId !== REVEAL_CHAIN_ID) return json(400, { error: `chainId must be ${REVEAL_CHAIN_ID} (Ethereum).` })
   if (!Number.isInteger(supply) || supply < 1 || supply > 100_000)
     return json(400, { error: 'supply must be 1..100000.' })
   if (!HEX64.test(hash)) return json(400, { error: 'provenanceHash must be sha256 hex.' })
@@ -469,6 +538,26 @@ async function adminStatus(c: Collection, db: RevealDb): Promise<Response> {
     if (!Number(r.metadata_loaded)) missingMetadata.push(Number(r.piece))
   }
   return json(200, { collection: c, provenanceLoaded: results.length === c.supply, missingImages, missingMetadata })
+}
+
+/**
+ * What is still missing before tokens may be drawn: provenance.json (its rows, and the file when a bucket is given) and
+ * each piece's image, metadata and salt. Undefined when everything is loaded.
+ */
+export async function missingPieces(c: Collection, db: RevealDb, bucket?: RevealBucket): Promise<string | undefined> {
+  const r = await db
+    .prepare(
+      `SELECT COUNT(*) AS n, SUM(CASE WHEN image_loaded = 1 AND metadata_loaded = 1 AND salt IS NOT NULL THEN 1 ELSE 0 END)
+         AS ready FROM reveal_pieces WHERE slug = ?`
+    )
+    .bind(c.slug)
+    .first()
+  const rows = Number(r?.n ?? 0)
+  const ready = Number(r?.ready ?? 0)
+  if (rows !== c.supply) return `provenance.json is not loaded (${rows} of ${c.supply} pieces)`
+  if (bucket && !(await bucket.head(provenanceKey(c.slug)))) return 'provenance.json is not in the bucket'
+  if (ready !== c.supply) return `${c.supply - ready} of ${c.supply} pieces are missing their image, metadata or salt`
+  return undefined
 }
 
 /** provenance.json: checked against the registered hash, then kept in R2 and as one row per piece. Safe to send again. */
@@ -520,8 +609,8 @@ async function loadProvenance(request: Request, c: Collection, db: RevealDb, buc
 }
 
 /**
- * PUT …/admin/piece/<n>.jpg, or <n>.json with its salt in x-reveal-salt: kept only when the hash is the provenance's.
- * The salt stays private (in D1) until the piece is drawn.
+ * PUT …/admin/piece/<n>.jpg (the bytes), or <n>.json as JSON { salt, metadata } (metadata: the stored JSON as a string):
+ * kept only when the hash is the provenance's. The salt stays private (in D1) until the piece is drawn.
  */
 async function loadPiece(
   request: Request,
@@ -541,14 +630,21 @@ async function loadPiece(
     .first()
   if (!row) return json(409, { error: 'Load provenance.json first.' })
 
-  const bytes = await readCappedBytes(request, ext === 'jpg' ? MAX_IMAGE_BYTES : MAX_PIECE_JSON_BYTES)
-  if (!bytes) return json(413, { error: 'Too large.' })
-  // A piece's metadata comes with its salt (header x-reveal-salt): its hash is sha256(salt || bytes).
-  const salt = ext === 'json' ? (request.headers.get('x-reveal-salt') ?? '').trim() : undefined
+  const body = await readCappedBytes(request, ext === 'jpg' ? MAX_IMAGE_BYTES : MAX_PIECE_UPLOAD_BYTES)
+  if (!body) return json(413, { error: 'Too large.' })
+  // A piece's metadata comes with its salt, both in the body: its hash is sha256(salt || metadata).
+  let bytes = body
+  let salt: string | undefined
   let hash: string
   try {
-    if (ext === 'json') servedMetadata(new TextDecoder().decode(bytes), { name: '', image: '' })
-    hash = salt === undefined ? await sha256Hex(bytes) : await metadataHash(salt, new TextDecoder().decode(bytes))
+    if (ext === 'json') {
+      const sent = pieceUpload(body)
+      salt = sent.salt
+      bytes = new TextEncoder().encode(sent.metadata)
+      if (bytes.byteLength > MAX_PIECE_JSON_BYTES) return json(413, { error: 'Too large.' })
+      servedMetadata(sent.metadata, { name: '', image: '' })
+      hash = await metadataHash(salt, sent.metadata)
+    } else hash = await sha256Hex(bytes)
   } catch (e) {
     return json(422, { error: (e as Error).message })
   }
@@ -569,12 +665,27 @@ async function loadPiece(
   return json(200, { ok: true, piece, file: ext, sha256: hash })
 }
 
+/** A metadata upload's body: exactly { salt, metadata }, both strings. */
+function pieceUpload(body: Uint8Array): { salt: string; metadata: string } {
+  let v: unknown
+  try {
+    v = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(body))
+  } catch {
+    throw new Error('Send JSON { salt, metadata }.')
+  }
+  const o = v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : undefined
+  if (!o || Object.keys(o).sort().join(',') !== 'metadata,salt' || typeof o.salt !== 'string')
+    throw new Error('Send JSON { salt, metadata }.')
+  if (typeof o.metadata !== 'string') throw new Error('metadata is the stored JSON, as a string.')
+  return { salt: o.salt, metadata: o.metadata }
+}
+
 /**
  * Sets the drop's address and the block it was created in, once checked on the chain: code first appears in that
- * block, maxSupply is the registered supply, and baseURI is this collection's /reveal/<slug>/ link. Fixed once a mint is
- * stored.
+ * block, maxSupply is the registered supply, and baseURI is exactly <origin>/reveal/<slug>/. Refused until every piece
+ * is loaded (missingPieces). Fixed once a mint is stored.
  */
-async function attach(request: Request, c: Collection, db: RevealDb, chain: RevealChain | undefined, now: number) {
+async function attach(request: Request, c: Collection, db: RevealDb, deps: RevealDeps, now: number) {
   const b = await readJson(request, MAX_SMALL_BODY)
   const address = String(b?.address ?? '')
   const deployBlock = Number(b?.deployBlock)
@@ -585,6 +696,11 @@ async function attach(request: Request, c: Collection, db: RevealDb, chain: Reve
   if (c.minted > 0 && (c.address !== lower || c.deployBlock !== deployBlock)) {
     return json(409, { error: 'Mints of this drop are already stored; it cannot be moved to another address.' })
   }
+  const missing = await missingPieces(c, db, deps.bucket)
+  if (missing) return json(409, { error: `Load every piece before attaching: ${missing}.` })
+  if (!deps.origin) return json(503, { error: 'REVEAL_ORIGIN is not a usable origin.' })
+  const link = `${deps.origin}${REVEAL_PREFIX}/${c.slug}/`
+  const chain = deps.chain?.(c.chainId)
   if (!chain) return json(503, { error: `No RPC for chain ${c.chainId}.` })
   let base: string
   try {
@@ -597,9 +713,7 @@ async function attach(request: Request, c: Collection, db: RevealDb, chain: Reve
     base = uri
     if (before || !at) return json(422, { error: `The contract was not created in block ${deployBlock}.` })
     if (max !== c.supply) return json(422, { error: `maxSupply is ${max}, the collection's supply is ${c.supply}.` })
-    if (!base.endsWith(`${REVEAL_PREFIX}/${c.slug}/`)) {
-      return json(422, { error: `baseURI is "${base}", not this collection's ${REVEAL_PREFIX}/${c.slug}/ link.` })
-    }
+    if (base !== link) return json(422, { error: `baseURI is "${base}", not this collection's link ${link}.` })
   } catch (e) {
     return json(502, { error: `Chain check failed: ${(e as Error).message}` })
   }
@@ -643,7 +757,7 @@ async function recordArweave(request: Request, c: Collection, db: RevealDb) {
 
 export const TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef'
 export const ZERO_TOPIC = `0x${'0'.repeat(64)}`
-/** First getLogs span tried; halved on errors (RPCs cap ranges), remembered per isolate. */
+/** Widest getLogs span tried; halved on errors (RPCs cap ranges), doubled back after each success, kept per isolate. */
 const FIRST_SPAN = 2000
 const spans = new Map<string, number>()
 /** RPC requests per collection per run. A header batch is one. */
@@ -652,15 +766,30 @@ const HEADERS_PER_CALL = 50
 /** Draws written per run: a few thousand rows in one transaction at most. */
 const MAX_DRAWS_PER_RUN = 2000
 const LOCK_MS = 55_000
-const REFRESH_PER_RUN = 20
+/**
+ * Marketplace refreshes per run, one every REFRESH_GAP_MS: about 2 a second, under OpenSea's per-key rate limit, and
+ * done well inside the run's lock. 50 a minute keeps up with a busy mint (3,000 an hour). A 429 ends the run's refreshes.
+ */
+const REFRESH_PER_RUN = 50
+const REFRESH_GAP_MS = 500
+/** A token whose refresh failed waits 2, 4, 8 ... minutes (at most 6 hours) and the others go first meanwhile. */
+const REFRESH_BACKOFF_MS = 2 * 60_000
+const REFRESH_BACKOFF_MAX_MS = 6 * 3600_000
+
+/** What a marketplace refresh came to. 'rate-limited': stop asking this run, nobody's fault. */
+export type RefreshResult = boolean | 'rate-limited'
 
 export type CronDeps = {
   db: RevealDb
   chain: (chainId: number) => RevealChain | undefined
+  /** The art. Without it nothing is refreshed (a token's piece is checked in it first). */
+  bucket?: RevealBucket
   now?: () => number
   log?: (line: string) => void
-  /** Asks a marketplace to read a token's metadata again (OpenSea), best effort. False or a throw: try next run. */
-  refresh?: (c: Collection, tokenId: number) => Promise<boolean>
+  /** Asks a marketplace to read a token's metadata again (OpenSea), best effort. False or a throw: retried later. */
+  refresh?: (c: Collection, tokenId: number) => Promise<RefreshResult>
+  /** The wait between two refreshes (REFRESH_GAP_MS; tests set 0). */
+  refreshGapMs?: number
 }
 
 /** One run over every attached collection. A collection's error is logged and kept on its row; the others go on. */
@@ -679,13 +808,21 @@ export async function runRevealCron(deps: CronDeps): Promise<void> {
       continue
     }
     try {
-      const chain = deps.chain(c.chainId)
-      if (!chain) throw new Error(`no RPC for chain ${c.chainId}`)
-      const budget = { calls: RPC_BUDGET }
-      const scanned = await scan(deps.db, chain, c.slug, budget, log)
-      const drawn = await assign(deps.db, chain, c.slug, budget, now)
-      if (scanned || drawn) log(`reveal ${c.slug}: ${scanned} mint(s) stored, ${drawn} drawn`)
-      if (deps.refresh) await refreshSome(deps.db, c, deps.refresh, now, log)
+      // Sold out and every token drawn: nothing left to read from the chain, only refreshes.
+      if (c.minted < c.supply || c.assigned < c.supply) {
+        const chain = deps.chain(c.chainId)
+        if (!chain) throw new Error(`no RPC for chain ${c.chainId}`)
+        const budget = { calls: RPC_BUDGET }
+        const scanned = await scan(deps.db, chain, c.slug, budget, log)
+        // Draws wait (they come out the same later: they depend on the chain alone) until every piece can be served.
+        const missing = await missingPieces(c, deps.db, deps.bucket)
+        if (missing) log(`reveal ${c.slug}: not drawing, ${missing}`)
+        const drawn = missing ? 0 : await assign(deps.db, chain, c.slug, budget, now)
+        if (scanned || drawn) log(`reveal ${c.slug}: ${scanned} mint(s) stored, ${drawn} drawn`)
+      }
+      if (deps.refresh && deps.bucket) {
+        await refreshSome(deps.db, deps.bucket, c, deps.refresh, now, log, deps.refreshGapMs ?? REFRESH_GAP_MS)
+      }
       await deps.db
         .prepare('UPDATE reveal_collections SET last_error = NULL WHERE slug = ? AND last_error IS NOT NULL')
         .bind(c.slug)
@@ -773,7 +910,7 @@ async function scan(db: RevealDb, chain: RevealChain, slug: string, budget: Budg
         )
       }
     }
-    spans.set(slug, span)
+    spans.set(slug, Math.min(FIRST_SPAN, span * 2)) // the next read tries wider again: one bad moment isn't forever
 
     const mints = logs.map((l) => parseMintLog(l, c.address!, from, to, c.supply)).sort((a, b) => a.tokenId - b.tokenId)
     mints.forEach((m, i) => {
@@ -899,24 +1036,55 @@ async function assign(db: RevealDb, chain: RevealChain, slug: string, budget: Bu
   return res[0]?.meta.changes ? draws.length : 0 // 0: another run drew them first
 }
 
-/** Asks OpenSea to read freshly drawn tokens again: it read the cover at mint time and keeps it otherwise. */
+/**
+ * Asks OpenSea to read freshly drawn tokens again: it read the cover at mint time and keeps it otherwise. A token is
+ * asked only once its metadata route really serves its piece (both files in R2), and marked done only when the
+ * marketplace took the request. A failure puts that token back by a growing wait; the tokens after it still go.
+ */
 async function refreshSome(
   db: RevealDb,
+  bucket: RevealBucket,
   c: Collection,
   refresh: NonNullable<CronDeps['refresh']>,
   now: () => number,
-  log: (l: string) => void
+  log: (l: string) => void,
+  gapMs: number
 ) {
   const { results } = await db
-    .prepare('SELECT token_id FROM reveal_assignments WHERE slug = ? AND refreshed_at = 0 ORDER BY token_id LIMIT ?')
-    .bind(c.slug, REFRESH_PER_RUN)
+    .prepare(
+      `SELECT token_id, piece, refresh_tries FROM reveal_assignments
+       WHERE slug = ? AND refreshed_at = 0 AND refresh_after <= ? ORDER BY token_id LIMIT ?`
+    )
+    .bind(c.slug, now(), REFRESH_PER_RUN)
     .all()
+  const later = async (id: number, tries: number, why: string) => {
+    const wait = Math.min(REFRESH_BACKOFF_MAX_MS, REFRESH_BACKOFF_MS * 2 ** Math.min(tries, 16))
+    log(`reveal ${c.slug}: refresh of token ${id} ${why}; tried again in ${Math.round(wait / 60_000)} min`)
+    await db
+      .prepare(
+        'UPDATE reveal_assignments SET refresh_tries = refresh_tries + 1, refresh_after = ? WHERE slug = ? AND token_id = ?'
+      )
+      .bind(now() + wait, c.slug, id)
+      .run()
+  }
+  let asked = 0
   for (const r of results) {
     const id = Number(r.token_id)
-    const ok = await refresh(c, id).catch(() => false)
-    if (!ok) {
-      log(`reveal ${c.slug}: marketplace refresh of ${id} failed; next run tries again`)
+    const tries = Number(r.refresh_tries ?? 0)
+    if (!(await servesPiece(c, id, Number(r.piece), db, bucket))) {
+      await later(id, tries, 'waits: its piece is not served yet')
+      continue
+    }
+    if (asked && gapMs) await new Promise((done) => setTimeout(done, gapMs))
+    asked += 1
+    const got = await refresh(c, id).catch(() => false as const)
+    if (got === 'rate-limited') {
+      log(`reveal ${c.slug}: the marketplace says slow down; refreshes go on next run`)
       return
+    }
+    if (got !== true) {
+      await later(id, tries, 'failed')
+      continue
     }
     await db
       .prepare('UPDATE reveal_assignments SET refreshed_at = ? WHERE slug = ? AND token_id = ?')
@@ -925,13 +1093,27 @@ async function refreshSome(
   }
 }
 
+/** Whether token `id`'s metadata route serves piece `piece` right now, and its image is in the bucket. */
+async function servesPiece(c: Collection, id: number, piece: number, db: RevealDb, bucket: RevealBucket) {
+  if (!(await bucket.head(pieceKey(c.slug, piece, 'jpg')))) return false
+  const res = await tokenMetadata(c, String(id), DEFAULT_ORIGIN, { db, bucket })
+  if (res.status !== 200) return false
+  const m = (await res.json()) as { attributes?: { trait_type?: unknown; value?: unknown }[] }
+  const last = Array.isArray(m.attributes) ? m.attributes[m.attributes.length - 1] : undefined
+  return last?.trait_type === PIECE_TRAIT && last.value === piece
+}
+
 /* ---------- the real chain ---------- */
 
 const quantity = (n: number) => `0x${n.toString(16)}`
 const SELECTOR = { totalSupply: '0x18160ddd', maxSupply: '0xd5abeb01', baseURI: '0x6c0360eb' } as const
 
-/** JSON-RPC over fetch, one call or a batch. Errors and odd answers throw: nothing is filled in. */
-export function rpcChain(url: string, fetchImpl: typeof fetch = fetch): RevealChain {
+/**
+ * JSON-RPC over fetch, one call or a batch. Errors and odd answers throw: nothing is filled in. The node's eth_chainId
+ * is checked against `chainId` before its first answer is used (once per instance: the Worker makes one per run), so a
+ * node on another chain is never read as this one.
+ */
+export function rpcChain(url: string, chainId: number, fetchImpl: typeof fetch = fetch): RevealChain {
   let id = 0
   const post = async (body: unknown) => {
     const res = await fetchImpl(url, {
@@ -951,7 +1133,18 @@ export function rpcChain(url: string, fetchImpl: typeof fetch = fetch): RevealCh
     if (a?.error || !a || !('result' in a)) throw new Error(`${method}: ${a?.error?.message ?? 'no result'}`)
     return a.result
   }
+  let checked: Promise<void> | undefined
+  const ready = () =>
+    (checked ??= (async () => {
+      const r = await call('eth_chainId', [])
+      if (typeof r !== 'string' || !/^0x[0-9a-f]+$/i.test(r)) throw new Error('eth_chainId: not a number')
+      if (Number(BigInt(r)) !== chainId) throw new Error(`The RPC is chain ${Number(BigInt(r))}, not ${chainId}.`)
+    })().catch((e) => {
+      checked = undefined
+      throw e
+    }))
   const ethCall = async (address: string, data: string, block: number | 'latest' = 'latest') => {
+    await ready()
     const r = await call('eth_call', [{ to: address, data }, block === 'latest' ? block : quantity(block)])
     if (typeof r !== 'string' || !/^0x[0-9a-fA-F]*$/.test(r)) throw new Error('eth_call: not hex')
     return r as `0x${string}`
@@ -965,11 +1158,13 @@ export function rpcChain(url: string, fetchImpl: typeof fetch = fetch): RevealCh
 
   return {
     blockNumber: async () => {
+      await ready()
       const r = await call('eth_blockNumber', [])
       if (typeof r !== 'string' || !/^0x[0-9a-f]+$/i.test(r)) throw new Error('eth_blockNumber: not a number')
       return Number(BigInt(r))
     },
     mintLogs: async (address, from, to) => {
+      await ready()
       const r = await call('eth_getLogs', [
         { address, fromBlock: quantity(from), toBlock: quantity(to), topics: [TRANSFER_TOPIC, ZERO_TOPIC] },
       ])
@@ -983,6 +1178,7 @@ export function rpcChain(url: string, fetchImpl: typeof fetch = fetch): RevealCh
       return s
     },
     hasCode: async (address, block) => {
+      await ready()
       const r = await call('eth_getCode', [address, quantity(block)])
       if (typeof r !== 'string') throw new Error('eth_getCode: not hex')
       return r !== '0x' && r !== '0x0'
@@ -990,6 +1186,7 @@ export function rpcChain(url: string, fetchImpl: typeof fetch = fetch): RevealCh
     headers: async (numbers) => {
       const out = new Map<number, Header>()
       if (!numbers.length) return out
+      await ready()
       const first = id + 1
       const batch = numbers.map((n) => ({
         jsonrpc: '2.0',
@@ -1025,7 +1222,7 @@ export function rpcChain(url: string, fetchImpl: typeof fetch = fetch): RevealCh
 /** OpenSea's "refresh metadata" for one token (chain 1 only), with the Worker's OPENSEA_API_KEY. */
 export function openSeaRefresher(apiKey: string | undefined, fetchImpl: typeof fetch = fetch) {
   if (!apiKey) return undefined
-  return async (c: Collection, tokenId: number) => {
+  return async (c: Collection, tokenId: number): Promise<RefreshResult> => {
     if (c.chainId !== 1 || !c.address) return true
     const res = await fetchImpl(
       `https://api.opensea.io/api/v2/chain/ethereum/contract/${c.address}/nfts/${tokenId}/refresh`,
@@ -1036,6 +1233,6 @@ export function openSeaRefresher(apiKey: string | undefined, fetchImpl: typeof f
       }
     )
     await res.body?.cancel().catch(() => undefined)
-    return res.ok
+    return res.status === 429 ? 'rate-limited' : res.ok
   }
 }

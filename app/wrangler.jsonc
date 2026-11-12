@@ -39,6 +39,8 @@
   // The per-mint reveal's private art (api/_lib/reveal.ts). The bucket must exist before a deploy with this binding;
   // keep it private: no r2.dev URL, no custom domain (the Worker serves drawn pieces only).
   // Admin key for scripts/reveal/*: npx wrangler secret put REVEAL_ADMIN_KEY   (32+ random characters)
+  // REVEAL_DEV, REVEAL_RPC_URL and an http REVEAL_ORIGIN are for local rehearsals (wrangler dev) only: never set them
+  // here or as secrets. Without REVEAL_DEV=1 the reveal reads only RPC_URL_1 and attaches only https://www.miyamaker.com.
   "r2_buckets": [{ "binding": "REVEAL", "bucket_name": "miyamaker-reveal" }],
   // The reveal's cron: reads new mints and draws their pieces (runRevealCron). Needs RPC_URL_1 (archive, e.g. Alchemy).
   "triggers": { "crons": ["* * * * *"] },

@@ -11,7 +11,9 @@
  * A token is drawn only once block B+1 exists and block B + CONFIRMATIONS is mined.
  *
  * Why B+1: block B's own prevrandao is public before B is built, so a minter could time a mint for a piece they want.
- * B+1's comes from B's proposer's RANDAO reveal, which nobody else knows until B is out.
+ * B+1's comes from B's proposer's RANDAO reveal, which nobody else knows until B is out. That proposer does know it, so
+ * a proposer minting in their own block can choose to include the mint or not: DRAW_RULE says so. Draws are written
+ * CONFIRMATIONS (5) blocks deep, not at finality: a deeper reorg would leave a written draw that verify.mjs flags.
  *
  * Only viem's keccak, so the Worker and Node both load this exact file. Plain JS (JSDoc types) like
  * src/pages/MusicMaker/media/allow.js, so `node` runs it without a build.
@@ -27,7 +29,11 @@ export const DRAW_RULE = [
   'seed = prevrandao of block B+1 (the block header mixHash), as bytes32;',
   'r = uint256(keccak256(abi.encodePacked(bytes32 seed, uint256 t)));',
   'i = r mod pool.length; piece = pool[i]; pool[i] = pool[pool.length - 1]; pool.pop().',
-  `A token is assigned only once block B+1 exists and block B+${CONFIRMATIONS} is mined. Assignments are final.`,
+  `A token is assigned only once block B+1 exists and block B+${CONFIRMATIONS} is mined, and is not redrawn after.`,
+  `Limits: the proposer of block B knows B+1's prevrandao before B is out (it comes from their own RANDAO reveal), so`,
+  'that proposer can choose whether a mint (their own, say) goes in B knowing what it would draw; nobody else can.',
+  `Assignments are final to a depth of ${CONFIRMATIONS} blocks: a reorg deeper than that, before Ethereum finalizes,`,
+  'could leave a written assignment disagreeing with the chain, which the verifier (scripts/reveal/verify.mjs) reports.',
 ].join(' ')
 
 const HASH32 = /^0x[0-9a-f]{64}$/

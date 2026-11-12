@@ -185,10 +185,20 @@ export function parseLink(input: string, required = true): Result<{ uri: string 
 }
 
 /**
- * A metadata folder served by miyamaker.com's per-mint reveal (api/_lib/reveal.ts): each piece shows its art once
- * minted and drawn, from the site, until the pieces are moved to Arweave. Not permanent while it points here.
+ * A metadata folder served by a per-mint reveal (api/_lib/reveal.ts, …/reveal/<slug>/): each piece shows its art once
+ * minted and drawn, from the site, until the pieces are moved to Arweave. Not permanent while it points here. `host` is
+ * the site serving it (named in copy only when it is miyamaker.com's); `slash` is false when the link lacks its final
+ * "/", which would make piece 1 read …/reveal/<slug>1.
  */
-export const isRevealLink = (uri: string) => /^https?:\/\/[^/]+\/reveal\/[a-z0-9-]+\/$/i.test(uri.trim())
+export function revealLink(uri: string): { host: string; miyamaker: boolean; slash: boolean } | undefined {
+  const m = /^https?:\/\/([^/?#]+)\/reveal\/[a-z0-9-]+(\/?)$/i.exec(uri.trim())
+  if (!m) return undefined
+  const host = m[1]!.toLowerCase()
+  return { host, miyamaker: host === 'www.miyamaker.com' || host === 'miyamaker.com', slash: m[2] === '/' }
+}
+
+/** Any per-mint reveal link, with or without its final slash. */
+export const isRevealLink = (uri: string) => revealLink(uri) !== undefined
 
 /** ETH typed by a person → wei via parseEther. `allowZero` for free mints. */
 export function parseEth(input: string, opts: { allowZero?: boolean; label?: string } = {}): Result<{ wei: bigint }> {

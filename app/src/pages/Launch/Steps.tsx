@@ -22,11 +22,11 @@ import { Eyebrow, Well } from '@/components/Retro'
 import type { FieldErrors, LaunchForm, LaunchType, PhaseForm } from '@/miyamints/launch'
 import {
   EMPTY_PHASE,
-  isRevealLink,
   MAX_PHASES,
   parseAlignmentPct,
   parseWhole,
   phaseFieldsBad,
+  revealLink,
 } from '@/miyamints/launch'
 import { pctLabel } from '@/miyamints/split'
 import type { PayToken } from '@/miyamints/tokens'
@@ -796,13 +796,26 @@ export function SaleStep({
             Piece 1 reads &lt;link&gt;/1, piece 2 reads &lt;link&gt;/2. Until you add one, every piece shows your
             artwork. You can add it later in Manager.
           </small>
-          {isRevealLink(form.revealUri) && (
-            <small>
-              This is miyamaker.com&apos;s per-mint reveal: each piece shows your artwork until it is minted and its
-              block is confirmed, then its own art, served by the site. It is not on Arweave yet: lock metadata only
-              once the folder link is an ar:// one.
-            </small>
-          )}
+          {(() => {
+            const r = revealLink(form.revealUri)
+            if (!r) return null
+            const who = r.miyamaker ? 'miyamaker.com\'s per-mint reveal' : `a per-mint reveal served by ${r.host}`
+            return (
+              <>
+                {!r.slash && (
+                  <Err>
+                    End the link with a slash ({form.revealUri.trim()}/): without it, piece 1 reads{' '}
+                    {form.revealUri.trim()}1, which is not a piece.
+                  </Err>
+                )}
+                <small>
+                  This is {who}: each piece shows your artwork until it is minted and its block is confirmed, then its
+                  own art, served by that site. It is not on Arweave yet: lock metadata only once the folder link is an
+                  ar:// one.
+                </small>
+              </>
+            )
+          })()}
           <Err>{errors.revealUri}</Err>
         </Field>
         <div style={{ marginTop: space[2] }}>

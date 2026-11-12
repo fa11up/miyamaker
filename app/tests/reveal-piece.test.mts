@@ -7,6 +7,7 @@ import { test } from 'node:test'
 import {
   canonicalJson,
   cleanMetadata,
+  HASH_RULE,
   isJpeg,
   metadataHash,
   provenanceHash,
@@ -15,6 +16,7 @@ import {
   storedFromServed,
   tokenName,
 } from '../api/_lib/revealpiece.mjs'
+import { DRAW_RULE } from '../api/_lib/revealdraw.mjs'
 
 const LAYERS = 'C:\\Users\\juan\\OneDrive\\Documents\\GitHub\\Miyamaker1024-main\\layers'
 const hashlips = (edition: number) => ({
@@ -123,4 +125,30 @@ test('served metadata adds name and image; dropping them gives back the hashed b
 test('isJpeg looks at the magic bytes', () => {
   assert.ok(isJpeg(new Uint8Array([0xff, 0xd8, 0xff, 0xe0])))
   assert.ok(!isJpeg(new Uint8Array([0x89, 0x50, 0x4e, 0x47])))
+})
+
+test('canonical JSON keeps a "__proto__" key as a key, and keeps non-ASCII raw (as HASH_RULE says)', () => {
+  const parsed = JSON.parse('{"b":1,"__proto__":{"x":1},"a":"é😀"}')
+  assert.equal(canonicalJson(parsed), '{"__proto__":{"x":1},"a":"é😀","b":1}')
+  assert.match(HASH_RULE, /raw UTF-8/)
+  assert.ok(!canonicalJson({ a: 'é' }).includes('\\u'))
+})
+
+test('storedFromServed refuses fields a piece does not have, so extra content cannot pass as the piece', () => {
+  const stored = canonicalJson(cleanMetadata(hashlips(7), 7, opts))
+  const served = servedMetadata(stored, { name: 'Miyamaker #7', image: 'ar://abc' })
+  assert.equal(storedFromServed(served), stored)
+  assert.throws(() => storedFromServed({ ...served, external_url: 'https://x' }), /unexpected field "external_url"/)
+  assert.throws(() => storedFromServed(JSON.parse(`{"__proto__":{},${JSON.stringify(served).slice(1)}`)), /__proto__/)
+  assert.throws(
+    () => storedFromServed({ ...served, attributes: [{ trait_type: 'A', value: 1, extra: 2 }] }),
+    /odd attribute/
+  )
+  assert.throws(() => storedFromServed({ name: 'x', image: 'y' }), /no description/)
+  assert.throws(() => storedFromServed([served]), /not an object/)
+})
+
+test('the draw rule states its limits: the B proposer can choose, and draws are final to 5 blocks', () => {
+  assert.match(DRAW_RULE, /proposer of block B knows B\+1's prevrandao/)
+  assert.match(DRAW_RULE, /final to a depth of 5 blocks/)
 })
