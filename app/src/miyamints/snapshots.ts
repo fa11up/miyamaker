@@ -27,20 +27,20 @@ export const SNAPSHOTS: readonly Snapshot[] = /* snapshots:start */[
     "name": "identity.md holders",
     "chainId": 1,
     "contract": "0x0000eC93127BAA929E58E97dd0095A2BFb38ec1D",
-    "block": 26394607,
-    "blockTime": 1794435287,
-    "root": "0x27a82c5863b1eab7c401c358f98d48bd48d9ff57509c8df4b911975d8bb6a887",
-    "count": 789,
-    "contracts": 5
+    "block": 26397157,
+    "blockTime": 1794466007,
+    "root": "0x4cf1d03afd03ad1eec81b4bdf80d278f4c97325cca4d99c6ee247db42125b635",
+    "count": 677,
+    "contracts": 2
   },
   {
     "name": "Milady holders",
     "chainId": 1,
     "contract": "0x5Af0D9827E0c53E4799BB226655A1de152A425a5",
-    "block": 26394607,
-    "blockTime": 1794435287,
-    "root": "0x05b6877e48cc9c2c63d6b436970fecf3a96fd361f23d8c825e56f6f7575e4a6a",
-    "count": 5138,
-    "contracts": 89
+    "block": 26397157,
+    "blockTime": 1794466007,
+    "root": "0x7d3aed4a692f85fb53db65fc780e9019e44648e3a5b957df917cb82b38dbb24e",
+    "count": 4507,
+    "contracts": 64
   }
 ]/* snapshots:end */
