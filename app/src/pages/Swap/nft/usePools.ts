@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { useMemo } from 'react'
 import type { Address } from 'viem'
-import { isAddress, zeroAddress } from 'viem'
+import { erc20Abi, isAddress, zeroAddress } from 'viem'
 import { useReadContract, useReadContracts } from 'wagmi'
 
 import { isRevert } from '@/hooks/readFailure'
@@ -14,7 +14,7 @@ import { cleanText, sanitizeMetadata } from '@/desktop/files/sanitize'
 import { useMetadata } from '@/utils/nftMetadata'
 import { resolveUri } from '@/utils/resolveUri'
 
-import { erc721Abi, erc1155Abi, poolAbi, poolFactoryAbi } from './abi'
+import { erc721Abi, erc1155Abi, poolAbi, poolFactoryAbi, poolVaultAbi, vaultConfigAbi } from './abi'
 import type { CommitRow, PoolKind, PoolSummary } from './pool'
 import { asKind, heldAmount, KIND, pendingFor, poolIndexes, poolLookup } from './pool'
 
@@ -38,7 +38,8 @@ export type Pool = PoolSummary & { address: Address; collection: Address; supply
 const fields = [
   'collection',
   'kind',
-  'premiumBps',
+  'imdFee',
+  'inferFee',
   'randomEnabled',
   'name',
   'symbol',
@@ -46,7 +47,7 @@ const fields = [
   'totalSupply',
 ] as const
 
-/** Reads the summary of each pool address (collection, kind, premium, random redeems, names, NFTs held). */
+/** Reads the summary of each pool address (collection, kind, pick fees, random redeems, names, NFTs held). */
 function usePoolSummaries(chainId: SupportedChainId, addresses: Address[]) {
   const reads = useReadContracts({
     allowFailure: true,
@@ -74,19 +75,21 @@ function usePoolSummaries(chainId: SupportedChainId, addresses: Address[]) {
       const collection = ok<Address>(r(0))
       const kind = asKind(ok<number>(r(1)))
       if (!collection || kind === undefined) return
-      // A failed premium or random read stays unknown: the pool is still shown, and what needs it waits for a re-read.
-      const premium = ok<number>(r(2))
-      const random = ok<boolean>(r(3))
+      // A failed fee or random read stays unknown: the pool is still shown, and what needs it waits for a re-read.
+      const imdFee = ok<bigint>(r(2))
+      const inferFee = ok<bigint>(r(3))
+      const random = ok<boolean>(r(4))
       out.push({
         address,
         collection,
         kind,
-        premiumBps: typeof premium === 'number' ? premium : undefined,
+        imdFee: typeof imdFee === 'bigint' ? imdFee : undefined,
+        inferFee: typeof inferFee === 'bigint' ? inferFee : undefined,
         randomEnabled: typeof random === 'boolean' ? random : undefined,
-        name: cleanText(ok<string>(r(4)), 80),
-        symbol: cleanText(ok<string>(r(5)), 24) || 'mNFT',
-        held: ok<bigint>(r(6)),
-        supply: ok<bigint>(r(7)),
+        name: cleanText(ok<string>(r(5)), 80),
+        symbol: cleanText(ok<string>(r(6)), 24) || 'mNFT',
+        held: ok<bigint>(r(7)),
+        supply: ok<bigint>(r(8)),
         collectionName: cleanText(ok<string>(names.data?.[i]), 80) || undefined,
       })
     })
@@ -137,18 +140,89 @@ export function usePools(chainId: SupportedChainId, factory: Address | undefined
 }
 
 /**
- * The factory's alignment vault on `chainId`: where pick premiums are sold to. address(0) means this chain has none, so
- * a new pool's premium must be 0. Undefined while loading or when the read failed.
+ * What a new pool's pick fees must respect on `chainId`: the factory's alignment vault, its IMD and INFER, and the
+ * vault's least contribution in each (vault.config().minContribution(token)). A vault of address(0) means this chain
+ * has none, so fees must be 0. Every field is undefined while loading or when its read failed.
  */
-export function useFactoryVault(chainId: SupportedChainId, factory: Address | undefined) {
-  const q = useReadContract({
-    address: factory,
-    abi: poolFactoryAbi,
-    functionName: 'vault',
-    chainId,
+export function useFeeRules(chainId: SupportedChainId, factory: Address | undefined) {
+  const base = useReadContracts({
+    allowFailure: true,
+    contracts: [
+      { address: factory, abi: poolFactoryAbi, functionName: 'vault', chainId },
+      { address: factory, abi: poolFactoryAbi, functionName: 'imd', chainId },
+      { address: factory, abi: poolFactoryAbi, functionName: 'infer', chainId },
+    ],
     query: { enabled: !!factory, staleTime: Infinity },
   })
-  return { vault: q.data as Address | undefined, loading: q.isLoading, failed: q.isError, refetch: q.refetch }
+  const vault = ok<Address>(base.data?.[0])
+  const imd = ok<Address>(base.data?.[1])
+  const infer = ok<Address>(base.data?.[2])
+  const hasVault = !!vault && vault.toLowerCase() !== zeroAddress
+  const config = useReadContract({
+    address: vault,
+    abi: poolVaultAbi,
+    functionName: 'config',
+    chainId,
+    query: { enabled: hasVault },
+  })
+  const configAddress = config.data as Address | undefined
+  const mins = useReadContracts({
+    allowFailure: true,
+    contracts: [imd, infer].map((token) => ({
+      address: configAddress,
+      abi: vaultConfigAbi,
+      functionName: 'minContribution' as const,
+      args: [token || zeroAddress] as const,
+      chainId,
+    })),
+    query: { enabled: !!configAddress && !!imd && !!infer },
+  })
+  return {
+    /** The factory's vault; zeroAddress = none on this chain. */
+    vault,
+    noVault: !!vault && vault.toLowerCase() === zeroAddress,
+    imd,
+    infer,
+    /** Least IMD / INFER a fee can be (token wei). */
+    imdMin: ok<bigint>(mins.data?.[0]),
+    inferMin: ok<bigint>(mins.data?.[1]),
+    loading: base.isLoading || config.isLoading || mins.isLoading,
+    failed:
+      !!base.error ||
+      (base.data?.some((r) => r.status !== 'success') ?? false) ||
+      config.isError ||
+      !!mins.error ||
+      (mins.data?.some((r) => r.status !== 'success') ?? false),
+    refetch: () => {
+      base.refetch()
+      config.refetch()
+      mins.refetch()
+    },
+  }
+}
+
+/** The connected wallet's balance of a pick-fee token and what it lets the pool take. Undefined when not read. */
+export function useFeeToken(
+  chainId: SupportedChainId,
+  token: Address | undefined,
+  owner: Address | undefined,
+  pool: Address | undefined
+) {
+  const reads = useReadContracts({
+    allowFailure: true,
+    contracts: [
+      { address: token, abi: erc20Abi, functionName: 'balanceOf', args: [owner || zeroAddress], chainId },
+      { address: token, abi: erc20Abi, functionName: 'allowance', args: [owner || zeroAddress, pool || zeroAddress], chainId },
+    ],
+    query: { enabled: !!token && !!owner && !!pool },
+  })
+  return {
+    balance: ok<bigint>(reads.data?.[0]),
+    allowance: ok<bigint>(reads.data?.[1]),
+    loading: reads.isLoading,
+    failed: !!reads.error || (reads.data?.some((r) => r.status !== 'success') ?? false),
+    refetch: reads.refetch,
+  }
 }
 
 /** A collection address's pool (one per collection), for finding a pool past the list or offering to create one. */
@@ -194,11 +268,12 @@ export function usePool(chainId: SupportedChainId, pool: Address | undefined, ow
       { address: pool, abi: poolAbi, functionName: 'nextCommitId', chainId },
       { address: pool, abi: poolAbi, functionName: 'nextRevealId', chainId },
       { address: pool, abi: poolAbi, functionName: 'balanceOf', args: [owner || zeroAddress], chainId },
-      { address: pool, abi: poolAbi, functionName: 'premiumPerUnit', chainId },
+      { address: pool, abi: poolAbi, functionName: 'imd', chainId },
+      { address: pool, abi: poolAbi, functionName: 'infer', chainId },
     ],
     query: { enabled: !!pool },
   })
-  const [count, pending, nextCommit, nextReveal, balance, perUnit] = extra.data || []
+  const [count, pending, nextCommit, nextReveal, balance, imd, infer] = extra.data || []
   return {
     pool: summary.pools[0],
     /** Undefined when the read failed: the held list can't be paged without it. */
@@ -208,8 +283,9 @@ export function usePool(chainId: SupportedChainId, pool: Address | undefined, ow
     nextCommitId: ok<bigint>(nextCommit),
     nextRevealId: ok<bigint>(nextReveal),
     balance: owner ? ok<bigint>(balance) : undefined,
-    /** Pool-token base units a pick burns per piece on top of the 1 token; undefined when the read failed. */
-    premiumPerUnit: ok<bigint>(perUnit),
+    /** The pick-fee tokens (address(0) on a pool without a vault); undefined when the read failed. */
+    imd: ok<Address>(imd),
+    infer: ok<Address>(infer),
     loading: summary.loading || extra.isLoading,
     missing: !summary.loading && !extra.isLoading && !summary.pools[0],
     refetch: () => {
@@ -432,35 +508,6 @@ export function useApprovedForAll(
     query: { enabled: !!collection && !!owner && !!operator },
   })
   return { approved: q.data as boolean | undefined, refetch: q.refetch }
-}
-
-/** How often the premium-lot price is re-read: it falls continuously while a lot is for sale. */
-const LOT_REFRESH_MS = 30_000
-
-/**
- * A pool's premium lots: the reserve of premium tokens, whether a whole token is for sale, and its ETH price now.
- * Every field is undefined when its read failed.
- */
-export function usePremiumLots(chainId: SupportedChainId, pool: Address | undefined, enabled = true) {
-  const reads = useReadContracts({
-    allowFailure: true,
-    contracts: [
-      { address: pool, abi: poolAbi, functionName: 'premiumReserve', chainId },
-      { address: pool, abi: poolAbi, functionName: 'lotAvailable', chainId },
-      { address: pool, abi: poolAbi, functionName: 'lotPrice', chainId },
-    ],
-    query: { enabled: !!pool && enabled, refetchInterval: LOT_REFRESH_MS },
-  })
-  const [reserve, available, price] = reads.data || []
-  return {
-    reserve: ok<bigint>(reserve),
-    available: ok<boolean>(available),
-    /** Wei. When no lot is for sale: what the next one will start at. */
-    price: ok<bigint>(price),
-    loading: reads.isLoading,
-    failed: !!reads.error || (reads.data?.some((r) => r.status !== 'success') ?? false),
-    refetch: reads.refetch,
-  }
 }
 
 /**

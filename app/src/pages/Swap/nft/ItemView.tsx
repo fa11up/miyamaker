@@ -15,7 +15,7 @@ import { erc721Abi } from './abi'
 import FillReview from './FillReview'
 import type { OsOrder } from './markets'
 import { formatPrice, itemUrl, venuesFor } from './markets'
-import { KIND, POOL_UNIT, premiumPerUnitOf, unitsText } from './pool'
+import { KIND, pickFeeAmounts } from './pool'
 import { goneHashes, sessionStore } from './sweep'
 import { Action, Card, Chips, Head, Hint, LinkButton, Mono, PushButton } from './ui'
 import { useOpenSeaCollection, useOpenSeaItem } from './useMarkets'
@@ -48,7 +48,7 @@ const same = (a?: string, b?: string) => !!a && !!b && a.toLowerCase() === b.toL
 
 /**
  * One NFT across venues: its OpenSea listing (buy here) and best offer (accept here when you hold it), whether a
- * MiyaPool holds it (pick it for 1 pool token + the pool's premium) and links to it on every venue.
+ * MiyaPool holds it (pick it for 1 pool token + the pool's pick fee) and links to it on every venue.
  */
 export default function ItemView({
   chainId,
@@ -96,11 +96,12 @@ export default function ItemView({
   const listingIsMine = !!listing && mine
   const unverified = !isFeatured(chainId, contract) && os.info?.verified !== true
   const openSeaHref = itemUrl('opensea', chainId, contract, tokenId)
-  // A picked NFT costs 1 pool token + the pool's premium.
-  const pickWords = (p: Pool) =>
-    p.premiumBps === undefined
-      ? `1 ${p.symbol} plus the pool's premium`
-      : `${unitsText(POOL_UNIT + premiumPerUnitOf(p.premiumBps))} ${p.symbol} (1 + the premium)`
+  // A picked NFT costs 1 pool token plus the pool's pick fee in IMD or INFER (if it has one).
+  const pickWords = (p: Pool) => {
+    const fee = pickFeeAmounts(p)
+    if (fee === undefined) return `1 ${p.symbol} plus the pool's pick fee`
+    return fee === 'free' ? `1 ${p.symbol}` : `1 ${p.symbol} plus ${fee}`
+  }
   let noPoolNote = 'No pool for this collection yet.'
   if (pools.loading) noPoolNote = 'Looking for a pool…'
   if (pools.checkFailed) noPoolNote = "Couldn't check for a pool."

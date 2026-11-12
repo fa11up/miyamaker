@@ -49,10 +49,12 @@ const FRIENDLY: Record<string, string> = {
   RandomUnavailable: 'This pool has no random buys (ERC-1155, or Robinhood Chain). Pick the NFT you want instead.',
   LockedForRandomRedeem:
     'A random draw is waiting to be revealed, and that NFT could be in it. Reveal the draw first, or pick another NFT.',
-  PremiumTooHigh: 'The premium can be at most 20%.',
-  NoVault: 'This network has no alignment vault yet, so the premium must be 0%.',
-  NoLot: 'There is no pool token for sale right now. Someone may have just bought it.',
-  PriceNotMet: 'Someone bought the lot first, so the next one costs more. Look at the new price and try again.',
+  NoVault: 'This network has no alignment vault yet, so pick fees must be 0.',
+  FeeBelowVaultMinimum: 'A pick fee is below the least amount the vault takes in that token. Raise it, or set it to 0.',
+  FeeTokenNotAccepted: 'The vault does not take that token right now, so it cannot be a pick fee. Set it to 0.',
+  FeeTokenNotOffered: 'This pool does not take its pick fee in that token. Choose the other one.',
+  FeeNotReceived: 'The pick fee did not arrive in full, so the pick did not go through.',
+  FeeNotForwarded: 'The vault did not take the pick fee, so the pick did not go through. Try again later.',
 }
 
 /** The contract's own error name in a viem error (`ExceedsMaxCost`), or undefined. */

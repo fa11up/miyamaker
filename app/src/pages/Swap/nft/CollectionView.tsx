@@ -18,7 +18,7 @@ import { CreatePool } from './CreatePool'
 import type { OsOrder, Price } from './markets'
 import { bestQuote, collectionUrl, formatAmount, formatPrice, lowerPrice, venuesFor } from './markets'
 import { DEFAULT_PAIR_SYMBOL, pickPair } from './pairs'
-import { KIND, POOL_UNIT, poolBuyPrice, premiumPerUnitOf, premiumText, unitsText, withPremium } from './pool'
+import { buyNeedsFee, KIND, pickFeeAmounts } from './pool'
 import { MAX_SWEEP, pickCheapest, sessionStore, sumPrices, sweepable, unconfirmedHashes } from './sweep'
 import SweepReview from './SweepReview'
 import { Action, Card, Chips, Field, Head, Hint, LinkButton, Mono, Prose, PushButton } from './ui'
@@ -272,8 +272,8 @@ function ListingTile({
 }
 
 /**
- * One MiyaPool line in the best-price box: one pool token priced in the chosen pair. A random NFT costs 1 token, a
- * picked one 1 token + the pool's premium.
+ * One MiyaPool line in the best-price box: one pool token priced in the chosen pair. A random NFT costs 1 token; a
+ * picked one costs 1 token plus the pick fee in IMD or INFER, said in words (no IMD/INFER price here).
  */
 function PoolPriceLine({
   pool,
@@ -287,15 +287,14 @@ function PoolPriceLine({
   swap: boolean
 }) {
   const label = 'In MiyaPool'
-  const pickTokens =
-    pool.premiumBps === undefined ? undefined : unitsText(POOL_UNIT + premiumPerUnitOf(pool.premiumBps))
+  const fee = pickFeeAmounts(pool)
+  const pickNote =
+    fee === undefined ? 'a pick adds a fee' : fee === 'free' ? 'picks add no fee' : `a pick adds ${fee}`
   const each = (
     <>
-      {pool.randomEnabled ? `1 ${pool.symbol}` : `${pickTokens ?? '–'} ${pool.symbol}`}{' '}
+      1 {pool.symbol}{' '}
       <span className="where">
-        {pool.randomEnabled
-          ? `for a random one; ${pickTokens ?? 'more'} to pick one`
-          : 'to pick one (1 token + the premium)'}
+        each{pool.randomEnabled ? ' at random' : ''}; {pickNote}
       </span>
     </>
   )
@@ -323,16 +322,13 @@ function PoolPriceLine({
       )
     const ask = poolSide(price, 'ask')
     const bid = poolSide(price, 'bid')
-    const pick =
-      ask && pool.premiumBps !== undefined ? { ...ask, amount: withPremium(ask.amount, pool.premiumBps) } : undefined
-    const first = pool.randomEnabled ? ask : pick
-    const firstWords = pool.randomEnabled ? 'for a random one' : 'to pick one'
+    const firstWords = buyNeedsFee(pool) ? 'to buy one, plus the pick fee' : 'to buy one'
     return (
       <>
-        {first && pool.held !== undefined && pool.held > 0n ? (
+        {ask && pool.held !== undefined && pool.held > 0n ? (
           <>
-            ≈ {formatPrice(first)} <span className="where">{firstWords}</span>
-            {pool.randomEnabled && pick && <span className="where sub">pick one ≈ {formatPrice(pick)}</span>}
+            ≈ {formatPrice(ask)} <span className="where">{firstWords}</span>
+            <span className="where sub">{pickNote}</span>
             {bid && <span className="where sub">sell one in ≈ {formatPrice(bid)}</span>}
           </>
         ) : (
@@ -441,14 +437,12 @@ export default function CollectionView({
   const shownPrices = usePoolPrices(chainId, poolAddresses, shownPair)
   const poolsWithNfts = pools.pools.filter((p) => p.held !== undefined && p.held > 0n)
   // `where` reads after the price: an OpenSea listing or offer is "on OpenSea"; a pool's bid is a sale into it.
-  // Buying from a pool: 1 token for a random NFT, or 1 token + the premium to pick one where random is off.
-  const poolBuy = (p: Pool) => {
-    const token = poolSide(ethPrices[p.address.toLowerCase()], 'ask')
-    const buy = token && poolBuyPrice(token.amount, p)
-    return buy && token
-      ? { where: `on MiyaPool (${buy.how})`, price: { ...token, amount: buy.amount } }
-      : { where: 'on MiyaPool', price: undefined }
-  }
+  // Buying from a pool costs 1 pool token, compared at the token's price. Where random is off, a pick also pays a fee
+  // in IMD or INFER: it is named in the line, not priced (the app has no IMD/INFER price).
+  const poolBuy = (p: Pool) => ({
+    where: buyNeedsFee(p) ? 'on MiyaPool, plus the pick fee' : 'on MiyaPool',
+    price: poolSide(ethPrices[p.address.toLowerCase()], 'ask'),
+  })
 
   // OpenSea's stat can be lower than anything its listings call returns: show the lowest known, and what can be bought.
   const floor: Price | undefined = lowerPrice(os.stats?.floor, listings.floor)
@@ -472,6 +466,11 @@ export default function CollectionView({
   const cheapestListing = canSweep[0] ?? listed[0]
   const offerPool = pools.pools.find(() => topOffer?.where === 'sell into MiyaPool')
 
+  const pickFact = (p: Pool) => {
+    const fee = pickFeeAmounts(p)
+    if (fee === undefined) return `1 ${p.symbol} + fee`
+    return fee === 'free' ? `1 ${p.symbol}, no fee` : `1 ${p.symbol} + ${fee}`
+  }
   const randomFact = (p: Pool) => {
     if (p.randomEnabled === undefined) return '–'
     return p.randomEnabled ? `1 ${p.symbol}` : 'not on this pool'
@@ -480,7 +479,7 @@ export default function CollectionView({
   let poolNote = 'No pool for this collection yet. Start one above.'
   if (pools.checkFailed) poolNote = "Couldn't check for a pool."
   if (pools.pools.length)
-    poolNote = 'Sell an NFT in for 1 pool token. Take one out for 1 token (random) or 1 token plus the premium (pick).'
+    poolNote = 'Sell an NFT in for 1 pool token. Take one out for 1 token (random) or 1 token plus the pick fee (pick).'
 
   // Only once the factory has said so: a failed lookup is not "no pool".
   const noPoolYet = !!factory && pools.free
@@ -798,10 +797,7 @@ export default function CollectionView({
                       value: `${p.held === undefined ? '–' : p.held.toString()} NFT${p.held === 1n ? '' : 's'}`,
                     },
                     { label: 'Random', value: randomFact(p) },
-                    {
-                      label: 'Pick',
-                      value: p.premiumBps === undefined ? '–' : `1 ${p.symbol} + ${premiumText(p.premiumBps)}`,
-                    },
+                    { label: 'Pick', value: pickFact(p) },
                   ])}
                 >
                   {pools.pools.map((p) => (

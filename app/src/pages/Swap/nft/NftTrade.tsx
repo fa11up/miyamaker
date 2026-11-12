@@ -24,7 +24,7 @@ import CollectionView from './CollectionView'
 import { CreatePool } from './CreatePool'
 import ItemView from './ItemView'
 import { OPENSEA_CHAIN } from './markets'
-import { filterPools, poolTitle, premiumText } from './pool'
+import { filterPools, pickFeeWords, poolTitle } from './pool'
 import PoolView from './PoolView'
 import { Card, Field, Head, Hint, LinkButton, Prose } from './ui'
 import {
@@ -220,9 +220,7 @@ function PoolRow({ chainId, pool, onOpen }: { chainId: number; pool: Pool; onOpe
           {pool.held === undefined ? '– NFTs' : `${pool.held.toLocaleString('en-US')} NFT${pool.held === 1n ? '' : 's'}`}
         </span>
         <span className="meta">
-          <Chip title="Random: 1 token. Pick: 1 token plus this premium.">
-            {pool.premiumBps === undefined ? 'Pick +?' : `Pick +${premiumText(pool.premiumBps)}`}
-          </Chip>
+          <Chip title="Random: 1 token, no fee. Pick: 1 token plus this fee.">{pickFeeWords(pool)}</Chip>
           {pool.randomEnabled && <Chip tone="ok">Random</Chip>}
           <span>{pool.symbol}</span>
         </span>
@@ -591,7 +589,8 @@ export default function NftTrade({
             <Prose>
               A pool holds NFTs from one collection. Each NFT in it is backed by exactly 1 pool token. Sell an NFT to
               the pool and you get 1 token. To take one out: pay 1 token for a random NFT, or 1 token plus the
-              pool&apos;s premium to pick the one you want. The premium goes to the INFER/IMD alignment vault.
+              pool&apos;s pick fee (in IMD or INFER, if it has one) to pick the one you want. The fee goes to the
+              INFER/IMD alignment vault, credited to you.
             </Prose>
           </Card>
 
@@ -675,7 +674,7 @@ export default function NftTrade({
       )}
       <Footer>
         {factory
-          ? `Pools on ${chain.name}: no owner, the contracts cannot be changed or paused. Selling in is free; a random NFT costs 1 token; picking one costs 1 token plus the pool's premium. `
+          ? `Pools on ${chain.name}: no owner, the contracts cannot be changed or paused. Selling in is free; a random NFT costs 1 token; picking one costs 1 token plus the pool's pick fee in IMD or INFER, if it has one. `
           : ''}
       </Footer>
     </Body>

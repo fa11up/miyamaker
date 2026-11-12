@@ -5,7 +5,8 @@
  * runtime import is viem's ABI coder (pure), so `node --test` can load it (tests/markets.test.mts).
  *
  * Venues (checked Nov 2026):
- *   MiyaPool  our pools, on-chain: no fee to sell in or for a random NFT; picking one costs the pool's premium (0-20%)
+ *   MiyaPool  our pools, on-chain: no fee to sell in or for a random NFT; picking one may add the pool's pick fee in
+ *             IMD or INFER
  *             (Ethereum, Sepolia, Robinhood Chain once the factory is live).
  *   OpenSea   API v2 through our proxy (/api/opensea): prices, listings, offers, in-app Seaport fills.
  *             Ethereum + Robinhood Chain. OpenSea closed its testnets, so no Sepolia.
@@ -38,7 +39,7 @@ export const VENUES: Venue[] = [
   {
     id: 'miyapool',
     name: 'MiyaPool',
-    fees: 'Random 0% · pick: pool premium',
+    fees: 'Random: no fee · pick: pool fee in IMD/INFER',
     chains: [1, 11155111, 4663],
     data: 'onchain',
     inApp: true,

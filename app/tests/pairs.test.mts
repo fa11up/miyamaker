@@ -6,7 +6,7 @@ import { test } from 'node:test'
 
 import { bestQuote, formatPrice, priceDecimals } from '../src/pages/Swap/nft/markets.ts'
 import type { PriceAnswer, PriceRequest } from '../src/pages/Swap/nft/pairs.ts'
-import { poolBuyPrice } from '../src/pages/Swap/nft/pool.ts'
+import { buyNeedsFee } from '../src/pages/Swap/nft/pool.ts'
 import {
   askFromProbe,
   DEFAULT_PAIR_SYMBOL,
@@ -114,20 +114,15 @@ test('a pool priced in ETH competes with OpenSea in the cheapest line', () => {
   assert.equal(bestQuote([offer, bid], 'highest')!.venue, 'MiyaPool')
 })
 
-test('a pick-only pool competes at 1 token + its premium, not at the token price', () => {
+test('pools compare at the pool-token price; a pick fee is named, never priced', () => {
   const os = { venue: 'OpenSea', price: { amount: (72n * E18) / 100n, decimals: 18, symbol: 'ETH' } }
-  const token = (70n * E18) / 100n
-  // ERC-1155 or Robinhood Chain: no random, so the cheapest way out is a pick at 5% more (0.735 ETH).
-  const pick = poolBuyPrice(token, { premiumBps: 500, randomEnabled: false })!
-  assert.deepEqual(pick, { amount: (735n * E18) / 1000n, how: 'pick' })
-  const pool = { venue: `MiyaPool (${pick.how})`, price: { amount: pick.amount, decimals: 18, symbol: 'ETH' } }
-  assert.equal(bestQuote([os, pool])!.venue, 'OpenSea')
-  // With random on, the same pool is 0.70 ETH and wins.
-  assert.deepEqual(poolBuyPrice(token, { premiumBps: 500, randomEnabled: true }), { amount: token, how: 'random' })
-  // A premium or random read that failed gives no price, never the token price.
-  assert.equal(poolBuyPrice(token, { premiumBps: undefined, randomEnabled: false }), undefined)
-  assert.equal(poolBuyPrice(token, { premiumBps: 500, randomEnabled: undefined }), undefined)
-  assert.equal(poolBuyPrice(undefined, { premiumBps: 500, randomEnabled: true }), undefined)
+  const token = { amount: (70n * E18) / 100n, decimals: 18, symbol: 'ETH' }
+  // Pick-only (ERC-1155 or Robinhood Chain) with a fee: still the token price, the fee said beside it.
+  const pickOnly = { imdFee: E18, inferFee: 0n, randomEnabled: false }
+  assert.equal(buyNeedsFee(pickOnly), true)
+  const where = buyNeedsFee(pickOnly) ? 'MiyaPool, plus the pick fee' : 'MiyaPool'
+  assert.equal(bestQuote([os, { venue: where, price: token }])!.venue, 'MiyaPool, plus the pick fee')
+  assert.equal(buyNeedsFee({ ...pickOnly, randomEnabled: true }), false)
 })
 
 test('prices show sensible decimals: dollars to the cent, big amounts whole', () => {
