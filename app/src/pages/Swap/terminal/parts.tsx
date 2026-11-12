@@ -8,7 +8,7 @@ import type { PriceStatus } from '../board'
 import { changeTone, featuredOn, formatChange, formatUsd, PRICE_STATUS_WORDS } from '../board'
 import type { SwapChainId, SwapToken } from '../constants'
 import { sameAddress } from '../constants'
-import { color, font, space, text } from '../floor/tokens'
+import { color, space, text } from '../floor/tokens'
 import type { BoardRow } from '../MarketBoard'
 import { Change, useCollectionFloor, useEthUsd } from '../MarketBoard'
 import type { Command, CommandCollection, CommandToken, Suggestion, TerminalTab } from './command'
@@ -248,6 +248,7 @@ export function CommandLine({
     setOpen(false)
     inputRef.current?.blur()
   }
+
   const take = (s: Suggestion) => {
     // A BUY typed before the suggestion keeps its count.
     const buy = /^\s*(?:buy|sweep)\s+(\d{1,3})?/i.exec(value)

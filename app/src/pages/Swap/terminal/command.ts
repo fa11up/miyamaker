@@ -47,7 +47,11 @@ export const COLLECTION_TICKERS: Record<string, string> = {
 }
 
 export const tickerOf = (c: { slug: string; name: string }) =>
-  COLLECTION_TICKERS[c.slug] ?? c.name.replace(/[^a-z0-9]/gi, '').slice(0, 6).toUpperCase()
+  COLLECTION_TICKERS[c.slug] ??
+  c.name
+    .replace(/[^a-z0-9]/gi, '')
+    .slice(0, 6)
+    .toUpperCase()
 
 const ADDRESS = /^0x[0-9a-fA-F]{40}$/
 const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '')
@@ -121,20 +125,24 @@ export function suggest(
   const text = cleanInput(input).replace(/^(?:buy|sweep)\s+(?:\d{1,3}\s+)?/i, '')
   const w = norm(text)
   if (!w || ADDRESS.test(text)) return []
-  const scored: { score: number; s: Suggestion }[] = []
-  for (const c of ctx.collections) {
-    const t = norm(tickerOf(c))
-    const n = norm(c.name)
-    const score = t.startsWith(w) ? 0 : n.startsWith(w) ? 1 : n.includes(w) ? 2 : -1
-    if (score >= 0)
-      scored.push({ score, s: { kind: 'collection', label: tickerOf(c), detail: c.name, collection: c } })
+  const score = (short: string, long: string) => {
+    const t = norm(short)
+    const n = norm(long)
+    return t.startsWith(w) ? 0 : n.startsWith(w) ? 1 : n.includes(w) ? 2 : -1
   }
-  for (const k of ctx.tokens) {
-    const t = norm(k.symbol)
-    const n = norm(k.name)
-    const score = t.startsWith(w) ? 0 : n.startsWith(w) ? 1 : n.includes(w) ? 2 : -1
-    if (score >= 0) scored.push({ score: score + 0.5, s: { kind: 'token', label: k.symbol, detail: k.name, token: k } })
-  }
+
+  const scored: { score: number; s: Suggestion }[] = [
+    ...ctx.collections.map((c) => ({
+      score: score(tickerOf(c), c.name),
+      s: { kind: 'collection', label: tickerOf(c), detail: c.name, collection: c } as Suggestion,
+    })),
+    // Tokens just after collections with the same score.
+    ...ctx.tokens.map((k) => ({
+      score: score(k.symbol, k.name) + 0.5,
+      s: { kind: 'token', label: k.symbol, detail: k.name, token: k } as Suggestion,
+    })),
+  ].filter((x) => x.score >= 0)
+
   return scored
     .sort((a, b) => a.score - b.score)
     .slice(0, max)

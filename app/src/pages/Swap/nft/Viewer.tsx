@@ -53,8 +53,7 @@ const Stage = styled.div`
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  background:
-    radial-gradient(circle at 50% 45%, #15181c 0, #000 70%);
+  background: radial-gradient(circle at 50% 45%, #15181c 0, #000 70%);
   cursor: zoom-in;
   touch-action: none;
   user-select: none;
@@ -267,7 +266,15 @@ const Side = styled.aside`
 const pct = (share: number) => (share < 0.001 ? '<0.1%' : `${(share * 100).toFixed(share < 0.1 ? 1 : 0)}%`)
 const when = (at: number) => new Date(at * 1000).toISOString().slice(0, 16).replace('T', ' ')
 
-function Traits({ traits, counts, size }: { traits: OsTrait[]; counts?: ReturnType<typeof useCollectionTraits>; size?: number }) {
+function Traits({
+  traits,
+  counts,
+  size,
+}: {
+  traits: OsTrait[]
+  counts?: ReturnType<typeof useCollectionTraits>
+  size?: number
+}) {
   if (!traits.length) return <p className="quiet">No traits in its metadata.</p>
   // Rarest first when the counts are known.
   const rows = traits
@@ -372,18 +379,18 @@ export default function Viewer({
       e.preventDefault()
       e.stopPropagation()
     }
+
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
   }, [])
 
   // The neighbours load while this one is looked at, so stepping is instant.
   useEffect(() => {
-    for (const n of [items[index - 1], items[index + 1]]) {
-      if (n?.image) {
-        const img = new Image()
-        img.src = n.image
-      }
-    }
+    ;[items[index - 1], items[index + 1]].forEach((n) => {
+      if (!n?.image) return
+      const img = new Image()
+      img.src = n.image
+    })
   }, [index, items])
 
   const closeRef = useRef<HTMLButtonElement>(null)
@@ -443,12 +450,7 @@ export default function Viewer({
           <button type="button" onClick={() => zoomTo(zoom * 1.5)} disabled={zoom >= MAX_ZOOM} aria-label="Zoom in">
             +
           </button>
-          <button
-            type="button"
-            onClick={() => step(1)}
-            disabled={index >= items.length - 1}
-            aria-label="Next"
-          >
+          <button type="button" onClick={() => step(1)} disabled={index >= items.length - 1} aria-label="Next">
             →
           </button>
         </StageBar>
@@ -489,16 +491,16 @@ export default function Viewer({
           ) : (
             <p className="quiet">Not for sale right now.</p>
           )}
-          {os.offer && (
-            <p className="sub">
-              Best offer {formatPrice(os.offer.price)}
-            </p>
-          )}
+          {os.offer && <p className="sub">Best offer {formatPrice(os.offer.price)}</p>}
         </section>
 
         <section aria-label="Traits">
           <h3>TRAITS{counts && supply ? ' · SHARE OF COLLECTION' : ''}</h3>
-          {meta.loading && !traits.length ? <p className="quiet">Reading…</p> : <Traits traits={traits} counts={counts} size={supply} />}
+          {meta.loading && !traits.length ? (
+            <p className="quiet">Reading…</p>
+          ) : (
+            <Traits traits={traits} counts={counts} size={supply} />
+          )}
         </section>
 
         <section aria-label="Sales this week">
@@ -513,9 +515,7 @@ export default function Viewer({
                 {sales.sales.slice(0, 8).map((s) => (
                   <tr key={s.tx}>
                     <td className="t">{when(s.at)}</td>
-                    <td className="v">
-                      {formatPrice({ amount: BigInt(s.price), decimals: 18, symbol: s.currency })}
-                    </td>
+                    <td className="v">{formatPrice({ amount: BigInt(s.price), decimals: 18, symbol: s.currency })}</td>
                   </tr>
                 ))}
               </tbody>

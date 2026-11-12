@@ -311,14 +311,18 @@ export function useMarketListings(slug: string | undefined) {
   }
 }
 
+/** One collection's sales query, shared by useMarketSales and the terminal's activity feed (same cache). */
+export const marketSalesQuery = (slug: string | undefined) => ({
+  queryKey: ['market-sales', slug],
+  enabled: !!slug,
+  ...common,
+  queryFn: ({ signal }: { signal: AbortSignal }) =>
+    market<MarketSales>(`sales?slug=${encodeURIComponent(slug!)}`, signal),
+})
+
 /** The week's sales, newest first, each with its transaction. */
 export function useMarketSales(slug: string | undefined) {
-  const q = useQuery({
-    queryKey: ['market-sales', slug],
-    enabled: !!slug,
-    ...common,
-    queryFn: ({ signal }) => market<MarketSales>(`sales?slug=${encodeURIComponent(slug!)}`, signal),
-  })
+  const q = useQuery(marketSalesQuery(slug))
   const sales = q.data ? (Array.isArray(q.data.sales) ? q.data.sales : []) : undefined
   return { sales, day: q.data?.day, loading: !!slug && q.isLoading, error: q.error }
 }

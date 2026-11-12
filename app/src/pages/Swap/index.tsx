@@ -19,12 +19,15 @@ import { Chip } from './floor/retro'
 import { color, font, space, text } from './floor/tokens'
 import { Tape, TokenTable, useBoard } from './MarketBoard'
 import NftTrade from './nft/NftTrade'
+import type { ActivityRow } from './terminal/activity'
+import { ActivityPanel, ActivityTape } from './terminal/ActivityView'
 import type { Command, TerminalTab } from './terminal/command'
 import { tabForKey } from './terminal/command'
 import { AMBER, CommandLine, FunctionKeys, StatusLine, Watchlist } from './terminal/parts'
+import { useActivity } from './terminal/useActivity'
 import TokenPage, { TokenResults } from './TokenPage'
 import type { SwapPreset } from './TokenSwap'
-import type { CollectionRef, TokenRef, TradeMode } from './tradePath'
+import type { CollectionRef, TokenRef } from './tradePath'
 import { parseTradePath, tabPath, TRADE_PATH, tradePath } from './tradePath'
 import { useCustomToken, useTokenList } from './useTokens'
 
@@ -236,17 +239,6 @@ const SearchHead = styled.div`
   }
 `
 
-const Soon = styled.div`
-  padding: ${space[5]} ${space[4]};
-  color: ${color.inkMuted};
-  h2 {
-    margin: 0 0 ${space[2]};
-    color: ${AMBER};
-    font-size: ${text.sm};
-    letter-spacing: 0.14em;
-  }
-`
-
 type View = TerminalTab | 'search'
 
 /**
@@ -299,6 +291,7 @@ export default function TradePage() {
   const [swapBusy, setSwapBusy] = useState(false)
   const tradeBusy = marketBusy || swapBusy
   const board = useBoard(chainId)
+  const activity = useActivity(chainId)
   const list = useTokenList(chainId)
   const custom = useCustomToken(chainId, query, list.tokens)
   const pastedToken = custom.listed || custom.token
@@ -333,6 +326,7 @@ export default function TradePage() {
       if (narrow) setSheetOpen((o) => !o)
       return
     }
+
     setView(t)
     setSheetOpen(false)
     if (t === 'nft') push(collection ? tradePath('nfts', undefined, collection) : TRADE_PATH)
@@ -369,6 +363,10 @@ export default function TradePage() {
     if (narrow) setSheetOpen(true)
     push(tradePath('tokens', undefined, undefined, ref))
   }
+
+  // A sale or mint opens that NFT's page in the NFT tab.
+  const openActivity = (r: ActivityRow) =>
+    openCollection({ chainId: r.chainId, address: r.address as `0x${string}`, tokenId: r.tokenId })
 
   const run = (c: Command) => {
     if (c.kind === 'tab') showTab(c.tab)
@@ -413,6 +411,7 @@ export default function TradePage() {
       showTab(t)
       return
     }
+
     if (typing) return
     if (e.key === '/') {
       e.preventDefault()
@@ -630,14 +629,17 @@ export default function TradePage() {
 
             {view === 'activity' && (
               <Pane>
-                <Soon role="status">
-                  <h2>ACTIVITY</h2>
-                  Sales, mints, listings, swaps and vault batches, live. Coming in this release.
-                </Soon>
+                <ActivityPanel
+                  rows={activity.rows}
+                  loading={activity.loading}
+                  failed={activity.failed}
+                  onOpen={openActivity}
+                />
               </Pane>
             )}
           </Main>
         </Body>
+        {!narrow && <ActivityTape rows={activity.rows} onOpen={openActivity} />}
       </Root>
     </WindowWrapper>
   )
