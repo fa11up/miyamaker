@@ -94,7 +94,13 @@ export default function FillReview({
   onDone,
   onGone,
   onBusy,
+  oneClick,
 }: {
+  /**
+   * The terminal's BUY / SELL NOW: each wallet step (an approval if owed, then the fill) opens by itself once, as soon as
+   * it is ready, so pressing BUY is the whole flow. Never after an error (a retry is pressed), never past a consent box.
+   */
+  oneClick?: boolean
   side: 'buy' | 'sell'
   order: OsOrder
   chainId: SupportedChainId
@@ -398,6 +404,7 @@ export default function FillReview({
         label: finish,
         step: `One signature: lets OpenSea's contract ${lets}, then ${finishVerb}s, all or nothing.`,
         disabled: mustAgree,
+        wallet: true,
         onClick: () => tx.runBatch('fill', [...owed, fillCall], 'approve'),
       }
     }
@@ -412,6 +419,7 @@ export default function FillReview({
                 ok.fromYou
               )} for the fees, out of what you receive. Then sell.`,
         disabled: mustAgree,
+        wallet: true,
         onClick: () => tx.run('approve', tokenAllow),
       }
 
@@ -422,6 +430,7 @@ export default function FillReview({
           nftState === 'needs-all'
             ? `${numbered}this lets OpenSea's contract ${moveWords}. Then sell.`
             : `${numbered}let OpenSea's contract ${moveWords}. Then sell.`,
+        wallet: true,
         onClick: () => tx.run('approve', nftAllow),
       }
 
@@ -429,9 +438,28 @@ export default function FillReview({
       label: finish,
       step: stepsDone > 0 ? `${numbered}${finishVerb}.` : undefined,
       disabled: mustAgree,
+      wallet: true,
       onClick: fill,
     }
-  })()
+  })() as { label: string; step?: string; disabled?: boolean; wallet?: boolean; onClick?: () => void }
+
+  // One click: a wallet step that is ready opens once (keyed by the steps already done and what it is). An error
+  // leaves the phase at 'error', so nothing fires again until the person presses.
+  const fired = useRef(new Set<string>())
+  const readyStep =
+    oneClick &&
+    action.wallet &&
+    !action.disabled &&
+    action.onClick &&
+    (tx.tx.phase === 'idle' || (tx.tx.phase === 'done' && tx.tx.id === 'approve'))
+      ? `${order.hash}:${stepsDone}:${action.label}`
+      : undefined
+  useEffect(() => {
+    if (!readyStep || fired.current.has(readyStep)) return
+    fired.current.add(readyStep)
+    action.onClick?.()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [readyStep])
 
   return (
     <Card aria-label={side === 'buy' ? 'Review your buy' : 'Review your sale'} data-fill-review>

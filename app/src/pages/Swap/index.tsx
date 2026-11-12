@@ -1,3 +1,4 @@
+import { useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate, useNavigationType } from 'react-router-dom'
 import styled from 'styled-components/macro'
@@ -18,12 +19,16 @@ import { isSwapChain, PINNED_TOKENS, sameAddress, SWAP_CHAINS } from './constant
 import { Chip } from './floor/retro'
 import { color, font, space, text } from './floor/tokens'
 import { Tape, TokenTable, useBoard } from './MarketBoard'
+import FillReview from './nft/FillReview'
 import NftTrade from './nft/NftTrade'
+import SweepReview from './nft/SweepReview'
 import type { ActivityRow } from './terminal/activity'
 import { ActivityPanel, ActivityTape } from './terminal/ActivityView'
 import type { Command, TerminalTab } from './terminal/command'
 import { tabForKey } from './terminal/command'
 import { AMBER, CommandLine, FunctionKeys, StatusLine, Watchlist } from './terminal/parts'
+import type { NftTicket } from './terminal/ticket'
+import { TicketContext, ticketTitle } from './terminal/ticket'
 import { useActivity } from './terminal/useActivity'
 import TokenPage, { TokenResults } from './TokenPage'
 import type { SwapPreset } from './TokenSwap'
@@ -181,6 +186,14 @@ const RailHead = styled.div`
   }
 `
 
+/* The NFT ticket: the buy / sell / sweep review, in the rail's width. */
+const NftTicketPane = styled.div`
+  padding: ${space[2]};
+  &[hidden] {
+    display: none;
+  }
+`
+
 /* The ticket holds the token page's own swap panel: give it the rail's width. */
 const Ticket = styled.div`
   > * {
@@ -275,7 +288,11 @@ export default function TradePage() {
   const [sweepAsk, setSweepAsk] = useState<{ key: number; count: number }>()
 
   // The rail: the watchlist or the ticket. On a phone it is a sheet, open or closed.
-  const [rail, setRail] = useState<'watch' | 'ticket'>(initial.current.token ? 'ticket' : 'watch')
+  // The rail: the watchlist, the token ticket (the token page's swap), or the NFT ticket (a buy, sell or sweep).
+  const [rail, setRail] = useState<'watch' | 'ticket' | 'nft'>(initial.current.token ? 'ticket' : 'watch')
+  const [nftTicket, setNftTicket] = useState<NftTicket & { key: number }>()
+  const [ticketBusy, setTicketBusy] = useState(false)
+  const queryClient = useQueryClient()
   const [sheetOpen, setSheetOpen] = useState(false)
   const [ticketEl, setTicketEl] = useState<HTMLDivElement | null>(null)
   const commandRef = useRef<HTMLInputElement>(null)
@@ -289,7 +306,7 @@ export default function TradePage() {
   const chainName = SWAP_CHAINS.find((c) => c.id === chainId)?.name ?? 'Ethereum'
   const [marketBusy, setMarketBusy] = useState(false)
   const [swapBusy, setSwapBusy] = useState(false)
-  const tradeBusy = marketBusy || swapBusy
+  const tradeBusy = marketBusy || swapBusy || ticketBusy
   const board = useBoard(chainId)
   const activity = useActivity(chainId)
   const list = useTokenList(chainId)
@@ -372,6 +389,24 @@ export default function TradePage() {
     push(tradePath('tokens', undefined, undefined, ref))
   }
 
+  // BUY / SELL NOW / SWEEP: the NFT ticket opens in the rail and goes straight to the wallet. A new one replaces the
+  // last only when nothing is in flight.
+  const openNftTicket = (t: NftTicket) => {
+    if (tradeBusy) return
+    setNftTicket({ ...t, key: Date.now() })
+    setRail('nft')
+    if (narrow) setSheetOpen(true)
+  }
+
+  const closeNftTicket = () => {
+    if (ticketBusy) return
+    setNftTicket(undefined)
+    setRail('watch')
+  }
+
+  // A finished trade changes listings, offers, owners and balances: read them again.
+  const afterTrade = () => queryClient.invalidateQueries()
+
   // A sale or mint opens that NFT's page in the NFT tab.
   const openActivity = (r: ActivityRow) =>
     openCollection({ chainId: r.chainId, address: r.address as `0x${string}`, tokenId: r.tokenId })
@@ -427,7 +462,7 @@ export default function TradePage() {
       commandRef.current?.focus()
     } else if (e.key === 'Escape') {
       if (narrow && sheetOpen) setSheetOpen(false)
-      else if (rail === 'ticket') setRail('watch')
+      else if (rail === 'ticket' || rail === 'nft') setRail('watch')
     }
   }
 
@@ -449,224 +484,281 @@ export default function TradePage() {
       `${ticketToken.address.slice(0, 6)}…`)
 
   return (
-    <WindowWrapper skin="floor">
-      <TitleBar
-        skin="floor"
-        closeBtn
-        onClose={(e) => {
-          if (e.cancelable) e.stopPropagation()
-          close()
-        }}
-        fullscreen={fullscreen}
-        fullscreenBtn
-        onFullscreen={() => toggleFullscreen()}
-        minimizeBtn
-        onMinimize={(e) => {
-          if (e.cancelable) e.stopPropagation()
-          minimize()
-        }}
-      >
-        {page?.label}
-      </TitleBar>
-      <Root
-        ref={(el) => {
-          rootRef.current = el
-          sizeRef(el)
-        }}
-        tabIndex={-1}
-        onKeyDown={onKeyDown}
-        className={[narrow && 'narrow', slim && 'slim'].filter(Boolean).join(' ') || undefined}
-      >
-        <StatusLine
-          chainId={chainId}
-          chainName={chainName}
-          priceStatus={board.status}
-          extra={
-            <>
-              <Net role="group" aria-label="Network">
-                {SWAP_CHAINS.map((c) => (
+    <TicketContext.Provider value={{ open: openNftTicket, busy: tradeBusy }}>
+      <WindowWrapper skin="floor">
+        <TitleBar
+          skin="floor"
+          closeBtn
+          onClose={(e) => {
+            if (e.cancelable) e.stopPropagation()
+            close()
+          }}
+          fullscreen={fullscreen}
+          fullscreenBtn
+          onFullscreen={() => toggleFullscreen()}
+          minimizeBtn
+          onMinimize={(e) => {
+            if (e.cancelable) e.stopPropagation()
+            minimize()
+          }}
+        >
+          {page?.label}
+        </TitleBar>
+        <Root
+          ref={(el) => {
+            rootRef.current = el
+            sizeRef(el)
+          }}
+          tabIndex={-1}
+          onKeyDown={onKeyDown}
+          className={[narrow && 'narrow', slim && 'slim'].filter(Boolean).join(' ') || undefined}
+        >
+          <StatusLine
+            chainId={chainId}
+            chainName={chainName}
+            priceStatus={board.status}
+            extra={
+              <>
+                <Net role="group" aria-label="Network">
+                  {SWAP_CHAINS.map((c) => (
+                    <button
+                      key={c.id}
+                      type="button"
+                      aria-pressed={c.id === chainId}
+                      disabled={tradeBusy}
+                      onClick={() => {
+                        setChainId(c.id)
+                        showTab('nft')
+                      }}
+                    >
+                      {c.id === 1 ? 'ETH' : 'RH'}
+                    </button>
+                  ))}
+                </Net>
+                {offline && <Chip tone="warn">Swap offline</Chip>}
+              </>
+            }
+          />
+          <CommandLine
+            inputRef={commandRef}
+            collections={commandCollections}
+            tokens={commandTokens}
+            disabled={tradeBusy}
+            onCommand={run}
+          />
+          <FunctionKeys
+            tab={view === 'search' ? 'nft' : view}
+            railOpen={narrow ? sheetOpen : false}
+            busy={tradeBusy}
+            onTab={showTab}
+          />
+          <Tape rows={board.rows} loading={board.loading} disabled={tradeBusy} onTrade={(t) => openToken(t)} />
+
+          <Body>
+            <Rail
+              className={narrow && !sheetOpen ? 'closed' : undefined}
+              aria-label={rail === 'watch' ? 'Watchlist' : 'Trade ticket'}
+            >
+              {rail === 'nft' && nftTicket ? (
+                <RailHead>
+                  <button type="button" onClick={() => setRail('watch')} title="Back to the watchlist (Esc)">
+                    ◀ WATCH
+                  </button>
+                  <span className="title">{ticketTitle(nftTicket)}</span>
                   <button
-                    key={c.id}
                     type="button"
-                    aria-pressed={c.id === chainId}
-                    disabled={tradeBusy}
-                    onClick={() => {
-                      setChainId(c.id)
-                      showTab('nft')
-                    }}
+                    onClick={closeNftTicket}
+                    disabled={ticketBusy}
+                    aria-label="Close the ticket"
+                    title={ticketBusy ? 'Finish the trade in progress first' : 'Close the ticket'}
                   >
-                    {c.id === 1 ? 'ETH' : 'RH'}
-                  </button>
-                ))}
-              </Net>
-              {offline && <Chip tone="warn">Swap offline</Chip>}
-            </>
-          }
-        />
-        <CommandLine
-          inputRef={commandRef}
-          collections={commandCollections}
-          tokens={commandTokens}
-          disabled={tradeBusy}
-          onCommand={run}
-        />
-        <FunctionKeys
-          tab={view === 'search' ? 'nft' : view}
-          railOpen={narrow ? sheetOpen : false}
-          busy={tradeBusy}
-          onTab={showTab}
-        />
-        <Tape rows={board.rows} loading={board.loading} disabled={tradeBusy} onTrade={(t) => openToken(t)} />
-
-        <Body>
-          <Rail
-            className={narrow && !sheetOpen ? 'closed' : undefined}
-            aria-label={rail === 'ticket' ? 'Trade ticket' : 'Watchlist'}
-          >
-            {rail === 'ticket' && ticketToken ? (
-              <RailHead>
-                <button type="button" onClick={() => setRail('watch')} title="Back to the watchlist (Esc)">
-                  ◀ WATCH
-                </button>
-                <span className="title">TICKET · {ticketSymbol}</span>
-                {narrow && (
-                  <button type="button" onClick={() => setSheetOpen(false)} aria-label="Close">
                     ✕
                   </button>
-                )}
-              </RailHead>
-            ) : (
-              <RailHead>
-                <span className="title">WATCHLIST · {chainName.toUpperCase()}</span>
-                {ticketToken && (
-                  <button type="button" onClick={() => setRail('ticket')} title="Back to the open ticket">
-                    TICKET ▶
+                </RailHead>
+              ) : rail === 'ticket' && ticketToken ? (
+                <RailHead>
+                  <button type="button" onClick={() => setRail('watch')} title="Back to the watchlist (Esc)">
+                    ◀ WATCH
                   </button>
+                  <span className="title">TICKET · {ticketSymbol}</span>
+                  {narrow && (
+                    <button type="button" onClick={() => setSheetOpen(false)} aria-label="Close">
+                      ✕
+                    </button>
+                  )}
+                </RailHead>
+              ) : (
+                <RailHead>
+                  <span className="title">WATCHLIST · {chainName.toUpperCase()}</span>
+                  {(nftTicket || ticketToken) && (
+                    <button
+                      type="button"
+                      onClick={() => setRail(nftTicket ? 'nft' : 'ticket')}
+                      title="Back to the open ticket"
+                    >
+                      TICKET ▶
+                    </button>
+                  )}
+                  {narrow && (
+                    <button type="button" onClick={() => setSheetOpen(false)} aria-label="Close">
+                      ✕
+                    </button>
+                  )}
+                </RailHead>
+              )}
+              <div className="scroll">
+                <div hidden={(rail === 'ticket' && !!ticketToken) || (rail === 'nft' && !!nftTicket)}>
+                  <Watchlist
+                    chainId={chainId}
+                    rows={board.rows}
+                    activeCollection={view === 'nft' ? collection?.address : undefined}
+                    activeToken={view === 'tokens' ? tokenRef?.address : undefined}
+                    busy={tradeBusy}
+                    onCollection={(address) => openCollection({ chainId, address: address as `0x${string}` })}
+                    onToken={(t) => openToken(t)}
+                  />
+                </div>
+                <Ticket ref={setTicketEl} hidden={rail !== 'ticket' || !ticketToken} data-trade-ticket />
+                {nftTicket && (
+                  <NftTicketPane hidden={rail !== 'nft'} data-nft-ticket>
+                    {nftTicket.kind === 'fill' ? (
+                      <FillReview
+                        key={nftTicket.key}
+                        oneClick
+                        side={nftTicket.side}
+                        order={nftTicket.order}
+                        chainId={nftTicket.chainId}
+                        contract={nftTicket.contract}
+                        tokenId={nftTicket.tokenId}
+                        title={nftTicket.title}
+                        flagged={nftTicket.flagged}
+                        unverified={nftTicket.unverified}
+                        onClose={closeNftTicket}
+                        onDone={afterTrade}
+                        onGone={afterTrade}
+                        onBusy={setTicketBusy}
+                      />
+                    ) : (
+                      <SweepReview
+                        key={nftTicket.key}
+                        oneClick
+                        listings={nftTicket.listings}
+                        chainId={nftTicket.chainId}
+                        contract={nftTicket.contract}
+                        title={nftTicket.title}
+                        unverified={nftTicket.unverified}
+                        onClose={closeNftTicket}
+                        onDone={afterTrade}
+                        onBusy={setTicketBusy}
+                      />
+                    )}
+                  </NftTicketPane>
                 )}
-                {narrow && (
-                  <button type="button" onClick={() => setSheetOpen(false)} aria-label="Close">
-                    ✕
-                  </button>
-                )}
-              </RailHead>
-            )}
-            <div className="scroll">
-              <div hidden={rail === 'ticket' && !!ticketToken}>
-                <Watchlist
-                  chainId={chainId}
-                  rows={board.rows}
-                  activeCollection={view === 'nft' ? collection?.address : undefined}
-                  activeToken={view === 'tokens' ? tokenRef?.address : undefined}
-                  busy={tradeBusy}
-                  onCollection={(address) => openCollection({ chainId, address: address as `0x${string}` })}
-                  onToken={(t) => openToken(t)}
-                />
               </div>
-              <Ticket ref={setTicketEl} hidden={rail !== 'ticket' || !ticketToken} data-trade-ticket />
-            </div>
-          </Rail>
+            </Rail>
 
-          <Main>
-            {view === 'search' && (
-              <Pane>
-                <SearchHead>
-                  <span>
-                    SEARCH <b>{query}</b>
-                  </span>
-                  <button type="button" onClick={() => showTab('nft')}>
-                    Clear ✕
-                  </button>
-                </SearchHead>
+            <Main>
+              {view === 'search' && (
+                <Pane>
+                  <SearchHead>
+                    <span>
+                      SEARCH <b>{query}</b>
+                    </span>
+                    <button type="button" onClick={() => showTab('nft')}>
+                      Clear ✕
+                    </button>
+                  </SearchHead>
+                  <Padded>
+                    <TokenResults
+                      query={query}
+                      tokens={list.tokens}
+                      pasted={pastedToken}
+                      loading={list.isLoading || custom.isLoading}
+                      onOpen={(t) => openToken(t)}
+                    />
+                  </Padded>
+                </Pane>
+              )}
+
+              <Pane hidden={!(view === 'nft' || view === 'pools' || view === 'search')} data-trade-nfts>
+                <NftTrade
+                  query={view === 'search' && !pastedToken ? query : ''}
+                  chainId={chainId}
+                  onBusy={setMarketBusy}
+                  section={view === 'pools' ? 'pools' : 'collections'}
+                  pool={view === 'pools' ? pool : undefined}
+                  collection={view === 'nft' ? collection : undefined}
+                  sweepAsk={sweepAsk}
+                  visible={view === 'nft' || view === 'pools' || view === 'search'}
+                  onOpenPool={openPool}
+                  onOpenCollection={(c) => openCollection(c)}
+                  onSwapToken={(p) => {
+                    // Pool tokens are the only ones here that aren't on the list, and the ticket is about them.
+                    const pinned = (t?: SwapToken) =>
+                      PINNED_TOKENS[p.chainId].some((x) => sameAddress(x.address, t?.address))
+                    const subject = pinned(p.buy) ? p.sell : p.buy
+                    setPreset({ ...p, key: Date.now() })
+                    if (subject) openToken({ chainId: p.chainId, address: subject.address }, true)
+                  }}
+                />
+              </Pane>
+
+              <Pane hidden={view !== 'tokens' || !!tokenRef} data-trade-home-tokens>
                 <Padded>
-                  <TokenResults
-                    query={query}
-                    tokens={list.tokens}
-                    pasted={pastedToken}
-                    loading={list.isLoading || custom.isLoading}
-                    onOpen={(t) => openToken(t)}
+                  <TokenTable
+                    rows={board.rows}
+                    failed={board.failed}
+                    loading={board.loading}
+                    onTrade={(t) => openToken(t)}
                   />
                 </Padded>
               </Pane>
-            )}
 
-            <Pane hidden={!(view === 'nft' || view === 'pools' || view === 'search')} data-trade-nfts>
-              <NftTrade
-                query={view === 'search' && !pastedToken ? query : ''}
-                chainId={chainId}
-                onBusy={setMarketBusy}
-                section={view === 'pools' ? 'pools' : 'collections'}
-                pool={view === 'pools' ? pool : undefined}
-                collection={view === 'nft' ? collection : undefined}
-                sweepAsk={sweepAsk}
-                visible={view === 'nft' || view === 'pools' || view === 'search'}
-                onOpenPool={openPool}
-                onOpenCollection={(c) => openCollection(c)}
-                onSwapToken={(p) => {
-                  // Pool tokens are the only ones here that aren't on the list, and the ticket is about them.
-                  const pinned = (t?: SwapToken) =>
-                    PINNED_TOKENS[p.chainId].some((x) => sameAddress(x.address, t?.address))
-                  const subject = pinned(p.buy) ? p.sell : p.buy
-                  setPreset({ ...p, key: Date.now() })
-                  if (subject) openToken({ chainId: p.chainId, address: subject.address }, true)
-                }}
-              />
-            </Pane>
+              {lastToken.current && (
+                <Pane hidden={view !== 'tokens' || !tokenRef} data-trade-tokens>
+                  <TokenPage
+                    chainId={chainId}
+                    onChain={setChainId}
+                    onBusy={setSwapBusy}
+                    address={lastToken.current.chainId === chainId ? lastToken.current.address : undefined}
+                    preset={preset}
+                    onBack={() => {
+                      setTokenRef(undefined)
+                      push(TRADE_PATH)
+                    }}
+                    backLabel="All tokens"
+                    onOffline={setOffline}
+                    ticket={ticketEl}
+                  />
+                </Pane>
+              )}
 
-            <Pane hidden={view !== 'tokens' || !!tokenRef} data-trade-home-tokens>
-              <Padded>
-                <TokenTable
-                  rows={board.rows}
-                  failed={board.failed}
-                  loading={board.loading}
-                  onTrade={(t) => openToken(t)}
-                />
-              </Padded>
-            </Pane>
-
-            {lastToken.current && (
-              <Pane hidden={view !== 'tokens' || !tokenRef} data-trade-tokens>
-                <TokenPage
-                  chainId={chainId}
-                  onChain={setChainId}
-                  onBusy={setSwapBusy}
-                  address={lastToken.current.chainId === chainId ? lastToken.current.address : undefined}
-                  preset={preset}
-                  onBack={() => {
-                    setTokenRef(undefined)
-                    push(TRADE_PATH)
-                  }}
-                  backLabel="All tokens"
-                  onOffline={setOffline}
-                  ticket={ticketEl}
-                />
-              </Pane>
-            )}
-
-            {view === 'activity' && (
-              <Pane>
-                <ActivityPanel
-                  rows={activity.rows}
-                  loading={activity.loading}
-                  failed={activity.failed}
-                  partial={activity.partial}
-                  capped={activity.capped}
-                  unlisted={activity.unlisted}
-                  onOpen={openActivity}
-                />
-              </Pane>
-            )}
-          </Main>
-        </Body>
-        {!narrow && (
-          <ActivityTape
-            rows={activity.rows}
-            loading={activity.loading}
-            failed={activity.failed}
-            busy={tradeBusy}
-            onOpen={openActivity}
-          />
-        )}
-      </Root>
-    </WindowWrapper>
+              {view === 'activity' && (
+                <Pane>
+                  <ActivityPanel
+                    rows={activity.rows}
+                    loading={activity.loading}
+                    failed={activity.failed}
+                    partial={activity.partial}
+                    capped={activity.capped}
+                    unlisted={activity.unlisted}
+                    onOpen={openActivity}
+                  />
+                </Pane>
+              )}
+            </Main>
+          </Body>
+          {!narrow && (
+            <ActivityTape
+              rows={activity.rows}
+              loading={activity.loading}
+              failed={activity.failed}
+              busy={tradeBusy}
+              onOpen={openActivity}
+            />
+          )}
+        </Root>
+      </WindowWrapper>
+    </TicketContext.Provider>
   )
 }

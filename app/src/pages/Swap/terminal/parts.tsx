@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import styled from 'styled-components/macro'
-import { useBlockNumber, useGasPrice } from 'wagmi'
+import { useAccount, useBlockNumber, useGasPrice } from 'wagmi'
 
 import NftImage from '@/components/NftImage'
 
@@ -11,6 +11,7 @@ import { sameAddress } from '../constants'
 import { color, space, text } from '../floor/tokens'
 import type { BoardRow } from '../MarketBoard'
 import { Change, useCollectionFloor, useEthUsd } from '../MarketBoard'
+import { useOpenSeaOwned } from '../nft/useMarkets'
 import type { Command, CommandCollection, CommandToken, Suggestion, TerminalTab } from './command'
 import { parseCommand, suggest, TABS, tickerOf } from './command'
 
@@ -573,8 +574,36 @@ export function Watchlist({
   onCollection: (address: string) => void
   onToken: (t: SwapToken) => void
 }) {
+  // What the wallet holds on this chain (OpenSea), biggest holding first; flagged spam left out.
+  const { address: me } = useAccount()
+  const owned = useOpenSeaOwned(chainId, me)
+  const yours = (owned.groups ?? []).filter((g) => !g.flagged).slice(0, 8)
   return (
     <List aria-label="Watchlist">
+      {yours.length > 0 && (
+        <>
+          <h3>YOURS · OPEN TO SELL</h3>
+          {yours.map((g) => (
+            <button
+              key={g.contract}
+              type="button"
+              aria-current={sameAddress(g.contract, activeCollection)}
+              disabled={busy}
+              onClick={() => onCollection(g.contract)}
+              title={`Open ${g.name}: sell any of yours into its best bid`}
+            >
+              <span className="pic" aria-hidden>
+                <NftImage src={g.image} alt="" variant="thumb" />
+              </span>
+              <span>
+                <span className="sym">{g.name}</span>
+                <span className="sub">you hold {g.ids.length}</span>
+              </span>
+              <span className="fig">SELL ▸</span>
+            </button>
+          ))}
+        </>
+      )}
       <h3>NFT · FLOOR</h3>
       {featuredOn(chainId).map((c) => (
         <CollectionLine

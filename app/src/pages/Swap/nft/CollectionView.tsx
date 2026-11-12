@@ -16,6 +16,7 @@ import { ethInUsd, isFeatured } from '../board'
 import { Chip, Eyebrow, Skeleton, StatusBox } from '../floor/retro'
 import { bevel, color, space, text } from '../floor/tokens'
 import { useEthUsd } from '../MarketBoard'
+import { useTicket } from '../terminal/ticket'
 import { erc721Abi, poolFactoryAbi } from './abi'
 import type { OsOrder, Price } from './markets'
 import { bestQuote, collectionUrl, formatAmount, formatPrice, lowerPrice, venuesFor } from './markets'
@@ -30,13 +31,15 @@ import {
   useMarketListings,
   useMarketSales,
   useOpenSeaCollection,
+  useOpenSeaItem,
   useOpenSeaNftImage,
+  useOpenSeaOwned,
 } from './useMarkets'
 import type { PoolPrice } from './usePoolPrices'
 import { pairsFor, poolSide, usePoolPrices } from './usePoolPrices'
 import type { Pool } from './usePools'
 import { poolFactoryFor, useNftMeta, usePoolsForCollection } from './usePools'
-import { Best, OutLink, PairSwitch, VenueList, VenueRow } from './venueUi'
+import { Best, PairSwitch, VenueList, VenueRow } from './venueUi'
 import type { ViewerItem } from './Viewer'
 import Viewer from './Viewer'
 
@@ -195,6 +198,76 @@ const ArtGrid = styled.ul`
     font-size: ${text.xs};
   }
 `
+
+const YoursList = styled.ul`
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 6px;
+  li {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+`
+
+function OwnedTile({ chainId, contract, id }: { chainId: SupportedChainId; contract: Address; id: string }) {
+  const osImage = useOpenSeaNftImage(chainId, contract, id)
+  const meta = useNftMeta(chainId, osImage ? undefined : contract, KIND.ERC721, BigInt(id))
+  return (
+    <div style={{ position: 'relative' }}>
+      <NftImage src={osImage || meta.image} alt={`#${id}`} variant="thumb" />
+      <span
+        style={{
+          position: 'absolute',
+          left: 0,
+          bottom: 0,
+          padding: '1px 6px',
+          background: 'rgba(0,0,0,.8)',
+          fontSize: 12,
+        }}
+      >
+        #{id}
+      </span>
+    </div>
+  )
+}
+
+/** SELL NOW for one NFT you hold: its best bid (OpenSea's best offer for it, collection bids included), in the ticket. */
+function SellNow({
+  chainId,
+  contract,
+  slug,
+  tokenId,
+  title,
+  label,
+}: {
+  chainId: SupportedChainId
+  contract: Address
+  slug?: string
+  tokenId: string
+  title: string
+  label?: string
+}) {
+  const ticket = useTicket()
+  const item = useOpenSeaItem(chainId, contract, slug, tokenId)
+  if (!ticket) return null
+  if (item.loading) return <Hint>Checking bids…</Hint>
+  if (item.needsKey || item.error) return <Hint>Bids unavailable right now.</Hint>
+  if (!item.offer) return <Hint>No bids right now.</Hint>
+  return (
+    <PushButton
+      type="button"
+      disabled={ticket.busy}
+      data-sell-now
+      onClick={() => ticket.open({ kind: 'fill', side: 'sell', order: item.offer!, chainId, contract, tokenId, title })}
+    >
+      {label ? `${label} · ${formatPrice(item.offer.price)}` : `Sell now · ${formatPrice(item.offer.price)}`}
+    </PushButton>
+  )
+}
 
 function GalleryTile({
   chainId,
@@ -491,8 +564,8 @@ export default function CollectionView({
   const galleryItems: ViewerItem[] = gallery.items.length
     ? gallery.items
     : onchainSupply
-      ? Array.from({ length: Math.min(onchainSupply, galleryLimit) }, (_, i) => ({ tokenId: String(i + 1) }))
-      : []
+    ? Array.from({ length: Math.min(onchainSupply, galleryLimit) }, (_, i) => ({ tokenId: String(i + 1) }))
+    : []
   const listedItems: ViewerItem[] = listed.map((l) => ({ tokenId: l.tokenId!, price: l.price }))
   // The open NFT is kept by its id, not its place: a refetch that adds a cheaper listing on top must not move the
   // viewer (and its BUY) onto another NFT. If it leaves the list (sold), the viewer closes.
@@ -516,6 +589,10 @@ export default function CollectionView({
   const name = knownName || 'Unnamed collection'
   const venues = venuesFor(chainId)
   const unverified = !isFeatured(chainId, address) && os.info?.verified !== true
+  // BUY, SWEEP and SELL NOW open the terminal's ticket (straight to the wallet); outside it, the old reviews.
+  const ticket = useTicket()
+  const owned = useOpenSeaOwned(chainId, me)
+  const mineHere = owned.groups?.find((g) => g.contract.toLowerCase() === address.toLowerCase())?.ids ?? []
   const openSeaHref = collectionUrl('opensea', chainId, address, os.slug)
 
   // MiyaPool prices: one pool token (= one NFT) through 0x, in ETH for the comparison and in the chosen pair to show.
@@ -551,7 +628,7 @@ export default function CollectionView({
         price: poolSide(ethPrices[p.address.toLowerCase()], 'bid'),
       })),
     ],
-    'highest',
+    'highest'
   )
   const poolLines = swap ? pools.pools : poolsWithNfts
   // The one Buy button goes wherever is cheapest right now.
@@ -582,7 +659,7 @@ export default function CollectionView({
           >
             Start a {MODE_LABEL[m]} pool
           </PushButton>
-        ),
+        )
       )}
       {pools.checkFailed && <Hint>Couldn&apos;t check which pools this collection has. Try again later.</Hint>}
       {pools.freeModes.length > 0 && !isConnected && (
@@ -701,6 +778,16 @@ export default function CollectionView({
                 Sell into the pool
               </PushButton>
             )}
+            {ticket && mineHere[0] && (
+              <SellNow
+                chainId={chainId}
+                contract={address}
+                slug={os.slug}
+                tokenId={mineHere[0]}
+                title={name}
+                label="Sell into the top bid"
+              />
+            )}
             {poolLines.map((p) => (
               <PoolPriceLine
                 key={p.address}
@@ -726,7 +813,25 @@ export default function CollectionView({
               Buy for {formatPrice(cheapest.price)} {cheapest.where}
             </Action>
           ) : cheapestListing?.tokenId ? (
-            <Action type="button" data-best-buy disabled={busy} onClick={() => onOpenItem(cheapestListing.tokenId!)}>
+            <Action
+              type="button"
+              data-best-buy
+              disabled={busy || !!ticket?.busy}
+              onClick={() =>
+                ticket
+                  ? ticket.open({
+                      kind: 'fill',
+                      side: 'buy',
+                      order: cheapestListing,
+                      chainId,
+                      contract: address,
+                      tokenId: cheapestListing.tokenId!,
+                      title: name,
+                      unverified,
+                    })
+                  : onOpenItem(cheapestListing.tokenId!)
+              }
+            >
               {cheapestListing.total
                 ? `Buy ${cheapestListing.remaining} of #${cheapestListing.tokenId} for ${formatPrice(
                     cheapestListing.total
@@ -780,8 +885,23 @@ export default function CollectionView({
             <strong title={ethInUsd(sumPrices(pickedListings), ethUsd)}>
               {formatAmount(sumPrices(pickedListings), 18, 4)} ETH
             </strong>
-            <PushButton type="button" onClick={() => setSweepSet(pickedListings)}>
-              Review sweep
+            <PushButton
+              type="button"
+              disabled={!!ticket?.busy}
+              onClick={() =>
+                ticket
+                  ? ticket.open({
+                      kind: 'sweep',
+                      listings: pickedListings,
+                      chainId,
+                      contract: address,
+                      title: name,
+                      unverified,
+                    })
+                  : setSweepSet(pickedListings)
+              }
+            >
+              {ticket ? `Sweep ${pickedListings.length}` : 'Review sweep'}
             </PushButton>
           </SweepBar>
         )
@@ -902,7 +1022,9 @@ export default function CollectionView({
                   }
                   facts={pools.pools.map((p) => ({
                     label: MODE_LABEL[p.mode],
-                    value: `${p.held === undefined ? '–' : p.held.toString()} NFT${p.held === 1n ? '' : 's'} · 1 ${p.symbol} each`,
+                    value: `${p.held === undefined ? '–' : p.held.toString()} NFT${p.held === 1n ? '' : 's'} · 1 ${
+                      p.symbol
+                    } each`,
                   }))}
                 >
                   {pools.pools.map((p) => (
@@ -924,12 +1046,12 @@ export default function CollectionView({
                     os.loading && !os.needsKey
                       ? 'Getting prices…'
                       : os.missing
-                        ? 'Not on OpenSea yet.'
-                        : os.needsKey
-                          ? 'Listings are unavailable right now.'
-                          : listings.listings?.length
-                            ? 'Buy listed NFTs right here, above.'
-                            : undefined
+                      ? 'Not on OpenSea yet.'
+                      : os.needsKey
+                      ? 'Listings are unavailable right now.'
+                      : listings.listings?.length
+                      ? 'Buy listed NFTs right here, above.'
+                      : undefined
                   }
                 ></VenueRow>
               )
@@ -945,6 +1067,29 @@ export default function CollectionView({
           <Hint>Random pools work only for ERC-721.</Hint>
         )}
       </Card>
+
+      {ticket && mineHere.length > 0 && (
+        <Card aria-label="Yours" data-yours>
+          <Eyebrow>
+            Yours · {mineHere.length}
+            {owned.partial ? '+' : ''}
+          </Eyebrow>
+          <Hint>
+            Sell any of them into its best bid in one step. What you receive, after fees, shows before you sign.
+          </Hint>
+          <YoursList>
+            {mineHere.slice(0, 12).map((id) => (
+              <li key={id}>
+                <OwnedTile chainId={chainId} contract={address} id={id} />
+                <SellNow chainId={chainId} contract={address} slug={os.slug} tokenId={id} title={name} />
+              </li>
+            ))}
+          </YoursList>
+          {mineHere.length > 12 && (
+            <Hint>Showing 12 of {mineHere.length}. Open one by number below to sell another.</Hint>
+          )}
+        </Card>
+      )}
 
       <Card aria-label="Gallery" data-gallery>
         <Eyebrow>
@@ -996,6 +1141,7 @@ export default function CollectionView({
 
       {viewing && viewingIndex >= 0 && (
         <Viewer
+          unverified={unverified}
           chainId={chainId}
           contract={address}
           slug={os.slug}

@@ -21,6 +21,7 @@ import { Action, Card, Chips, Head, Hint, LinkButton, Mono, PushButton } from '.
 import { useOpenSeaCollection, useOpenSeaItem } from './useMarkets'
 import { poolFactoryFor, useNftMeta, usePoolsForCollection } from './usePools'
 import { OutLink, VenueList, VenueRow } from './venueUi'
+import { useTicket } from '../terminal/ticket'
 import Viewer from './Viewer'
 
 const Layout = styled.div`
@@ -99,13 +100,32 @@ export default function ItemView({
   const listingIsMine = !!listing && mine
   const unverified = !isFeatured(chainId, contract) && os.info?.verified !== true
   const openSeaHref = itemUrl('opensea', chainId, contract, tokenId)
+  // In the terminal, Buy and Accept open its ticket (straight to the wallet); elsewhere, the review below.
+  const ticket = useTicket()
+  const startFill = (side: 'buy' | 'sell', order: OsOrder) => {
+    if (!ticket) {
+      setReview({ side, order })
+      return
+    }
+    ticket.open({
+      kind: 'fill',
+      side,
+      order,
+      chainId,
+      contract,
+      tokenId,
+      title: collectionName,
+      flagged: !!item.nft?.suspicious,
+      unverified: side === 'buy' ? unverified : undefined,
+    })
+  }
   // Read once on mount: the flag is used up as soon as this page opens.
   const wantsBuy = useRef(autoBuy)
   const autoBought = useRef(false)
   useEffect(() => {
     if (!wantsBuy.current || autoBought.current || !listing || listingIsMine) return
     autoBought.current = true
-    setReview({ side: 'buy', order: listing })
+    startFill('buy', listing)
   }, [listing, listingIsMine])
   const [viewing, setViewing] = useState(false)
 
@@ -155,16 +175,21 @@ export default function ItemView({
             {listing && !listingIsMine && !review && (
               <Action
                 type="button"
-                disabled={busy}
-                onClick={() => setReview({ side: 'buy', order: listing })}
+                disabled={busy || !!ticket?.busy}
+                onClick={() => startFill('buy', listing)}
                 data-item-buy
               >
                 Buy for {formatPrice(listing.price)}
               </Action>
             )}
             {mine && item.offer && !review && (
-              <Action type="button" disabled={busy} onClick={() => setReview({ side: 'sell', order: item.offer! })}>
-                Accept {formatPrice(item.offer.price)} offer
+              <Action
+                type="button"
+                disabled={busy || !!ticket?.busy}
+                onClick={() => startFill('sell', item.offer!)}
+                data-item-sell
+              >
+                Sell now · {formatPrice(item.offer.price)} bid
               </Action>
             )}
           </div>
@@ -182,9 +207,10 @@ export default function ItemView({
           index={0}
           onIndex={() => {}}
           onClose={() => setViewing(false)}
+          unverified={unverified}
           onOpen={(_, buy) => {
             setViewing(false)
-            if (buy && listing && !listingIsMine) setReview({ side: 'buy', order: listing })
+            if (buy && listing && !listingIsMine) startFill('buy', listing)
           }}
         />
       )}

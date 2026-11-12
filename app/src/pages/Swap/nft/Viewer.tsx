@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import styled from 'styled-components/macro'
 import type { Address } from 'viem'
-import { useAccount } from 'wagmi'
+import { useAccount, useReadContract } from 'wagmi'
 
 import NftImage from '@/components/NftImage'
 import type { SupportedChainId } from '@/config/wagmi'
@@ -10,6 +10,8 @@ import { cleanText } from '@/desktop/files/sanitize'
 
 import { color, font, space, text } from '../floor/tokens'
 import { saleDecimals } from '../terminal/activity'
+import { useTicket } from '../terminal/ticket'
+import { erc721Abi } from './abi'
 import type { OsTrait, Price } from './markets'
 import { formatPrice, itemUrl, traitShare } from './markets'
 import { KIND } from './pool'
@@ -203,6 +205,13 @@ const Side = styled.aside`
     letter-spacing: 0.06em;
     cursor: pointer;
   }
+  .buy:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+  .sell {
+    background: ${color.success};
+  }
   .rank {
     color: #fff;
   }
@@ -322,7 +331,10 @@ export default function Viewer({
   onIndex,
   onClose,
   onOpen,
+  unverified,
 }: {
+  /** The collection has no OpenSea badge and isn't hand-checked: the ticket asks for a yes before buying. */
+  unverified?: boolean
   chainId: SupportedChainId
   contract: Address
   slug?: string
@@ -348,6 +360,46 @@ export default function Viewer({
   const listing = os.listing && !goneHashes(store).has(os.listing.hash) ? os.listing : undefined
   const ownListing = !!listing?.maker && !!me && listing.maker.toLowerCase() === me.toLowerCase()
   const pendingBuy = !!listing && unconfirmedHashes(store).has(listing.hash)
+  // Whether the viewer holds it: ownerOf for an ERC-721, OpenSea's owner list for an ERC-1155.
+  const owner = useReadContract({
+    address: contract,
+    abi: erc721Abi,
+    functionName: 'ownerOf',
+    args: [BigInt(id)],
+    chainId,
+    query: { enabled: !!me && os.nft?.standard !== 'erc1155', retry: false },
+  })
+  const mine =
+    !!me &&
+    (os.nft?.standard === 'erc1155'
+      ? os.nft.owners.some((o) => o.toLowerCase() === me.toLowerCase())
+      : typeof owner.data === 'string' && owner.data.toLowerCase() === me.toLowerCase())
+  // BUY and SELL NOW open the terminal's ticket, which goes straight to the wallet; outside the terminal, the NFT's page.
+  const ticket = useTicket()
+  const buy = () => {
+    if (!listing) return
+    if (!ticket) {
+      onOpen(id, true)
+      return
+    }
+    ticket.open({
+      kind: 'fill',
+      side: 'buy',
+      order: listing,
+      chainId,
+      contract,
+      tokenId: id,
+      title: collectionName,
+      flagged: os.nft?.suspicious,
+      unverified,
+    })
+    onClose()
+  }
+  const sell = () => {
+    if (!os.offer || !ticket) return
+    ticket.open({ kind: 'fill', side: 'sell', order: os.offer, chainId, contract, tokenId: id, title: collectionName })
+    onClose()
+  }
   const image = item?.image || os.nft?.image || meta.image
   const title = cleanText(item?.name || os.nft?.name || meta.name, 80) || `${collectionName} #${id}`
   const traits: OsTrait[] = os.nft?.traits.length
@@ -534,7 +586,7 @@ export default function Viewer({
               ) : pendingBuy ? (
                 <p className="sub">Your buy of it is still waiting to confirm.</p>
               ) : (
-                <button className="buy" type="button" onClick={() => onOpen(id, true)} data-viewer-buy>
+                <button className="buy" type="button" onClick={buy} disabled={ticket?.busy} data-viewer-buy>
                   BUY #{id}
                 </button>
               )}
@@ -548,7 +600,14 @@ export default function Viewer({
           ) : (
             <p className="quiet">Not listed on OpenSea right now.</p>
           )}
-          {os.offer && <p className="sub">Best offer {formatPrice(os.offer.price)}</p>}
+          {os.offer && mine && ticket ? (
+            <button className="buy sell" type="button" onClick={sell} disabled={ticket.busy} data-viewer-sell>
+              SELL NOW · {formatPrice(os.offer.price)} BID
+            </button>
+          ) : (
+            os.offer && <p className="sub">Best offer {formatPrice(os.offer.price)}</p>
+          )}
+          {mine && !os.offer && !os.loading && <p className="sub">You hold it. No bids on it right now.</p>}
         </section>
 
         <section aria-label="Traits">

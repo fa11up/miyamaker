@@ -141,7 +141,10 @@ export default function SweepReview({
   onClose,
   onDone,
   onBusy,
+  oneClick,
 }: {
+  /** The terminal's SWEEP: the sweep starts by itself once every listing is checked (and any consent is given). Once. */
+  oneClick?: boolean
   listings: OsOrder[]
   chainId: SupportedChainId
   contract: Address
@@ -392,8 +395,18 @@ export default function SweepReview({
       label: `Buy ${good.length} for up to ${eth(totals.total)}`,
       disabled: !!unverified && !agreed,
       onClick: sweep,
+      start: true,
     }
-  })()
+  })() as { label: string; disabled?: boolean; onClick?: () => void; start?: boolean }
+
+  const started = useRef(false)
+  const ready = !!oneClick && !!action.start && !action.disabled
+  useEffect(() => {
+    if (!ready || started.current) return
+    started.current = true
+    sweep()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready])
 
   return (
     <Card aria-label="Review your sweep" data-sweep-review>
