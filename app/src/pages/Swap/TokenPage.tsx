@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import styled from 'styled-components/macro'
 import { useElementSize } from 'usehooks-ts'
 import { useAccount } from 'wagmi'
@@ -462,6 +463,7 @@ export default function TokenPage({
   onBack,
   backLabel,
   onOffline,
+  ticket,
 }: {
   chainId: SwapChainId
   onChain: (chainId: SwapChainId) => void
@@ -472,9 +474,14 @@ export default function TokenPage({
   onBack: () => void
   backLabel: string
   onOffline: (offline: boolean) => void
+  /**
+   * The terminal's rail: when given, the swap (and this token's history) renders there as the trade ticket, and the
+   * page is the market alone. It stays mounted here either way, so a swap in flight keeps its state.
+   */
+  ticket?: HTMLElement | null
 }) {
   const [rootRef, { width }] = useElementSize()
-  const oneColumn = width > 0 && width < 820
+  const oneColumn = !ticket && width > 0 && width < 820
   const list = useTokenList(chainId)
   const custom = useCustomToken(chainId, address ?? '', list.tokens)
   const fallback = DEFAULT_PAIR[chainId][1]
@@ -511,7 +518,7 @@ export default function TokenPage({
   const dockRef = useRef<HTMLDivElement>(null)
 
   return (
-    <Layout ref={rootRef} className={oneColumn ? 'one' : undefined}>
+    <Layout ref={rootRef} className={oneColumn || ticket ? 'one' : undefined}>
       <Market data-token-market>
         <LinkButton type="button" onClick={onBack} data-token-back>
           ← {backLabel}
@@ -687,10 +694,20 @@ export default function TokenPage({
         )}
       </Market>
 
-      <Dock ref={dockRef}>
-        <TokenSwap chainId={chainId} onChain={onChain} onBusy={onBusy} preset={swapPreset} onOffline={onOffline} />
-        {token && <TokenHistory chainId={chainId} token={token} />}
-      </Dock>
+      {ticket ? (
+        createPortal(
+          <>
+            <TokenSwap chainId={chainId} onChain={onChain} onBusy={onBusy} preset={swapPreset} onOffline={onOffline} />
+            {token && <TokenHistory chainId={chainId} token={token} />}
+          </>,
+          ticket
+        )
+      ) : (
+        <Dock ref={dockRef}>
+          <TokenSwap chainId={chainId} onChain={onChain} onBusy={onBusy} preset={swapPreset} onOffline={onOffline} />
+          {token && <TokenHistory chainId={chainId} token={token} />}
+        </Dock>
+      )}
     </Layout>
   )
 }

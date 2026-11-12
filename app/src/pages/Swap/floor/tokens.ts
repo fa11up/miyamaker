@@ -1,25 +1,25 @@
 import { css } from 'styled-components/macro'
 
 /**
- * Trade's own look: a dark trading floor (user, 2026-11-05). Same token names as theme/tokens, so every Trade screen
+ * Trade's own look: a dark trading floor (user, 2026-11-05), black like a Bloomberg terminal (2026-11-12). Same token names as theme/tokens, so every Trade screen
  * takes its colours from here instead of the lilac miyaOS palette. The window frame and title bar stay miyaOS.
  */
 export const color = {
-  face: '#10161c', // panels
-  faceLight: '#18212a',
-  well: '#0a0f13', // inputs, wells, the floor behind the panels
-  hover: '#1c2731',
+  face: '#07090b', // panels
+  faceLight: '#0f1317',
+  well: '#000000', // inputs, wells, the floor behind the panels
+  hover: '#151b21',
   highlight: '#e9f2ec',
-  light: '#1f2a34',
+  light: '#1a2027',
   shadow: '#6d8291',
-  dark: '#2b3945', // lines
-  ink: '#dfe9e2',
-  inkMuted: '#9db0a9',
+  dark: '#262d35', // lines
+  ink: '#ececec',
+  inkMuted: '#a0a4a8',
   accent: '#ffb000', // amber: the one thing to press
   accentDark: '#b57d00',
   onAccent: '#0a0f13',
-  titleFrom: '#1b2630',
-  titleTo: '#1b2630',
+  titleFrom: '#000000',
+  titleTo: '#000000',
   titleInactiveFrom: '#141c23',
   titleInactiveTo: '#141c23',
   success: '#35d07f', // up

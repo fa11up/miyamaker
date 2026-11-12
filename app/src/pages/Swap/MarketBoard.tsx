@@ -501,6 +501,24 @@ export function TokenTable({
 type CollectionColumn = 'floor' | 'sales' | 'volume'
 type CollectionFigures = Partial<Record<CollectionColumn, number>> & { nothingForSale?: boolean }
 
+/** One collection's floor (the lower of OpenSea's stats and the live listings), its picture and name, for the watchlist. */
+export function useCollectionFloor(slug: string) {
+  const { info, stats, loading, error } = useCollectionRow(slug)
+  const market = useMarketListings(slug)
+  const floor = lowerPrice(stats?.floor, market.floor)
+  const waiting = loading || market.loading
+  const failed = !!error || !!market.error
+  return {
+    image: info?.image,
+    name: info?.name,
+    floor,
+    /** Words for the floor cell: the price, or why there is none. */
+    floorWords: floor ? formatPrice(floor) : waiting ? '…' : failed ? 'n/a' : 'none',
+    sales7d: stats?.sales7d,
+    volume7d: stats?.volume7d,
+  }
+}
+
 function CollectionRow({
   slug,
   name,

@@ -21,7 +21,7 @@ import {
   wholeUnits,
   revealWords,
 } from '../src/pages/Swap/nft/pool.ts'
-import { canonicalPath, parseTradePath, tradePath } from '../src/pages/Swap/tradePath.ts'
+import { canonicalPath, parseTradePath, tabPath, tradePath } from '../src/pages/Swap/tradePath.ts'
 
 const POOL = '0x1111111111111111111111111111111111111111'
 const ME = '0xAbCdEf0000000000000000000000000000000001'
@@ -39,14 +39,18 @@ test('old /swap links move to /trade, keeping the rest of the path and query', (
 test('trade paths round-trip mode and pool', () => {
   assert.deepEqual(parseTradePath('/trade'), { mode: 'tokens' })
   assert.deepEqual(parseTradePath('/trade/nfts'), { mode: 'nfts' })
-  assert.deepEqual(parseTradePath(`/trade/nfts/${POOL}`), { mode: 'nfts', pool: POOL })
+  assert.deepEqual(parseTradePath(`/trade/nfts/${POOL}`), { mode: 'nfts', pool: POOL, tab: 'pools' })
   assert.deepEqual(parseTradePath('/trade/nfts/not-an-address'), { mode: 'nfts' })
   assert.deepEqual(parseTradePath('/trade/whatever'), { mode: 'tokens' })
   assert.deepEqual(parseTradePath('/mint'), { mode: 'tokens' })
   assert.equal(tradePath('tokens'), '/trade')
   assert.equal(tradePath('nfts'), '/trade/nfts')
   assert.equal(tradePath('nfts', POOL), `/trade/nfts/${POOL}`)
-  assert.deepEqual(parseTradePath(tradePath('nfts', POOL)), { mode: 'nfts', pool: POOL })
+  assert.deepEqual(parseTradePath(tradePath('nfts', POOL)), { mode: 'nfts', pool: POOL, tab: 'pools' })
+  // The terminal's own tabs.
+  assert.deepEqual(parseTradePath(tabPath('pools')), { mode: 'nfts', tab: 'pools' })
+  assert.deepEqual(parseTradePath(tabPath('activity')), { mode: 'nfts', tab: 'activity' })
+  assert.deepEqual(parseTradePath('/trade/activity/x'), { mode: 'tokens' })
 })
 
 test('1 NFT is 1e18 pool tokens', () => {
