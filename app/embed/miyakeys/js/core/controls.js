@@ -1,4 +1,4 @@
-import * as THREE from 'three-modkeys';
+import * as THREE from 'three-miyakeys';
 import gsap from 'gsap';
 import { renderer, scene, camera, root, caseGroup, capsGroup, knobGroup, uni } from './scene.js';
 import { plateMesh, updateSelectionChrome } from './keyboard.js';

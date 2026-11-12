@@ -8,10 +8,10 @@ import { useAppDispatch } from '@/store/hooks'
 import { closeWindow, minimizeWindow } from '@/store/windows/actions'
 import { useFullscreen } from '@/store/windows/hooks'
 
-/** The configurator is its own page (embed/modkeys), built beside the desktop. */
-export const MODKEYS_SRC = '/embed/modkeys/'
+/** The configurator is its own page (embed/miyakeys), built beside the desktop. */
+export const MIYAKEYS_SRC = '/embed/miyakeys/'
 
-const page = Pages.modkeys
+const page = Pages.miyakeys
 
 const Frame = styled.iframe`
   display: block;
@@ -27,24 +27,24 @@ const Frame = styled.iframe`
 `
 
 /**
- * MODKEYS, the 3D keyboard configurator from nuroctane.xyz, in a frame of its own. It holds its page in module
+ * miyakeys, the 3D keyboard configurator (MODKEYS from nuroctane.xyz), in a frame of its own. It holds its page in module
  * state, sets classes on <html>, listens on document and reloads itself at its phone breakpoint, so a frame
  * keeps all of that inside it. The frame's width picks its layout: a phone-sized window gets the phone one.
  */
-export default function ModkeysPage() {
+export default function MiyakeysPage() {
   const dispatch = useAppDispatch()
-  const [fullscreen, toggleFullscreen] = useFullscreen('modkeys')
-  // A shared build (/modkeys#<build>) goes to the configurator, which reads it from its own address.
-  const [src] = useState(() => `${MODKEYS_SRC}${window.location.pathname === page?.path ? window.location.hash : ''}`)
+  const [fullscreen, toggleFullscreen] = useFullscreen('miyakeys')
+  // A shared build (/miyakeys#<build>) goes to the configurator, which reads it from its own address.
+  const [src] = useState(() => `${MIYAKEYS_SRC}${window.location.pathname === page?.path ? window.location.hash : ''}`)
 
   return (
-    <WindowWrapper skin="modkeys">
+    <WindowWrapper skin="miyakeys">
       <TitleBar
-        skin="modkeys"
+        skin="miyakeys"
         closeBtn
         onClose={(e) => {
           if (e.cancelable) e.stopPropagation()
-          dispatch(closeWindow({ value: 'modkeys' }))
+          dispatch(closeWindow({ value: 'miyakeys' }))
         }}
         fullscreen={fullscreen}
         fullscreenBtn
@@ -52,13 +52,13 @@ export default function ModkeysPage() {
         minimizeBtn
         onMinimize={(e) => {
           if (e.cancelable) e.stopPropagation()
-          dispatch(minimizeWindow({ value: 'modkeys' }))
+          dispatch(minimizeWindow({ value: 'miyakeys' }))
         }}
       >
         {page?.label}
       </TitleBar>
       <div style={{ position: 'relative', height: '100%', minHeight: 0 }}>
-        <Frame src={src} title="MODKEYS keyboard configurator" allow="clipboard-write" />
+        <Frame src={src} title="miyakeys keyboard configurator" allow="clipboard-write" />
       </div>
     </WindowWrapper>
   )

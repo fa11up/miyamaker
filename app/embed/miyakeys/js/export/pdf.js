@@ -23,9 +23,9 @@ export async function exportPDF() {
   doc.setFontSize(8);
   const lightBit = `${state.light.mode}/${state.light.color}`;
   doc.text(
-    `MODKEYS — ${LAYOUTS[state.layout].pct} — ${cwName} — ${state.profile} — ${state.sw} — ${lightBit} — ${new Date().toISOString().slice(0, 10)}`,
+    `miyakeys — ${LAYOUTS[state.layout].pct} — ${cwName} — ${state.profile} — ${state.sw} — ${lightBit} — ${new Date().toISOString().slice(0, 10)}`,
     10,
     totalH + 22,
   );
-  doc.save(`modkeys-${state.layout}-${cwName}.pdf`);
+  doc.save(`miyakeys-${state.layout}-${cwName}.pdf`);
 }

@@ -37,9 +37,9 @@ export function generateSpec() {
 
   const spec = {
     formatVersion: 3,
-    name: `MODKEYS ${L.pct} — ${cwName}`,
+    name: `miyakeys ${L.pct} — ${cwName}`,
     generated: new Date().toISOString(),
-    configurator: 'MODKEYS by nur',
+    configurator: 'miyakeys on miyaOS (MODKEYS by nur)',
 
     layout: {
       name: L.name,
@@ -122,7 +122,7 @@ export function downloadSpec() {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `modkeys-${state.layout}-${state.customColors ? 'custom' : state.colorway}-spec.json`;
+  a.download = `miyakeys-${state.layout}-${state.customColors ? 'custom' : state.colorway}-spec.json`;
   a.click();
   URL.revokeObjectURL(url);
 }

@@ -1,5 +1,5 @@
 /* What nuroctane.xyz layers over the base stylesheets when it hosts MODKEYS (artifacts/digital-sea ModkeysPage.tsx),
-   so this page looks like the live one. Unscoped here: this page is MODKEYS alone. */
+   so this page looks like the live one. Unscoped here: this page is miyakeys alone. */
 
 /* Desktop: constrain grid/flex children to prevent overflow */
 .app { grid-template-rows: 1fr; }

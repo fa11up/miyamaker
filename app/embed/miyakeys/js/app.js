@@ -1,4 +1,4 @@
-import * as THREE from 'three-modkeys';
+import * as THREE from 'three-miyakeys';
 import gsap from 'gsap';
 
 import { state, stateSlice } from './core/state.js';
@@ -30,7 +30,7 @@ import { wantsMobile } from './shell.js';
 let animationId = null;
 let cleanupFns = [];
 
-/* The community gallery is the one on nuroctane.xyz: builds saved here show up there, and the other way round.
+/* The community gallery is MODKEYS's on nuroctane.xyz: builds saved here show up there, and the other way round.
    That API lets miyamaker.com (and localhost) in through CORS. Renaming and deleting stay on nuroctane.xyz. */
 const GALLERY_API = 'https://www.nuroctane.xyz/api/modkeys/gallery'; /* www: the apex answers with a redirect, which CORS refuses */
 

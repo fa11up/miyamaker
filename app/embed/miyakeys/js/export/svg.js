@@ -124,7 +124,7 @@ export function downloadSVG() {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `modkeys-${state.layout}-${state.customColors ? 'custom' : state.colorway}-template.svg`;
+  a.download = `miyakeys-${state.layout}-${state.customColors ? 'custom' : state.colorway}-template.svg`;
   a.click();
   URL.revokeObjectURL(url);
 }

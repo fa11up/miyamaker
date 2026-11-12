@@ -58,7 +58,7 @@ const TV = lazy(APP_LOADERS.tv!)
 const Radio = lazy(APP_LOADERS.radio!)
 const DropMusic = lazy(APP_LOADERS.dropmusic!)
 const MusicMaker = lazy(APP_LOADERS.music!)
-const Modkeys = lazy(APP_LOADERS.modkeys!)
+const Miyakeys = lazy(APP_LOADERS.miyakeys!)
 
 export default function DynamicWrapper({ identifier }: { identifier: string }) {
   const component = useMemo(() => {
@@ -89,8 +89,8 @@ export default function DynamicWrapper({ identifier }: { identifier: string }) {
         return <DropMusic />
       case 'music':
         return <MusicMaker />
-      case 'modkeys':
-        return <Modkeys />
+      case 'miyakeys':
+        return <Miyakeys />
       default:
         return <></>
     }

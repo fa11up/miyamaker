@@ -22,8 +22,8 @@ export function exportKLE() {
   const cwName = state.customColors ? 'Custom' : (cw?.name || 'Custom');
 
   const meta = {
-    name: `MODKEYS ${L.pct} — ${cwName}`,
-    author: 'MODKEYS Configurator',
+    name: `miyakeys ${L.pct} — ${cwName}`,
+    author: 'miyakeys Configurator',
     notes: [
       `Switch: ${state.sw} ${state.switchColor || SWITCHES[state.sw]?.dot || ''}`.trim(),
       `Plate: ${state.plate} ${state.plateColor || PLATES[state.plate]?.c || ''}`.trim(),
@@ -147,7 +147,7 @@ export function downloadKLE() {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `modkeys-${state.layout}-${state.customColors ? 'custom' : state.colorway}-layout.json`;
+  a.download = `miyakeys-${state.layout}-${state.customColors ? 'custom' : state.colorway}-layout.json`;
   a.click();
   URL.revokeObjectURL(url);
 }

@@ -22,7 +22,7 @@
 export const MOBILE_MQ = '(max-width: 768px), ((pointer: coarse) and (max-width: 1024px))';
 
 /* MOBILE_MQ, worked out from the page's width. A frame that has only just been made can answer the width half of
-   the media query from its size before layout (miyaOS's Modkeys window got the phone shell at 1234px); innerWidth
+   the media query from its size before layout (miyaOS's miyakeys window got the phone shell at 1234px); innerWidth
    is current. Pointer type doesn't depend on size. */
 export function wantsMobile() {
   const w = window.innerWidth;

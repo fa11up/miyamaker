@@ -17,11 +17,11 @@ export function decodeState(str) {
 export function shareURL(stateObj) {
   const enc = encodeState(stateObj);
   if (!enc) return '';
-  /* Inside miyaOS this page is a frame of the Modkeys window: the link opens that window (/modkeys), which hands
+  /* Inside miyaOS this page is a frame of the miyakeys window: the link opens that window (/miyakeys), which hands
      its hash back to this page. */
   let u = new URL(window.location.href);
   try {
-    if (window.parent !== window) u = new URL('/modkeys', window.parent.location.href);
+    if (window.parent !== window) u = new URL('/miyakeys', window.parent.location.href);
   } catch { /* not a same-origin parent: link to this page */ }
   u.hash = enc;
   return u.href;

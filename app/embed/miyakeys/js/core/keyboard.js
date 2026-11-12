@@ -1,4 +1,4 @@
-import * as THREE from 'three-modkeys';
+import * as THREE from 'three-miyakeys';
 import { LAYOUTS } from '../data/layouts.js';
 import { COLORWAYS } from '../data/colorways.js';
 import { PROFILES, SWITCHES, GAP } from '../data/components.js';

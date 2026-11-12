@@ -13,7 +13,7 @@ export const APP_LOADERS: Record<string, () => Promise<{ default: React.Componen
   radio: () => import('@/pages/Radio'),
   dropmusic: () => import('@/pages/DropMusic'),
   music: () => import('@/pages/MusicMaker'),
-  modkeys: () => import('@/pages/Modkeys'),
+  miyakeys: () => import('@/pages/Miyakeys'),
 }
 
 /** Starts an app downloading when someone is about to open it, so the window has its code by the time it's up. */

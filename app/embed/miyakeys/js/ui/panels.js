@@ -141,7 +141,7 @@ const PANELS = {
   { w: 1.1, h: 1.1, x: 38, y: 24, c: cw.m.bg, f: cw.m.fg, l: 'TAB' },
   { w: 1.1, h: 1.1, x: 86, y: 24, c: cw.a.bg, f: cw.a.fg, l: 'Q' },
   { w: 1.1, h: 1.1, x: 134, y: 24, c: cw.x.bg, f: cw.x.fg, l: 'S' },
-  { w: 1.9, h: 0.45, x: 18, y: 106, c: cw.m.bg, f: cw.m.fg, l: 'MODKEYS' },
+  { w: 1.9, h: 0.45, x: 18, y: 106, c: cw.m.bg, f: cw.m.fg, l: 'MIYAKEYS' },
 ].map(k => `<div class="kc" style="left:${k.x}px;top:${k.y}px;width:${k.w * 48}px;height:${k.h * 46}px;background:${k.c};color:${k.f}"><div class="kctop">${k.l}</div></div>`).join('')}</div>
 <div class="grp"><div class="glabel">PROFILE</div>${Object.entries(PROFILES).map(([id, p]) =>
   `<button class="profBtn ${state.profile === id ? 'on' : ''}" data-act="profile" data-v="${id}"><svg width="40" height="22" viewBox="0 0 40 22"><path d="${PROFILE_ICONS[id]}" fill="currentColor"/></svg></button>`

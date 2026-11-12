@@ -1,4 +1,4 @@
-import * as THREE from 'three-modkeys';
+import * as THREE from 'three-miyakeys';
 import { cleanSnap } from './cleanSnap.js';
 import gsap from 'gsap';
 import { state, stateSlice } from './state.js';

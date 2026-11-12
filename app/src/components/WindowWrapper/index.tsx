@@ -21,7 +21,7 @@ const SELECTION: Partial<Record<TitleSkin, [string, string]>> = {
   files: ['#7dff9a', '#04140a'],
   display: ['#000080', '#ffffff'],
   traits: ['#7A49C4', '#ffffff'],
-  modkeys: ['#d4572a', '#ffffff'],
+  miyakeys: ['#d4572a', '#ffffff'],
 }
 const selectionRules = Object.entries(SELECTION)
   .map(([skin, colours]) => `&[data-skin='${skin}'] ::selection { background: ${colours?.[0]}; color: ${colours?.[1]}; }`)
@@ -135,11 +135,11 @@ const WindowFrame = styled.div`
     background: #9f98c1;
     color: #1a1230;
   }
-  &[data-skin='modkeys'] {
+  &[data-skin='miyakeys'] {
     background: linear-gradient(180deg, #2a2a30, #0f0f11);
     box-shadow: inset 0 0 0 1px #000, 4px 6px 0 rgba(0, 0, 0, 0.35);
   }
-  &[data-skin='modkeys'] > .window-body {
+  &[data-skin='miyakeys'] > .window-body {
     background: #0f0f11;
   }
   /* Display keeps the window face: the classic grey dialog under a blue bar. */

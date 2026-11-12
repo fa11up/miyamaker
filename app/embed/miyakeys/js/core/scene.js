@@ -1,4 +1,4 @@
-import * as THREE from 'three-modkeys';
+import * as THREE from 'three-miyakeys';
 import { CASES, PLATES, SWITCHES, MATERIALS, PROFILES, GAP, LIGHT_COLORS } from '../data/components.js';
 import { COLORWAYS, PANEL_SWATCHES } from '../data/colorways.js';
 import { state } from './state.js';
