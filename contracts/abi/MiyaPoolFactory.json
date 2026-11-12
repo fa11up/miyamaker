@@ -1,5 +1,21 @@
 [
   {
+    "type": "constructor",
+    "inputs": [
+      {
+        "name": "vault_",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "error",
+    "name": "InvalidVault",
+    "inputs": []
+  },
+  {
     "type": "error",
     "name": "PoolExists",
     "inputs": [
@@ -9,16 +25,6 @@
         "internalType": "address"
       }
     ]
-  },
-  {
-    "type": "error",
-    "name": "RandomRequiresERC721",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "RandomUnsafeOnThisChain",
-    "inputs": []
   },
   {
     "type": "error",
@@ -48,10 +54,16 @@
         "internalType": "enum MiyaPool.Kind"
       },
       {
-        "name": "mode",
-        "type": "uint8",
+        "name": "premiumBps",
+        "type": "uint16",
         "indexed": false,
-        "internalType": "enum MiyaPool.RedeemMode"
+        "internalType": "uint16"
+      },
+      {
+        "name": "randomEnabled",
+        "type": "bool",
+        "indexed": false,
+        "internalType": "bool"
       },
       {
         "name": "creator",
@@ -104,9 +116,9 @@
         "internalType": "address"
       },
       {
-        "name": "mode",
-        "type": "uint8",
-        "internalType": "enum MiyaPool.RedeemMode"
+        "name": "premiumBps",
+        "type": "uint16",
+        "internalType": "uint16"
       }
     ],
     "outputs": [
@@ -126,11 +138,6 @@
         "name": "collection",
         "type": "address",
         "internalType": "address"
-      },
-      {
-        "name": "mode",
-        "type": "uint8",
-        "internalType": "enum MiyaPool.RedeemMode"
       }
     ],
     "outputs": [
@@ -157,11 +164,24 @@
         "internalType": "enum MiyaPool.Kind"
       },
       {
-        "name": "mode",
-        "type": "uint8",
-        "internalType": "enum MiyaPool.RedeemMode"
+        "name": "premiumBps",
+        "type": "uint16",
+        "internalType": "uint16"
       }
     ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "vault",
+    "inputs": [],
     "outputs": [
       {
         "name": "",

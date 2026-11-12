@@ -3,6 +3,7 @@
 #
 #   script/deploy.sh [forge script args...]        e.g. --rpc-url ... --account miyamints-deployer --sender 0x... --broadcast --verify
 #   DEPLOY_TAG=v1.0.0 script/deploy.sh ...          deploy a release tag instead of main (HEAD must be exactly that tag)
+#   DEPLOY_SCRIPT=script/DeployMiyaPoolV2.s.sol script/deploy.sh ...   only the v2 pool factory, next to a live system
 #
 # Refuses unless:
 #   - the whole repo is clean (no staged, unstaged or untracked files; ignored files are fine),
@@ -47,4 +48,7 @@ case " $* " in *" --broadcast "*) case " $* " in *" --slow "*) ;; *) EXTRA=(--sl
 
 echo "deploy.sh: deploying ${REF} @ ${COMMIT}"
 export FOUNDRY_PROFILE=deploy DEPLOY_GIT_COMMIT="$COMMIT" DEPLOY_GIT_REF="$REF"
-exec forge script script/DeployMiyamints.s.sol "$@" ${EXTRA[@]+"${EXTRA[@]}"}
+# DEPLOY_SCRIPT picks another script under the same checks (e.g. script/DeployMiyaPoolV2.s.sol).
+SCRIPT="${DEPLOY_SCRIPT:-script/DeployMiyamints.s.sol}"
+case "$SCRIPT" in script/DeployMiyamints.s.sol|script/DeployMiyaPoolV2.s.sol) ;; *) die "unknown DEPLOY_SCRIPT $SCRIPT" ;; esac
+exec forge script "$SCRIPT" "$@" ${EXTRA[@]+"${EXTRA[@]}"}

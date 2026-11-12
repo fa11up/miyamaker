@@ -32,9 +32,9 @@ import { TestAlignmentToken } from "./mocks/TestAlignmentToken.sol";
  *         script/config/<chainId>.json; a few values can be overridden by env (see DEPLOY.md).
  *
  *         Order: [test token] → MiyaRegistry → UniAlignmentVaultFactory → ERC721DropFactory → ERC721AuctionFactory →
- *         ERC1155Factory → DynamicPricingModule → [gating module] → MiyaPoolFactory → registry wiring → payment tokens,
- *         swap targets, ETH-claim pool and minimums → default alignment target + vault → ownership handoff → checks →
- *         JSON.
+ *         ERC1155Factory → DynamicPricingModule → [gating module] → registry wiring → payment tokens, swap targets,
+ *         ETH-claim pool and minimums → default alignment target + vault → MiyaPoolFactory (v2, given the default
+ *         vault) → ownership handoff → checks → JSON.
  *
  *         Addressing: contracts that take their owner as an argument or have none (registry, drop factory, pool
  *         factory) are deployed with CreateX CREATE3 and a deployer-permissioned salt, so the
@@ -46,6 +46,10 @@ import { TestAlignmentToken } from "./mocks/TestAlignmentToken.sol";
  *         Keys: never read here except `DEPLOYER_PRIVATE_KEY` (optional). Prefer `--account <keystore>` or
  *         `--ledger` with `--sender <addr>`: then vm.startBroadcast() is called without a key.
  */
+/// @dev CREATE3 label of the pool factory. v2 (both redeem paths, premiums to the vault) takes a new label: v1's
+///      "MiyaPoolFactory" salt is spent on mainnet. script/DeployMiyaPoolV2.s.sol uses the same label.
+string constant POOL_FACTORY_LABEL = "MiyaPoolFactoryV2";
+
 contract DeployMiyamints is Script {
     using StateLibrary for IPoolManager;
     using PoolIdLibrary for PoolKey;
@@ -294,9 +298,6 @@ contract DeployMiyamints is Script {
         d.dynamicPricingModule = address(new DynamicPricingModule());
         if (c.deployGatingModule) d.gatingModule = address(new PasswordTierGatingModule(d.registry));
 
-        // 8. Pool factory (ownerless, CREATE3 → same address on every chain for the same deployer/namespace).
-        d.poolFactory = _create3(deployer, c.saltNamespace, "MiyaPoolFactory", type(MiyaPoolFactory).creationCode);
-
         // 9. Registry wiring.
         // Unset KEEPER leaves vault conversions paused until the owner calls setConversionKeeper.
         registry.setConversionKeeper(c.keeper);
@@ -323,6 +324,16 @@ contract DeployMiyamints is Script {
             )
         );
         d.defaultVault = vaultFactory.deployVault(vaultSalt, d.alignmentTargetId);
+
+        // 10b. Pool factory v2 (ownerless, CREATE3 → same address on every chain for the same deployer/namespace; the
+        //      constructor's vault doesn't change it). Targeted-redeem premiums are sold for ETH that goes to the default
+        //      vault. The label differs from v1's "MiyaPoolFactory", whose salt is spent on mainnet.
+        d.poolFactory = _create3(
+            deployer,
+            c.saltNamespace,
+            POOL_FACTORY_LABEL,
+            abi.encodePacked(type(MiyaPoolFactory).creationCode, abi.encode(d.defaultVault))
+        );
 
         // 11. Ownership handoff (one-step solady transferOwnership; the Safe needs no acceptance tx).
         if (c.owner != deployer) {
@@ -404,6 +415,7 @@ contract DeployMiyamints is Script {
 
         _eq(Ownable(d.dynamicPricingModule).owner(), c.owner, "dynamicPricing.owner");
         _t(d.poolFactory.code.length > 0, "pool factory code");
+        _eq(MiyaPoolFactory(d.poolFactory).vault(), d.defaultVault, "poolFactory.vault");
         _checkPayments(c, d);
     }
 

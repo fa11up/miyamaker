@@ -57,10 +57,10 @@ contract, add it to the list in `export-abis.sh` and to `MAP` in `app/tests/abi-
 | 6 | `ERC1155Factory(registry, weth)` (music drops: `createInstance` + `ERC1155Instance.addEdition`) | CREATE | `OWNER` |
 | 7 | `DynamicPricingModule` (LIMITED_DYNAMIC editions) | CREATE | `OWNER` |
 | 7b | `PasswordTierGatingModule` (only with `DEPLOY_GATING_MODULE=true`, see decisions) | CREATE | `OWNER` |
-| 8 | `MiyaPoolFactory` | CreateX CREATE3 | ownerless |
 | 9 | registry: `setConversionKeeper(KEEPER)`, `setVaultFactory`, `setFactory` x3, `setComponent(dynamicPricing)`; `ERC1155Factory.setDynamicPricingModule` | calls | |
 | 9b | registry `setPaymentToken` per `paymentTokens`; vault factory `setSwapTarget` per `swapTargets`, `setEthPool(ethPool)`, `setMinContribution` per `minContributions` | calls | |
 | 10 | registry `addTarget(name, [INFER, IMD])` → target 0; `vaultFactory.deployVault(...)` → **default vault** (CREATE3 via the factory) | calls | vault owned by the vault factory |
+| 10b | `MiyaPoolFactory(defaultVault)` (v2: one pool per collection, random + targeted; label `MiyaPoolFactoryV2`) | CreateX CREATE3 | ownerless |
 | 11 | `transferOwnership(OWNER)` on registry, vault factory, auction factory, 1155 factory, modules (testnets only: skipped when `OWNER` is unset; on 1 and 4663 `OWNER` is required) | calls | |
 
 Then it asserts the wiring (factories/vault factory/components registered, target active, vault registered,
@@ -123,8 +123,17 @@ deployer nonces still match).
 
 ## Runbook
 
-**Robinhood Chain: no RANDOM pools.** `blockhash` on Arbitrum-based chains is documented as insecure randomness
-(AUDIT-NOTES.md), so `MiyaPoolFactory` refuses them on 4663. Keep the app from offering them there.
+**Robinhood Chain: no random redeems.** `blockhash` on Arbitrum-based chains is documented as insecure randomness
+(AUDIT-NOTES.md), so pools created on 4663 have `randomEnabled == false` (targeted redeems only). The app reads the flag.
+
+**Pool factory v2 on a chain that already has the system (mainnet).** `script/DeployMiyaPoolV2.s.sol` deploys only the
+v2 `MiyaPoolFactory`, given `deployments/<chainId>.json`'s `defaultVault` (override: `POOL_VAULT`), with the same
+CREATE3 salt scheme (label `MiyaPoolFactoryV2`). Dry run first (sends nothing):
+`FOUNDRY_PROFILE=deploy forge script script/DeployMiyaPoolV2.s.sol --rpc-url $RPC --sender <deployer>`. A broadcast
+must come from a clean release checkout (`DEPLOY_SCRIPT=script/DeployMiyaPoolV2.s.sol script/deploy.sh ...`, which
+sets `DEPLOY_GIT_COMMIT`), and records `miyaPoolFactory` (and the replaced
+`miyaPoolFactoryV1`) in the deployments JSON; then set `VITE_MIYA_POOL_FACTORY_<chainId>` for the app. The v1 factory
+has no pools and nothing references it, so there is nothing to migrate.
 
 **Run the fork tests for real.** Set `REQUIRE_FORK_TESTS=true` before deploying, or a machine without an RPC skips them and
 reports green. Pin `FORK_BLOCK` to a recent block so the run is repeatable.

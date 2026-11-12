@@ -595,3 +595,71 @@ gas for the multi-pass loop, real zRouter on a fork, on-chain config addresses.
 - **Batch cost rounding** (Info): a small base price no longer rounds to free.
 - **Fork test** (Info): `REQUIRE_FORK_TESTS=true` fails instead of skipping. CI and pre-deploy runs should set it. It still seeds
   its own 100 ETH pool until the real one exists.
+
+---
+
+## MiyaPool v2: one pool per collection, random + targeted, premium to the vault (2026-11-12, not yet reviewed)
+
+Branch `contracts/miyapool-v2`. Replaces `MiyaPool` / `MiyaPoolFactory` in place. The live v1 factory (mainnet
+`0x0513…efF3`) has no pools and nothing references it, so v2 is a new factory (CREATE3 label `MiyaPoolFactoryV2`,
+`script/DeployMiyaPoolV2.s.sol`), with nothing to migrate. Owner decisions 2026-11-12: one pool per collection with both
+redeem paths; random costs exactly 1 token per piece; targeted costs 1 token + a premium set per pool by its creator
+(cap `MAX_PREMIUM_BPS` = 2000, 20%), fixed forever; the premium goes to the INFER/IMD alignment vault; no admin, pause or
+upgrade; random stays off on Robinhood Chain (4663); ERC1155 targeted only.
+
+**Premium route (why a pool-side sale).** The vault books only ETH and registry payment tokens
+(`receiveContribution`: `isPaymentToken`, at most 15 ERC-20s, per-token minimums), and converts them through
+keeper-built swaps. Pool tokens are neither, have no market the keeper could quote, and an unbooked transfer would be
+stranded (the vault only accounts for INFER, IMD and ETH beyond what it owes). Listing each pool token in the registry is
+a per-pool Safe action against a 15-slot cap and still needs a market. A premium paid directly in ETH needs a price for a
+pool token, which no on-chain source gives. So the pool burns `UNIT + premium` per targeted unit, books the premium as
+`premiumReserve` (still backed: the NFTs stay in the pool), and sells it one whole token (`LOT` = 1e18) at a time for ETH
+in a falling-price auction. `buyLot(to, benefactor)` mints the lot to `to` and forwards exactly the price to
+`vault.receiveContribution{value: price}(ETH, price, benefactor)` in the same call (any excess is refunded; the pool never
+holds ETH). The live vault and registry are unchanged; the mainnet fork test sells a lot into the live default vault and
+checks `pendingOf(buyer, ETH)`.
+
+- Price: the first lot starts at `FIRST_LOT_PRICE` (10 ETH), each later one at twice the last sale; it halves every
+  `LOT_HALF_LIFE` (1 day, linear within each half-life), never below `MIN_LOT_PRICE` (0.001 ETH = the vault's ETH
+  minimum, so a sale can't be refused for size). The clock runs only while a whole lot is in the reserve (it starts when
+  the reserve reaches `LOT`, or at the previous sale if a lot is still there), so an idle pool doesn't sell its next lot
+  for the floor. Only targeted redeems add to the reserve (pool tokens sent to the pool are not counted), so dust can't
+  start or hold the clock.
+- Accounting, exact: `totalSupply + premiumReserve + UNIT * pendingUnits == UNIT * heldUnits`.
+- `benefactor` (who gets the vault shares for the ETH) is chosen by the buyer; the app passes the buyer.
+
+**Random and targeted on one pool.** Every held id of a random-enabled pool sits in the deposit-order queue, with its
+position (`_positionOf`). A commit draws from `[head, queueEnd)`; reveals run in commit order and swap the picked id
+with the head (as v1). While any commit is pending, positions `[0, queueEnd of the newest pending commit)` are locked for
+targeted redeems (`LockedForRandomRedeem`; older commits' ranges are prefixes of the newest's). A targeted redeem may
+take only ids past that point, and removes them by swapping with the tail, so no pending commit's range changes. Hence:
+- a commit draws only ids deposited before it, whatever targeted redeems or deposits happen in between;
+- once the seed is public nobody can take the piece a commit will get (no sniping), and the committer can't re-roll by
+  taking their own pick; a commit's range never shrinks, so a reveal can't run short (no stranding), and an id leaves
+  `_ids` and the queue exactly once (reveal or targeted; escrowed ids are in neither, so no double spend);
+- the lock lasts from the commit (the target block isn't mined yet) until the reveal, which anyone can send from the
+  block after the target block. Ids deposited after the newest pending commit stay free.
+
+Also new: a hook for an escrowed id reverts `AlreadyHeld` (in v1 a collection calling `onERC721Received` for an escrowed
+id could mint a token against an NFT already owed to its recipient).
+
+Tests: `test/pools/MiyaPool.t.sol` (v1's ported; premium, cap, no-vault, 4663, the lock in the commit block and after,
+fuzzed "targeted redeems can't steer a pick", committer re-roll, full-range commit settles, lot price curve and
+monotonicity (fuzz), sale into a mock vault with the vault's checks, refund, vault refusal, back-to-back lots),
+`test/invariant/MiyaPoolInvariant.t.sol` (a both-paths 721 pool at 20%, a 1155 pool at 10%, a 721 pool made on 4663 at
+5%: exact accounting, custody, queue is a bijection onto held ids, no targeted redeem of a drawable id, every draw
+deposited before its commit, vault ETH == lot sales, no ETH held), `test/pools/MiyaPoolGas.t.sol`,
+`test/fork/MiyaPoolV2Fork.t.sol` (the live Miyamaker drop's holders, the live default vault).
+
+Review focus:
+- The lock rule and queue bookkeeping (`_dequeue`, the reveal swap, `_positionOf`): the invariant suite checks the
+  bijection and the eligibility of draws; a reviewer should try to make a commit's range shrink or a position collide.
+- The lot auction: price math (`lotPrice`), the clock rules (`_payTargeted` crossing, `buyLot` restart), the 2x restart,
+  `FIRST_LOT_PRICE` for very valuable collections (the first lot can sell below value once), and the refund path.
+- `buyLot`'s external calls (the vault, then the refund to `msg.sender`) under `nonReentrant`; the receiver hooks are not
+  guarded (as in v1) but only the collection can call them.
+- Squatting: the first creator of a collection's pool fixes its premium for everyone, forever (0% or 20% alike).
+- Griefing the lock: a 1-unit commit in front of a targeted redeem makes it revert until someone reveals (about 2 blocks;
+  the griefer pays a commit and gets a random piece). Random redeems are free of premium, so re-rolling random redeems
+  (deposit, commit, reveal) to fish for a piece costs only gas: for small pools at a low premium that can be cheaper than
+  the premium. Both are accepted consequences of the owner's decisions, not bugs.
