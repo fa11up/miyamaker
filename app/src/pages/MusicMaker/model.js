@@ -445,8 +445,10 @@ export function normalizeEvent(ev) {
     pitch: num(ev?.pitch, 0, -96, 96),
     nudge: int(ev?.nudge, 0, -50, 50),
     tail: 0,
+    cut: false,
   }
   delete out.tail
+  delete out.cut
   if (ev?.off) out.off = true
   else {
     if (Number.isFinite(ev?.sl)) out.sl = Math.max(0, Math.min(65535, ev.sl | 0))

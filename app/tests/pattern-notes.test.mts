@@ -33,8 +33,8 @@ test('a recorded chord keeps every note, and the sequence lists each one', () =>
   commitTrackerNote({ pad: 0, vel: 0.8, pitch: 7, row: 2, live: false })
   assert.equal(JSON.stringify(seq.steps[2]), before)
 
-  const lane = (events) => {
-    const cell = Array.from({ length: 16 }, () => null)
+  const lane = (events: Array<{ pad: number, pitch: number, vel: number, nudge: number, tail?: number, cut?: boolean }>) => {
+    const cell: Array<{ pad: number, pitch: number, vel: number, nudge: number, tail?: number, cut?: boolean } | null> = Array.from({ length: 16 }, () => null)
     events.forEach((ev, i) => { cell[i] = ev })
     return cell
   }

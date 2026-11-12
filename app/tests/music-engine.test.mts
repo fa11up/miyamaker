@@ -263,7 +263,7 @@ test('gridPlace snaps to a straight division, and a note end can stop inside a s
 })
 
 test('chopParts keeps a short note when the start sits on the next step', () => {
-  const span = (parts) => ({
+  const span = (parts: { step: number, nudge: number, end: number, tail: number }) => ({
     start: Math.round((parts.step + parts.nudge / 100) * 1000) / 1000,
     end: Math.round((parts.end + parts.tail / 100 + parts.nudge / 100) * 1000) / 1000,
   })
