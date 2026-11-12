@@ -357,3 +357,63 @@ export function spectralCentroid(pcm, sampleRate, start, length) {
   if (magSum < 1e-8) return 0
   return weighted / magSum
 }
+
+/** A synth take is 64 KB of mono audio. The bit depth is both the crunch and the length. */
+export const TAKE_BYTES = 65536
+
+export function takeDepth(depth) {
+  const n = depth | 0
+  return n === 8 || n === 16 || n === 24 || n === 32 ? n : 16
+}
+
+export function takeMaxSamples(depth) {
+  return Math.floor(TAKE_BYTES / (takeDepth(depth) / 8))
+}
+
+export function takeSeconds(depth, sampleRate = SYNTH_SR) {
+  const rate = sampleRate > 0 ? sampleRate : SYNTH_SR
+  return takeMaxSamples(depth) / rate
+}
+
+/** Step one sample onto that bit depth. 8-bit is the crunchiest and the longest take. */
+export function quantizeSample(x, depth) {
+  const bits = takeDepth(depth)
+  const max = bits === 32 ? 2147483647 : (1 << (bits - 1)) - 1
+  const n = Math.max(-1, Math.min(1, Number(x) || 0))
+  const q = Math.max(-max, Math.min(max, Math.round(n * max)))
+  return q / max
+}
+
+export function quantizeTake(pcm, depth) {
+  const out = new Float32Array(pcm.length)
+  for (let i = 0; i < pcm.length; i++) out[i] = quantizeSample(pcm[i], depth)
+  return out
+}
+
+/**
+ * Mix one rendered note into a take.
+ * `rate` is source samples advanced per output sample.
+ * `srcAt` is the source position at `start`.
+ * Writing stops at the end of either buffer. The return is the first output index not written.
+ */
+export function mixNote(dest, src, { start = 0, rate = 1, vel = 1, until = dest.length, srcAt = 0 } = {}) {
+  if (!dest?.length || !src?.length) return start | 0
+  const step = Math.max(1 / 64, Math.min(64, Number(rate) || 1))
+  const gain = Math.max(0, Math.min(1, Number(vel) || 0))
+  const from = Math.max(0, start | 0)
+  const end = Math.max(from, Math.min(dest.length, until | 0))
+  let at = Number(srcAt) || 0
+  for (let i = from; i < end; i++) {
+    if (at >= src.length) return i
+    const i0 = at | 0
+    const frac = at - i0
+    const a = src[i0] || 0
+    const b = i0 + 1 < src.length ? src[i0 + 1] : a
+    let sample = dest[i] + (a + (b - a) * frac) * gain
+    if (sample > 1) sample = 1
+    else if (sample < -1) sample = -1
+    dest[i] = sample
+    at += step
+  }
+  return end
+}

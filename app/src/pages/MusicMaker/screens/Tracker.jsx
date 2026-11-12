@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { noteName } from '../keys.js'
 import {
   LANES,
@@ -19,18 +19,22 @@ import {
   writeTrackerField,
 } from '../model.js'
 import { useModel } from '../useModel.js'
+import { cuePatternStep, getMeters } from '../audio/engine.js'
 import { PatternBar } from './PatternBar.jsx'
 import { HelpButton } from '../widgets.jsx'
 
 const HEADS = ['NOTE', 'INST', 'VEL', 'MOVE', 'SL', 'LP']
 const STICK_DEAD = 16
+const COPIES = [0, 1, 2]
+const VU_BARS = 8
 
 /** Held by the lower-left SHIFT control. The trackpad edits instead of moving while this is set. */
-export const finger = { shift: false }
+export const finger = { shift: false, kbShift: false }
 
 export function Tracker() {
   useModel()
   const [menu, setMenu] = useState(null)
+  const [slots, setSlots] = useState(15)
   const gridRef = useRef(null)
   const stick = useRef({ on: false, id: 0, ox: 0, oy: 0, x: 0, y: 0, ax: 0, ay: 0, moved: false, ate: false, raf: 0, then: 0 })
   const seq = currentPattern()
@@ -56,13 +60,39 @@ export function Tracker() {
       t.hex = ''
       touch(false)
     }
-    if (!t.follow) return
-    revealTracker(gridRef.current, gridRef.current?.querySelector('tr.play'), 'y')
   }, [model.playing, model.playhead, t.follow, t.edit, t.row])
+  const followPlay = !!(model.playing && t.follow)
+  const anchor = followPlay ? (model.playhead | 0) : (t.row | 0)
+  const midSlot = Math.floor(slots / 2)
+  const cursorSlot = markedSlot(anchor, t.row | 0, midSlot, slots, rows, trackerLocked())
+  useLayoutEffect(() => {
+    const grid = gridRef.current
+    if (!grid || grid.clientHeight < 20) return
+    const head = grid.querySelector('thead')?.offsetHeight || 35
+    const rowH = grid.querySelector('tbody tr')?.offsetHeight || 18
+    const n = Math.max(3, Math.ceil(Math.max(rowH, grid.clientHeight - head) / rowH) + 2)
+    const odd = n % 2 ? n : n + 1
+    if (odd !== slots) {
+      setSlots(odd)
+      return
+    }
+    centerTracker(grid)
+  }, [slots, anchor, t.col, t.row, rows, fields, model.pattern, model.playing, followPlay])
   useEffect(() => {
-    if (!t.focus || (model.playing && t.follow && !t.edit)) return
-    revealTracker(gridRef.current, gridRef.current?.querySelector('td.here'))
-  }, [t.focus, t.row, t.col, t.edit, t.follow, model.pattern, model.playing])
+    const grid = gridRef.current
+    if (!grid || typeof ResizeObserver === 'undefined') return undefined
+    const ro = new ResizeObserver(() => {
+      if (grid.clientHeight < 20) return
+      const head = grid.querySelector('thead')?.offsetHeight || 35
+      const rowH = grid.querySelector('tbody tr')?.offsetHeight || 18
+      const n = Math.max(3, Math.ceil(Math.max(rowH, grid.clientHeight - head) / rowH) + 2)
+      const odd = n % 2 ? n : n + 1
+      setSlots((prev) => (prev === odd ? prev : odd))
+      centerTracker(grid)
+    })
+    ro.observe(grid)
+    return () => ro.disconnect()
+  }, [])
   useEffect(() => {
     if (!t.focus || activeField()) return
     gridRef.current?.focus({ preventScroll: true })
@@ -124,18 +154,18 @@ export function Tracker() {
           <thead onContextMenu={openCols}>
             <tr>
               <th className="st" rowSpan={2}>STEP</th>
-              {Array.from({ length: LANES }, (_, lane) => (
-                <th key={lane} colSpan={fields} className="track">
+              {COPIES.map((copy) => Array.from({ length: LANES }, (_, lane) => (
+                <th key={`${copy}-${lane}`} colSpan={fields} className="track">
                   <span className="track-title">
                     <b>{trackNo(lane)}</b>
                     <span>{laneInstrument(seq, lane)}</span>
                   </span>
                 </th>
-              ))}
+              )))}
             </tr>
             <tr>
-              {Array.from({ length: LANES }, (_, lane) => (
-                <Fragment key={lane}>
+              {COPIES.map((copy) => Array.from({ length: LANES }, (_, lane) => (
+                <Fragment key={`${copy}-${lane}`}>
                   {HEADS.slice(0, fields).map((label, field) => (
                     <th
                       key={label}
@@ -146,34 +176,39 @@ export function Tracker() {
                     </th>
                   ))}
                 </Fragment>
-              ))}
+              )))}
             </tr>
           </thead>
           <tbody>
-            {Array.from({ length: rows }, (_, row) => {
+            {Array.from({ length: slots }, (_, slot) => {
+              const row = mod(anchor - midSlot + slot, rows)
               const events = seq.steps[row] || []
-              const play = model.playing && model.playhead === row
+              const isMid = slot === midSlot
+              const play = model.playing && mod(model.playhead | 0, rows) === row && (followPlay ? isMid : true)
               const armed = !!t.edit
               return (
-                <tr key={row} className={rowClass(row, play)}>
-                  <td className="st">{hexByte(row)}</td>
-                  {Array.from({ length: LANES * fields }, (_, col) => {
+                <tr key={slot} data-mid={isMid ? '1' : '0'} className={rowClass(row, play)}>
+                  <td className="st" data-step={row} title={`Play from step ${hexByte(row)}`}>{hexByte(row)}</td>
+                  {COPIES.map((copy) => Array.from({ length: LANES * fields }, (_, col) => {
                     const lane = Math.floor(col / fields)
                     const field = col % fields
                     const ev = events[lane]
                     const rect = blockOf(t)
-                    const cursor = !trackerLocked() && t.row === row && t.col === col
-                    const anchor = !!(rect && row === t.block.ar && col === t.block.ac)
+                    const cursor = slot === cursorSlot && t.col === col && copy === 1
+                    const blockAnchor = !!(rect && row === t.block.ar && col === t.block.ac)
                     const inside = !!(rect && row >= rect.r0 && row <= rect.r1 && col >= rect.c0 && col <= rect.c1)
                     const cls = [
                       field === 0 ? 'note edge' : field === 1 ? 'inst' : field === 2 ? 'vel' : field === 3 ? 'move' : field === 4 ? 'sl' : 'lp',
-                      cursor || anchor ? (armed ? 'edit' : 'mark') : '',
+                      cursor || blockAnchor ? (armed ? 'edit' : 'mark') : '',
                       cursor ? 'here' : '',
-                      inside && !cursor && !anchor ? 'block' : '',
+                      inside && !cursor && !blockAnchor ? 'block' : '',
                     ].filter(Boolean).join(' ')
                     return (
                       <td
-                        key={col}
+                        key={`${copy}-${col}`}
+                        data-row={row}
+                        data-col={col}
+                        data-copy={copy}
                         className={cls}
                         onClick={() => {
                           if (stick.current.ate) {
@@ -197,13 +232,14 @@ export function Tracker() {
                         {renderCell(ev, field, cursor && armed, t)}
                       </td>
                     )
-                  })}
+                  }))}
                 </tr>
               )
             })}
           </tbody>
         </table>
       </div>
+      {model.playing ? <RowMeter /> : null}
       {menu && (
         <div className="ctx-menu" style={{ left: menu.x, top: menu.y, minWidth: 220 }} role="menu">
           <button
@@ -245,11 +281,18 @@ export function Tracker() {
     s.ate = false
     s.tapRow = -1
     s.tapCol = -1
+    s.tapStep = -1
     const cell = event.target?.closest?.('td')
-    if (cell && !cell.classList.contains('st') && el.contains(cell)) {
-      const rowEl = cell.parentElement
-      s.tapRow = [...el.querySelectorAll('tbody tr')].indexOf(rowEl)
-      s.tapCol = [...rowEl.querySelectorAll('td:not(.st)')].indexOf(cell)
+    if (cell?.classList.contains('st') && el.contains(cell)) {
+      const step = Number(cell.dataset.step)
+      s.tapStep = Number.isInteger(step) ? step : -1
+    } else if (cell && el.contains(cell)) {
+      const row = Number(cell.dataset.row)
+      const col = Number(cell.dataset.col)
+      if (Number.isInteger(row) && Number.isInteger(col)) {
+        s.tapRow = row
+        s.tapCol = col
+      }
     }
     s.then = performance.now()
     t.focus = true
@@ -276,6 +319,10 @@ export function Tracker() {
     setTimeout(() => {
       s.ate = false
     }, 0)
+    if (s.tapStep >= 0 && !s.moved) {
+      cuePatternStep(s.tapStep)
+      return
+    }
     if (s.moved || trackerLocked() || s.tapRow < 0 || s.tapCol < 0) return
     const tr = model.tracker
     tr.row = s.tapRow
@@ -319,34 +366,100 @@ export function Tracker() {
   }
 }
 
-/** Keep a cell in view past the sticky step column, the sticky header, and the scrollbars.
- *  scrollIntoView stops one header short of the start, so the edges needed the scrollbar. */
-function revealTracker(grid, el, axis) {
-  if (!grid || !el) return
+function mod(n, m) {
+  const size = Math.max(1, m | 0)
+  return ((n % size) + size) % size
+}
+
+/** The visible slot of this pattern row that sits closest to the middle. */
+function markedSlot(anchor, cursorRow, mid, slots, length, locked) {
+  if (locked) return -1
+  let best = -1
+  let dist = Infinity
+  for (let i = 0; i < slots; i++) {
+    if (mod(anchor - mid + i, length) !== cursorRow) continue
+    const d = Math.abs(i - mid)
+    if (d < dist) {
+      dist = d
+      best = i
+    }
+  }
+  return best
+}
+
+/** Pin the live row to the vertical middle and the edit cell to the horizontal middle.
+ *  The pattern is drawn three times across, so a wrap from the last column to the first
+ *  is the same picture as a one-cell slide. */
+function centerTracker(grid) {
+  const mid = grid.querySelector('tr[data-mid="1"]')
+  if (!mid) return
   const gridRect = grid.getBoundingClientRect()
-  const elRect = el.getBoundingClientRect()
-  const stickyLeft = grid.querySelector('th.st')?.getBoundingClientRect().width || 0
-  const stickyTop = grid.querySelector('thead')?.getBoundingClientRect().height || 0
-  const barX = grid.offsetWidth - grid.clientWidth
-  const barY = grid.offsetHeight - grid.clientHeight
-  const viewLeft = gridRect.left + stickyLeft
-  const viewTop = gridRect.top + stickyTop
-  const viewRight = gridRect.right - barX
-  const viewBottom = gridRect.bottom - barY
-  if (axis !== 'y') {
-    if (elRect.left < viewLeft) grid.scrollLeft += elRect.left - viewLeft
-    else if (elRect.right > viewRight) grid.scrollLeft += elRect.right - viewRight
-    if (el.cellIndex === 1) grid.scrollLeft = 0
-    else if (el.parentElement?.cells && el.cellIndex === el.parentElement.cells.length - 1) grid.scrollLeft = grid.scrollWidth
+  const headH = grid.querySelector('thead')?.getBoundingClientRect().height || 0
+  const rowRect = mid.getBoundingClientRect()
+  const bodyMid = gridRect.top + headH + (gridRect.height - headH) / 2
+  grid.scrollTop += (rowRect.top + rowRect.height / 2) - bodyMid
+
+  const st = grid.querySelector('th.st')?.getBoundingClientRect()
+  const noteLeft = st ? st.right : gridRect.left
+  const noteMid = noteLeft + (gridRect.right - noteLeft) / 2
+  const col = model.tracker.col | 0
+  const cell = mid.querySelector(`td[data-col="${col}"][data-copy="1"]`)
+  if (!cell) return
+  const cellRect = cell.getBoundingClientRect()
+  grid.scrollLeft += (cellRect.left + cellRect.width / 2) - noteMid
+  placeMeter(grid)
+}
+
+function placeMeter(grid) {
+  const screen = grid.closest('.tracker-screen')
+  if (!screen) return
+  const playing = [...grid.querySelectorAll('tr.play')]
+  if (!playing.length) {
+    screen.style.setProperty('--vu-show', '0')
+    return
   }
-  if (axis !== 'x') {
-    if (elRect.top < viewTop) grid.scrollTop += elRect.top - viewTop
-    else if (elRect.bottom > viewBottom) grid.scrollTop += elRect.bottom - viewBottom
-    const rows = grid.querySelectorAll('tbody tr')
-    const row = el.closest('tr')
-    if (row && row === rows[0]) grid.scrollTop = 0
-    else if (row && row === rows[rows.length - 1]) grid.scrollTop = grid.scrollHeight
+  const s = screen.getBoundingClientRect()
+  const g = grid.getBoundingClientRect()
+  const headH = grid.querySelector('thead')?.getBoundingClientRect().height || 0
+  const bodyMid = g.top + headH + (g.height - headH) / 2
+  let row = playing[0]
+  let best = Infinity
+  for (const el of playing) {
+    const rect = el.getBoundingClientRect()
+    const dist = Math.abs(rect.top + rect.height / 2 - bodyMid)
+    if (dist < best) {
+      best = dist
+      row = el
+    }
   }
+  const r = row.getBoundingClientRect()
+  const st = grid.querySelector('th.st')?.getBoundingClientRect()
+  const left = ((st ? st.right : g.left) + g.right) / 2 - s.left
+  const top = r.top + r.height / 2 - s.top
+  screen.style.setProperty('--vu-left', `${left}px`)
+  screen.style.setProperty('--vu-top', `${top}px`)
+  screen.style.setProperty('--vu-show', '1')
+}
+
+function RowMeter() {
+  const [level, setLevel] = useState(0)
+  const peak = useRef(0)
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      const now = getMeters().master || 0
+      peak.current = Math.max(now, peak.current * 0.72)
+      setLevel(peak.current)
+    }, 80)
+    return () => window.clearInterval(id)
+  }, [])
+  const lit = Math.round(Math.min(1, level * 1.6) * VU_BARS)
+  return (
+    <div className="row-vu" aria-hidden="true">
+      {Array.from({ length: VU_BARS }, (_, i) => (
+        <i key={i} className={i < lit ? 'on' : ''} />
+      ))}
+    </div>
+  )
 }
 
 function trackNo(lane) {
@@ -428,13 +541,6 @@ export function handleTrackerKey(e) {
   const seq = currentPattern()
   const fields = trackerFields()
   const key = e.key
-  if (key === 'Escape') {
-    t.edit = !t.edit
-    t.focus = true
-    t.hex = ''
-    touch(false)
-    return true
-  }
   if (isCopy(e)) {
     e.preventDefault()
     copyBlock()

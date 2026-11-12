@@ -1,10 +1,10 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { PAD_KEYS, SCREENS, SEQ_KEYS, SHORTCUTS, pianoNote, renoiseNote, typing } from './keys.js'
 import {
   addBar,
-  clearHit,
   commitTrackerNote,
   cyclePlaySurface,
+  setPlaySurface,
   cycleScreen,
   deleteSelection,
   doubleUp,
@@ -26,12 +26,13 @@ import { midiSummary } from './audio/midi.js'
 import { undo } from './history.js'
 import { songId } from './jobs.js'
 import { useModel } from './useModel.js'
-import { Dialog } from './widgets.jsx'
+import { Dialog, HelpButton } from './widgets.jsx'
 import { Pads } from './screens/Pads.jsx'
 import { Editor } from './screens/Editor.jsx'
-import { Sequencer } from './screens/Sequencer.jsx'
+import { Sequencer, copySeqSelection, deleteSeqSelection, pasteSeqSelection } from './screens/Sequencer.jsx'
 import { Mixer } from './screens/Mixer.jsx'
 import { Tracker, finger, handleTrackerKey } from './screens/Tracker.jsx'
+import { ShiftHold } from './screens/ShiftHold.jsx'
 import { Synth } from './screens/Synth.jsx'
 import { Fx } from './screens/Fx.jsx'
 import { SampleBrowser } from './screens/Browser.jsx'
@@ -44,19 +45,47 @@ import { Manual } from './screens/Manual.jsx'
 import { PadMenu } from './screens/PadMenu.jsx'
 import { Arranger } from './screens/Arranger.jsx'
 import { PlaySurface } from './screens/PlaySurface.jsx'
+import { startPorta, stopPorta, portaArmed } from './screens/porta.js'
+import { padStep } from './padNav.js'
 
 export function MiyaMusicMaker() {
   useModel()
   useEffect(() => listenForFiles(buildPublish), [])
-  useEffect(() => {
+  useLayoutEffect(() => {
     const node = document.querySelector('[data-miya-music]')?.shadowRoot?.querySelector('.mmm')
-    if (!node || typeof ResizeObserver === 'undefined') return undefined
-    const watch = new ResizeObserver(() => {
-      if (node.clientWidth <= 600 && model.dockOpen !== false && model.arrangeOpen) {
-        model.arrangeOpen = false
-        touch(false)
+    if (!node) return undefined
+    const apply = () => {
+      // The phone rules are container queries on .mmm, and those see the content box.
+      // clientWidth includes this frame's padding, so a window just past 600px was
+      // still the phone layout and also grew the right-hand numpad column.
+      const wide = contentWidth(node) > 600
+      // 940 covers every iPhone, portrait or landscape. A wide tablet keeps two octaves.
+      const hand = node.clientWidth <= 940
+      let changed = false
+      if (!!model.fxWide !== wide) {
+        const wasWide = !!model.fxWide
+        model.fxWide = wide
+        changed = true
+        if (!wide && wasWide && model.fxOpen) model.screen = 'fx'
       }
-    })
+      if (!!model.chordHand !== hand) {
+        model.chordHand = hand
+        changed = true
+      }
+      if (wide && model.screen === 'fx') {
+        model.fxOpen = true
+        model.screen = 'pads'
+        changed = true
+      }
+      if (!wide && model.dockOpen !== false && model.arrangeOpen) {
+        model.arrangeOpen = false
+        changed = true
+      }
+      if (changed) touch(false)
+    }
+    apply()
+    if (typeof ResizeObserver === 'undefined') return undefined
+    const watch = new ResizeObserver(apply)
     watch.observe(node)
     return () => watch.disconnect()
   }, [])
@@ -71,6 +100,9 @@ export function MiyaMusicMaker() {
     const down = (e) => onKey(e)
     const up = (e) => {
       const low = e.key.length === 1 ? e.key.toLowerCase() : e.key
+      if (e.code === 'NumpadSubtract') stopPorta(-1)
+      if (e.code === 'NumpadAdd') stopPorta(1)
+      if (e.key === 'Shift') finger.kbShift = false
       if (e.key === 'Shift') releaseNumpadFx()
       const digit = numpadDigit(e)
       if (digit != null) releaseNumpadFx(digit)
@@ -80,6 +112,8 @@ export function MiyaMusicMaker() {
     // A key held while focus leaves never sends its keyup here, so its note would loop forever.
     const blur = () => {
       model.hold = null
+      finger.kbShift = false
+      stopPorta()
       releaseNumpadFx()
       releaseKeyboardNotes()
     }
@@ -88,43 +122,33 @@ export function MiyaMusicMaker() {
     }
     window.addEventListener('keydown', down)
     window.addEventListener('keyup', up)
-    const pads = { held: new Array(16).fill(false), at: new Array(16).fill(0) }
+    const pads = new Map()
     let raf = 0
     const poll = () => {
       const list = navigator.getGamepads?.() || []
       const now = performance.now()
+      const seen = new Set()
       for (const gp of list) {
-        if (!gp || (gp.mapping && gp.mapping !== 'standard')) continue
-        const r1 = !!gp.buttons[5]?.pressed
-        const arrows = [[12, 'ArrowUp'], [13, 'ArrowDown'], [14, 'ArrowLeft'], [15, 'ArrowRight']]
-        for (const [btn, key] of arrows) {
-          const downPad = !!gp.buttons[btn]?.pressed
-          let fire = false
-          if (downPad && !pads.held[btn]) {
-            fire = true
-            pads.at[btn] = now + 380
-          } else if (downPad && now >= pads.at[btn]) {
-            fire = true
-            pads.at[btn] = now + 70
-          }
-          pads.held[btn] = downPad
-          if (fire) {
-            onKey({
-              key,
-              ctrlKey: r1,
-              shiftKey: false,
-              altKey: false,
-              metaKey: false,
-              repeat: false,
-              code: '',
-              preventDefault() {},
-              stopPropagation() {},
-              target: null,
-              composedPath() { return [] },
-            })
-          }
-        }
+        if (!gp) continue
+        seen.add(gp.index)
+        const step = padStep(pads.get(gp.index), gp, now)
+        pads.set(gp.index, step.state)
+        if (!step.fire || !step.key) continue
+        onKey({
+          key: step.key,
+          ctrlKey: step.ctrl,
+          shiftKey: step.ctrl,
+          altKey: false,
+          metaKey: false,
+          repeat: false,
+          code: '',
+          preventDefault() {},
+          stopPropagation() {},
+          target: null,
+          composedPath() { return [] },
+        })
       }
+      for (const index of pads.keys()) if (!seen.has(index)) pads.delete(index)
       raf = requestAnimationFrame(poll)
     }
     raf = requestAnimationFrame(poll)
@@ -151,7 +175,7 @@ export function MiyaMusicMaker() {
   const bothDocks = model.dockOpen !== false && !!model.arrangeOpen
   return (
     <div
-      className={`mmm surface-${model.playSurface || 'pads'} ${model.k3 ? 'theme-k3' : ''}`}
+      className={`mmm surface-${model.playSurface || 'pads'} screen-${model.screen} ${model.chordHand ? 'chord-hand' : ''} ${model.k3 ? 'theme-k3' : ''}`}
       onDragOver={(e) => e.preventDefault()}
       onDrop={(e) => {
         e.preventDefault()
@@ -170,11 +194,16 @@ export function MiyaMusicMaker() {
       </div>
       <div
         className={`mmm-body${model.dockOpen === false && !model.arrangeOpen ? ' dock-shut' : ''}`}
+        style={{ '--fx-size': `${Math.max(168, model.fxWidth || 280)}px` }}
       >
         <div className="dock-rail">
+          <RailHelp />
+          <RailMenu />
           <DockToggles names />
-          <ShiftHold />
+          <div className="rail-slot" />
+          <ShiftHold mark={model.playSurface !== 'chords' || !!model.fxWide} />
         </div>
+        <div className="mmm-rest">
         {(model.dockOpen !== false || model.arrangeOpen) && (
           <>
             <div className="dock-pane">
@@ -207,6 +236,7 @@ export function MiyaMusicMaker() {
             <div className="dock-splitter" aria-hidden="true" />
           </>
         )}
+        <div className="mmm-stage">
         <div className="mmm-main">
           {model.screen === 'pads' && <Pads />}
           {model.screen === 'edit' && <Editor />}
@@ -214,7 +244,7 @@ export function MiyaMusicMaker() {
           {model.screen === 'mix' && <Mixer />}
           {model.screen === 'track' && <Tracker />}
           {model.screen === 'synth' && <Synth />}
-          {model.screen === 'fx' && <Fx />}
+          {model.screen === 'fx' && !model.fxWide && <Fx />}
           <PlaySurface />
           <PadMenu />
           {model.keysHelp && (
@@ -222,6 +252,16 @@ export function MiyaMusicMaker() {
           )}
           {model.help && (
             <Dialog title="QWERTY shortcuts" onClose={() => { model.help = false; touch(false) }}>
+              <div className="topic-blurbs">
+                <p>Make music every day. A little time at the instrument keeps you creative, and it keeps you at one with God's creation.</p>
+                <p><b>Pads.</b> Drums. Sixteen in this bank, and banks A through D beyond it.</p>
+                <p><b>Keys.</b> The selected pad, one note at a time.</p>
+                <p><b>Chords.</b> The buttons choose the harmony. The piano plays that chord. The strip plays one note.</p>
+                <p><b>Sequence and Tracker.</b> The same pattern. Sequence paints hits. The tracker is the spreadsheet, and the row in the middle is the one you are on.</p>
+                <p><b>Arranger.</b> Patterns played in order as a song.</p>
+                <p><b>Sample, Synth, Mixer, FX.</b> Trim the wave, draw a sound, balance the buses, and hold an effect while it plays.</p>
+                <p>The table is the shortcuts.</p>
+              </div>
               <table>
                 <tbody>
                   {SHORTCUTS.map(([key, action]) => (
@@ -234,6 +274,28 @@ export function MiyaMusicMaker() {
               </table>
             </Dialog>
           )}
+        </div>
+        {model.fxWide && model.fxOpen && (
+          <>
+            <div className="fx-splitter" onPointerDown={fxDrag} />
+            <div className="fx-pane">
+              <Fx dock />
+            </div>
+          </>
+        )}
+        {model.fxWide && (
+          <div className="fx-rail">
+            <button
+              type="button"
+              className={`btn ${model.fxOpen ? 'on' : ''}`}
+              aria-label={model.fxOpen ? 'Hide numpad' : 'Show numpad'}
+              onClick={toggleFx}
+            >
+              Numpad
+            </button>
+          </div>
+        )}
+        </div>
         </div>
       </div>
       {model.fileWindow === 'manual' && <Manual />}
@@ -254,16 +316,8 @@ function Transport() {
           <button
             type="button"
             data-coach="rec"
-            className={`btn free-width rec ${(model.screen === 'track' ? model.tracker.edit : model.recording) ? 'on' : ''}`}
-            onClick={() => {
-              if (model.screen === 'track') {
-                model.tracker.edit = !model.tracker.edit
-                model.tracker.focus = true
-                touch(false)
-                return
-              }
-              toggleRecord()
-            }}
+            className={`btn free-width rec ${(model.tracker.edit || model.recording) ? 'on' : ''}`}
+            onClick={() => toggleRecord()}
           >
             Rec
           </button>
@@ -313,9 +367,7 @@ function Transport() {
             </button>
           ))}
         </div>
-        <button type="button" className="btn free-width surface-btn" aria-label="Play surface" onClick={() => cyclePlaySurface()}>
-          {surfaceLabel()}
-        </button>
+        <SurfaceMenu />
         <BankMenu />
         <button
           type="button"
@@ -326,17 +378,24 @@ function Transport() {
           {midi.short}
         </button>
         <div className="screen-tabs">
-          {SCREENS.map((screen) => (
+          {SCREENS.map((screen) => {
+            const docked = screen.id === 'fx' && model.fxWide
+            const on = docked ? !!model.fxOpen : model.screen === screen.id
+            return (
             <button
               key={screen.id}
               type="button"
-              className={`btn free-width ${model.screen === screen.id ? 'on' : ''}`}
+              className={`btn free-width ${on ? 'on' : ''}`}
               data-coach={`page-${screen.id}`}
-              onClick={() => setScreen(screen.id)}
+              onClick={() => {
+                if (docked) toggleFx()
+                else setScreen(screen.id)
+              }}
             >
               {screen.label}
             </button>
-          ))}
+            )
+          })}
         </div>
         <ScreenMenu />
         <div className="dock-pair">
@@ -346,9 +405,15 @@ function Transport() {
   )
 }
 
+function contentWidth(node) {
+  const style = getComputedStyle(node)
+  const pad = (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0)
+  return node.clientWidth - pad
+}
+
 function narrowWindow() {
   const node = document.querySelector('[data-miya-music]')?.shadowRoot?.querySelector('.mmm')
-  return !!node && node.clientWidth <= 600
+  return !!node && contentWidth(node) <= 600
 }
 
 function toggleBrowser() {
@@ -357,6 +422,15 @@ function toggleBrowser() {
   else {
     model.dockOpen = true
     if (narrowWindow()) model.arrangeOpen = false
+  }
+  touch(true)
+}
+
+function toggleFx() {
+  if (model.fxOpen) model.fxOpen = false
+  else {
+    model.fxOpen = true
+    if ((model.fxWidth || 0) < 168) model.fxWidth = 280
   }
   touch(true)
 }
@@ -370,35 +444,50 @@ function toggleArranger() {
   touch(true)
 }
 
-function ShiftHold() {
-  const [on, setOn] = useState(false)
-  const release = () => {
-    finger.shift = false
-    setOn(false)
+const PAGE_HELP = {
+  pads: ['Pads', 'pads'],
+  edit: ['Sample', 'sample'],
+  seq: ['Sequence', 'sequence'],
+  mix: ['Mixer', 'mixer'],
+  track: ['Tracker', 'tracker'],
+  synth: ['Synth', 'synth'],
+  fx: ['FX', 'fx'],
+}
+
+function RailHelp() {
+  const pair = PAGE_HELP[model.screen] || PAGE_HELP.pads
+  return <HelpButton title={pair[0]} topic={pair[1]} />
+}
+
+function RailMenu() {
+  const root = useRef(null)
+  const [open, setOpen] = useState(false)
+  useMenuCloser(open, root, setOpen)
+  const go = (run) => {
+    setOpen(false)
+    run()
   }
-  useEffect(() => () => { finger.shift = false }, [])
   return (
-    <button
-      type="button"
-      className={`btn shift-hold ${on ? 'on' : ''}`}
-      data-coach="shift"
-      aria-pressed={on}
-      aria-label="Shift. Hold and drag the tracker to edit the cell."
-      onPointerDown={(e) => {
-        if (e.button !== 0) return
-        e.preventDefault()
-        e.stopPropagation()
-        try { e.currentTarget.setPointerCapture(e.pointerId) } catch { /* already gone */ }
-        finger.shift = true
-        setOn(true)
-      }}
-      onPointerUp={release}
-      onPointerCancel={release}
-      onLostPointerCapture={release}
-      onContextMenu={(e) => e.preventDefault()}
-    >
-      SHIFT
-    </button>
+    <div className="mmm-file rail-file" ref={root}>
+      <button
+        type="button"
+        className={`btn rail-more ${open ? 'on' : ''}`}
+        aria-expanded={open}
+        aria-haspopup="menu"
+        aria-label="More tabs"
+        onClick={() => setOpen((value) => !value)}
+      >
+        Tabs
+      </button>
+      {open && (
+        <div className="file-menu rail-pop" role="menu">
+          <button type="button" onClick={() => go(toggleBrowser)}>Browser</button>
+          <button type="button" onClick={() => go(toggleArranger)}>Arranger</button>
+          <button type="button" onClick={() => go(() => { model.fileWindow = 'manual'; touch(false) })}>Manual</button>
+          <button type="button" onClick={() => go(() => { enableMidi().catch(() => {}) })}>MIDI</button>
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -425,11 +514,99 @@ function DockToggles({ names = false }) {
   )
 }
 
+const SURFACE_CHOICES = [
+  ['off', 'Off'],
+  ['pads', 'Pads'],
+  ['keys', 'Keys'],
+  ['chords', 'Chords'],
+  ['strum', 'Strum'],
+  ['fx', 'FX'],
+]
+
 function surfaceLabel() {
-  if (model.playSurface === 'off') return 'Off'
-  if (model.playSurface === 'keys') return `Keys ${model.renoiseOct}`
-  if (model.playSurface === 'fx') return 'FX'
-  return 'Pads'
+  const row = SURFACE_CHOICES.find(([id]) => id === model.playSurface)
+  return row ? row[1] : 'Keys'
+}
+
+function surfaceOn() {
+  return model.playSurface && model.playSurface !== 'off'
+}
+
+function SurfaceMenu() {
+  const root = useRef(null)
+  const [open, setOpen] = useState(false)
+  const hold = useRef(0)
+  const swallow = useRef(false)
+  useMenuCloser(open, root, setOpen)
+  useEffect(() => () => window.clearTimeout(hold.current), [])
+  const pick = (id) => {
+    if (id === 'fx' && model.fxWide) {
+      model.fxOpen = true
+      if ((model.fxWidth || 0) < 168) model.fxWidth = 280
+    }
+    setPlaySurface(id)
+    setOpen(false)
+  }
+  const openMenu = () => {
+    swallow.current = true
+    setOpen(true)
+  }
+  const shifted = (event) => event.shiftKey || finger.shift || finger.kbShift
+  return (
+    <div className="mmm-file surface-menu" ref={root}>
+      <button
+        type="button"
+        className={`btn free-width surface-btn ${surfaceOn() ? 'on' : ''}`}
+        aria-label="On-screen keys"
+        aria-expanded={open}
+        aria-haspopup="menu"
+        title="Tap to cycle. Hold, right-click, or Shift-click for the list."
+        onPointerDown={(event) => {
+          if (event.button === 2) {
+            event.preventDefault()
+            openMenu()
+            return
+          }
+          if (event.button !== 0) return
+          if (shifted(event)) {
+            event.preventDefault()
+            openMenu()
+            return
+          }
+          swallow.current = false
+          window.clearTimeout(hold.current)
+          hold.current = window.setTimeout(openMenu, 420)
+        }}
+        onPointerUp={() => window.clearTimeout(hold.current)}
+        onPointerCancel={() => window.clearTimeout(hold.current)}
+        onContextMenu={(event) => {
+          event.preventDefault()
+          openMenu()
+        }}
+        onClick={(event) => {
+          window.clearTimeout(hold.current)
+          if (swallow.current || shifted(event)) {
+            swallow.current = false
+            setOpen(true)
+            return
+          }
+          setOpen(false)
+          cyclePlaySurface()
+        }}
+      >
+        {surfaceLabel()}
+      </button>
+      {open && (
+        <div className="file-menu" role="menu">
+          {SURFACE_CHOICES.filter(([id]) => id !== 'fx' || !model.fxWide).map(([id, name]) => (
+            <button key={id} type="button" className={model.playSurface === id ? 'on' : ''} onClick={() => pick(id)}>
+              {name}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
 }
 
 function useMenuCloser(open, root, setOpen) {
@@ -543,7 +720,11 @@ function ScreenMenu() {
       {open && (
         <div className="file-menu" role="menu">
           {SCREENS.map((screen) => (
-            <button key={screen.id} type="button" onClick={() => { setOpen(false); setScreen(screen.id) }}>{screen.label}</button>
+            <button key={screen.id} type="button" onClick={() => {
+              setOpen(false)
+              if (screen.id === 'fx' && model.fxWide) toggleFx()
+              else setScreen(screen.id)
+            }}>{screen.label}</button>
           ))}
         </div>
       )}
@@ -597,6 +778,40 @@ function nudgePair(event) {
   save()
 }
 
+function fxDrag(event) {
+  if (event.button != null && event.button !== 0) return
+  const splitter = event.currentTarget
+  const stage = splitter.parentElement
+  if (!stage) return
+  const start = event.clientX
+  const origin = model.fxWidth || 280
+  const id = event.pointerId
+  const move = (ev) => {
+    if (ev.pointerId !== id) return
+    const room = stage.clientWidth - 160
+    const next = origin - (ev.clientX - start)
+    if (next < 56) {
+      model.fxOpen = false
+      touch(true)
+      end(ev)
+      return
+    }
+    model.fxWidth = Math.max(168, Math.min(Math.max(168, room), next))
+    touch(false)
+  }
+  const end = (ev) => {
+    if (ev && ev.pointerId !== id) return
+    splitter.removeEventListener('pointermove', move)
+    splitter.removeEventListener('pointerup', end)
+    splitter.removeEventListener('pointercancel', end)
+    save()
+  }
+  splitter.setPointerCapture?.(id)
+  splitter.addEventListener('pointermove', move)
+  splitter.addEventListener('pointerup', end)
+  splitter.addEventListener('pointercancel', end)
+}
+
 /**
  * One at a time, aimed at the pads and the song from when they were dropped. A failure says why and the
  * rest still import. A song in the drop opens, and the sounds after it go to the library, not its pads.
@@ -642,7 +857,7 @@ function musicRoot() {
 function navItems() {
   const root = musicRoot()
   if (!root) return []
-  return [...root.querySelectorAll('.mmm-main .dial, .mmm-main input[type="range"], .mmm-main select, .mmm-main [data-nav], .dock-pane [data-nav], .dock-pane select, .dock-pane input[type="range"]')]
+  return [...root.querySelectorAll('.mmm-main .dial, .mmm-main input[type="range"], .mmm-main select, .mmm-main [data-nav], .dock-pane [data-nav], .dock-pane select, .dock-pane input[type="range"], .fx-pane [data-nav], .fx-pane select, .fx-pane input[type="range"]')]
     .filter((el) => el.offsetParent !== null && !el.disabled)
 }
 
@@ -759,6 +974,8 @@ let kAt = 0
 function onKey(e) {
   if (musicUnfocused()) return
   if (typing(e)) return
+  const keySource = (typeof e.composedPath === 'function' && e.composedPath()[0]) || e.target
+  if (keySource?.classList?.contains('piano-splitter')) return
   // Space is the transport toggle on every screen, even when a button is highlighted.
   if ((e.key === ' ' || e.code === 'Space') && !e.ctrlKey && !e.metaKey && !e.altKey) {
     e.preventDefault()
@@ -766,10 +983,16 @@ function onKey(e) {
     return
   }
   if (model.fileWindow || model.keysHelp) return
+  if (e.key === 'Shift') finger.kbShift = true
   if (e.key === 'Escape' && model.coachTopic) {
     e.preventDefault()
     model.coachTopic = ''
     touch(false)
+    return
+  }
+  if (e.key === 'Escape' && !e.repeat && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
+    e.preventDefault()
+    toggleRecord()
     return
   }
   const key = e.key
@@ -820,9 +1043,9 @@ function onKey(e) {
     touch(true)
     return
   }
-  if (e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && (key === 'ArrowLeft' || key === 'ArrowRight' || key === 'ArrowUp' || key === 'ArrowDown')) {
+  if (e.ctrlKey && e.shiftKey && !e.metaKey && !e.altKey && (key === 'ArrowLeft' || key === 'ArrowRight' || key === 'ArrowUp' || key === 'ArrowDown')) {
     e.preventDefault()
-    cycleScreen(key === 'ArrowRight' || key === 'ArrowDown' ? 1 : -1)
+    if (!e.repeat) cycleScreen(key === 'ArrowRight' || key === 'ArrowDown' ? 1 : -1)
     return
   }
   if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && !e.repeat && (key === 'z' || key === 'Z')) {
@@ -839,6 +1062,13 @@ function onKey(e) {
     const block = e.shiftKey && e.altKey && !e.ctrlKey && !e.metaKey && key.startsWith('Arrow')
     const clip = (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && (key === 'c' || key === 'C' || key === 'v' || key === 'V')
     if ((block || clip) && handleTrackerKey(e)) {
+      e.preventDefault()
+      return
+    }
+  }
+  if (model.screen === 'seq' && (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && !e.repeat && (key === 'c' || key === 'C' || key === 'v' || key === 'V')) {
+    const did = key === 'c' || key === 'C' ? copySeqSelection() : pasteSeqSelection()
+    if (did) {
       e.preventDefault()
       return
     }
@@ -933,6 +1163,11 @@ function onKey(e) {
     else setPattern(model.pattern + dir)
     return
   }
+  if ((e.code === 'NumpadSubtract' || e.code === 'NumpadAdd') && !e.repeat && portaArmed()) {
+    e.preventDefault()
+    startPorta(e.code === 'NumpadAdd' ? 1 : -1)
+    return
+  }
   if (key === '=') {
     e.preventDefault()
     addBar()
@@ -969,15 +1204,7 @@ function onKey(e) {
   }
   if ((key === 'Delete' || key === 'Backspace') && !(model.screen === 'track' && model.tracker.focus)) {
     e.preventDefault()
-    if (model.screen === 'seq' && model.seqHit) {
-      const hit = model.seqHit
-      const from = Math.min(hit.step, hit.end ?? hit.step)
-      const to = Math.max(hit.step, hit.end ?? hit.step)
-      for (let s = from; s <= to; s++) clearHit(s, hit.pad)
-      model.seqHit = null
-      touch(false)
-      return
-    }
+    if (model.screen === 'seq' && deleteSeqSelection()) return
     deleteSelection()
     return
   }

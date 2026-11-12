@@ -10,44 +10,46 @@ export function Pads() {
   const start = model.bank * 16
   const pat = currentPattern()
   return (
-    <div className="screen">
+    <div className="screen pads-screen">
       <div className="screen-head">
         <span className="hint">{BANKS[model.bank]} · {hexByte(model.pattern)} {pat.name || 'untitled'}</span>
         <HelpButton title="Pads" topic="pads" />
       </div>
       <div className="pad-layout">
-        <div className="pad-grid">
-          {Array.from({ length: 16 }, (_, local) => {
-            const index = start + local
-            const pad = model.pads[index]
-            const cls = [
-              'pad',
-              pad.source === 'empty' ? 'empty' : 'seen',
-              model.selected === index || model.selection.includes(index) ? 'selected' : '',
-              pad.mute ? 'muted' : '',
-              pad.solo ? 'soloed' : '',
-            ]
-              .filter(Boolean)
-              .join(' ')
-            return (
-              <button
-                key={index}
-                type="button"
-                className={cls}
-                data-pad={index}
-                data-coach={local === 0 ? 'pad' : undefined}
-                {...padGesture(index, { play: true })}
-              >
-                <PadWave index={index} />
-                <span className="key">{padKeyLabel(local)}</span>
-                <span className="name">{pad.name}</span>
-                <span className="meta">
-                  {BANKS[model.bank]}
-                  {local + 1} · {pad.choke ? `choke ${pad.choke}` : 'choke off'} · {model.buses[pad.bus]?.name || busLabel(pad.bus)}
-                </span>
-              </button>
-            )
-          })}
+        <div className="pad-fit">
+          <div className="pad-grid">
+            {Array.from({ length: 16 }, (_, local) => {
+              const index = start + local
+              const pad = model.pads[index]
+              const cls = [
+                'pad',
+                pad.source === 'empty' ? 'empty' : 'seen',
+                model.selected === index || model.selection.includes(index) ? 'selected' : '',
+                pad.mute ? 'muted' : '',
+                pad.solo ? 'soloed' : '',
+              ]
+                .filter(Boolean)
+                .join(' ')
+              return (
+                <button
+                  key={index}
+                  type="button"
+                  className={cls}
+                  data-pad={index}
+                  data-coach={local === 0 ? 'pad' : undefined}
+                  {...padGesture(index, { play: true })}
+                >
+                  <PadWave index={index} />
+                  <span className="key">{padKeyLabel(local)}</span>
+                  <span className="name">{pad.name}</span>
+                  <span className="meta">
+                    {BANKS[model.bank]}
+                    {local + 1} · {pad.choke ? `choke ${pad.choke}` : 'choke off'} · {model.buses[pad.bus]?.name || busLabel(pad.bus)}
+                  </span>
+                </button>
+              )
+            })}
+          </div>
         </div>
         <PadQuick />
       </div>

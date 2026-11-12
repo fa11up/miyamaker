@@ -7,7 +7,8 @@ import d2 from '../assets/q8n3k/d2.png'
 import d3 from '../assets/q8n3k/d3.png'
 import { snapOctave } from '../audio/knee.js'
 import { FX_TYPES, busLabel, model, touch } from '../model.js'
-import { getCompReduction, getMeters, syncMasterComp, syncMixer } from '../audio/engine.js'
+import { getBandReduction, getCompReduction, getMeters, syncMasterComp, syncMixer } from '../audio/engine.js'
+import { clampCrossovers } from '../audio/multiband.js'
 import { GraphicEq } from './GraphicEq.jsx'
 import { useModel } from '../useModel.js'
 import { HelpButton, Knob } from '../widgets.jsx'
@@ -31,7 +32,7 @@ function atlasPos(index) {
   return `${(col * 100) / 7}% ${(row * 100) / 7}%`
 }
 
-const mixUi = { bus: 0, eq: 0 }
+const mixUi = { bus: 0, eq: 0, fxOpen: true, band: 0 }
 
 function selectBus(index) {
   if (mixUi.bus === index && mixUi.eq === index) return
@@ -49,32 +50,24 @@ function selectEq(value) {
   const index = value | 0
   mixUi.eq = index
   mixUi.bus = index
-  const page = index >= 8 ? 1 : 0
-  if ((model.mixPage === 1 ? 1 : 0) !== page) model.mixPage = page
   touch(false)
 }
 
 export function Mixer() {
   useModel()
-  const page = model.mixPage === 1 ? 1 : 0
-  const pageStart = page * 8
   const picked = mixUi.bus | 0
-  const selected = picked >= pageStart && picked < pageStart + 8 ? picked : pageStart
-  const visible = model.buses.slice(pageStart, pageStart + 8)
+  const selected = picked >= 0 && picked < model.buses.length ? picked : 0
   return (
     <div className="screen mix-screen">
       <div className="mix-pages">
-        <button type="button" className={`btn free-width ${page === 0 ? 'on' : ''}`} data-coach="mix-page" onClick={() => setPage(0)}>
-          1–8
-        </button>
-        <button type="button" className={`btn free-width ${page === 1 ? 'on' : ''}`} onClick={() => setPage(1)}>
-          9–16
-        </button>
         <HelpButton title="Mixer" topic="mixer" />
+        <button type="button" className="btn free-width mix-clear" onClick={clearMix}>
+          Unmute/Unsolo All
+        </button>
       </div>
-      <div className="mix">
-        {visible.map((bus, local) => (
-          <Channel key={pageStart + local} bus={bus} index={pageStart + local} on={pageStart + local === selected} />
+      <div className="mix" data-coach="mix-row">
+        {model.buses.map((bus, index) => (
+          <Channel key={index} bus={bus} index={index} on={index === selected} />
         ))}
       </div>
       <div className={`mix-rack ${model.comp.justice ? 'has-plate' : ''}`}>
@@ -86,14 +79,18 @@ export function Mixer() {
   )
 }
 
+function clearMix() {
+  model.buses.forEach((bus) => {
+    bus.mute = false
+    bus.solo = false
+  })
+  touch(true)
+  syncMixer()
+}
+
 function compHead(alt) {
   if (!alt) return 'Master compressor'
   return String.fromCharCode(74, 117, 115, 116, 105, 99, 101, 32, 102, 111, 114, 32, 71, 101, 111, 114, 103, 101, 32, 70, 108, 111, 121, 100, 32, 75, 110, 101, 101, 32, 67, 111, 109, 112, 114, 101, 115, 115, 111, 114)
-}
-
-function setPage(page) {
-  model.mixPage = page
-  touch(true)
 }
 
 function Channel({ bus, index, on }) {
@@ -106,8 +103,16 @@ function Channel({ bus, index, on }) {
     touch(true)
     syncMixer()
   }
+  const anySolo = model.buses.some((b) => b.solo)
+  const silenced = !!bus.mute || (anySolo && !bus.solo)
+  const dim = silenced
   return (
-    <div className={`strip ${on ? 'on' : ''}`} data-bus={index} aria-current={on ? 'true' : undefined} onPointerDown={() => selectBus(index)}>
+    <div
+      className={`strip ${on ? 'on' : ''} ${dim ? 'is-dim' : ''}`}
+      data-bus={index}
+      aria-current={on ? 'true' : undefined}
+      onPointerDown={() => selectBus(index)}
+    >
       <b className="idx">{busLabel(index)}</b>
       <Knob
         label={`${bus.name} pan`}
@@ -121,26 +126,27 @@ function Channel({ bus, index, on }) {
       />
       <div className="fader-row">
         <Meter level={level} />
-        <input
-          type="range"
-          className="strip-fader"
-          min={0}
-          max={1}
-          step={0.01}
+        <StripFader
           value={bus.volume}
-          aria-label={`${bus.name} volume`}
-          onChange={(e) => {
-            bus.volume = Number(e.target.value)
+          label={`${bus.name} volume`}
+          onChange={(v) => {
+            bus.volume = v
             commit()
           }}
         />
       </div>
+      <div className="pips" aria-hidden="true">
+        {bus.fx.map((slot, s) => (
+          <i key={s} className={slot.type !== 'none' ? 'hot' : ''} />
+        ))}
+      </div>
       <div className="ms">
         <button
           type="button"
-          className={`btn free-width ${bus.mute ? 'on' : ''}`}
+          className={`btn free-width ${silenced ? 'on' : ''}`}
           aria-label={`${bus.name} mute`}
-          aria-pressed={!!bus.mute}
+          aria-pressed={silenced}
+          title={silenced && !bus.mute ? 'Muted by solo' : 'Mute'}
           onClick={() => {
             bus.mute = !bus.mute
             commit()
@@ -161,11 +167,6 @@ function Channel({ bus, index, on }) {
           S
         </button>
       </div>
-      <div className="pips" aria-hidden="true">
-        {bus.fx.map((slot, s) => (
-          <i key={s} className={slot.type !== 'none' ? 'hot' : ''} />
-        ))}
-      </div>
       <input
         className="field name"
         value={bus.name}
@@ -184,42 +185,56 @@ function Inserts({ bus, index }) {
     touch(true)
     syncMixer()
   }
+  const title = bus.name === busLabel(index) ? bus.name : `${busLabel(index)} · ${bus.name}`
+  const open = mixUi.fxOpen !== false
   return (
     <div className="mix-inserts" data-coach="mix-fx">
-      <div className="mix-insert-title">{bus.name === busLabel(index) ? bus.name : `${busLabel(index)} · ${bus.name}`}</div>
-      <div className="mix-slots">
-        {bus.fx.map((slot, s) => (
-          <div className="fx-slot" key={s}>
-            <select
-              value={slot.type}
-              aria-label={`${bus.name} effect ${s + 1}`}
-              onChange={(e) => {
-                slot.type = e.target.value
-                commit()
-              }}
-            >
-              {FX_TYPES.map((type) => (
-                <option key={type} value={type}>
-                  {type}
-                </option>
-              ))}
-            </select>
-            <input
-              type="range"
-              min={0}
-              max={1}
-              step={0.01}
-              value={slot.amount}
-              aria-label={`${bus.name} effect ${s + 1} amount`}
-              disabled={slot.type === 'none'}
-              onChange={(e) => {
-                slot.amount = Number(e.target.value)
-                commit()
-              }}
-            />
-          </div>
-        ))}
-      </div>
+      <button
+        type="button"
+        className="mix-insert-title"
+        aria-expanded={open}
+        onClick={() => {
+          mixUi.fxOpen = !open
+          touch(false)
+        }}
+      >
+        {title}
+        <i>{open ? '–' : '+'}</i>
+      </button>
+      {open && (
+        <div className="mix-slots">
+          {bus.fx.map((slot, s) => (
+            <div className={`fx-slot ${slot.type === 'none' ? 'is-off' : ''}`} key={s}>
+              <select
+                value={slot.type}
+                aria-label={`${bus.name} effect ${s + 1}`}
+                onChange={(e) => {
+                  slot.type = e.target.value
+                  commit()
+                }}
+              >
+                {FX_TYPES.map((type) => (
+                  <option key={type} value={type}>
+                    {type}
+                  </option>
+                ))}
+              </select>
+              <Knob
+                label={`${bus.name} effect ${s + 1} amount`}
+                min={0}
+                max={1}
+                value={slot.amount}
+                text={slot.type === 'none' ? 'off' : `${Math.round(slot.amount * 100)}%`}
+                onChange={(v) => {
+                  if (slot.type === 'none') return
+                  slot.amount = v
+                  commit()
+                }}
+              />
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
@@ -322,6 +337,184 @@ function dbToCurveY(db, size) {
   return ((0 - clamped) / 48) * size
 }
 
+const F_LO = 20
+const F_HI = 20000
+
+function freqToX(freq, width) {
+  const f = Math.min(F_HI, Math.max(F_LO, freq))
+  return (Math.log(f / F_LO) / Math.log(F_HI / F_LO)) * width
+}
+
+function xToFreq(x, width) {
+  const t = width > 0 ? Math.min(1, Math.max(0, x / width)) : 0
+  return F_LO * (F_HI / F_LO) ** t
+}
+
+function BandGraph() {
+  const ref = useRef(null)
+  const comp = model.comp
+  const selected = Math.max(0, Math.min(3, mixUi.band | 0))
+  const setCrossover = (index, freq, done) => {
+    const next = comp.crossovers.slice()
+    next[index] = freq
+    comp.crossovers = clampCrossovers(next)
+    touch(!!done)
+    syncMasterComp()
+  }
+  const setThreshold = (index, db, done) => {
+    comp.bands[index].threshold = Math.max(-60, Math.min(0, db))
+    touch(!!done)
+    syncMasterComp()
+  }
+  const down = (event) => {
+    if (event.button != null && event.button !== 0) return
+    event.preventDefault()
+    const node = ref.current
+    if (!node) return
+    const id = event.pointerId
+    const localX = (clientX) => {
+      const rect = node.getBoundingClientRect()
+      return ((clientX - rect.left) / Math.max(1, rect.width)) * width
+    }
+    const nearest = (clientX) => {
+      const x = localX(clientX)
+      let best = -1
+      let dist = 14
+      comp.crossovers.forEach((freq, index) => {
+        const delta = Math.abs(x - freqToX(freq, width))
+        if (delta < dist) {
+          dist = delta
+          best = index
+        }
+      })
+      return best
+    }
+    const bandAt = (clientX) => {
+      const freq = xToFreq(localX(clientX), width)
+      const [a, b, c] = comp.crossovers
+      if (freq < a) return 0
+      if (freq < b) return 1
+      if (freq < c) return 2
+      return 3
+    }
+    const drag = nearest(event.clientX)
+    if (drag < 0) {
+      mixUi.band = bandAt(event.clientX)
+      touch(false)
+    }
+    const move = (ev) => {
+      if (ev.pointerId !== id) return
+      const rect = node.getBoundingClientRect()
+      if (drag >= 0) setCrossover(drag, xToFreq(localX(ev.clientX), width), false)
+      else {
+        const index = mixUi.band | 0
+        const db = -60 * ((ev.clientY - rect.top) / Math.max(1, rect.height))
+        setThreshold(index, db, false)
+      }
+    }
+    const up = (ev) => {
+      if (ev.pointerId !== id) return
+      if (drag >= 0) setCrossover(drag, comp.crossovers[drag], true)
+      else setThreshold(mixUi.band | 0, comp.bands[mixUi.band | 0].threshold, true)
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+      window.removeEventListener('pointercancel', up)
+    }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+    window.addEventListener('pointercancel', up)
+  }
+  const width = 300
+  const height = 72
+  const cuts = comp.crossovers.map((freq) => freqToX(freq, width))
+  const edges = [0, ...cuts, width]
+  const gr = getBandReduction()
+  return (
+    <svg
+      ref={ref}
+      className="band-graph"
+      viewBox={`0 0 ${width} ${height}`}
+      role="group"
+      aria-label="Multiband compressor"
+      onPointerDown={down}
+    >
+      {comp.bands.map((band, index) => {
+        const x = edges[index]
+        const w = Math.max(0, edges[index + 1] - x)
+        const y = ((0 - band.threshold) / 60) * height
+        const reduced = Math.max(0, Math.min(height - y, ((gr[index] || 0) / -24) * (height - y)))
+        return (
+          <g key={index}>
+            <rect x={x} y="0" width={w} height={height} className={index === selected ? 'on' : ''} />
+            <line x1={x} x2={x + w} y1={y} y2={y} />
+            <rect x={x} y={y} width={w} height={reduced} className="gr" />
+          </g>
+        )
+      })}
+      {cuts.map((x, index) => <line key={index} className="cut" x1={x} x2={x} y1="0" y2={height} />)}
+    </svg>
+  )
+}
+
+function MultiBand() {
+  const comp = model.comp
+  const index = Math.max(0, Math.min(3, mixUi.band | 0))
+  const band = comp.bands[index]
+  const setBand = (key, value) => {
+    band[key] = value
+    touch(true)
+    syncMasterComp()
+  }
+  const pick = (next) => {
+    mixUi.band = next
+    touch(false)
+  }
+  return (
+    <>
+      <BandGraph />
+      <div className="band-picks" role="group" aria-label="Compressor bands">
+        {comp.bands.map((row, i) => (
+          <button
+            key={i}
+            type="button"
+            className={`btn ${i === index ? 'on' : ''}`}
+            aria-pressed={i === index}
+            onClick={() => pick(i)}
+          >
+            {i + 1}
+          </button>
+        ))}
+        <button
+          type="button"
+          className={`btn ${band.solo ? 'on' : ''}`}
+          aria-pressed={!!band.solo}
+          aria-label={`Solo band ${index + 1}`}
+          onClick={() => setBand('solo', !band.solo)}
+        >
+          S
+        </button>
+        <button
+          type="button"
+          className={`btn ${band.mute ? 'on' : ''}`}
+          aria-pressed={!!band.mute}
+          aria-label={`Mute band ${index + 1}`}
+          onClick={() => setBand('mute', !band.mute)}
+        >
+          M
+        </button>
+      </div>
+      <div className="knob-row comp-knobs">
+        <Knob label="Thresh" min={-60} max={0} value={band.threshold} text={`${band.threshold.toFixed(1)} dB`} onChange={(v) => setBand('threshold', v)} />
+        <Knob label="Ratio" min={1} max={20} value={band.ratio} text={`${band.ratio.toFixed(1)}:1`} onChange={(v) => setBand('ratio', v)} />
+        <Knob label="Knee" min={0} max={40} value={band.knee} text={`${band.knee.toFixed(1)} dB`} onChange={(v) => setBand('knee', v)} />
+        <Knob label="Attack" min={0.001} max={0.5} value={band.attack} text={`${Math.round(band.attack * 1000)} ms`} onChange={(v) => setBand('attack', v)} />
+        <Knob label="Release" min={0.01} max={1.2} value={band.release} text={`${Math.round(band.release * 1000)} ms`} onChange={(v) => setBand('release', v)} />
+        <Knob label="Gain" min={-24} max={24} value={band.gain} text={`${band.gain.toFixed(1)} dB`} onChange={(v) => setBand('gain', v)} />
+      </div>
+    </>
+  )
+}
+
 function Compressor() {
   const headRef = useRef(null)
   const skipClick = useRef(false)
@@ -376,7 +569,7 @@ function Compressor() {
   }
   return (
     <section className={`comp-panel ${model.compFocus ? 'armed' : ''} ${comp.justice ? 'has-plate' : ''}`}>
-      <CompScope comp={comp} />
+      {!(comp.multi && !comp.justice) && <CompScope comp={comp} />}
       <div className="comp-head-row">
         <button
           ref={headRef}
@@ -414,11 +607,29 @@ function Compressor() {
         />
         <span className="hint">Comp {compGr < -0.1 ? `${compGr.toFixed(1)} dB` : '0.0 dB'}</span>
         <span className="hint">Limit {gr < -0.1 ? `${gr.toFixed(1)} dB` : '0.0 dB'}</span>
+        {!comp.justice && (
+          <button
+            type="button"
+            className={`btn comp-multi ${comp.multi ? 'on' : ''}`}
+            aria-pressed={!!comp.multi}
+            aria-label="Multiband compressor"
+            title="Four bands, like a multiband compressor"
+            onClick={() => {
+              comp.multi = !comp.multi
+              touch(true)
+              syncMasterComp()
+            }}
+          >
+            MB
+          </button>
+        )}
       </div>
       {comp.justice ? (
         <div className="plate-slot">
           <Faceplate />
         </div>
+      ) : comp.multi ? (
+        <MultiBand />
       ) : (
         <div className="knob-row comp-knobs">
           <Knob label="Thresh" min={-60} max={0} value={comp.threshold} text={`${comp.threshold.toFixed(1)} dB`} onChange={(v) => set('threshold', v)} />
@@ -630,6 +841,50 @@ function FaceKnob({ knob }) {
           )}
         </div>
       )}
+    </div>
+  )
+}
+
+function StripFader({ value, label, onChange }) {
+  const ref = useRef(null)
+  const level = Math.min(1, Math.max(0, Number(value) || 0))
+  const drag = (event) => {
+    const box = ref.current?.getBoundingClientRect()
+    if (!box || box.height <= 0) return
+    const next = 1 - (event.clientY - box.top) / box.height
+    onChange(Math.min(1, Math.max(0, Math.round(next * 100) / 100)))
+  }
+  return (
+    <div
+      ref={ref}
+      className="v-fader"
+      role="slider"
+      tabIndex={0}
+      aria-label={label}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={Math.round(level * 100)}
+      onPointerDown={(event) => {
+        event.currentTarget.setPointerCapture(event.pointerId)
+        drag(event)
+      }}
+      onPointerMove={(event) => {
+        if (event.currentTarget.hasPointerCapture(event.pointerId)) drag(event)
+      }}
+      onKeyDown={(event) => {
+        const step = event.shiftKey ? 0.1 : 0.01
+        if (event.key === 'ArrowUp' || event.key === 'ArrowRight') {
+          event.preventDefault()
+          onChange(Math.min(1, Math.round((level + step) * 100) / 100))
+        }
+        if (event.key === 'ArrowDown' || event.key === 'ArrowLeft') {
+          event.preventDefault()
+          onChange(Math.max(0, Math.round((level - step) * 100) / 100))
+        }
+      }}
+    >
+      <i className="fill" style={{ height: `calc(${level} * (100% - 18px))` }} />
+      <i className="cap" style={{ bottom: `calc(${level} * (100% - 18px))` }} />
     </div>
   )
 }

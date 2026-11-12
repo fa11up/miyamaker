@@ -2,9 +2,11 @@ import { formatLp, formatSl } from './audio/grain.js'
 import { PAD_KEYS } from './keys.js'
 import { FACTORY, KIT_LAYOUT } from './audio/presets.js'
 import { defaultNumpadFx, normalizeFxPresets, normalizeNumpadFx } from './audio/numpadFx.js'
+import { CHORDS, PIANO_FROM, PIANO_WHITES, SCALES, TUNINGS, clampAxis, clampBank, clampBend, clampLead } from './audio/piano.js'
 import { autoTarget, normalizeAuto, normalizeLaunch, withSongValues } from './audio/arrange.js'
 import { snapOctave } from './audio/knee.js'
 import { defaultEq, normalizeEq } from './audio/eq.js'
+import { clampCrossovers, defaultBand, defaultCrossovers, normalizeBands } from './audio/multiband.js'
 import { defaultPatch, MAX_PARTIALS, MAX_UNISON, renderSynth, safeEntries, SYNTH_SR } from './audio/synth.js'
 import { SongChanged, bumpSong, exclusive, sameSong, songId } from './jobs.js'
 
@@ -65,6 +67,36 @@ export const model = {
   arrangeOpen: false,
   /** Share of the dock column given to the browser when the arranger is open too. */
   dockSplit: 0.5,
+  /** Right-hand numpad column. Wide windows only. Not a phone page. */
+  fxOpen: false,
+  fxWidth: 280,
+  /** Share of that column given to the numpad when the editor sits under it. */
+  fxSplit: 0.55,
+  /** Bytes per second while − or + bends the slots held with Shift. */
+  porta: 72,
+  /** Runtime. True when the music window's content box is wider than a phone. Not saved. */
+  fxWide: false,
+  /** Runtime. A phone, including landscape. The chord piano is one octave. Not saved. */
+  chordHand: true,
+  /** First white key of the on-screen piano, counted from A0, and how many whites show. */
+  pianoFrom: PIANO_FROM,
+  pianoWhites: PIANO_WHITES,
+  pianoRoot: 0,
+  pianoChord: '',
+  pianoInv: 0,
+  pianoScale: '',
+  pianoTuning: 'equal',
+  /** Pitch-wheel range in semitones. 24 is two octaves. */
+  pianoBend: 24,
+  /** Lead strip, in octaves relative to the root. */
+  pianoLeadLo: -1,
+  pianoLeadHi: 3,
+  /** What the vertical position of a tap changes. */
+  pianoAxis: 'velocity',
+  /** Which page of the 15 harmony buttons is showing. */
+  pianoBank: 0,
+  /** Height of the on-screen Keys, Chords, or Strum palette. */
+  pianoHeight: 240,
   help: false,
   about: false,
   tracker: { row: 0, col: 0, pair: 0, focus: false, hex: '', sign: 1, edit: false, step: 1, follow: true, grains: false },
@@ -475,6 +507,9 @@ export function defaultComp() {
     kSnap: true,
     lfo: { kPolice: defaultLfo(), kFold: defaultLfo() },
     eq: defaultEq(),
+    multi: false,
+    crossovers: defaultCrossovers(),
+    bands: [defaultBand(), defaultBand(), defaultBand(), defaultBand()],
   }
 }
 
@@ -499,6 +534,9 @@ export function normalizeComp(raw) {
       kFold: normalizeLfo(raw.lfo && typeof raw.lfo === 'object' ? raw.lfo.kFold : null),
     },
     eq: normalizeEq(raw.eq),
+    multi: !!raw.multi,
+    crossovers: clampCrossovers(raw.crossovers),
+    bands: normalizeBands(raw.bands),
   }
 }
 
@@ -691,11 +729,56 @@ export function findHit(step, padIndex) {
   return cell.findIndex((e) => e && e.pad === padIndex)
 }
 
-export function setHit(step, padIndex, patch = {}) {
+/** Sounding events for one pad on a step, lane order. A chord is several of these. */
+export function hitsFor(col, pad) {
+  const out = []
+  if (!col) return out
+  for (let lane = 0; lane < col.length; lane++) {
+    const ev = col[lane]
+    if (ev && !ev.off && ev.pad === pad) out.push({ lane, ev })
+  }
+  return out
+}
+
+/**
+ * Bars on one sequence row. Each pitch is its own bar, so a chord shows every note.
+ * Consecutive steps of one pitch join. Two notes of the same pitch on one step stay apart.
+ */
+export function noteRuns(steps, pad) {
+  const n = steps?.length || 0
+  const open = []
+  const runs = []
+  for (let s = 0; s < n; s++) {
+    const hits = hitsFor(steps[s], pad)
+    const used = new Set()
+    for (const run of open) {
+      if (run.end !== s - 1) continue
+      const idx = hits.findIndex((hit, i) => !used.has(i) && (hit.ev.pitch | 0) === run.pitch)
+      if (idx < 0) continue
+      used.add(idx)
+      run.end = s
+      run.ev = hits[idx].ev
+    }
+    for (let i = open.length - 1; i >= 0; i--) {
+      if (open[i].end !== s) open.splice(i, 1)
+    }
+    hits.forEach((hit, i) => {
+      if (used.has(i)) return
+      const run = { start: s, end: s, pitch: hit.ev.pitch | 0, ev: hit.ev }
+      open.push(run)
+      runs.push(run)
+    })
+  }
+  return runs
+}
+
+export function setHit(step, padIndex, patch = {}, matchPitch = null) {
   const cell = currentPattern().steps[step]
   if (!cell) return null
-  let lane = cell.findIndex((e) => e && e.pad === padIndex)
+  const wanted = matchPitch == null ? null : matchPitch | 0
+  let lane = cell.findIndex((e) => e && e.pad === padIndex && (wanted == null || (e.pitch | 0) === wanted))
   if (lane < 0) {
+    if (wanted != null) return null
     lane = cell.findIndex((e) => !e)
     if (lane < 0) return null
     cell[lane] = { pad: padIndex, vel: 0.9, pitch: 0, nudge: 0 }
@@ -709,10 +792,19 @@ export function setHit(step, padIndex, patch = {}) {
   return ev
 }
 
-export function clearHit(step, padIndex) {
+export function clearHit(step, padIndex, matchPitch = null) {
   const cell = currentPattern().steps[step]
-  const lane = findHit(step, padIndex)
-  if (lane >= 0) cell[lane] = null
+  if (!cell) return
+  if (matchPitch == null) {
+    const lane = findHit(step, padIndex)
+    if (lane >= 0) cell[lane] = null
+  } else {
+    const wanted = matchPitch | 0
+    for (let lane = 0; lane < cell.length; lane++) {
+      const ev = cell[lane]
+      if (ev && ev.pad === padIndex && (ev.pitch | 0) === wanted) cell[lane] = null
+    }
+  }
   touch(true)
 }
 
@@ -1054,19 +1146,26 @@ export function deleteSelection() {
   }).finally(() => touch(true))
 }
 
-export function cyclePlaySurface() {
-  const order = ['off', 'pads', 'keys', 'fx']
-  const cur = order.includes(model.playSurface) ? model.playSurface : 'pads'
-  const next = order[(order.indexOf(cur) + 1) % order.length]
+const SURFACES = ['off', 'pads', 'keys', 'chords', 'strum', 'fx']
+
+export function setPlaySurface(id) {
+  const next = SURFACES.includes(id) ? id : 'pads'
   model.playSurface = next
   if (next === 'pads') {
     model.keyboard = false
     model.keyMap = 'koala'
-  } else if (next === 'keys') {
+  } else if (next === 'keys' || next === 'chords' || next === 'strum') {
     model.keyboard = true
     model.keyMap = 'renoise'
   }
   touch(true)
+}
+
+export function cyclePlaySurface() {
+  const order = model.fxWide ? SURFACES.filter((id) => id !== 'fx') : SURFACES
+  let i = order.indexOf(model.playSurface)
+  if (i < 0) i = -1
+  setPlaySurface(order[(i + 1) % order.length])
 }
 
 export function setSongLoop(loop) {
@@ -1224,19 +1323,24 @@ export function moveSongCell(from, to) {
 }
 
 export function setScreen(id) {
-  model.screen = id
-  if (id === 'track') {
-    model.tracker.focus = true
-    model.tracker.edit = true
-  } else {
-    model.tracker.focus = false
+  if (id === 'fx' && model.fxWide) {
+    model.fxOpen = true
+    if ((model.fxWidth || 0) < 168) model.fxWidth = 280
+    touch(true)
+    return
   }
+  model.screen = id
+  if (id === 'track') model.tracker.focus = true
+  else model.tracker.focus = false
   touch(false)
 }
 
 export function cycleScreen(dir) {
-  const order = ['pads', 'edit', 'seq', 'mix', 'track', 'synth', 'fx']
+  const order = model.fxWide
+    ? ['pads', 'edit', 'seq', 'mix', 'track', 'synth']
+    : ['pads', 'edit', 'seq', 'mix', 'track', 'synth', 'fx']
   let i = order.indexOf(model.screen)
+  if (i < 0) i = 0
   i = (i + dir + order.length) % order.length
   setScreen(order[i])
 }
@@ -1277,6 +1381,28 @@ function clampDockSplit(value) {
   return Math.max(0.15, Math.min(0.85, n))
 }
 
+function clampFxSplit(value) {
+  const n = Number(value)
+  if (!Number.isFinite(n)) return 0.55
+  return Math.max(0.22, Math.min(0.78, n))
+}
+
+function clampPorta(value) {
+  const n = Number(value)
+  if (!Number.isFinite(n)) return 72
+  return Math.max(1, Math.min(255, Math.round(n)))
+}
+
+export function clampPianoHeight(value) {
+  const n = Number(value)
+  if (!Number.isFinite(n)) return 240
+  return Math.max(180, Math.min(640, Math.round(n)))
+}
+
+function knownId(list, value, fallback) {
+  return list.some((item) => item.id === value) ? value : fallback
+}
+
 export function save() {
   saveTimer = 0
   if (typeof localStorage === 'undefined') return
@@ -1302,7 +1428,24 @@ export function save() {
     dockOpen: model.dockOpen !== false,
     arrangeOpen: !!model.arrangeOpen,
     dockSplit: clampDockSplit(model.dockSplit),
-    playSurface: ['off', 'pads', 'keys', 'fx'].includes(model.playSurface) ? model.playSurface : 'pads',
+    fxOpen: !!model.fxOpen,
+    fxWidth: Math.max(168, Math.min(640, model.fxWidth | 0 || 280)),
+    fxSplit: clampFxSplit(model.fxSplit),
+    porta: clampPorta(model.porta),
+    pianoFrom: Math.max(0, Math.min(51, model.pianoFrom | 0)),
+    pianoWhites: Math.max(7, Math.min(21, model.pianoWhites | 0 || PIANO_WHITES)),
+    pianoRoot: Math.max(0, Math.min(11, model.pianoRoot | 0)),
+    pianoChord: knownId(CHORDS, model.pianoChord, ''),
+    pianoInv: Math.max(-3, Math.min(3, model.pianoInv | 0)),
+    pianoScale: knownId(SCALES, model.pianoScale, ''),
+    pianoTuning: knownId(TUNINGS, model.pianoTuning, 'equal'),
+    pianoBend: clampBend(model.pianoBend),
+    pianoLeadLo: clampLead(model.pianoLeadLo, model.pianoLeadHi).lo,
+    pianoLeadHi: clampLead(model.pianoLeadLo, model.pianoLeadHi).hi,
+    pianoAxis: clampAxis(model.pianoAxis),
+    pianoBank: clampBank(model.pianoBank),
+    pianoHeight: clampPianoHeight(model.pianoHeight),
+    playSurface: SURFACES.includes(model.playSurface) ? model.playSurface : 'pads',
     settings: model.settings,
     octave: model.octave,
     keyMap: model.keyMap === 'renoise' ? 'renoise' : 'koala',
@@ -1608,13 +1751,30 @@ export function boot() {
       songLoop: data.songLoop === 'section' || data.songLoop === 'once' ? data.songLoop : 'wrap',
       songLaunch: normalizeLaunch(data.songLaunch),
       songCursor: Math.max(0, data.songCursor | 0),
-      playSurface: data.playSurface === 'off' || data.playSurface === 'keys' || data.playSurface === 'pads' || data.playSurface === 'fx'
+      playSurface: SURFACES.includes(data.playSurface)
         ? data.playSurface
         : (data.keyMap === 'renoise' ? 'keys' : 'pads'),
       arrangeOpen: !!data.arrangeOpen,
       dockSplit: clampDockSplit(data.dockSplit),
+      fxOpen: !!data.fxOpen,
+      fxWidth: Math.max(168, Math.min(640, Number(data.fxWidth) || 280)),
+      fxSplit: clampFxSplit(data.fxSplit),
+      porta: clampPorta(data.porta),
+      pianoFrom: Math.max(0, Math.min(51, Number.isFinite(Number(data.pianoFrom)) ? Number(data.pianoFrom) : PIANO_FROM)),
+      pianoWhites: Math.max(7, Math.min(21, Number(data.pianoWhites) || PIANO_WHITES)),
+      pianoRoot: Math.max(0, Math.min(11, Number(data.pianoRoot) || 0)),
+      pianoChord: knownId(CHORDS, data.pianoChord, ''),
+      pianoInv: Math.max(-3, Math.min(3, Number(data.pianoInv) || 0)),
+      pianoScale: knownId(SCALES, data.pianoScale, ''),
+      pianoTuning: knownId(TUNINGS, data.pianoTuning, 'equal'),
+      pianoBend: clampBend(data.pianoBend),
+      pianoLeadLo: clampLead(data.pianoLeadLo, data.pianoLeadHi).lo,
+      pianoLeadHi: clampLead(data.pianoLeadLo, data.pianoLeadHi).hi,
+      pianoAxis: clampAxis(data.pianoAxis),
+      pianoBank: clampBank(data.pianoBank),
+      pianoHeight: clampPianoHeight(data.pianoHeight),
     })
-    model.keyboard = model.playSurface === 'keys' || (model.playSurface === 'off' && model.keyMap === 'renoise')
+    model.keyboard = model.playSurface === 'keys' || model.playSurface === 'chords' || model.playSurface === 'strum' || (model.playSurface === 'off' && model.keyMap === 'renoise')
     if (data.v === 2) {
       restorePatterns(data.patterns)
       model.pattern = int(data.pattern, 0, 0, 255)
@@ -1625,10 +1785,7 @@ export function boot() {
     if (Number.isFinite(data.editStep)) model.tracker.step = Math.max(0, Math.min(16, data.editStep | 0))
     model.tracker.grains = !!data.grainCols
     model.dockOpen = data.dockOpen !== false
-    if (model.screen === 'track') {
-      model.tracker.focus = true
-      model.tracker.edit = true
-    }
+    if (model.screen === 'track') model.tracker.focus = true
     audioBank.clear()
     model.pads.forEach((pad, i) => {
       const next = normalizePad(pad, i)

@@ -1,4 +1,5 @@
 import { importFile, importRemote, noteOff, noteOn } from './audio/engine.js'
+import { importPictureUrl } from './media/pictures.js'
 import { beginUndo, endUndo, stashUndo } from './history.js'
 import { loadCached, readDirectoryFile } from './media/library.js'
 import {
@@ -356,6 +357,8 @@ export async function dropSample(index, payload) {
       await importFile(file, index)
     } else if (payload.kind === 'remote') {
       await importRemote(payload.url, index, payload.name)
+    } else if (payload.kind === 'picture') {
+      await importPictureUrl(payload.url, payload.name, { toPad: true, index })
     }
   } catch (error) {
     model.browserNote = error.message || 'Could not drop that sample'

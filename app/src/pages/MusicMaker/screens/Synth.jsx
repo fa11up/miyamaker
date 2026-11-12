@@ -1,16 +1,39 @@
-import { useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { FACTORY, mutatePatch } from '../audio/presets.js'
-import { defaultPatch, renderSynth } from '../audio/synth.js'
-import { previewPcm } from '../audio/engine.js'
+import { defaultPatch, renderSynth, takeDepth, takeSeconds } from '../audio/synth.js'
+import { previewPcm, renderSynthTake, startSynthTake, stopSynthTake, synthTakeStatus } from '../audio/engine.js'
 import { model, renderPad, selectedPad, touch } from '../model.js'
 import { useModel } from '../useModel.js'
 import { HelpButton, Knob } from '../widgets.jsx'
+
+const DEPTHS = [8, 16, 24, 32]
+
+function takeClock(seconds) {
+  return seconds >= 1 ? `${seconds.toFixed(2)}s` : `${Math.round(seconds * 1000)} ms`
+}
 
 export function Synth() {
   useModel()
   const pad = selectedPad()
   const patch = ensureDraft(pad)
   const timer = useRef(0)
+  const [depth, setDepth] = useState(16)
+  const [take, setTake] = useState(() => synthTakeStatus())
+  useEffect(() => {
+    if (!take.on) return undefined
+    const id = window.setInterval(() => setTake(synthTakeStatus()), 80)
+    return () => window.clearInterval(id)
+  }, [take.on])
+  useEffect(() => () => {
+    if (synthTakeStatus().on) stopSynthTake()
+  }, [])
+  const armTake = () => {
+    if (synthTakeStatus().on) {
+      setTake(stopSynthTake())
+      return
+    }
+    startSynthTake(depth).then((status) => setTake(status))
+  }
   const edit = (partial) => {
     Object.assign(patch, partial)
     touch(false)
@@ -85,7 +108,43 @@ export function Synth() {
         >
           Mutate
         </button>
+        <div className="synth-take" role="group" aria-label="Synth take">
+          {DEPTHS.map((bits) => (
+            <button
+              key={bits}
+              type="button"
+              className={`btn ${takeDepth(depth) === bits ? 'on' : ''}`}
+              aria-pressed={takeDepth(depth) === bits}
+              aria-label={`${bits}-bit, ${takeClock(takeSeconds(bits))}`}
+              disabled={take.on}
+              onClick={() => setDepth(bits)}
+            >
+              {bits}
+            </button>
+          ))}
+          <button type="button" className={`btn rec ${take.on ? 'on' : ''}`} onClick={armTake}>
+            {take.on ? 'Stop take' : 'Take'}
+          </button>
+          <span className="synth-take-time" role="status">
+            {take.on
+              ? `${takeClock(take.samples / 44100)} / ${takeClock(take.seconds)}`
+              : `${takeDepth(depth)}-bit · ${takeClock(takeSeconds(depth))}`}
+          </span>
+          <button
+            type="button"
+            className="btn"
+            disabled={!take.ready}
+            onClick={() => {
+              renderSynthTake().then((ok) => {
+                if (ok) setTake(synthTakeStatus())
+              })
+            }}
+          >
+            Take to pad
+          </button>
+        </div>
       </div>
+      <p className="hint synth-live">Keys, chords, strum, and MIDI play this patch. A take holds 64 KB. Take to pad stores that recording.</p>
       <div className="synth-grid">
         <fieldset className="group">
           <legend>Oscillators</legend>

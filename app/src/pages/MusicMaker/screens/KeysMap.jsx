@@ -94,6 +94,8 @@ export function KeysMap({ onClose }) {
   return (
     <Dialog title="Pad and Keys" onClose={onClose}>
       <div className="keys-map">
+        <p>Make music every day. A little time at the instrument keeps you creative, and it keeps you at one with God's creation.</p>
+        <p>Pad is the drums. Keys is a melody on the selected pad. The pictures below are those keys.</p>
         <h3>Pad</h3>
         <p>This bank is a 4 by 4 grid. Read it left to right, top to bottom. The corner number is the pad.</p>
         <div className="keys-grids">

@@ -4,7 +4,7 @@ import { normalizeAuto, normalizeLaunch, withSongValues } from './arrange.js'
 import { FACTORY, KIT_LAYOUT } from './presets.js'
 import { renderSynth } from './synth.js'
 import { beginUndo, endUndo, songSwitch, stashUndo } from '../history.js'
-import { bumpSong, exclusive, loadCurrent, loadTicket } from '../jobs.js'
+import { bumpSong, exclusive, loadCurrent, loadTicket, sameSong } from '../jobs.js'
 import { ensureLibrary } from '../media/library.js'
 import { allowedMediaUrl } from '../media/allow.js'
 import { fetchCapped, TooLarge } from '../media/capped.js'
@@ -634,6 +634,30 @@ async function clearKitNow() {
 /** Kit loads run one at a time with song loads and undo, so two never mix their pads. */
 export function loadKit(doc) {
   return exclusive(() => loadKitNow(doc))
+}
+
+/**
+ * The same load, dropped when the song changed while the pictures were being read.
+ * False means nothing was replaced.
+ */
+export function loadKitIfCurrent(doc, song) {
+  return exclusive(() => loadKitIfCurrentNow(doc, song))
+}
+
+async function loadKitIfCurrentNow(doc, song) {
+  if (!sameSong(song)) return false
+  if (!doc || doc.type !== 'k1t') throw new Error('That file is not a .k1t kit')
+  beginUndo()
+  try {
+    const applied = await applyKit(doc, () => sameSong(song))
+    if (!applied) return false
+    model.kitName = plainText(doc.name, 48) || 'Kit'
+    model.browserNote = `${model.kitName} loaded`
+    touch(true)
+    return true
+  } finally {
+    endUndo()
+  }
 }
 
 async function loadKitNow(doc) {

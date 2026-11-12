@@ -15,13 +15,16 @@ export function PadMenu() {
       closePadMenu()
     }
     const key = (event) => {
-      if (event.key === 'Escape') closePadMenu()
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      event.stopPropagation()
+      closePadMenu()
     }
     window.addEventListener('pointerdown', down)
-    window.addEventListener('keydown', key)
+    window.addEventListener('keydown', key, true)
     return () => {
       window.removeEventListener('pointerdown', down)
-      window.removeEventListener('keydown', key)
+      window.removeEventListener('keydown', key, true)
     }
   }, [menu])
   if (!menu) return null

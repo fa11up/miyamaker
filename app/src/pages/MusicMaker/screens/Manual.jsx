@@ -95,7 +95,8 @@ function Index({ onOpen }) {
     <>
       <h2>Manual</h2>
       <p className="manual-note">{ARTICLES.length} articles. Read any of them, in any order.</p>
-      <Rich text="The ? cards on each page show the buttons. This book is the longer version. Start at [[Welcome]]." onOpen={onOpen} />
+      <p className="manual-note">Make music every day. A little time at the instrument keeps you creative, and it keeps you at one with God's creation.</p>
+      <Rich text="The ? cards on each page show the buttons. This book is the longer version. The notes under each heading say what that part is. The keys are last, in [[Shortcuts]]. Start at [[Welcome]]." onOpen={onOpen} />
       {CATEGORIES.map((cat) => {
         const list = articlesIn(cat.id)
         if (!list.length) return null
@@ -158,11 +159,11 @@ const CHIP = {
   Vel: { label: 'Vel', kind: 'btn' },
   'Bus FX': { label: 'Bus FX', kind: 'btn' },
   SHIFT: { label: 'SHIFT', kind: 'btn' },
-  '1–8': { label: '1–8', kind: 'btn' },
   'Mint song': { label: 'Mint song…', kind: 'btn' },
   'Mint kit': { label: 'Mint kit…', kind: 'btn' },
   'Mint audio': { label: 'Mint audio…', kind: 'btn' },
   Welcome: null,
+  Shortcuts: null,
 }
 
 function Rich({ text, onOpen }) {
@@ -174,10 +175,11 @@ function Rich({ text, onOpen }) {
         if (!named) return <span key={i}>{part}</span>
         const chip = CHIP[named[1]]
         if (chip) return <CoachChip key={i} label={chip.label} kind={chip.kind} />
-        if (named[1] === 'Welcome') {
+        const linked = ARTICLES.find((item) => item.title === named[1])
+        if (linked) {
           return (
-            <button key={i} type="button" className="manual-link on" onClick={() => onOpen('welcome')}>
-              Welcome
+            <button key={i} type="button" className="manual-link on" onClick={() => onOpen(linked.slug)}>
+              {linked.title}
             </button>
           )
         }

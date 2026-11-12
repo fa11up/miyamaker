@@ -38,11 +38,11 @@ import {
 } from '../src/pages/MusicMaker/audio/song.js'
 import { buildPublish } from '../src/pages/MusicMaker/publish.js'
 import { ensureLibrary, removeCached } from '../src/pages/MusicMaker/media/library.js'
-import { linksFromItem, loadWalletPacks, pageTokens, walletSummary } from '../src/pages/MusicMaker/media/nft.js'
+import { kitPictures, linksFromItem, loadWalletPacks, mediaUrl, pageTokens, walletSummary } from '../src/pages/MusicMaker/media/nft.js'
 import { fetchCapped, readCapped } from '../src/pages/MusicMaker/media/capped.js'
 import { heldBytes, trimStack } from '../src/pages/MusicMaker/history.js'
 import { bounceSeconds, BOUNCE_MAX_SECONDS, looksLikeVideo } from '../src/pages/MusicMaker/audio/engine.js'
-import { imageSize } from '../src/pages/MusicMaker/audio/imageSpectrum.js'
+import { imageSize, imageToPcm, kitHitSettings } from '../src/pages/MusicMaker/audio/imageSpectrum.js'
 
 // The sampler's state is plain JS; the tests poke at it freely, so it is typed loosely here.
 const model = musicModel as unknown as { pads: any[]; buses: any[]; [key: string]: any }
@@ -304,13 +304,82 @@ test('a wallet listing pages until done, and a failed or capped one says partial
   assert.equal(result.packs[0].name, 'Collection')
   assert.deepEqual(result.locked.map((c: any) => c.id), ['ravepigs'])
   assert.match(walletSummary(result), /Showing 1 token with media.*More not loaded/)
-  assert.equal(walletSummary({ ...result, partial: false, shown: 0 }), 'No audio or video in this wallet yet')
+  assert.equal(walletSummary({ ...result, partial: false, shown: 0 }), 'No audio, video, or pictures in this wallet yet')
 
   // The balance check failing too: Ravepigs is "not checked", never "locked".
   const worse = async (url: string) => (String(url).includes('token-balances') ? new Response('x', { status: 500 }) : flaky(url))
   const unknown = await loadWalletPacks('0x' + 'a'.repeat(40), { fetchImpl: worse as any })
   assert.deepEqual(unknown.locked, [])
   assert.deepEqual(unknown.unknown.map((c: any) => c.id), ['ravepigs'])
+})
+
+test('a png or jpg in a wallet can become a sample, and a Milady one can fill a kit', async () => {
+  const milady = '0x5af0d9827e0c53e4799bb226655a1de152a425a5'
+  assert.equal(mediaUrl('ipfs://bafy/milady.png')?.url, 'https://ipfs.filebase.io/ipfs/bafy/milady.png')
+  assert.equal(mediaUrl('https://dweb.link/ipfs/bafy/1.png')?.url, 'https://ipfs.filebase.io/ipfs/bafy/1.png')
+  assert.equal(mediaUrl('https://ipfs.io/ipfs/bafy/1.png')?.url, 'https://ipfs.filebase.io/ipfs/bafy/1.png')
+  assert.equal(
+    mediaUrl('https://gateway.pinata.cloud/ipfs/bafy/1.png')?.url,
+    'https://gateway.pinata.cloud/ipfs/bafy/1.png',
+  )
+  assert.equal(
+    mediaUrl('https://bafybeifcsnqi52gixsq.ipfs.dweb.link/a.png')?.url,
+    'https://ipfs.filebase.io/ipfs/bafybeifcsnqi52gixsq/a.png',
+  )
+  assert.equal(mediaUrl('ipfs://bafy/milady.png')?.kind, 'image')
+  assert.equal(
+    mediaUrl('https://miladyaura.mypinata.cloud/ipfs/QmRY/1.png')?.url,
+    'https://ipfs.filebase.io/ipfs/QmRY/1.png',
+  )
+  assert.equal(mediaUrl('https://x.test/a.gif', { picture: true }), null)
+  assert.equal(mediaUrl('https://x.test/no-extension', { picture: true })?.kind, 'image')
+  assert.equal(linksFromItem({ image_url: 'https://x.test/a.gif' }).length, 0)
+  assert.equal(linksFromItem({ animation_url: 'https://x.test/clip' })[0].kind, 'audio')
+
+  const item = {
+    id: 7,
+    image_url: 'ipfs://bafy/milady.png',
+    token: { address_hash: milady, name: 'whatever' },
+    metadata: { name: 'Milady 7', image: 'https://www.miladymaker.net/milady/7.png' },
+  }
+  const other = {
+    id: 1,
+    image_url: 'https://ipfs.io/ipfs/bafy/other.png',
+    token: { address_hash: '0x' + '9'.repeat(40), name: 'Other' },
+    metadata: { name: 'Other 1' },
+  }
+  const fetchImpl = async (url: string) => {
+    if (String(url).includes('token-balances')) return new Response('[]', { status: 200 })
+    if (String(url).includes('ERC-1155')) return page([])
+    return page([item, other])
+  }
+  const result = await loadWalletPacks('0x' + 'c'.repeat(40), { fetchImpl: fetchImpl as any })
+  const miladyPack = result.packs.find((pack: any) => pack.ecosystem)
+  assert.equal(miladyPack.name, 'Milady Maker')
+  assert.equal(miladyPack.tokens.length, 1)
+  assert.ok(result.packs.some((pack: any) => !pack.ecosystem && pack.tokens.length === 1))
+  const one = kitPictures(result.packs)
+  assert.equal(one.total, 1)
+  assert.match(one.picks[0].url, /milady\.png$/)
+  assert.equal(one.picks[0].name, 'Milady 7')
+
+  const many = kitPictures([{
+    ecosystem: true,
+    name: 'Milady Maker',
+    tokens: Array.from({ length: 20 }, (_, i) => ({
+      name: `Milady ${i}`,
+      links: [{ kind: 'image', url: `https://ipfs.io/ipfs/bafy/${i}.png` }, { kind: 'audio', url: 'https://x.test/a.mp3' }],
+    })),
+  }])
+  assert.equal(many.total, 20)
+  assert.equal(many.picks.length, 16)
+
+  const pixels = new Uint8Array(8 * 8 * 4).fill(180)
+  const hit = imageToPcm({ width: 8, height: 8, data: pixels }, kitHitSettings(0))
+  assert.equal(hit.sr, 44100)
+  assert.equal(hit.pcm.length, 44100)
+  assert.equal(kitHitSettings(3).octave, 5)
+  assert.equal(kitHitSettings(4).octave, 2)
 })
 
 test('walking metadata links is bounded in depth and count', () => {
