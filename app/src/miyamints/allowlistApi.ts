@@ -45,6 +45,19 @@ export async function fetchProof(root: string, address: string, fetcher: Fetch =
   return { state: 'listed', proof }
 }
 
+/** An 'unknown' answer as an error, so a query retries it and is never kept as an answer. */
+export class ProofUnknown extends Error {}
+
+/**
+ * fetchProof for a query: 'unknown' throws (ProofUnknown, its message the why), so react-query retries it and doesn't
+ * cache it for minutes; the definite answers come back as they are.
+ */
+export async function fetchProofOrThrow(root: string, address: string, fetcher: Fetch = fetch) {
+  const a = await fetchProof(root, address, fetcher)
+  if (a.state === 'unknown') throw new ProofUnknown(a.why)
+  return a
+}
+
 /** A list's name and size, from the route (snapshots carry a name; a pasted list has none). */
 export async function fetchListInfo(
   root: string,

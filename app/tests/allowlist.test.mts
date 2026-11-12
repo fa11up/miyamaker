@@ -26,11 +26,12 @@ import {
   verifyProof,
 } from '../api/_lib/allowlist.ts'
 
-const { fetchProof, saveList } = await import('../src/miyamints/allowlistApi.ts')
-const { buildDropArgs, buildPhases, EMPTY_FORM, EMPTY_PHASE, phaseLine, phaseList, validateStep, ZERO_ROOT } =
+const { fetchProof, fetchProofOrThrow, ProofUnknown, saveList } = await import('../src/miyamints/allowlistApi.ts')
+const { clearPendingMint, pendingMintKey, readPendingMint, savePendingMint } = await import('../src/miyamints/pendingMint.ts')
+const { buildDropArgs, buildPhases, EMPTY_FORM, EMPTY_PHASE, freeClaim, phaseLine, phaseList, snapshotsFor, validateStep, ZERO_ROOT } =
   await import('../src/miyamints/launch.ts')
 const { SNAPSHOTS } = await import('../src/miyamints/snapshots.ts')
-const { defaultPhase, listStanding, livePhases } = await import('../src/pages/Mint/liveMints.ts')
+const { defaultPhase, listStanding, livePhases, mergeReads, readKey, standingWords } = await import('../src/pages/Mint/liveMints.ts')
 const { phaseGate } = await import('../src/miyamints/precheck.ts')
 
 // vm.addr(1..5): the same list, root and proofs as AllowlistProof.t.sol (and @openzeppelin/merkle-tree 1.0.8).
@@ -430,17 +431,95 @@ test('livePhases lists every running phase, public and list, with what each can 
   )
 })
 
-test('listStanding: connect, checking, not listed, claimed, full, eligible', () => {
+test('listStanding: connect, checking, not listed, claimed, full, sold out, eligible', () => {
   const s = (o: object) => listStanding({ maxPerWallet: 1, account: FIXTURE[0], ...o })
   assert.equal(listStanding({ maxPerWallet: 1 }), 'connect')
   assert.equal(s({}), 'checking')
   assert.equal(s({ proof: { state: 'unknown' } }), 'unknown')
   assert.equal(s({ proof: { state: 'no-list' } }), 'no-list')
   assert.equal(s({ proof: { state: 'not-listed' }, minted: 0 }), 'not-listed')
-  assert.equal(s({ proof: { state: 'listed' }, minted: 1, left: 0 }), 'claimed', 'claimed says so even when full')
-  assert.equal(s({ proof: { state: 'listed' }, minted: 0, left: 0 }), 'full')
+  assert.equal(s({ proof: { state: 'listed' }, minted: 1, capLeft: 0 }), 'claimed', 'claimed says so even when full')
+  assert.equal(s({ proof: { state: 'listed' }, minted: 0, capLeft: 0, publicRemaining: 50 }), 'full')
+  assert.equal(s({ proof: { state: 'listed' }, minted: 0, capLeft: 5, publicRemaining: 0 }), 'soldout', 'the list has spots, the collection has none')
+  assert.equal(s({ proof: { state: 'listed' }, minted: 0, publicRemaining: 0 }), 'soldout')
   assert.equal(s({ proof: { state: 'listed' } }), 'checking', 'the count is still being read')
-  assert.equal(s({ proof: { state: 'listed' }, minted: 0, left: 5 }), 'eligible')
+  assert.equal(s({ proof: { state: 'listed' }, mintedFailed: true }), 'unknown', 'a failed count is not "checking" forever')
+  assert.equal(s({ proof: { state: 'listed' }, minted: 0, capLeft: 5 }), 'eligible')
+})
+
+test('the standing words say the number a wallet claimed, and sold out apart from a full list', () => {
+  assert.equal(standingWords('claimed', 1), 'This wallet has claimed its 1 piece on this list.')
+  assert.equal(standingWords('claimed', 3), 'This wallet has claimed all 3 of its pieces on this list.')
+  assert.match(standingWords('full', 1), /Every spot on this list/)
+  assert.match(standingWords('soldout', 1), /sold out/)
+})
+
+test("a proof answer of 'unknown' throws for the query (retried, never cached), and carries its why", async () => {
+  await assert.rejects(fetchProofOrThrow(ROOT, OUTSIDER, fakeFetch(503, { error: 'x' })), (e: Error) => {
+    assert.ok(e instanceof ProofUnknown)
+    assert.match(e.message, /Couldn't check the list/)
+    return true
+  })
+  assert.deepEqual(await fetchProofOrThrow(ROOT, OUTSIDER, fakeFetch(200, { listed: false })), { state: 'not-listed' })
+  assert.deepEqual(await fetchProofOrThrow(ROOT, OUTSIDER, fakeFetch(404, { root: ROOT })), { state: 'no-list' })
+})
+
+test('a refetch that fails keeps each read\'s last good answer; unknown only when nothing ever answered', () => {
+  const memory = new Map()
+  const keys = ['1:0xa:phases', '1:0xa:totalSupply']
+  const good = [{ status: 'success' as const, result: ['p'] }, { status: 'success' as const, result: 5n }]
+  const fail = { status: 'failure' as const, error: new Error('HTTP 429') }
+  const never = mergeReads(new Map(), keys, [fail, fail])
+  assert.equal(never.everGood, false)
+  assert.equal(never.allFailed, true)
+  assert.equal(mergeReads(memory, keys, good).everGood, true)
+  const after = mergeReads(memory, keys, [fail, fail])
+  assert.equal(after.allFailed, true)
+  assert.deepEqual(after.results, good, 'every read failed (one multicall): the last good values stay')
+  const partly = mergeReads(memory, keys, [fail, { status: 'success', result: 6n }])
+  assert.deepEqual(partly.results?.map((r) => r?.result), [['p'], 6n])
+  assert.equal(mergeReads(new Map(), keys, undefined).results, undefined)
+  assert.equal(readKey({ chainId: 1, address: '0xAB', functionName: 'mintedInPhase', args: [1n, '0xC'] }), '1:0xab:mintedInPhase:1,0xC')
+})
+
+test('a sent mint is remembered per chain, drop and wallet until it settles', () => {
+  const mem = new Map<string, string>()
+  const store = { getItem: (k: string) => mem.get(k) ?? null, setItem: (k: string, v: string) => void mem.set(k, v), removeItem: (k: string) => void mem.delete(k) }
+  const key = pendingMintKey(1, FIXTURE[0], FIXTURE[1])
+  assert.equal(key, pendingMintKey(1, FIXTURE[0].toLowerCase(), FIXTURE[1].toUpperCase().replace('0X', '0x')))
+  assert.notEqual(key, pendingMintKey(1, FIXTURE[0], FIXTURE[2]), 'another wallet is not blocked')
+  const hash = `0x${'ab'.repeat(32)}` as const
+  savePendingMint(key, hash, 1000, store)
+  assert.equal(readPendingMint(key, 2000, store), hash)
+  assert.equal(readPendingMint(key, 1000 + 25 * 3600_000, store), undefined, 'a day later it is let go')
+  clearPendingMint(key, store)
+  assert.equal(readPendingMint(key, 2000, store), undefined)
+  mem.set(key, '{bad')
+  assert.equal(readPendingMint(key, 2000, store), undefined)
+  const broken = { getItem: () => { throw new Error('denied') }, setItem: () => { throw new Error('denied') }, removeItem: () => {} }
+  assert.doesNotThrow(() => savePendingMint(key, hash, 1, broken))
+  assert.equal(readPendingMint(key, 1, broken), undefined)
+})
+
+test('"Make it a free claim (1 per wallet)" makes it free and 1 per wallet, whatever limit was typed before', () => {
+  const p = freeClaim({ ...EMPTY_PHASE, maxPerWallet: '5', prices: { [zeroAddress]: '0.01', '0xabc': '3' } }, zeroAddress)
+  assert.equal(p.maxPerWallet, '1')
+  assert.deepEqual(p.prices, { [zeroAddress]: '0' })
+})
+
+test('holder lists are offered only on their own chain', () => {
+  assert.deepEqual(snapshotsFor(1, SNAP).map((x) => x.root), [ROOT])
+  assert.deepEqual(snapshotsFor(11155111, SNAP), [])
+  const f = {
+    ...EMPTY_FORM,
+    type: 'drop' as const,
+    supply: '100',
+    tokens: [zeroAddress],
+    phases: [{ ...EMPTY_PHASE, access: 'list' as const, listSource: 'snapshot' as const, snapshotRoot: SNAPSHOTS[0]!.root, prices: free }],
+  }
+  const ctx = { now: NOW, chainId: 1, minAlignmentBps: 1000, protocolFeeBps: 100, image: { hasFile: true }, audio: { hasFile: false } }
+  assert.equal(validateStep('sale', f, ctx).phases, undefined)
+  assert.match(validateStep('sale', f, { ...ctx, chainId: 11155111 }).phases ?? '', /Pick a holder list/)
 })
 
 test('defaultPhase opens on a claim the wallet can make, else the public sale', () => {

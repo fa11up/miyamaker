@@ -1,6 +1,6 @@
 import { useConnectModal } from '@rainbow-me/rainbowkit'
 import { useQueries } from '@tanstack/react-query'
-import { readContract } from '@wagmi/core'
+import { getAccount, readContract } from '@wagmi/core'
 import { useEffect, useMemo, useState } from 'react'
 import type { Address, Hash } from 'viem'
 import { erc20Abi, isAddress } from 'viem'
@@ -17,8 +17,8 @@ import NftImage from '@/components/NftImage'
 import type { SupportedChainId } from '@/config/wagmi'
 import { explorerUrl, wagmiConfig } from '@/config/wagmi'
 import type { PayToken } from '@/miyamints/tokens'
-import type { ProofAnswer } from '@/miyamints/allowlistApi'
-import { fetchListInfo, fetchProof } from '@/miyamints/allowlistApi'
+import { fetchListInfo, fetchProofOrThrow } from '@/miyamints/allowlistApi'
+import { clearPendingMint, pendingMintKey, readPendingMint, savePendingMint } from '@/miyamints/pendingMint'
 import { revertName } from '@/miyamints/errors'
 import { COULDNT_CHECK_WORDS, freshCost, phaseGate, priceRoseWords } from '@/miyamints/precheck'
 import { approveWords, ETH, isEth, knownToken, payPlan, pickToken, sameToken, tokenLabel } from '@/miyamints/tokens'
@@ -33,7 +33,7 @@ import {
   listStanding,
   mintableNow,
   STANDING_BUTTON,
-  STANDING_WORDS,
+  standingWords,
   toCard,
 } from '@/pages/Mint/liveMints'
 import type { MachineStatus } from '@/pages/Mint/handheld/MintCart'
@@ -45,7 +45,14 @@ import MintNeeds from '@/pages/Mint/MintNeeds'
 import { erc721mAbi } from '@/pages/Mint/Miyamini/abi'
 import { describeError } from '@/pages/Mint/Miyamini/useMiyamini'
 import type { ReadResult } from '@/pages/Mint/useLiveMints'
-import { dropAbi, dropCalls, erc721mCalls, readsFromResults, useContractImage } from '@/pages/Mint/useLiveMints'
+import {
+  dropAbi,
+  dropCalls,
+  erc721mCalls,
+  readsFromResults,
+  useContractImage,
+  useStickyReads,
+} from '@/pages/Mint/useLiveMints'
 import { space, text } from '@/theme/tokens'
 
 import { mintedWhere } from './where'
@@ -59,16 +66,19 @@ import { mintedWhere } from './where'
  */
 
 const MAX_PER_TX = 10
+/** Said when the wallet changed between pressing Mint and the wallet prompt: the checks were for the other one. */
+const WALLET_CHANGED_WORDS = 'Your wallet changed since you pressed Mint. Nothing was sent. Check the screen and try again.'
 
 function useCollection(card: LiveMintCard) {
   const address = card.address as Address
-  const reads = useReadContracts({
-    contracts: card.kind === 'erc721m' ? erc721mCalls(address, card.chainId) : dropCalls(address, card.chainId),
-    query: { refetchInterval: 15_000 },
-  })
-  const r = reads.data ? readsFromResults(card.kind, reads.data as ReadResult[]) : undefined
+  const calls = card.kind === 'erc721m' ? erc721mCalls(address, card.chainId) : dropCalls(address, card.chainId)
+  const reads = useReadContracts({ contracts: calls, query: { refetchInterval: 15_000 } })
+  // A poll that fails (one read, or the whole multicall) keeps the last good values: "Unavailable" only when the sale
+  // has never been read.
+  const sticky = useStickyReads(calls, reads as { data?: readonly ReadResult[]; isError: boolean })
+  const r = sticky.data ? readsFromResults(card.kind, sticky.data as ReadResult[]) : undefined
   const live = r ? toCard({ ...card, address }, r, card.source) : card
-  return { reads: r, live, isLoading: reads.isLoading, isError: reads.isError && !reads.data, refetch: reads.refetch }
+  return { reads: r, live, isLoading: reads.isLoading && !sticky.data, isError: sticky.isError, refetch: reads.refetch }
 }
 
 /**
@@ -88,6 +98,22 @@ function useMint(
   const balance = useBalance({ address, chainId, query: { enabled: !!address } })
   const write = useWriteContract()
   const { outcome } = useTxOutcome(chainId, write.data as Hash | undefined)
+  // A drop mint this wallet sent that hasn't settled, remembered past a reload: no second claim while it may land.
+  const pendingKey = card.kind === 'drop' && address && card.address ? pendingMintKey(chainId, card.address, address) : undefined
+  const [earlier, setEarlier] = useState<Hash>()
+  useEffect(() => setEarlier(pendingKey ? readPendingMint(pendingKey) : undefined), [pendingKey])
+  const earlierOutcome = useTxOutcome(chainId, write.data ? undefined : earlier).outcome
+  useEffect(() => {
+    if (write.data && pendingKey) savePendingMint(pendingKey, write.data)
+  }, [write.data])
+  useEffect(() => {
+    const settled = (o: string) => o === 'success' || o === 'reverted' || o === 'cancelled'
+    if (pendingKey && write.data && settled(outcome)) clearPendingMint(pendingKey)
+    if (pendingKey && earlier && !write.data && settled(earlierOutcome)) {
+      clearPendingMint(pendingKey)
+      setEarlier(undefined)
+    }
+  }, [outcome, earlierOutcome])
   /** The ERC-20 approval before a drop mint paid in that token (exactly the total, never unlimited). */
   const approval = useTx()
   /** The checks read again before anything is signed (drops): running, and why they stopped the mint. */
@@ -188,6 +214,12 @@ function useMint(
               chainId,
             }),
           send: async (_call, total) => {
+            // The checks and the proof were for the wallet connected when Mint was pressed: not another one.
+            const now = getAccount(wagmiConfig).address
+            if (!address || now?.toLowerCase() !== address.toLowerCase()) {
+              setCheckError(WALLET_CHANGED_WORDS)
+              return false
+            }
             const plan = payPlan(token, total)
             const common = { address: card.address as Address, abi: dropAbi, chainId, value: plan.value }
             if (to) {
@@ -251,6 +283,14 @@ function useMint(
     cancelled: outcome === 'cancelled',
     /** It was sent, but its receipt couldn't be read: it may still land, so Mint isn't offered again. */
     unconfirmed: outcome === 'unknown',
+    /** A mint this wallet sent earlier (before a reload) still waiting, or one whose ending couldn't be read. */
+    earlierHash: !write.data ? earlier : undefined,
+    earlierWaiting: !write.data && !!earlier && earlierOutcome === 'waiting',
+    earlierUnknown: !write.data && !!earlier && earlierOutcome === 'unknown',
+    forgetEarlier: () => {
+      if (pendingKey) clearPendingMint(pendingKey)
+      setEarlier(undefined)
+    },
     reset: write.reset,
     error: write.error,
   }
@@ -265,9 +305,10 @@ function useListPhases(card: LiveMintCard, reads: ReturnType<typeof readsFromRes
     queries: lists.map((p) => ({
       queryKey: ['allowlist-proof', p.root.toLowerCase(), account?.toLowerCase()],
       enabled: !!account,
+      // Only real answers are kept: "couldn't check" throws (fetchProofOrThrow), so it is retried, never cached.
       staleTime: 5 * 60_000,
-      retry: 1,
-      queryFn: (): Promise<ProofAnswer> => fetchProof(p.root, account as Address),
+      retry: 2,
+      queryFn: () => fetchProofOrThrow(p.root, account as Address),
     })),
   })
   const names = useQueries({
@@ -277,35 +318,51 @@ function useListPhases(card: LiveMintCard, reads: ReturnType<typeof readsFromRes
       queryFn: () => fetchListInfo(p.root).then((i) => i ?? null),
     })),
   })
+  const mintedCalls = lists.map((p) => ({
+    address: card.address as Address,
+    abi: dropAbi,
+    functionName: 'mintedInPhase' as const,
+    args: [BigInt(p.phaseId), account as Address] as const,
+    chainId,
+  }))
   const minted = useReadContracts({
-    contracts: lists.map((p) => ({
-      address: card.address as Address,
-      abi: dropAbi,
-      functionName: 'mintedInPhase' as const,
-      args: [BigInt(p.phaseId), account as Address] as const,
-      chainId,
-    })),
+    contracts: mintedCalls,
     query: { enabled: card.kind === 'drop' && !!account && lists.length > 0, refetchInterval: 15_000 },
   })
-  const byPhase: Record<number, { standing: ListStanding; proof?: `0x${string}`[]; name?: string; count?: number }> = {}
+  const mintedNow = useStickyReads(mintedCalls, minted as { data?: readonly ReadResult[]; isError: boolean })
+  const byPhase: Record<
+    number,
+    { standing: ListStanding; words: string; proof?: `0x${string}`[]; name?: string; count?: number }
+  > = {}
   lists.forEach((p, i) => {
-    const answer = proofs[i]?.data
-    const m = minted.data?.[i]
-    const left = p.left === undefined ? reads?.publicRemaining : Math.min(p.left, reads?.publicRemaining ?? p.left)
+    const q = proofs[i]
+    const answer = q?.data
+    const m = mintedNow.data?.[i]
+    const standing = listStanding({
+      account,
+      proof: answer ?? (q?.isError ? { state: 'unknown' } : undefined),
+      maxPerWallet: p.maxPerWallet,
+      minted: m?.status === 'success' ? Number(m.result) : undefined,
+      mintedFailed: minted.isError || m?.status === 'failure',
+      capLeft: p.left,
+      publicRemaining: reads?.publicRemaining,
+    })
+    const why = !answer && q?.error ? ` ${q.error.message}` : ''
     byPhase[p.phaseId] = {
-      standing: listStanding({
-        account,
-        proof: proofs[i]?.isError ? { state: 'unknown' } : answer,
-        maxPerWallet: p.maxPerWallet,
-        minted: m?.status === 'success' ? Number(m.result) : undefined,
-        left,
-      }),
+      standing,
+      words: `${standingWords(standing, p.maxPerWallet)}${standing === 'unknown' ? why : ''}`,
       proof: answer?.state === 'listed' ? answer.proof : undefined,
       name: names[i]?.data?.name,
       count: names[i]?.data?.count,
     }
   })
-  return { phases, byPhase, refetchMinted: minted.refetch }
+  const retry = () => {
+    proofs.forEach((q) => {
+      if (!q.data) q.refetch()
+    })
+    minted.refetch()
+  }
+  return { phases, byPhase, refetchMinted: minted.refetch, retry }
 }
 
 export default function LiveMintView({ card }: { card: LiveMintCard }) {
@@ -313,6 +370,8 @@ export default function LiveMintView({ card }: { card: LiveMintCard }) {
   const { address: account } = useAccount()
   const lists = useListPhases(card, reads, account)
   const [chosen, setChosen] = useState<number>()
+  // Another wallet: the phase picked for the last one is not this one's choice.
+  useEffect(() => setChosen(undefined), [account])
   const standings = useMemo(
     () => Object.fromEntries(Object.entries(lists.byPhase).map(([k, v]) => [k, v.standing])),
     [lists.byPhase]
@@ -399,6 +458,8 @@ export default function LiveMintView({ card }: { card: LiveMintCard }) {
     if (tx.isAwaitingWallet) return off('Confirm in wallet…')
     if (tx.isConfirming) return off('Minting…')
     if (tx.unconfirmed) return { label: 'Start over', disabled: false, onClick: tx.reset }
+    if (tx.earlierWaiting) return off('Last mint still pending…')
+    if (tx.earlierUnknown) return { label: 'Start over', disabled: false, onClick: tx.forgetEarlier }
     if (isLoading) return off('Loading…')
     if (isError) return off('Unavailable')
     if (live.status === 'soldout') return off('Sold out')
@@ -412,6 +473,7 @@ export default function LiveMintView({ card }: { card: LiveMintCard }) {
         disabled: tx.isSwitching,
         onClick: tx.switchChain,
       }
+    if (claim && claim.standing === 'unknown') return { label: 'Try again', disabled: false, onClick: lists.retry }
     if (claim && claim.standing !== 'eligible') return off(STANDING_BUTTON[claim.standing] ?? 'Not available')
     if (phase && phase.left === 0) return off('This phase is sold out')
     if (mintable === 0) return off(claim ? 'Already claimed' : 'Wallet limit reached')
@@ -466,6 +528,19 @@ export default function LiveMintView({ card }: { card: LiveMintCard }) {
           <>
             {TX_UNCONFIRMED_WORDS}{' '}
             <a href={txUrl} target="_blank" rel="noreferrer">
+              View transaction
+            </a>
+          </>
+        ),
+      }
+    : tx.earlierWaiting || tx.earlierUnknown
+    ? {
+        tone: 'info',
+        alert: tx.earlierUnknown,
+        body: (
+          <>
+            {tx.earlierWaiting ? 'Your last mint from this wallet is still waiting for the chain.' : TX_UNCONFIRMED_WORDS}{' '}
+            <a href={`${explorer}/tx/${tx.earlierHash}`} target="_blank" rel="noreferrer">
               View transaction
             </a>
           </>
@@ -561,7 +636,7 @@ export default function LiveMintView({ card }: { card: LiveMintCard }) {
                         {p.isList && l && (
                           <>
                             <br />
-                            <small>{STANDING_WORDS[l.standing]}</small>
+                            <small>{l.words}</small>
                           </>
                         )}
                       </span>

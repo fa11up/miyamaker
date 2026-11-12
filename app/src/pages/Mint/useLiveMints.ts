@@ -7,7 +7,7 @@ import { useReadContracts } from 'wagmi'
 import type { SupportedChainId } from '@/config/wagmi'
 import { chains } from '@/config/wagmi'
 import { miyamintsAddresses } from '@/constants/contracts'
-import type { DropPhase, LiveMintCard, LiveMintEntry, LiveMintReads, LivePhase } from '@/pages/Mint/liveMints'
+import type { DropPhase, LiveMintCard, LiveMintEntry, LiveMintReads, LivePhase, ReadAnswer } from '@/pages/Mint/liveMints'
 import {
   activePublicPhase,
   livePhases,
@@ -15,6 +15,8 @@ import {
   entryKey,
   isLiveAddress,
   LIVE_MINTS,
+  mergeReads,
+  readKey,
   registryEntry,
 } from '@/pages/Mint/liveMints'
 import { knownToken, tokenLabel } from '@/miyamints/tokens'
@@ -61,6 +63,23 @@ export const dropCalls = (a: Address, chainId: number) =>
   )
 
 export type ReadResult = { status: 'success' | 'failure'; result?: unknown } | undefined
+
+/**
+ * `data` from useReadContracts over `calls`, with each read's last good answer kept through a failed refetch
+ * (mergeReads). `isError`: nothing good yet and the last try failed (or every read in it did).
+ */
+export function useStickyReads(
+  calls: readonly { chainId?: number; address: string; functionName: string; args?: readonly unknown[] }[],
+  q: { data?: readonly ReadAnswer[]; isError: boolean }
+) {
+  const memory = useRef(new Map<string, ReadAnswer>())
+  const keys = calls.map(readKey)
+  const joined = keys.join('|')
+  return useMemo(() => {
+    const m = mergeReads(memory.current, keys, q.data)
+    return { data: m.results, isError: (q.isError || m.allFailed) && !m.everGood }
+  }, [joined, q.data, q.isError])
+}
 const ok = <T>(r: ReadResult) => (r?.status === 'success' ? (r.result as T) : undefined)
 const num = (v: bigint | number | undefined) => (v !== undefined ? Number(v) : undefined)
 
@@ -200,21 +219,30 @@ export function useContractImage(contractURI: string | undefined) {
  */
 export function useLiveMints() {
   const readable = useMemo(() => LIVE_MINTS.filter((e) => isLiveAddress(e.address)), [])
-  const curatedReads = useReadContracts({
-    contracts: readable.flatMap((e) =>
-      e.kind === 'erc721m' ? erc721mCalls(e.address as Address, e.chainId) : dropCalls(e.address as Address, e.chainId)
-    ),
+  const curatedCalls = useMemo(
+    () =>
+      readable.flatMap((e) =>
+        e.kind === 'erc721m' ? erc721mCalls(e.address as Address, e.chainId) : dropCalls(e.address as Address, e.chainId)
+      ),
+    [readable]
+  )
+  const curatedQuery = useReadContracts({
+    contracts: curatedCalls,
     query: { refetchInterval: REFRESH_MS, staleTime: REFRESH_MS / 2 },
   })
+  // A poll that fails keeps each card's last good reads: one bad answer must not turn every card "unknown".
+  const curatedReads = useStickyReads(curatedCalls, curatedQuery as { data?: readonly ReadAnswer[]; isError: boolean })
 
   const discovered = useRegistryDrops()
   // The last name each registry drop read back. A card's slug is made from its name, so a later read that fails must
   // not rename it to its address: the open collection would no longer be found, and Mint would drop to the menu.
   const knownNames = useRef(new Map<string, string>())
-  const registryReads = useReadContracts({
-    contracts: discovered.flatMap((d) => dropCalls(d.address, d.chainId)),
+  const registryCalls = useMemo(() => discovered.flatMap((d) => dropCalls(d.address, d.chainId)), [discovered])
+  const registryQuery = useReadContracts({
+    contracts: registryCalls,
     query: { enabled: discovered.length > 0, refetchInterval: REFRESH_MS, staleTime: REFRESH_MS / 2 },
   })
+  const registryReads = useStickyReads(registryCalls, registryQuery as { data?: readonly ReadAnswer[]; isError: boolean })
 
   const cards: LiveMintCard[] = useMemo(() => {
     const byKey: Record<string, LiveMintReads | undefined> = {}
@@ -242,7 +270,7 @@ export function useLiveMints() {
 
   return {
     cards,
-    isLoading: curatedReads.isLoading,
-    isError: curatedReads.isError && !curatedReads.data,
+    isLoading: curatedQuery.isLoading,
+    isError: curatedReads.isError,
   }
 }
