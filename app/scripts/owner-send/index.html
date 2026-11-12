@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Owner send</title>
+<style>
+  :root { --bg:#F4F3F8; --surface:#FFFFFF; --ink:#1B1D2A; --muted:#5D6175; --rule:#DCDFE8; --ok:#1F6B45; --bad:#8A1D1D; --accent:#C2186B; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:14px/1.6 "SFMono-Regular", Menlo, Consolas, monospace; }
+  main { max-width:760px; margin:40px auto; padding:0 16px; display:grid; gap:12px; }
+  h1 { font-size:20px; margin:0; }
+  .sub { color:var(--muted); margin:0; white-space:pre-wrap; }
+  .card { background:var(--surface); border:1px solid var(--rule); padding:14px 16px; display:grid; gap:6px; }
+  .row { display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap; align-items:center; }
+  .meta { color:var(--muted); font-size:12px; word-break:break-all; }
+  button { font:inherit; background:var(--ink); color:var(--bg); border:0; padding:8px 14px; cursor:pointer; }
+  button:disabled { background:var(--rule); color:var(--muted); cursor:default; }
+  .ok { color:var(--ok); } .bad { color:var(--bad); }
+  a { color:var(--accent); }
+</style>
+</head>
+<body>
+<main>
+  <h1 id="title">Owner send</h1>
+  <p class="sub" id="note"></p>
+  <div class="card"><div class="row"><button id="connect">Connect wallet</button><span id="acct" class="meta"></span></div></div>
+  <div class="card" id="guards"><b>Chain checks</b><div id="glist" class="meta">Connect to run them.</div></div>
+  <div id="txs"></div>
+</main>
+<script>
+const eth = window.ethereum
+let plan, account
+const $ = (id) => document.getElementById(id)
+const set = (el, text, cls) => { el.textContent = text; el.className = cls || '' }
+
+async function ensureChain() {
+  const want = '0x' + plan.chainId.toString(16)
+  if ((await eth.request({ method: 'eth_chainId' })) !== want)
+    await eth.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: want }] })
+}
+
+// Every guard re-read from the chain now; every tx simulated from the connected account. All must pass to send.
+async function check() {
+  const lines = []
+  let ok = true
+  for (const g of plan.guards || []) {
+    const got = await eth.request({ method: 'eth_call', params: [{ to: g.to, data: g.data }, 'latest'] })
+    const same = got.toLowerCase() === g.expect.toLowerCase()
+    ok = ok && same
+    lines.push(`${same ? 'OK ' : 'CHANGED '} ${g.label}`)
+  }
+  for (const t of plan.txs) {
+    try {
+      await eth.request({ method: 'eth_call', params: [{ from: account, to: t.to, data: t.data, value: t.value || '0x0' }, 'latest'] })
+      lines.push(`OK  simulates: ${t.label}`)
+    } catch (e) {
+      ok = false
+      lines.push(`FAILS ${t.label}: ${(e && (e.data?.message || e.message)) || e}`)
+    }
+  }
+  $('glist').textContent = lines.join('\n')
+  $('glist').style.whiteSpace = 'pre-wrap'
+  $('glist').className = ok ? 'meta ok' : 'meta bad'
+  return ok
+}
+
+function render() {
+  $('txs').innerHTML = ''
+  plan.txs.forEach((t, i) => {
+    const card = document.createElement('div')
+    card.className = 'card'
+    card.innerHTML = `<div class="row"><b></b><button disabled>Send</button></div><div class="meta"></div><div class="meta status"></div>`
+    card.querySelector('b').textContent = `${i + 1}. ${t.label}`
+    card.querySelector('.meta').textContent = `to ${t.to} · ${t.data.length / 2 - 1} bytes of calldata${t.value && t.value !== '0x0' ? ' · value ' + t.value : ''}`
+    const btn = card.querySelector('button'), status = card.querySelector('.status')
+    btn.disabled = !account
+    btn.onclick = async () => {
+      btn.disabled = true
+      try {
+        await ensureChain()
+        set(status, 'Checking the chain again…')
+        if (!(await check())) { set(status, 'The chain changed since this plan was made, or the transaction would fail. Nothing was sent. Ask for a fresh plan.', 'bad'); return }
+        set(status, 'Confirm in your wallet…')
+        const tx = { from: account, to: t.to, data: t.data, value: t.value || '0x0' }
+        if (t.gas) tx.gas = t.gas
+        const hash = await eth.request({ method: 'eth_sendTransaction', params: [tx] })
+        status.innerHTML = `Sent: <a target="_blank" rel="noopener" href="https://eth.blockscout.com/tx/${hash}">${hash}</a>`
+        status.className = 'meta ok'
+      } catch (e) {
+        set(status, `Not sent: ${(e && e.message) || e}`, 'bad')
+        btn.disabled = false
+      }
+    }
+    $('txs').appendChild(card)
+  })
+}
+
+$('connect').onclick = async () => {
+  if (!eth) { set($('acct'), 'No browser wallet found. Open this page in a browser with your wallet extension.', 'bad'); return }
+  try {
+    ;[account] = await eth.request({ method: 'eth_requestAccounts' })
+    await ensureChain()
+    const right = account.toLowerCase() === plan.from.toLowerCase()
+    set($('acct'), right ? `${account} (owner)` : `${account}: not the owner (${plan.from}). Switch accounts in your wallet.`, right ? 'meta ok' : 'meta bad')
+    if (!right) { account = undefined; render(); return }
+    render()
+    await check()
+  } catch (e) { set($('acct'), `Not connected: ${(e && e.message) || e}`, 'meta bad') }
+}
+if (eth) eth.on?.('accountsChanged', () => location.reload())
+
+fetch('/plan.json').then((r) => r.ok ? r.json() : r.text().then((t) => Promise.reject(new Error(t)))).then((p) => {
+  plan = p
+  $('title').textContent = p.title || 'Owner send'
+  $('note').textContent = p.note || ''
+  render()
+}).catch((e) => set($('note'), `The plan did not load: ${e.message}`, 'bad'))
+</script>
+</body>
+</html>
