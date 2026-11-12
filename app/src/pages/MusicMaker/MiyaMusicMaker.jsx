@@ -32,6 +32,7 @@ import { Editor } from './screens/Editor.jsx'
 import { Sequencer, copySeqSelection, deleteSeqSelection, pasteSeqSelection } from './screens/Sequencer.jsx'
 import { Mixer } from './screens/Mixer.jsx'
 import { Tracker, finger, handleTrackerKey } from './screens/Tracker.jsx'
+import { PitchWheel } from './screens/ChordPanel.jsx'
 import { ShiftHold } from './screens/ShiftHold.jsx'
 import { Synth } from './screens/Synth.jsx'
 import { Fx } from './screens/Fx.jsx'
@@ -201,7 +202,8 @@ export function MiyaMusicMaker() {
           <RailMenu />
           <DockToggles names />
           <div className="rail-slot" />
-          <ShiftHold mark={model.playSurface !== 'chords' || !!model.fxWide} />
+          {model.playSurface === 'keys' && <PitchWheel className="rail-wheel" />}
+          <ShiftHold mark />
         </div>
         <div className="mmm-rest">
         {(model.dockOpen !== false || model.arrangeOpen) && (
@@ -320,6 +322,19 @@ function Transport() {
             onClick={() => toggleRecord()}
           >
             Rec
+          </button>
+          <button
+            type="button"
+            className={`btn free-width quantize ${model.recNatural ? 'on' : ''}`}
+            aria-pressed={!!model.recNatural}
+            aria-label={model.recNatural ? 'Quantize on' : 'Quantize off'}
+            title="Quantize on measures MOVE, how far the note sits from the step. Quantize off does not record movement."
+            onClick={() => {
+              model.recNatural = !model.recNatural
+              touch(true)
+            }}
+          >
+            {model.recNatural ? 'Q On' : 'Q Off'}
           </button>
           <button type="button" className={`btn free-width bar-wide ${model.metro ? 'on' : ''}`} onClick={() => toggleMetro()}>
             Metro

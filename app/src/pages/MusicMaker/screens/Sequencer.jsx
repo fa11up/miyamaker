@@ -2,10 +2,12 @@ import { Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { BANKS, model, currentPattern, addBar, removeBar, doubleUp, stepCount, touch } from '../model.js'
 import { syncMixer } from '../audio/engine.js'
+import { edgeParts, gridDiv, gridEnd, gridPlace, gridUnit } from '../audio/voices.js'
 import { useModel } from '../useModel.js'
 import { noteName } from '../keys.js'
 import { HelpButton, Slider } from '../widgets.jsx'
 import { PatternBar } from './PatternBar.jsx'
+import { finger } from './Tracker.jsx'
 
 const GRIP = 36
 const GRIP_GAP = 4
@@ -142,6 +144,139 @@ export function deleteSeqSelection() {
   return true
 }
 
+const SNAP_LABELS = [
+  [4, '1/4'],
+  [8, '1/8'],
+  [16, '1/16'],
+  [32, '1/32'],
+  [64, '1/64'],
+  [128, '1/128'],
+]
+
+function SnapControl() {
+  const anchor = useRef(null)
+  const menu = useRef(null)
+  const hold = useRef(0)
+  const swallow = useRef(false)
+  const host = useRef(null)
+  const [open, setOpen] = useState(false)
+  const [pos, setPos] = useState(null)
+  useEffect(() => () => window.clearTimeout(hold.current), [])
+  useEffect(() => {
+    if (!open) swallow.current = false
+  }, [open])
+  useEffect(() => {
+    if (!open) return undefined
+    const down = (event) => {
+      const path = event.composedPath?.() || []
+      const inside = [anchor.current, menu.current].some((node) => node && (node.contains(event.target) || path.includes(node)))
+      if (!inside) setOpen(false)
+    }
+    const key = (event) => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      event.stopPropagation()
+      setOpen(false)
+    }
+    window.addEventListener('pointerdown', down)
+    window.addEventListener('keydown', key, true)
+    return () => {
+      window.removeEventListener('pointerdown', down)
+      window.removeEventListener('keydown', key, true)
+    }
+  }, [open])
+  const shifted = (event) => event.shiftKey || finger.shift || finger.kbShift
+  const openMenu = () => {
+    const node = anchor.current
+    const root = node?.getRootNode()
+    const box = root?.querySelector?.('.mmm')
+    const r = node?.getBoundingClientRect()
+    const hb = box?.getBoundingClientRect()
+    if (r && hb) {
+      const menuH = 196
+      const menuW = 110
+      let top = r.top - hb.top
+      let left = r.right - hb.left + 4
+      if (top + menuH > hb.height) top = Math.max(4, hb.height - menuH - 4)
+      if (left + menuW > hb.width) left = Math.max(4, r.left - hb.left - menuW)
+      setPos({ left, top })
+    }
+    host.current = box || null
+    swallow.current = true
+    setOpen(true)
+  }
+  const pick = (div) => {
+    model.seqDiv = div
+    model.seqSnap = true
+    setOpen(false)
+    touch(true)
+  }
+  const on = model.seqSnap !== false
+  const div = gridDiv(model.seqDiv)
+  const label = SNAP_LABELS.find(([n]) => n === div)?.[1] || '1/16'
+  return (
+    <div className="seq-snap" ref={anchor}>
+      <button
+        type="button"
+        className={`btn free-width ${on ? 'on' : ''}`}
+        aria-pressed={on}
+        aria-expanded={open}
+        aria-haspopup="menu"
+        aria-label={on ? `Snap ${label}` : 'Snap off'}
+        data-coach="snap"
+        data-div={div}
+        title="Snap to the grid. Click to turn it off. Hold, right-click, or Shift-click to pick the division, down to a 128th."
+        onPointerDown={(event) => {
+          if (event.button === 2) {
+            event.preventDefault()
+            openMenu()
+            return
+          }
+          if (event.button !== 0) return
+          if (shifted(event)) {
+            event.preventDefault()
+            openMenu()
+            return
+          }
+          swallow.current = false
+          window.clearTimeout(hold.current)
+          hold.current = window.setTimeout(openMenu, 420)
+        }}
+        onPointerUp={() => window.clearTimeout(hold.current)}
+        onPointerCancel={() => window.clearTimeout(hold.current)}
+        onContextMenu={(event) => {
+          event.preventDefault()
+          openMenu()
+        }}
+        onClick={(event) => {
+          window.clearTimeout(hold.current)
+          if (swallow.current || shifted(event)) {
+            swallow.current = false
+            setOpen(true)
+            return
+          }
+          setOpen(false)
+          model.seqSnap = model.seqSnap === false
+          touch(true)
+        }}
+      >
+        Snap
+      </button>
+      {open && pos && host.current && createPortal(
+        <div className="file-menu snap-menu" role="menu" data-snap-menu ref={menu} style={{ left: pos.left, top: pos.top }}>
+          <p>Grid</p>
+          {SNAP_LABELS.map(([n, name]) => (
+            <button key={n} type="button" role="menuitem" className={div === n ? 'on' : ''} onClick={() => pick(n)}>
+              {name}
+            </button>
+          ))}
+        </div>,
+        host.current,
+      )}
+    </div>
+  )
+}
+
 export function Sequencer() {
   useModel()
   const gridRef = useRef(null)
@@ -151,7 +286,7 @@ export function Sequencer() {
   const pinch = useRef(null)
   const zoomAnchor = useRef(null)
   const [grip, setGrip] = useState(null)
-  const [narrow, setNarrow] = useState(false)
+  const [dock, setDock] = useState(false)
   const [slot, setSlot] = useState(null)
   const seq = currentPattern()
   const steps = stepCount(seq)
@@ -178,23 +313,47 @@ export function Sequencer() {
   const selected = hit ? readHit(seq.steps[hit.step], hit.pad) : null
   const from = hit ? Math.min(hit.step, hit.end ?? hit.step) : 0
   const to = hit ? Math.max(hit.step, hit.end ?? hit.step) : 0
+  const lastHit = hit ? readHit(seq.steps[to], hit.pad) : null
+  const noteTail = eventTail(lastHit?.ev)
+  const noteEdge = to + noteTail / 100
+  const snapOn = model.seqSnap !== false
+  const endUnit = snapOn ? gridUnit(model.seqDiv) : 0.01
+  const endMax = hit ? nextWall(seq, hit.pad, from, to, steps) : steps
+  const endMin = from + endUnit
+  const endCeiling = Math.max(endMin, endMax)
+  const endValue = Math.max(endMin, Math.min(endCeiling, noteEdge))
   const cellW = clamp(seqUi.cellW, CELL_MIN, CELL_MAX)
   const cellH = clamp(seqUi.cellH, ROW_MIN, ROW_MAX)
   const atMin = cellW <= CELL_MIN + 0.5 && cellH <= ROW_MIN + 0.5
   const atMax = cellW >= CELL_MAX - 0.5 && cellH >= ROW_MAX - 0.5
   const showY = picks.length > 0 && seqUi.tool !== 'erase'
   const showX = showY || seqUi.pasteAt != null
-  const pickKey = picks.map((p) => `${p.id}:${p.pad}:${p.start}:${p.end}`).join(',')
+  const pickKey = picks.map((p) => {
+    const last = readHit(seq.steps[p.end], p.pad)
+    const first = readHit(seq.steps[p.start], p.pad)
+    return `${p.id}:${p.pad}:${p.start}:${p.end}:${eventTail(last?.ev)}:${first?.ev?.nudge || 0}`
+  }).join(',')
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const root = frameRef.current?.getRootNode()
-    const mmm = root?.querySelector?.('.mmm')
-    setSlot(root?.querySelector?.('.rail-slot') || null)
-    if (!mmm) return undefined
-    const apply = () => setNarrow(mmm.clientWidth <= 600)
+    const rail = root?.querySelector?.('.dock-rail')
+    const slotEl = rail?.querySelector?.('.rail-slot') || null
+    setSlot(slotEl)
+    if (!rail) return undefined
+    const apply = () => {
+      let used = 0
+      for (const child of rail.children) {
+        if (child === slotEl) continue
+        used += child.offsetHeight
+      }
+      const gap = parseFloat(getComputedStyle(rail).rowGap || getComputedStyle(rail).gap) || 0
+      const free = rail.clientHeight - used - Math.max(0, rail.children.length - 1) * gap
+      // The empty stretch between the tabs and SHIFT. Short windows keep the tools on top.
+      setDock(free >= 240)
+    }
     apply()
     const watch = new ResizeObserver(apply)
-    watch.observe(mmm)
+    watch.observe(rail)
     return () => watch.disconnect()
   }, [])
 
@@ -281,6 +440,10 @@ export function Sequencer() {
 
   const tools = (
     <div className="seq-tools" role="toolbar" aria-label="Part tools">
+      <button type="button" className="btn free-width" onClick={removeBar}>− bar</button>
+      <button type="button" className="btn free-width" onClick={addBar}>+ bar</button>
+      <button type="button" className="btn free-width" onClick={doubleUp}>Double</button>
+      <SnapControl />
       <button type="button" className={`btn free-width ${seqUi.tool === 'draw' ? 'on' : ''}`} aria-pressed={seqUi.tool === 'draw'} data-coach="draw" onClick={() => setSeqUi({ tool: 'draw' })}>Draw</button>
       <button type="button" className={`btn free-width ${seqUi.tool === 'erase' ? 'on' : ''}`} aria-pressed={seqUi.tool === 'erase'} data-coach="erase" onClick={() => setSeqUi({ tool: 'erase' })}>Erase</button>
       <button type="button" className={`btn free-width ${seqUi.tool === 'select' ? 'on' : ''}`} aria-pressed={seqUi.tool === 'select'} data-coach="select" onClick={() => setSeqUi({ tool: 'select' })}>Select</button>
@@ -302,11 +465,8 @@ export function Sequencer() {
     <div className="screen seq-screen">
       <div className="seq-top">
         <PatternBar />
-        <button type="button" className="btn free-width" onClick={removeBar}>− bar</button>
-        <button type="button" className="btn free-width" onClick={addBar}>+ bar</button>
-        <button type="button" className="btn free-width" onClick={doubleUp}>Double</button>
         <span className="hint">{steps === 1 ? '1 step' : `${steps} steps`}</span>
-        {narrow && slot ? createPortal(tools, slot) : tools}
+        {dock && slot ? createPortal(tools, slot) : tools}
         <HelpButton title="Sequence" topic="sequence" />
         <Slider
           label="Swing"
@@ -364,13 +524,20 @@ export function Sequencer() {
                   ))}
                   {runsFor(seq, pad).map((run) => {
                     const picked = picks.find((p) => p.pad === pad && p.start === run.start && p.end === run.end)
+                    const tail = run.tail ?? 100
+                    const missing = tail < 100 ? ((100 - tail) / 100) * Math.round(cellW) : 0
                     return (
                       <button
                         key={`${run.start}-${run.pitch}`}
                         type="button"
                         tabIndex={-1}
                         className={`part-note${picked ? ' sel' : ''}${picked && picked.id === seqUi.primaryId ? ' primary' : ''}`}
-                        style={{ gridColumn: `${run.start + 2} / ${run.end + 3}`, gridRow: local + 2 }}
+                        style={{
+                          gridColumn: `${run.start + 2} / ${run.end + 3}`,
+                          gridRow: local + 2,
+                          marginRight: missing ? `calc(2px + ${missing}px)` : undefined,
+                          transform: run.ev.nudge ? `translateX(${(run.ev.nudge * cellW) / 100}px)` : undefined,
+                        }}
                         data-pad={pad}
                         data-start={run.start}
                         data-end={run.end}
@@ -397,7 +564,7 @@ export function Sequencer() {
               <button type="button" className="seq-grip" data-handle="move" style={{ left: grip.move }} aria-label="Move in time" title="Move in time">↔</button>
             )}
             {showY && grip?.len != null && (
-              <button type="button" className="seq-grip" data-handle="len" style={{ left: grip.len }} aria-label="Length" title="Length">⇥</button>
+              <button type="button" className="seq-grip" data-handle="len" style={{ left: grip.len }} aria-label="Length" title="Length. Snap off lets the end sit between steps.">⇥</button>
             )}
             {seqUi.pasteAt != null && grip?.paste != null && (
               <button type="button" className="seq-grip seq-grip-paste" data-handle="paste" style={{ left: grip.paste }} aria-label="Paste point" title="Paste point">▼</button>
@@ -453,6 +620,17 @@ export function Sequencer() {
               touch(true)
             }}
           />
+          <div className="seq-end" data-edge={endValue} data-step={endUnit} style={{ display: 'contents' }}>
+            <Slider
+              label="End"
+              min={endMin}
+              max={endCeiling}
+              step={endUnit}
+              value={endValue}
+              text={formatLen(endValue - from)}
+              onChange={(v) => commitRunEdge(hit.pad, from, v)}
+            />
+          </div>
           <button type="button" className="btn free-width" onClick={deleteSeqSelection}>
             {picks.length > 1 ? 'Clear hits' : 'Clear hit'}
           </button>
@@ -540,7 +718,12 @@ export function Sequencer() {
   }
 
   function armHandle(grid, e, kind) {
-    const runs = seqUi.picks.map((p) => ({ ...p }))
+    const live = currentPattern()
+    const runs = seqUi.picks.map((p) => {
+      const hit = readHit(live.steps[p.start], p.pad)
+      const last = readHit(live.steps[p.end], p.pad)
+      return { ...p, nudge: hit?.ev.nudge || 0, tail: eventTail(last?.ev) }
+    })
     if (!runs.length) return
     const cell = grid.querySelector('.part-cell')?.getBoundingClientRect()
     gesture.current = {
@@ -556,6 +739,8 @@ export function Sequencer() {
       cellH: cell?.height || 36,
       // Song playback can move on to another pattern mid-drag. The drag stays on the one it started in.
       seq: currentPattern(),
+      snapOn: model.seqSnap !== false,
+      div: gridDiv(model.seqDiv),
       snap: clonePattern(currentPattern()),
       dirty: false,
       frame: 0,
@@ -735,6 +920,133 @@ function readHit(col, pad) {
   return { lane, ev: col[lane] }
 }
 
+/** How much of the last step a note fills. A missing tail is the whole step. */
+function eventTail(ev) {
+  const t = Number(ev?.tail)
+  if (!Number.isFinite(t)) return 100
+  const n = Math.round(t)
+  if (n < 1 || n >= 100) return 100
+  return n
+}
+
+function formatLen(steps) {
+  const q = Math.round(Number(steps) * 100) / 100
+  if (!Number.isFinite(q)) return '0'
+  if (Math.abs(q - Math.round(q)) < 0.001) return String(Math.round(q))
+  return String(q)
+}
+
+function nextWall(seq, pad, start, end, n) {
+  for (let s = end + 1; s < n; s++) {
+    if (readHit(seq.steps[s], pad)) return s
+  }
+  return n
+}
+
+function capEdge(edge, start, walls, n) {
+  let at = Number(edge)
+  if (!Number.isFinite(at)) at = start + 1
+  if (at < start + 0.01) at = start + 0.01
+  if (at > n) at = n
+  const stops = (walls || []).filter((s) => s > start && s < at).sort((a, b) => a - b)
+  if (stops.length) at = stops[0]
+  return at
+}
+
+function planParts(run, delta, snap, div, n, walls) {
+  const base = run.end + (Number.isFinite(run.tail) ? run.tail : 100) / 100
+  const min = run.start + (snap ? gridUnit(div) : 0.01)
+  let edge = gridEnd(base + (Number(delta) || 0), snap, n, div, min)
+  edge = capEdge(edge, run.start, walls, n)
+  return edgeParts(edge, run.start)
+}
+
+function wallsFor(seq, run, runs, n) {
+  const walls = []
+  for (let s = 0; s < n; s++) {
+    if (s >= run.start && s <= run.end) continue
+    const other = runs.some((o) => o !== run && o.pad === run.pad && s >= o.start && s <= o.end)
+    if (other || readHit(seq.steps[s], run.pad)) walls.push(s)
+  }
+  return walls
+}
+
+function paintRun(seq, run, events, parts, written) {
+  const sample = events.filter((e) => e.runId === run.id)
+  const tailEv = sample[sample.length - 1]
+  if (!tailEv) return null
+  let end = parts.end
+  if (written) {
+    for (let s = run.start; s <= end; s++) {
+      if (written.has(`${run.pad}:${s}`)) {
+        end = s - 1
+        break
+      }
+    }
+  }
+  if (end < run.start) return null
+  const tail = end === parts.end ? parts.tail : 100
+  let placed = false
+  for (let s = run.start; s <= end; s++) {
+    const orig = sample.find((e) => e.step === s)
+    const ev = { ...(orig ? orig.ev : tailEv.ev) }
+    if (s === end && tail < 100) ev.tail = tail
+    else delete ev.tail
+    const lane = orig ? orig.lane : tailEv.lane
+    if (!writeAt(seq, s, lane, ev, run.pad)) continue
+    if (written) written.add(`${run.pad}:${s}`)
+    placed = true
+  }
+  if (!placed) return null
+  return { end, tail }
+}
+
+function commitRunEdge(pad, start, edge) {
+  const seq = currentPattern()
+  const found = runAt(seq, pad, start)
+  if (!found) return
+  const n = stepCount(seq)
+  const events = []
+  for (let s = found.start; s <= found.end; s++) {
+    const hit = readHit(seq.steps[s], pad)
+    if (hit) events.push({ step: s, lane: hit.lane, ev: { ...hit.ev }, runId: 1 })
+  }
+  if (!events.length) return
+  const run = {
+    id: 1,
+    pad,
+    start: found.start,
+    end: found.end,
+    tail: eventTail(events[events.length - 1].ev),
+  }
+  const walls = []
+  for (let s = 0; s < n; s++) {
+    if (s >= run.start && s <= run.end) continue
+    if (readHit(seq.steps[s], pad)) walls.push(s)
+  }
+  const base = run.end + run.tail / 100
+  const parts = planParts(run, edge - base, model.seqSnap !== false, gridDiv(model.seqDiv), n, walls)
+  for (const item of events) {
+    const col = seq.steps[item.step]
+    if (col && col[item.lane] && col[item.lane].pad === pad) col[item.lane] = null
+  }
+  const wrote = paintRun(seq, run, events, parts, null)
+  if (!wrote) return
+  seqUi.picks = seqUi.picks.map((p) => (p.pad === pad && p.start === found.start ? { ...p, end: wrote.end } : p))
+  const primary = seqUi.picks.find((p) => p.id === seqUi.primaryId) || seqUi.picks[seqUi.picks.length - 1] || null
+  model.seqHit = primary ? { step: primary.start, pad: primary.pad, end: primary.end } : null
+  touch(true)
+}
+
+function drawnSpan(pick) {
+  const seq = currentPattern()
+  const first = readHit(seq.steps[pick.start], pick.pad)
+  const last = readHit(seq.steps[pick.end], pick.pad)
+  const nudge = (first?.ev?.nudge || 0) / 100
+  const tail = eventTail(last?.ev) / 100
+  return { start: pick.start + nudge, end: pick.end + tail + nudge }
+}
+
 /** Consecutive steps of one pad with one pitch. The tracker stores each of those steps. */
 function runsFor(seq, pad) {
   const n = stepCount(seq)
@@ -747,9 +1059,12 @@ function runsFor(seq, pad) {
       continue
     }
     const pitch = hit.ev.pitch | 0
-    if (cur && cur.pitch === pitch && cur.end === s - 1) cur.end = s
-    else {
-      cur = { start: s, end: s, pitch, ev: hit.ev }
+    const tail = eventTail(hit.ev)
+    if (cur && cur.pitch === pitch && cur.end === s - 1) {
+      cur.end = s
+      cur.tail = tail
+    } else {
+      cur = { start: s, end: s, pitch, ev: hit.ev, tail }
       runs.push(cur)
     }
   }
@@ -867,8 +1182,74 @@ function samePlace(before, after) {
   for (const run of after) {
     const prev = before.find((p) => p.id === run.id)
     if (!prev || prev.pad !== run.pad || prev.start !== run.start || prev.end !== run.end) return false
+    if ((prev.nudge || 0) !== (run.nudge || 0)) return false
+    if ((prev.tail ?? 100) !== (run.tail ?? 100)) return false
   }
   return true
+}
+
+function slideNotes(seq, g, dx, events, runs, n) {
+  const snap = g.snapOn !== false
+  const div = g.div || 16
+  const cell = Math.max(8, g.cellW)
+  let delta = dx / cell
+  const fromOf = (item) => item.step + (snap ? 0 : (item.ev.nudge || 0) / 100)
+  const lo = Math.min(...events.map((item) => fromOf(item) + delta))
+  if (lo < 0) delta -= lo
+  const hi = Math.max(...events.map((item) => fromOf(item) + delta))
+  if (hi > n - 1) delta -= hi - (n - 1)
+
+  if (snap) {
+    // One shift for the whole selection, so a long note does not collapse onto one grid line.
+    const origin = Math.min(...runs.map((r) => r.start))
+    const place = gridPlace(origin, 0, delta, true, n, div)
+    let shift = place.step - origin
+    let nudge = place.nudge
+    const maxEnd = Math.max(...runs.map((r) => r.end))
+    if (origin + shift < 0) shift = -origin
+    if (maxEnd + shift > n - 1) {
+      shift = n - 1 - maxEnd
+      nudge = 0
+    }
+    clearEvents(seq, events)
+    const next = []
+    const ordered = [...runs].sort((a, b) => a.start - b.start)
+    for (const run of ordered) {
+      const sample = events.filter((item) => item.runId === run.id)
+      let first = null
+      let last = null
+      for (const item of sample) {
+        const step = item.step + shift
+        if (step < 0 || step >= n) continue
+        if (!writeAt(seq, step, item.lane, { ...item.ev, nudge }, run.pad)) continue
+        if (first == null || step < first) first = step
+        if (last == null || step > last) last = step
+      }
+      if (first != null) next.push({ ...run, start: first, end: last, nudge })
+    }
+    return next
+  }
+
+  clearEvents(seq, events)
+  const next = []
+  const ordered = [...runs].sort((a, b) => a.start - b.start)
+  for (const run of ordered) {
+    const sample = events.filter((item) => item.runId === run.id)
+    let first = null
+    let last = null
+    let shown = 0
+    for (const item of sample) {
+      const place = gridPlace(item.step, item.ev.nudge, delta, false, n, div)
+      if (!writeAt(seq, place.step, item.lane, { ...item.ev, nudge: place.nudge }, run.pad)) continue
+      if (first == null || place.step < first) {
+        first = place.step
+        shown = place.nudge
+      }
+      if (last == null || place.step > last) last = place.step
+    }
+    if (first != null) next.push({ ...run, start: first, end: last, nudge: shown })
+  }
+  return next
 }
 
 function applyGesture(seq, g, dx, dy) {
@@ -882,55 +1263,26 @@ function applyGesture(seq, g, dx, dy) {
   if (!events.length) return runs.map((run) => ({ ...run }))
 
   if (g.kind === 'len') {
-    clearEvents(seq, events)
-    const foreign = new Set()
-    for (let s = 0; s < n; s++) {
-      const col = seq.steps[s] || []
-      for (const ev of col) {
-        if (ev && ev.pad != null) foreign.add(`${ev.pad}:${s}`)
-      }
-    }
+    const delta = dx / Math.max(8, g.cellW)
+    const snap = g.snapOn !== false
+    const div = g.div || 16
     const planned = runs.map((run) => {
-      let end = Math.max(run.start, Math.min(n - 1, run.end + dStep))
-      if (end > run.end) {
-        for (let s = run.end + 1; s <= end; s++) {
-          const reserved = runs.some((other) => other !== run && other.pad === run.pad && s >= other.start && s <= other.end)
-          if (reserved || foreign.has(`${run.pad}:${s}`)) {
-            end = s - 1
-            break
-          }
-        }
-      }
-      return { ...run, end }
+      const walls = wallsFor(seq, run, runs, n)
+      const parts = planParts(run, delta, snap, div, n, walls)
+      return { ...run, parts }
     })
+    clearEvents(seq, events)
     const written = new Set()
-    const ordered = planned.sort((a, b) => a.start - b.start || a.pad - b.pad)
+    const ordered = [...planned].sort((a, b) => a.start - b.start || a.pad - b.pad)
     const next = []
     for (const run of ordered) {
-      let end = run.end
-      for (let s = run.start; s <= end; s++) {
-        if (written.has(`${run.pad}:${s}`)) {
-          end = s - 1
-          break
-        }
-      }
-      if (end < run.start) continue
-      const sample = events.filter((e) => e.runId === run.id)
-      const tail = sample[sample.length - 1]
-      if (!tail) continue
-      let placed = false
-      for (let s = run.start; s <= end; s++) {
-        const orig = sample.find((e) => e.step === s)
-        const ev = orig ? orig.ev : tail.ev
-        const lane = orig ? orig.lane : tail.lane
-        if (!writeAt(seq, s, lane, ev, run.pad)) continue
-        written.add(`${run.pad}:${s}`)
-        placed = true
-      }
-      if (placed) next.push({ ...run, end })
+      const wrote = paintRun(seq, run, events, run.parts, written)
+      if (wrote) next.push({ ...run, end: wrote.end, tail: wrote.tail })
     }
     return next
   }
+
+  if (g.kind === 'move') return slideNotes(seq, g, dx, events, runs, n)
 
   let shift = g.kind === 'row' ? 0 : dStep
   let rowDelta = g.kind === 'row' ? dRow : 0
@@ -997,11 +1349,16 @@ function layoutGrips(grid, frame) {
   let row = null
   let paste = null
   if (showNotes) {
-    const minStart = Math.min(...picks.map((p) => p.start))
-    const maxEnd = Math.max(...picks.map((p) => p.end))
+    let minAt = Infinity
+    let maxAt = -Infinity
+    for (const p of picks) {
+      const box = drawnSpan(p)
+      if (box.start < minAt) minAt = box.start
+      if (box.end > maxAt) maxAt = box.end
+    }
     const primary = picks.find((p) => p.id === seqUi.primaryId) || picks[picks.length - 1]
-    const startX = o.left + (minStart - step0) * o.width - barLeft
-    const endX = o.left + (maxEnd + 1 - step0) * o.width - barLeft
+    const startX = o.left + (minAt - step0) * o.width - barLeft
+    const endX = o.left + (maxAt - step0) * o.width - barLeft
     const rowCenter = o.top + (primary.pad - pad0) * o.height + o.height / 2 - sideTop
     move = Math.round(clamp(startX - GRIP / 2, 0, maxX))
     len = Math.round(clamp(endX - GRIP / 2, 0, maxX))

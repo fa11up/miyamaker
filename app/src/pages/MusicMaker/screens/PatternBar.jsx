@@ -95,16 +95,6 @@ export function PatternBar() {
           touch(true)
         }}
       />
-      <button
-        type="button"
-        className={`btn free-width ${model.recNatural ? 'on' : ''}`}
-        onClick={() => {
-          model.recNatural = !model.recNatural
-          touch(true)
-        }}
-      >
-        {model.recNatural ? 'Natural' : 'Grid'}
-      </button>
     </div>
   )
 }

@@ -19,7 +19,7 @@ import { createBufferCache, finiteOr, heldForPort, liveVoices, locateStep, playF
 import { importKitFile, importSongFile } from './song.js'
 import { SongChanged, loadTicket, songId } from '../jobs.js'
 import { defaultPatch, mixNote, quantizeTake, renderSynth, takeDepth, takeMaxSamples, takeSeconds } from './synth.js'
-import { BUS_COUNT, TRACK_VEL, audioBank, budgetNote, model, currentSequence, ensurePattern, stepCount, trackerFields, commitTrackerNote, setUndoBatch, touch, rememberSample, idbSet, selectPad, flushSave } from '../model.js'
+import { BUS_COUNT, TRACK_VEL, audioBank, budgetNote, model, currentPattern, currentSequence, ensurePattern, stepCount, trackerFields, commitTrackerNote, setUndoBatch, touch, rememberSample, idbSet, selectPad, flushSave } from '../model.js'
 
 setUndoBatch({ begin: beginUndo, end: endUndo })
 
@@ -1564,6 +1564,40 @@ function grainFraction(v, now) {
   return v.play.reverse ? 1 - buf : buf
 }
 
+/** Semitones the pitch wheel is holding. Notes written while it is up keep that bend. */
+let performBend = 0
+/** Notes this bend may still retune. Cleared when the wheel springs back, so the last pitch stays. */
+const bendTakes = []
+
+function rememberBend(wrote, base) {
+  if (!wrote) return
+  bendTakes.push({ row: wrote.row, lane: wrote.lane, base: Number(base) || 0 })
+}
+
+/** Write the wheel onto the notes it is holding. A spring back leaves those pitches where they were. */
+export function setPerformBend(semi, { live = true } = {}) {
+  const next = Math.max(-24, Math.min(24, Number(semi) || 0))
+  performBend = live ? next : 0
+  if (!live || Math.abs(next) < 0.04) {
+    bendTakes.length = 0
+    performBend = 0
+    return
+  }
+  if (!model.tracker.edit || !bendTakes.length) return
+  const seq = currentPattern()
+  let changed = false
+  for (const take of bendTakes) {
+    const ev = seq.steps[take.row]?.[take.lane]
+    if (!ev || ev.off) continue
+    const pitch = Math.max(-60, Math.min(67, Math.round(take.base + next)))
+    if ((ev.pitch | 0) !== pitch) {
+      ev.pitch = pitch
+      changed = true
+    }
+  }
+  if (changed) touch(false)
+}
+
 function captureHit(index, velocity, pitch, when) {
   // Rec arms the pattern on every page. The sequence and the tracker read the same steps.
   if (!model.tracker.edit) return
@@ -1578,14 +1612,18 @@ function captureHit(index, velocity, pitch, when) {
       nudge = hit.nudge
     } else live = false
   }
-  commitTrackerNote({
+  const base = typeof pitch === 'number' ? pitch : 0
+  // Quantize off does not record movement. Quantize on measures how far the hit sits from the step.
+  if (!model.recNatural) nudge = 0
+  const wrote = commitTrackerNote({
     pad: index,
     vel: velocity,
-    pitch: typeof pitch === 'number' ? Math.round(pitch) : 0,
+    pitch: Math.round(base + performBend),
     row,
     nudge,
     live,
   })
+  rememberBend(wrote, base)
 }
 
 function scheduleAmp(amp, env, vel, t, total) {
@@ -2619,6 +2657,16 @@ export function onMidi(event) {
   const note = data[1]
   const velocityByte = data.length > 2 ? data[2] : 0
   const cmd = status & 0xf0
+  if (cmd === 0xe0) {
+    const raw = (note & 0x7f) | ((velocityByte & 0x7f) << 7)
+    const range = Math.max(1, Math.min(24, model.pianoBend | 0 || 24))
+    const semi = ((raw - 8192) / 8192) * range
+    if (Math.abs(semi) < 0.05) setPerformBend(0, { live: false })
+    else setPerformBend(semi)
+    shapeHeld('midi:', { bend: performBend })
+    shapeHeld('piano:', { bend: performBend })
+    return
+  }
   if (cmd !== 0x80 && cmd !== 0x90) return
   const port = event.target
   const portId = portKey(port)
@@ -2653,15 +2701,18 @@ export function onMidi(event) {
         nudge = hit.nudge
       }
     }
+    if (!model.recNatural) nudge = 0
     if (write) {
-      commitTrackerNote({
+      const base = 'pitch' in action ? action.pitch : 0
+      const wrote = commitTrackerNote({
         pad: 'pad' in action ? action.pad : model.selected,
         vel,
-        pitch: 'pitch' in action ? action.pitch : 0,
+        pitch: Math.round(base + performBend),
         row,
         nudge,
         live,
       })
+      rememberBend(wrote, base)
     }
   }
   const onTrack = model.screen === 'track'
