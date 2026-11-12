@@ -8,6 +8,7 @@
 // The plan (JSON):
 //   { "title": "…", "chainId": 1, "from": "0xOwner", "note": "…",
 //     "guards": [ { "label": "…", "to": "0x…", "data": "0x…", "expect": "0x…" } ],   // eth_call result must equal expect
+//       or { …, "arrayAt": [1, 2], "equals": ["2", "41"] }: only those positions of a returned uint256[] must match
 //     "txs": [ { "label": "…", "to": "0x…", "data": "0x…", "value": "0x0", "gas": "0x…"? } ] }
 // A guard that no longer matches means the chain moved since the plan was made: the page refuses and says so.
 import { createServer } from 'node:http'
@@ -34,7 +35,10 @@ const readPlan = () => {
     throw new Error('plan needs chainId, from and at least one tx')
   }
   for (const t of p.txs) if (!ADDR.test(t.to) || !HEX.test(t.data)) throw new Error(`bad tx: ${t.label}`)
-  for (const g of p.guards || []) if (!ADDR.test(g.to) || !HEX.test(g.data) || !HEX.test(g.expect)) throw new Error(`bad guard: ${g.label}`)
+  for (const g of p.guards || []) {
+    const ok = g.arrayAt ? Array.isArray(g.arrayAt) && Array.isArray(g.equals) && g.arrayAt.length === g.equals.length : HEX.test(g.expect)
+    if (!ADDR.test(g.to) || !HEX.test(g.data) || !ok) throw new Error(`bad guard: ${g.label}`)
+  }
   return p
 }
 readPlan() // fail at start, not in the browser

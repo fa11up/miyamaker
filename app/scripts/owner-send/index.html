@@ -45,7 +45,10 @@ async function check() {
   let ok = true
   for (const g of plan.guards || []) {
     const got = await eth.request({ method: 'eth_call', params: [{ to: g.to, data: g.data }, 'latest'] })
-    const same = got.toLowerCase() === g.expect.toLowerCase()
+    // An array guard compares only the listed positions of a returned uint256[] (e.g. the free phases' counts).
+    const same = g.arrayAt
+      ? g.arrayAt.every((i, k) => BigInt('0x' + got.slice(2 + 128 + 64 * i, 2 + 128 + 64 * (i + 1))) === BigInt(g.equals[k]))
+      : got.toLowerCase() === g.expect.toLowerCase()
     ok = ok && same
     lines.push(`${same ? 'OK ' : 'CHANGED '} ${g.label}`)
   }
