@@ -708,7 +708,11 @@ export default function LiveMintView({ card }: { card: LiveMintCard }) {
       }
       action={action}
       status={status}
-      needs={!tx.isConnected ? <MintNeeds chainName={live.chainName} /> : undefined}
+      needs={
+        !tx.isConnected ? (
+          <MintNeeds chainName={live.chainName} paySymbol={unit?.symbol ?? 'ETH'} free={unitPrice === 0n} />
+        ) : undefined
+      }
       dropped={
         tx.isConfirmed ? (
           <>
