@@ -18,18 +18,36 @@ import { bevel, color, space, text } from '../floor/tokens'
 import { useEthUsd } from '../MarketBoard'
 import { useTicket } from '../terminal/ticket'
 import { erc721Abi, poolFactoryAbi } from './abi'
+import BatchReview from './BatchReview'
+import type { BatchPick, PoolOption } from './batchRoute'
+import { batchSummary, ethValue, preTick, routeSells, sellPicks, togglePick } from './batchRoute'
 import type { OsOrder, Price } from './markets'
 import { bestQuote, collectionUrl, formatAmount, formatPrice, lowerPrice, venuesFor } from './markets'
 import { DEFAULT_PAIR_SYMBOL, pickPair } from './pairs'
 import type { PoolMode } from './pool'
 import { KIND, MODE, MODE_HINT, MODE_LABEL } from './pool'
+import type { PoolRef } from './poolBatch'
 import { MAX_SWEEP, pickCheapest, sessionStore, sumPrices, sweepable, unconfirmedHashes } from './sweep'
 import SweepReview from './SweepReview'
-import { Action, Card, Chips, Field, Head, Hint, LinkButton, Mono, Prose, PushButton, SwitchNote } from './ui'
+import {
+  Action,
+  ActionDock,
+  Card,
+  Chips,
+  Field,
+  Head,
+  Hint,
+  LinkButton,
+  Mono,
+  Prose,
+  PushButton,
+  SwitchNote,
+} from './ui'
 import {
   useCollectionGallery,
   useMarketListings,
   useMarketSales,
+  useOpenSeaBids,
   useOpenSeaCollection,
   useOpenSeaItem,
   useOpenSeaNftImage,
@@ -38,7 +56,7 @@ import {
 import type { PoolPrice } from './usePoolPrices'
 import { pairsFor, poolSide, usePoolPrices } from './usePoolPrices'
 import type { Pool } from './usePools'
-import { poolFactoryFor, useNftMeta, usePoolsForCollection } from './usePools'
+import { HELD_PAGE, poolFactoryFor, useHeldIds, useNftMeta, usePoolsForCollection } from './usePools'
 import { Best, PairSwitch, VenueList, VenueRow } from './venueUi'
 import type { ViewerItem } from './Viewer'
 import Viewer from './Viewer'
@@ -213,6 +231,78 @@ const YoursList = styled.ul`
   }
 `
 
+/** The batch tick on a tile's corner: its own 32px press, apart from the tile's own (open / view). */
+const Tick = styled.button`
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  z-index: 1;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 1px solid ${color.shadow};
+  background: rgba(0, 0, 0, 0.8);
+  color: ${color.accent};
+  font-size: ${text.lg};
+  font-weight: 700;
+  cursor: pointer;
+  &[aria-pressed='true'] {
+    background: ${color.accent};
+    border-color: ${color.accent};
+    color: ${color.onAccent};
+  }
+  &:focus-visible {
+    outline: 2px solid ${color.accent};
+    outline-offset: 1px;
+  }
+  &:disabled {
+    cursor: not-allowed;
+    opacity: 0.6;
+  }
+`
+
+const Picked = styled.div`
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: ${text.xs};
+  color: ${color.inkMuted};
+  select {
+    width: 100%;
+    min-height: 32px;
+    background: ${color.well};
+    color: ${color.ink};
+    border: 1px solid ${color.dark};
+    font: inherit;
+  }
+  .narrow & select {
+    min-height: 44px;
+  }
+  b {
+    color: ${color.ink};
+    font-weight: 400;
+  }
+`
+
+const Bar = styled.div`
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: ${space[2]};
+  font-size: ${text.sm};
+  strong {
+    flex: 1 1 160px;
+    min-width: 0;
+    font-variant-numeric: tabular-nums;
+    overflow-wrap: anywhere;
+  }
+  .narrow & button {
+    flex: 1 1 auto;
+  }
+`
+
 function OwnedTile({ chainId, contract, id }: { chainId: SupportedChainId; contract: Address; id: string }) {
   const osImage = useOpenSeaNftImage(chainId, contract, id)
   const meta = useNftMeta(chainId, osImage ? undefined : contract, KIND.ERC721, BigInt(id))
@@ -374,20 +464,36 @@ function ListingTile({
   onOpen,
   picked,
   disabled,
+  onTick,
 }: {
   chainId: SupportedChainId
   contract: Address
   listing: OsOrder
   onOpen: () => void
-  /** In the sweep the bar would buy. */
+  /** Ticked for the batch. */
   picked?: boolean
   disabled?: boolean
+  /** Ticks it for a batch buy; absent when it can't be batched (priced in a token, your own, still unconfirmed). */
+  onTick?: () => void
 }) {
   const id = listing.tokenId!
   const osImage = useOpenSeaNftImage(chainId, contract, id)
   const meta = useNftMeta(chainId, osImage ? undefined : contract, KIND.ERC721, BigInt(id))
   return (
-    <li>
+    <li style={{ position: 'relative' }}>
+      {onTick && (
+        <Tick
+          type="button"
+          aria-pressed={!!picked}
+          aria-label={picked ? `Take #${id} out of the batch` : `Add #${id} to the batch`}
+          title={picked ? 'In the batch' : 'Add to the batch'}
+          disabled={disabled}
+          onClick={onTick}
+          data-batch-tick
+        >
+          {picked ? '✓' : '+'}
+        </Tick>
+      )}
       <TileButton
         type="button"
         onClick={onOpen}
@@ -395,7 +501,7 @@ function ListingTile({
         data-picked={picked || undefined}
         aria-label={`#${id}, ${formatPrice(listing.price)}${
           listing.total ? ` each, ${listing.remaining} for ${formatPrice(listing.total)}` : ''
-        } on OpenSea${picked ? ', in the sweep' : ''}. Open`}
+        } on OpenSea${picked ? ', in the batch' : ''}. Open`}
       >
         <NftImage src={osImage || meta.image} alt="" variant="thumb" />
         <span className="label">
@@ -413,6 +519,83 @@ function ListingTile({
         </span>
       </TileButton>
     </li>
+  )
+}
+
+/** NFTs a pick-your-NFT pool holds, to tick for a batch buy: 1 pool token each, no fees. */
+function PoolHeldPicks({
+  chainId,
+  pool,
+  ask,
+  picked,
+  disabled,
+  onTick,
+}: {
+  chainId: SupportedChainId
+  pool: Pool
+  /** One pool token in ETH through 0x, when priced. */
+  ask?: bigint
+  picked: (id: string) => boolean
+  disabled?: boolean
+  onTick: (id: string) => void
+}) {
+  const count = pool.held === undefined ? undefined : Number(pool.held)
+  const held = useHeldIds(chainId, pool, count, 1)
+  if (!count) return null
+  return (
+    <Card aria-label={`In the ${MODE_LABEL[pool.mode]} pool`} data-pool-picks={pool.address}>
+      <Eyebrow>
+        In MiyaPool ({MODE_LABEL[pool.mode]}) · {count}
+      </Eyebrow>
+      <Hint>
+        1 {pool.symbol} each, no fees{ask !== undefined ? ` (about ${formatAmount(ask, 18, 4)} ETH)` : ''}. Tick any to
+        add them to the batch.
+      </Hint>
+      {held.failed && !held.loading ? (
+        <Hint>
+          Couldn&apos;t list what the pool holds.{' '}
+          <LinkButton type="button" onClick={() => held.refetch()}>
+            Try again
+          </LinkButton>
+        </Hint>
+      ) : held.loading ? (
+        <Tiles>
+          {[0, 1, 2].map((i) => (
+            <li key={i}>
+              <Skeleton h="120px" />
+            </li>
+          ))}
+        </Tiles>
+      ) : (
+        <Tiles>
+          {held.ids.slice(0, HELD_PAGE).map((idn) => {
+            const id = idn.toString()
+            const on = picked(id)
+            return (
+              <li key={id} style={{ position: 'relative' }}>
+                <Tick
+                  type="button"
+                  aria-pressed={on}
+                  aria-label={on ? `Take #${id} out of the batch` : `Add #${id} to the batch`}
+                  title={on ? 'In the batch' : 'Add to the batch'}
+                  disabled={disabled}
+                  onClick={() => onTick(id)}
+                  data-batch-tick
+                >
+                  {on ? '✓' : '+'}
+                </Tick>
+                <OwnedTile chainId={chainId} contract={pool.collection} id={id} />
+              </li>
+            )
+          })}
+        </Tiles>
+      )}
+      {count > HELD_PAGE && (
+        <Hint>
+          Showing {HELD_PAGE} of {count}. Open the pool to pick from the rest.
+        </Hint>
+      )}
+    </Card>
   )
 }
 
@@ -638,6 +821,93 @@ export default function CollectionView({
   const cheapestListing = canSweep[0] ?? listed[0]
   const offerPool = pools.pools.find((p) => `sell into ${poolVenue(p)}` === topOffer?.where)
 
+  /* ---------- the batch: tick several, one transaction per venue ---------- */
+
+  const [buyTicks, setBuyTicks] = useState<BatchPick<OsOrder>[]>([])
+  const [sellTicks, setSellTicks] = useState<string[]>([])
+  const [venueChoice, setVenueChoice] = useState<Record<string, string>>({})
+  const [full, setFull] = useState<{ side: 'buy' | 'sell'; words: string }>()
+  // Inline only (no terminal ticket): the set agreed to, frozen when Review is pressed, as the sweep's.
+  const [batchSet, setBatchSet] = useState<{ side: 'buy' | 'sell'; picks: BatchPick<OsOrder>[] }>()
+  // Another wallet's NFTs are not this one's to sell.
+  useEffect(() => {
+    setSellTicks([])
+    setVenueChoice({})
+  }, [me])
+  const tickable = new Set(canSweep.map((l) => l.hash))
+  // A listing that has gone (sold, cancelled) leaves the batch with its tile; so does an NFT that left the wallet.
+  const buyPicks = listings.listings ? buyTicks.filter((p) => p.venue === 'pool' || tickable.has(p.key)) : buyTicks
+  const sellIds = sellTicks.filter((id) => mineHere.includes(id))
+  const poolAsk = (p: Pool) => ethValue(poolSide(ethPrices[p.address.toLowerCase()], 'ask'))
+  const poolBid = (p: Pool) => ethValue(poolSide(ethPrices[p.address.toLowerCase()], 'bid'))
+  const poolRefs: PoolRef[] = pools.pools.map((p) => ({
+    address: p.address,
+    collection: p.collection,
+    kind: p.kind,
+    mode: p.mode,
+    symbol: p.symbol,
+  }))
+  const poolInfo = pools.pools.map((p) => ({
+    address: p.address,
+    symbol: p.symbol,
+    ethAsk: poolAsk(p),
+    ethBid: poolBid(p),
+  }))
+  const sellBids = useOpenSeaBids(os.slug, sellIds)
+  const poolOptions: PoolOption[] = pools.pools.map((p) => ({
+    address: p.address,
+    symbol: p.symbol,
+    label: poolVenue(p),
+    ethBid: poolBid(p),
+  }))
+  const routes = routeSells(
+    sellIds.map((id) => ({ tokenId: id, bid: sellBids.bids[id] })),
+    poolOptions,
+    venueChoice
+  )
+  const sellBatch = sellPicks(routes)
+  const buySummary = batchSummary('buy', buyPicks, poolInfo)
+  const sellSummary = batchSummary('sell', sellBatch, poolInfo)
+  const routing = routes.some((r) => r.checking)
+  const tickBuy = (pick: BatchPick<OsOrder>) => {
+    const r = togglePick(buyPicks, pick)
+    setBuyTicks(r.picks)
+    setFull(r.full ? { side: 'buy', words: r.full } : undefined)
+  }
+
+  const tickSell = (id: string) => {
+    const r = togglePick(
+      sellIds.map((key) => ({ key })),
+      { key: id }
+    )
+    setSellTicks(r.picks.map((p) => p.key))
+    setFull(r.full ? { side: 'sell', words: r.full } : undefined)
+  }
+
+  const reviewBatch = (side: 'buy' | 'sell') => {
+    const picks = side === 'buy' ? buyPicks : sellBatch
+    if (!picks.length) return
+    setFull(undefined)
+    if (ticket)
+      ticket.open({ kind: 'batch', side, picks, pools: poolRefs, chainId, contract: address, title: name, unverified })
+    else setBatchSet({ side, picks })
+  }
+
+  // The Sweep ticks the N cheapest in place of the other OpenSea ticks; pool picks stay.
+  const tickCheapest = () => {
+    const r = preTick(
+      buyPicks,
+      pickedListings.map((l) => ({ key: l.hash, tokenId: l.tokenId!, venue: 'opensea' as const, order: l })),
+      (p) => p.venue === 'opensea'
+    )
+    setBuyTicks(r.picks)
+    setFull(r.full ? { side: 'buy', words: r.full } : undefined)
+  }
+
+  const targetPools = pools.pools.filter(
+    (p) => p.mode === MODE.TARGETED && p.kind === KIND.ERC721 && p.held !== undefined && p.held > 0n
+  )
+
   const createPool = (mode: PoolMode) =>
     factory &&
     create.run(`create-${mode}`, {
@@ -846,8 +1116,13 @@ export default function CollectionView({
             <Tiles>
               {shownListings.map((l) => (
                 <ListingTile
-                  picked={!sweepSet && pickedListings.some((p) => p.hash === l.hash)}
-                  disabled={busy}
+                  picked={buyPicks.some((p) => p.key === l.hash)}
+                  onTick={
+                    tickable.has(l.hash)
+                      ? () => tickBuy({ key: l.hash, tokenId: l.tokenId!, venue: 'opensea', order: l })
+                      : undefined
+                  }
+                  disabled={busy || !!ticket?.busy}
                   key={l.hash}
                   chainId={chainId}
                   contract={address}
@@ -881,7 +1156,7 @@ export default function CollectionView({
         canSweep.length >= 2 && (
           <SweepBar aria-label="Sweep the floor">
             <label htmlFor="sweep-count">
-              <b>Sweep:</b> buy the {pickedListings.length} cheapest
+              <b>Sweep:</b> tick the {pickedListings.length} cheapest
               {sweepAsk && sweepAsk.count > pickedListings.length ? ` (asked ${sweepAsk.count})` : ''}
             </label>
             <input
@@ -895,27 +1170,48 @@ export default function CollectionView({
             <strong title={ethInUsd(sumPrices(pickedListings), ethUsd)}>
               {formatAmount(sumPrices(pickedListings), 18, 4)} ETH
             </strong>
-            <PushButton
-              type="button"
-              disabled={!!ticket?.busy}
-              onClick={() =>
-                ticket
-                  ? ticket.open({
-                      kind: 'sweep',
-                      listings: pickedListings,
-                      chainId,
-                      contract: address,
-                      title: name,
-                      unverified,
-                    })
-                  : setSweepSet(pickedListings)
-              }
-            >
-              {ticket ? `Sweep ${pickedListings.length}` : 'Review sweep'}
+            <PushButton type="button" disabled={busy || !!ticket?.busy} onClick={tickCheapest} data-sweep-tick>
+              Tick {pickedListings.length} cheapest
             </PushButton>
           </SweepBar>
         )
       )}
+
+      {batchSet && (
+        <BatchReview
+          key={`batch-${batchSet.side}`}
+          escapeCloses
+          side={batchSet.side}
+          picks={batchSet.picks}
+          pools={poolRefs}
+          chainId={chainId}
+          contract={address}
+          title={name}
+          unverified={unverified}
+          onClose={() => setBatchSet(undefined)}
+          onDone={() => listings.refetch()}
+          onBusy={setSweepBusy}
+          onOneByOne={(list) => {
+            if (batchSet.side !== 'buy') return
+            setBatchSet(undefined)
+            setSweepSet(list.map((p) => p.order))
+          }}
+        />
+      )}
+
+      {targetPools.map((p) => (
+        <PoolHeldPicks
+          key={p.address}
+          chainId={chainId}
+          pool={p}
+          ask={poolAsk(p)}
+          disabled={busy || !!ticket?.busy}
+          picked={(id) => buyPicks.some((x) => x.key === `${p.address.toLowerCase()}:${id}`)}
+          onTick={(id) =>
+            tickBuy({ key: `${p.address.toLowerCase()}:${id}`, tokenId: id, venue: 'pool', pool: p.address })
+          }
+        />
+      ))}
 
       {ticket && mineHere.length > 0 && (
         <Card aria-label="Yours" data-yours>
@@ -924,15 +1220,63 @@ export default function CollectionView({
             {owned.partial ? '+' : ''}
           </Eyebrow>
           <Hint>
-            Sell any of them into its best bid. The ticket shows what you receive after fees; you confirm once.
+            Sell any of them into its best bid. The ticket shows what you receive after fees; you confirm once. Tick
+            several to sell them together, each where it gets the most.
           </Hint>
           <YoursList>
-            {mineHere.slice(0, 12).map((id) => (
-              <li key={id}>
-                <OwnedTile chainId={chainId} contract={address} id={id} />
-                <SellNow chainId={chainId} contract={address} slug={os.slug} tokenId={id} title={name} />
-              </li>
-            ))}
+            {mineHere.slice(0, 12).map((id) => {
+              const route = routes.find((r) => r.tokenId === id)
+              const open = route?.options.filter((o) => !o.blocked) ?? []
+              const chosen = route?.options.find((o) => o.venue === route.venue)
+              return (
+                <li key={id} data-yours-item={id}>
+                  <div style={{ position: 'relative' }}>
+                    <Tick
+                      type="button"
+                      aria-pressed={!!route}
+                      aria-label={route ? `Take #${id} out of the batch` : `Add #${id} to the batch`}
+                      title={route ? 'In the batch' : 'Add to the batch'}
+                      disabled={busy || !!ticket?.busy}
+                      onClick={() => tickSell(id)}
+                      data-batch-tick
+                    >
+                      {route ? '✓' : '+'}
+                    </Tick>
+                    <OwnedTile chainId={chainId} contract={address} id={id} />
+                  </div>
+                  {route ? (
+                    <Picked data-batch-route>
+                      {route.checking ? (
+                        <span>Checking bids…</span>
+                      ) : open.length > 1 ? (
+                        <label>
+                          Sell into
+                          <select
+                            value={route.venue ?? ''}
+                            aria-label={`Where to sell #${id}`}
+                            onChange={(e) => setVenueChoice((c) => ({ ...c, [id]: e.target.value }))}
+                          >
+                            {open.map((o) => (
+                              <option key={o.venue} value={o.venue}>
+                                {o.label}: {o.gets}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      ) : chosen ? (
+                        <span>
+                          {chosen.label}: <b>{chosen.gets}</b>
+                        </span>
+                      ) : null}
+                      {sellBids.failed.includes(id) && <span>Bids unavailable right now.</span>}
+                      {route.note && <span>{route.note}</span>}
+                    </Picked>
+                  ) : (
+                    <SellNow chainId={chainId} contract={address} slug={os.slug} tokenId={id} title={name} />
+                  )}
+                </li>
+              )
+            })}
           </YoursList>
           {mineHere.length > 12 && (
             <Hint>Showing 12 of {mineHere.length}. Open one by number below to sell another.</Hint>
@@ -1197,6 +1541,59 @@ export default function CollectionView({
         </Prose>
       </Card>
       <div style={{ height: space[3] }} />
+
+      {(buyPicks.length > 0 || sellIds.length > 0) && (
+        <ActionDock aria-label="Batch" data-batch-bar>
+          {(['buy', 'sell'] as const).map((side) => {
+            const summary = side === 'buy' ? buySummary : sellSummary
+            const count = side === 'buy' ? buyPicks.length : sellIds.length
+            if (!count) return null
+            const waiting = side === 'sell' && routing
+            return (
+              <Bar key={side} data-batch-side={side}>
+                <strong aria-live="polite">
+                  {summary.words || `${count} ticked, none can be sold right now`}
+                  {side === 'sell' && summary.count > 0 && !waiting && count > summary.count
+                    ? ` · ${count - summary.count} with no buyer, left out`
+                    : ''}
+                  {waiting ? ' · checking bids…' : ''}
+                </strong>
+                <LinkButton
+                  type="button"
+                  disabled={busy}
+                  onClick={() => {
+                    if (side === 'buy') setBuyTicks([])
+                    else {
+                      setSellTicks([])
+                      setVenueChoice({})
+                    }
+
+                    setFull(undefined)
+                  }}
+                >
+                  Clear
+                </LinkButton>
+                <PushButton
+                  type="button"
+                  disabled={busy || !!ticket?.busy || waiting || !summary.count}
+                  onClick={() => reviewBatch(side)}
+                  data-batch-review-open
+                >
+                  Review {side === 'buy' ? 'buy' : 'sale'}
+                </PushButton>
+              </Bar>
+            )
+          })}
+          {full && (
+            <Hint role="status" data-batch-full>
+              {full.words}
+            </Hint>
+          )}
+          {sellIds.length > 0 && sellBatch.some((p) => p.venue === 'pool') && (
+            <Hint>A pool pays in its own token, not ETH. Turning it into ETH is a separate swap.</Hint>
+          )}
+        </ActionDock>
+      )}
     </>
   )
 }
