@@ -71,6 +71,18 @@ const allowlistWriteLimiter = createRateLimiter({ capacity: 5, perSecond: 0.05 }
 // These limiters are per isolate. The global limit is the Cloudflare WAF rate-limiting rule on /api/* described at
 // createRateLimiter (api/_lib/zeroex.ts); set it up in the dashboard.
 
+/**
+ * A list shipped with the build (public/allowlists/<root>.json). A missing file is a 404 or the app's index.html (the
+ * single-page fallback, not JSON): no list. Any other failure throws, so the route says "couldn't check", not "no list".
+ */
+async function readShippedList(assets: Env['ASSETS'], url: URL, root: string): Promise<unknown> {
+  const r = await assets.fetch(new Request(new URL(`/allowlists/${root}.json`, url).toString()))
+  if (r.status === 404) return undefined
+  if (!r.ok) throw new Error(`asset store answered ${r.status}`)
+  if (!(r.headers.get('content-type') || '').includes('json')) return undefined
+  return r.json()
+}
+
 const edge = () => edgeCache((caches as unknown as { default?: Cache }).default)
 
 /**
@@ -230,11 +242,7 @@ async function api(request: Request, env: Env, url: URL): Promise<Response> {
     return handleAllowlistRequest(
       { method: request.method, url: request.url, headers: request.headers, body },
       {
-        // Lists shipped with the build. A missing file is the app's index.html (single-page fallback): not JSON.
-        readStatic: async (root) => {
-          const r = await env.ASSETS.fetch(new Request(new URL(`/allowlists/${root}.json`, url).toString()))
-          return r.ok && (r.headers.get('content-type') || '').includes('json') ? r.json() : undefined
-        },
+        readStatic: (root) => readShippedList(env.ASSETS, url, root),
         store: env.DB ? d1AllowlistStore(env.DB) : undefined,
         sameOrigin,
         clientKey,

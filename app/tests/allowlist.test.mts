@@ -16,10 +16,13 @@ import {
   handleAllowlistRequest,
   leafHash,
   MAX_PASTED,
+  MAX_SAVED_BYTES_PER_DAY,
+  MAX_SAVED_PER_CLIENT_PER_DAY,
   memoryAllowlistStore,
   parseAddressList,
   proofFor,
   readDump,
+  readStored,
   verifyProof,
 } from '../api/_lib/allowlist.ts'
 
@@ -180,7 +183,45 @@ test('a shipped file whose tree is for another root is not served under that roo
   clearAllowlistCache()
   const other = `0x${'cd'.repeat(32)}`
   const r = await get(`${ALLOWLIST_PATH}/${other}?address=${FIXTURE[0]}`, deps({ readStatic: async () => FIXTURE_DUMP }))
-  assert.equal(r.status, 404)
+  assert.equal(r.status, 503)
+  assert.equal((await r.json()).root, undefined, 'a broken copy is not "no list"')
+})
+
+test('a list that could not be read is 503 without a root (the page shows "couldn\'t check"), never 404', async () => {
+  const q = `${ALLOWLIST_PATH}/${ROOT}?address=${FIXTURE[0]}`
+  const answer = async (d: ReturnType<typeof deps>) => {
+    clearAllowlistCache()
+    const r = await get(q, d)
+    return { status: r.status, root: (await r.json()).root }
+  }
+  const down = async () => Promise.reject(new Error('asset store down'))
+  assert.deepEqual(await answer(deps({ readStatic: down })), { status: 503, root: undefined })
+  assert.deepEqual(await answer(deps({ readStatic: async () => '<html>' })), { status: 503, root: undefined })
+  const d1Down = { get: down, put: async () => true, usageSince: async () => ({ lists: 0, bytes: 0 }) }
+  assert.deepEqual(await answer(deps({ readStatic: async () => undefined, store: d1Down })), { status: 503, root: undefined })
+  const badRow = { ...d1Down, get: async () => ({ not: 'a list' }) }
+  assert.deepEqual(await answer(deps({ readStatic: async () => undefined, store: badRow })), { status: 503, root: undefined })
+  // A row whose addresses build another root is a broken copy too.
+  const otherRow = { ...d1Down, get: async () => [FIXTURE[0].toLowerCase()] }
+  assert.deepEqual(await answer(deps({ readStatic: async () => undefined, store: otherRow })), { status: 503, root: undefined })
+  const nothing = { ...d1Down, get: async () => undefined }
+  assert.deepEqual(await answer(deps({ readStatic: async () => undefined, store: nothing })), { status: 404, root: ROOT })
+  clearAllowlistCache()
+  assert.equal((await fetchProof(ROOT, FIXTURE[0], async () => get(q, deps({ readStatic: down })))).state, 'unknown')
+})
+
+test('answers for a shipped list may be cached (a root is fixed); a missing list and a pasted one are not', async () => {
+  clearAllowlistCache()
+  const yes = await get(`${ALLOWLIST_PATH}/${ROOT}?address=${FIXTURE[0]}`)
+  assert.match(yes.headers.get('cache-control') ?? '', /immutable/)
+  assert.match(yes.headers.get('cache-control') ?? '', /s-maxage=/)
+  const missing = await get(`${ALLOWLIST_PATH}/0x${'ab'.repeat(32)}?address=${OUTSIDER}`)
+  assert.equal(missing.headers.get('cache-control'), 'no-store')
+  const d = deps({ readStatic: async () => undefined })
+  const saved = await (await post({ addresses: FIXTURE.slice(0, 2) }, d)).json()
+  const pasted = await get(`${ALLOWLIST_PATH}/${saved.root}?address=${FIXTURE[0]}`, d)
+  assert.equal(pasted.status, 200)
+  assert.equal(pasted.headers.get('cache-control'), 'no-store')
 })
 
 test('POST saves a pasted list under the root miya works out, once, from this site only', async () => {
@@ -202,11 +243,55 @@ test('POST saves a pasted list under the root miya works out, once, from this si
   assert.equal((await post({ addresses: many }, d)).status, 413)
   assert.equal((await post({ addresses: [FIXTURE[1]] }, deps({ writeLimiter: () => false }))).status, 429)
   const broken = deps({
-    store: { get: async () => Promise.reject(new Error('no such table: allowlists')), put: async () => true, countSince: async () => 0 },
+    store: {
+      get: async () => Promise.reject(new Error('no such table: allowlists')),
+      put: async () => true,
+      usageSince: async () => ({ lists: 0, bytes: 0 }),
+    },
   })
   assert.equal((await post({ addresses: [FIXTURE[1]] }, broken)).status, 503)
-  const full = deps({ store: { get: async () => undefined, put: async () => true, countSince: async () => 10_000 } })
+  const full = deps({ store: { get: async () => undefined, put: async () => true, usageSince: async () => ({ lists: 10_000, bytes: 0 }) } })
   assert.equal((await post({ addresses: [FIXTURE[1]] }, full)).status, 429)
+  const heavy = deps({
+    store: { get: async () => undefined, put: async () => true, usageSince: async () => ({ lists: 1, bytes: MAX_SAVED_BYTES_PER_DAY }) },
+  })
+  assert.equal((await post({ addresses: [FIXTURE[1]] }, heavy)).status, 429, 'the day has a byte ceiling too')
+})
+
+test('a pasted list is stored as its sorted lowercase addresses only, and one client gets a daily cap', async () => {
+  clearAllowlistCache()
+  const rows: { root: string; body: unknown; client?: string }[] = []
+  const store = memoryAllowlistStore()
+  const spy = {
+    ...store,
+    put: async (root: `0x${string}`, addresses: readonly string[], at: number, client?: string) => {
+      rows.push({ root, body: addresses, client })
+      return store.put(root, addresses, at, client)
+    },
+  }
+  const d = deps({ readStatic: async () => undefined, store: spy, clientKey: () => '203.0.113.7' })
+  const saved = await (await post({ addresses: [FIXTURE[4], FIXTURE[0]] }, d)).json()
+  assert.deepEqual(rows[0]!.body, [FIXTURE[0].toLowerCase(), FIXTURE[4].toLowerCase()].sort())
+  assert.match(rows[0]!.client ?? '', /^[0-9a-f]{32}$/, 'the client is kept hashed')
+  assert.ok(!(rows[0]!.client ?? '').includes('203'), 'no IP stored')
+  assert.deepEqual(await store.get(saved.root), [FIXTURE[0].toLowerCase(), FIXTURE[4].toLowerCase()].sort())
+  assert.equal(readStored(await store.get(saved.root))?.length, 2)
+  // The reply checksums only the wallet asked about.
+  const one = await (await get(`${ALLOWLIST_PATH}/${saved.root}?address=${FIXTURE[4].toLowerCase()}`, d)).json()
+  assert.equal(one.address, FIXTURE[4])
+  assert.ok(verifyProof(saved.root, FIXTURE[4], one.proof))
+
+  let n = 1
+  for (; n < MAX_SAVED_PER_CLIENT_PER_DAY; n += 1) {
+    assert.equal((await post({ addresses: [`0x${(n + 100).toString(16).padStart(40, '0')}`] }, d)).status, 200)
+  }
+  const over = await post({ addresses: [`0x${'7'.repeat(40)}`] }, d)
+  assert.equal(over.status, 429)
+  const elsewhere = deps({ readStatic: async () => undefined, store: spy, clientKey: () => '198.51.100.1' })
+  assert.equal((await post({ addresses: [`0x${'7'.repeat(40)}`] }, elsewhere)).status, 200, 'another client still can')
+  assert.equal(readStored(['0xb', '0xa']), undefined)
+  assert.equal(readStored([FIXTURE[1].toLowerCase(), FIXTURE[0].toLowerCase()].sort().reverse()), undefined, 'out of order')
+  assert.equal(readStored([FIXTURE[0]]), undefined, 'checksummed case is not how rows are stored')
 })
 
 // ── the page's side ──────────────────────────────────────────────────────────

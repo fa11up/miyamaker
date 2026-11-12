@@ -239,8 +239,15 @@ function allowlistDevProxy(): Plugin {
         const response = await handleAllowlistRequest(
           { method: req.method || 'GET', url: `http://${devHost(req)}${ALLOWLIST_PATH}${rest}`, headers: devHeaders(req), body },
           {
-            readStatic: async (root) =>
-              JSON.parse(await fs.promises.readFile(path.resolve(__dirname, 'public/allowlists', `${root}.json`), 'utf8')),
+            // No file is no list; any other failure throws, as the Worker's does.
+            readStatic: async (root) => {
+              const file = path.resolve(__dirname, 'public/allowlists', `${root}.json`)
+              const text = await fs.promises.readFile(file, 'utf8').catch((e: NodeJS.ErrnoException) => {
+                if (e.code === 'ENOENT') return undefined
+                throw e
+              })
+              return text === undefined ? undefined : JSON.parse(text)
+            },
             store,
             sameOrigin,
             clientKey,

@@ -34,12 +34,21 @@ test('a body that says it is too large is turned away unread', async () => {
   assert.equal(seen.bytes, 0)
 })
 
-test('a body without a length stops being read at the limit', async () => {
+test('a body without a length that runs past the limit is turned away, not cut short', async () => {
   const { stream, seen } = endless()
-  const text = await readCappedText(post(stream))
-  assert.equal(text?.length, BODY_LIMIT)
+  assert.equal(await readCappedText(post(stream)), undefined)
   assert.ok(seen.bytes <= BODY_LIMIT + 2000, `pulled ${seen.bytes}`)
   assert.ok(seen.cancelled)
+})
+
+test('a body whose length lies is turned away once it is past the limit', async () => {
+  const body = new ReadableStream<Uint8Array>({
+    start(c) {
+      c.enqueue(new TextEncoder().encode('x'.repeat(BODY_LIMIT + 1)))
+      c.close()
+    },
+  })
+  assert.equal(await readCappedText(post(body, { 'content-length': '10' })), undefined)
 })
 
 test('JSON answers say nosniff; others are left alone', async () => {
