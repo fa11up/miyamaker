@@ -51,9 +51,11 @@ The chart draws the rise for the copies you set, and at most 240 of them, and it
 
 MiyaMusicMaker is a drum machine, a keyboard, a tracker, and a song arranger in one window. A starter kit is already loaded. Pattern `00` is a short demo. Click the window once, so the browser will make sound, then press Play. Make music every day. A little time at the instrument keeps you creative, and it keeps you at one with God's creation.
 
-Sixty-four pads sit in banks A through D. The Sequence page and the Tracker page edit the same pattern. The arranger chains those patterns into a song. The bar under the playing cell shows how far that loop has gone. A cell that is waiting for the current loop to finish is the only one that blinks.
+Sixty-four pads sit in banks A through D. The Sequence page and the Tracker page edit the same pattern. On Sequence, Snap sets the grid, from a quarter note down to a 128th, and the tools move into the left rail when it has room. The arranger chains those patterns into a song. The bar under the playing cell shows how far that loop has gone. A cell that is waiting for the current loop to finish is the only one that blinks.
 
 Songs save as `.m1ya`. Kits save as `.k1t`. From the site, or from a local checkout, you can publish a song, a kit, or a bounce to Arweave, and mint it as an edition. Publishing is public and permanent, and storage is paid in real ETH on Ethereum mainnet. The full map of the instrument, including MIDI controllers, the phone layout, the chord panel, and the tracker keys, is [app/src/pages/MusicMaker/README.md](app/src/pages/MusicMaker/README.md). The chord-panel section of that guide is released under the [Source Seppuku License](https://wiki.remilia.org/Source_Seppuku_License).
+
+Version 1.0.0 is also a program you can run without a browser window. The Mac download is the GitHub release `MiyaMusicMaker-v1.0.0`. The same source builds a portable exe on Windows and an AppImage on Linux. The steps are in [desktop/miyamusicmaker/README.md](desktop/miyamusicmaker/README.md).
 
 ## Layout
 
@@ -62,6 +64,7 @@ Songs save as `.m1ya`. Kits save as `.k1t`. From the site, or from a local check
 | `app/` | miyaOS frontend (Vite + React 18), imported from [miyamaker/miyaOS](https://github.com/miyamaker/miyaOS) `main` @ `527d825` |
 | `app/src/pages/` | One folder per program |
 | `app/src/pages/MusicMaker/` | The sampler. Its guide is [the MusicMaker README](app/src/pages/MusicMaker/README.md). |
+| `desktop/miyamusicmaker/` | Portable MiyaMusicMaker 1.0.0. A Mac zip, and the source for a Windows exe and a Linux AppImage. |
 | `app/src/pages/OperatingSystem/` | The desktop, the wallpaper, and the window layer |
 | `app/src/desktop/` | Icons, My Files, Display, the pet, and the screen saver |
 | `app/src/miyamints/` | Launch, manage, and the edition math the windows share |

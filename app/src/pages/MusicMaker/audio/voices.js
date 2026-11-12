@@ -37,6 +37,83 @@ export function locateStep(time, anchor, step, n, natural) {
   return { step: ((at % n) + n) % n, nudge }
 }
 
+/** Straight snap divisions. A bar is 16 steps, so 16 is one step and 128 is an eighth of a step. */
+export const GRID_DIVS = [4, 8, 16, 32, 64, 128]
+
+export function gridDiv(value) {
+  const n = Number(value)
+  return GRID_DIVS.includes(n) ? n : 16
+}
+
+/** Steps per snap point. 1/16 is one step. Finer than that is a fraction of a step. */
+export function gridUnit(div) {
+  return 16 / gridDiv(div)
+}
+
+/**
+ * Where a sequencer drag lands.
+ * Snap sits on the division. Coarser than a step lands on that step and clears MOVE.
+ * Finer than a step keeps the remainder as MOVE. Off keeps the fraction as MOVE.
+ * `div` defaults to 16 so older callers still snap to a step.
+ */
+export function gridPlace(step, nudge, delta, snap, length, div) {
+  const n = Math.max(1, length | 0)
+  const micro = Math.max(-50, Math.min(50, Math.round(Number(nudge) || 0)))
+  const from = (step | 0) + (snap ? 0 : micro / 100)
+  let at = from + (Number(delta) || 0)
+  const unit = gridUnit(div)
+  if (snap) at = Math.round(Math.round(at / unit) * unit * 1000) / 1000
+  const nearest = Math.round(at)
+  let landed = nearest
+  if (landed < 0) landed = 0
+  if (landed > n - 1) landed = n - 1
+  if ((snap && unit >= 1) || landed !== nearest) return { step: landed, nudge: 0 }
+  const rest = Math.max(-50, Math.min(50, Math.round((at - nearest) * 100)))
+  return { step: landed, nudge: rest }
+}
+
+/** Exclusive end of a note, in steps. Snap lands on the division. Off keeps hundredths of a step. */
+export function gridEnd(edge, snap, length, div, minEdge) {
+  const n = Math.max(1, length | 0)
+  const unit = snap ? gridUnit(div) : 0.01
+  let at = Number(edge)
+  if (!Number.isFinite(at)) at = n
+  if (snap) at = Math.round(Math.round(at / unit) * unit * 1000) / 1000
+  else at = Math.round(at * 100) / 100
+  const floor = Math.min(n, Math.max(unit, Number(minEdge) || 0))
+  if (at < floor) at = floor
+  if (at > n) at = n
+  return at
+}
+
+/** Last step a note occupies, and how much of that step it fills (1–100). 100 is the whole step. */
+export function edgeParts(edge, start) {
+  const origin = Math.max(0, start | 0)
+  let at = Number(edge)
+  if (!Number.isFinite(at)) at = origin + 1
+  const nearest = Math.round(at)
+  let end
+  let tail
+  if (Math.abs(at - nearest) < 0.001) {
+    end = nearest - 1
+    tail = 100
+  } else {
+    end = Math.floor(at + 1e-6)
+    tail = Math.round((at - end) * 100)
+  }
+  if (tail >= 100) tail = 100
+  else if (tail <= 0) {
+    end -= 1
+    tail = 100
+  }
+  if (end < origin) {
+    end = origin
+    const into = Math.round((at - origin) * 100)
+    tail = Math.max(1, Math.min(100, into || 1))
+  }
+  return { end, tail }
+}
+
 /** One decoded buffer per sample entry and direction. A new entry (or rev) makes a new buffer. */
 export function createBufferCache() {
   let cache = new WeakMap()

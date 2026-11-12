@@ -1,13 +1,18 @@
-import { useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { noteOff, noteOn } from '../audio/engine.js'
 import {
+  CHORD_BANKS,
   CHORDS,
   KEY_HI,
   KEY_LO,
   ROOTS,
   SCALES,
   WHITE_COUNT,
+  bankItemName,
   blackAnchor,
+  clampAxis,
+  clampBank,
+  fingerVelocity,
   isWhite,
   slideKeys,
   strumSet,
@@ -24,8 +29,13 @@ function trackExtra() {
   return { trackerNote: true, lane: Math.floor((model.tracker.col || 0) / trackerFields()) }
 }
 
-function playAt(midi, hold) {
-  noteOn(model.selected, TRACK_VEL, hold, tunedPitch(midi, model.pianoRoot | 0, model.pianoTuning), trackExtra())
+function playAt(midi, hold, velocity = TRACK_VEL) {
+  noteOn(model.selected, velocity, hold, tunedPitch(midi, model.pianoRoot | 0, model.pianoTuning), trackExtra())
+}
+
+function pressVelocity(event, rect) {
+  const y = (event.clientY - rect.top) / Math.max(1, rect.height)
+  return fingerVelocity(y, clampAxis(model.pianoAxis))
 }
 
 function KeyMap() {
@@ -126,7 +136,7 @@ function Board({ lit, onLit }) {
       if (held != null) noteOff('piano:key')
       held = midi
       onLit(midi)
-      if (midi != null) playAt(Number(midi), 'piano:key')
+      if (midi != null) playAt(Number(midi), 'piano:key', pressVelocity(ev, board.getBoundingClientRect()))
     }
     const up = (ev) => {
       if (ev.pointerId !== id) return
@@ -204,7 +214,7 @@ function Strum() {
       if (last >= 0) noteOff(`piano:strum:${last}`)
       last = index
       const midi = notes[index]
-      if (midi != null) playAt(midi, `piano:strum:${index}`)
+      if (midi != null) playAt(midi, `piano:strum:${index}`, pressVelocity(ev, el.getBoundingClientRect()))
     }
     const up = (ev) => {
       if (ev.pointerId !== id) return
@@ -220,7 +230,150 @@ function Strum() {
     el.addEventListener('pointercancel', up)
     play(event)
   }
-  return <div ref={host} className="piano-strum" onPointerDown={down} role="group" aria-label="Strum" style={{ '--stripes': notes.length }} />
+  const rootPc = model.pianoRoot | 0
+  return (
+    <div ref={host} className="piano-strum" onPointerDown={down} role="group" aria-label="Strum" style={{ '--stripes': notes.length }}>
+      {notes.map((midi, index) => (
+        <i key={`${midi}-${index}`} className={(midi % 12) === rootPc ? 'is-root' : ''}>{noteName(midi - 60).replace('-', '')}</i>
+      ))}
+    </div>
+  )
+}
+
+function bankForSelection() {
+  const chordId = model.pianoChord
+  const scaleId = model.pianoScale
+  if (chordId) {
+    const at = CHORD_BANKS.findIndex((bank) => bank.items.some((item) => item.kind === 'chord' && item.id === chordId))
+    if (at >= 0) return at
+  }
+  if (scaleId) {
+    const at = CHORD_BANKS.findIndex((bank) => bank.items.some((item) => item.kind === 'scale' && item.id === scaleId))
+    if (at >= 0) return at
+  }
+  return clampBank(model.pianoBank)
+}
+
+function StrumScreen() {
+  const [open, setOpen] = useState(false)
+  const root = useRef(null)
+  useEffect(() => {
+    if (!open) return undefined
+    const down = (event) => {
+      const node = root.current
+      if (!node) return
+      if (node.contains(event.target)) return
+      if (event.composedPath?.().includes(node)) return
+      setOpen(false)
+    }
+    const key = (event) => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      event.stopPropagation()
+      setOpen(false)
+    }
+    window.addEventListener('pointerdown', down)
+    window.addEventListener('keydown', key, true)
+    return () => {
+      window.removeEventListener('pointerdown', down)
+      window.removeEventListener('keydown', key, true)
+    }
+  }, [open])
+  const toggle = () => {
+    if (!open) {
+      const bank = bankForSelection()
+      if (bank !== clampBank(model.pianoBank)) {
+        model.pianoBank = bank
+        touch(false)
+      }
+    }
+    setOpen((value) => !value)
+  }
+  const pick = (patch) => {
+    if (patch.root != null) model.pianoRoot = patch.root
+    if (patch.chord != null) {
+      model.pianoChord = patch.chord
+      model.pianoScale = ''
+    }
+    if (patch.scale != null) {
+      model.pianoScale = patch.scale
+      model.pianoChord = ''
+    }
+    touch(true)
+    if (patch.root == null) setOpen(false)
+  }
+  const bankIndex = clampBank(model.pianoBank)
+  const bank = CHORD_BANKS[bankIndex]
+  return (
+    <div className="strum-screen" ref={root}>
+      <div className="strum-bar">
+        <button
+          type="button"
+          className={`btn ${open ? 'on' : ''}`}
+          aria-expanded={open}
+          aria-label="Scale and root. Locates notes on the strings. Does not play."
+          onClick={toggle}
+        >
+          Scale
+        </button>
+        <StrumCaption />
+      </div>
+      {open ? (
+        <div className="strum-picker" role="dialog" aria-label="Scale and root. Marks the strings and does not play.">
+          <div className="strum-roots" role="group" aria-label="Root">
+            {ROOTS.map((name, index) => (
+              <button
+                key={name}
+                type="button"
+                className={`btn ${(model.pianoRoot | 0) === index ? 'on' : ''}`}
+                aria-pressed={(model.pianoRoot | 0) === index}
+                onClick={() => pick({ root: index })}
+              >
+                {name}
+              </button>
+            ))}
+          </div>
+          <div className="strum-bank" role="group" aria-label={`${bank.label}. These mark the strings and do not play.`}>
+            {bank.items.map((item) => {
+              const name = bankItemName(item)
+              const on = item.kind === 'chord'
+                ? model.pianoChord === item.id && !model.pianoScale
+                : model.pianoScale === item.id && !model.pianoChord
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  className={`btn ${on ? 'on' : ''}`}
+                  aria-pressed={on}
+                  title={name}
+                  onClick={() => pick(item.kind === 'chord' ? { chord: item.id } : { scale: item.id })}
+                >
+                  {name}
+                </button>
+              )
+            })}
+          </div>
+          <div className="strum-banks" role="group" aria-label="Harmony banks">
+            {CHORD_BANKS.map((page, index) => (
+              <button
+                key={page.id}
+                type="button"
+                className={`btn ${index === bankIndex ? 'on' : ''}`}
+                aria-pressed={index === bankIndex}
+                aria-label={page.label}
+                onClick={() => {
+                  model.pianoBank = index
+                  touch(true)
+                }}
+              >
+                {page.name}
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : <Strum />}
+    </div>
+  )
 }
 
 function Octave() {
@@ -327,12 +480,7 @@ export function Piano() {
           </>
         )}
         {view === 'chords' && <ChordPanel />}
-        {view === 'strum' && (
-          <>
-            <StrumCaption />
-            <Strum />
-          </>
-        )}
+        {view === 'strum' && <StrumScreen />}
       </div>
     </div>
   )

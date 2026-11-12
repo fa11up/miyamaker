@@ -1,0 +1,78 @@
+{
+  "name": "miyamusicmaker",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Portable MiyaMusicMaker. The instrument is the web app, opened on /music.",
+  "author": "Juan Larrazabal",
+  "license": "AGPL-3.0-only",
+  "main": "main.js",
+  "engines": {
+    "node": ">=22.18.0"
+  },
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "dist:mac": "node prepare.js && electron-builder --mac zip --arm64",
+    "dist:mac:x64": "node prepare.js && electron-builder --mac zip --x64",
+    "dist:win": "node prepare.js && electron-builder --win portable",
+    "dist:linux": "node prepare.js && electron-builder --linux AppImage"
+  },
+  "devDependencies": {
+    "electron": "45.3.1",
+    "electron-builder": "26.18.0"
+  },
+  "build": {
+    "appId": "com.miyamaker.miyamusicmaker",
+    "productName": "MiyaMusicMaker",
+    "copyright": "Copyright © 2026 Juan Larrazabal",
+    "asar": true,
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../../app/dist",
+        "to": "app",
+        "filter": [
+          "**/*",
+          "!tsconfig.tsbuildinfo"
+        ]
+      }
+    ],
+    "mac": {
+      "category": "public.app-category.music",
+      "target": [
+        "zip"
+      ],
+      "artifactName": "MiyaMusicMaker-${version}-mac-${arch}.zip",
+      "identity": "-",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.inherit.plist",
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "MiyaMusicMaker uses the microphone when you record a sample."
+      }
+    },
+    "win": {
+      "target": [
+        "portable"
+      ],
+      "signAndEditExecutable": false,
+      "artifactName": "MiyaMusicMaker-${version}-windows.exe"
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "Audio",
+      "synopsis": "A drum machine, keyboard, tracker, and song arranger.",
+      "artifactName": "MiyaMusicMaker-${version}-linux.${ext}"
+    }
+  }
+}
