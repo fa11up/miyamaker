@@ -264,7 +264,7 @@ function SellNow({
       data-sell-now
       onClick={() => ticket.open({ kind: 'fill', side: 'sell', order: item.offer!, chainId, contract, tokenId, title })}
     >
-      {label ? `${label} · ${formatPrice(item.offer.price)}` : `Sell now · ${formatPrice(item.offer.price)}`}
+      {label ? `${label} · ${formatPrice(item.offer.price)}` : `Sell now · bid ${formatPrice(item.offer.price)}`}
     </PushButton>
   )
 }
@@ -754,59 +754,6 @@ export default function CollectionView({
           </Stats>
         )}
 
-        {/* The figures above already give OpenSea's prices: the price lines are here only to compare them with our pools. */}
-        {poolLines.length > 0 && (
-          <Best aria-label="Best prices">
-            {cheapest && (
-              <div className="line">
-                <span>Cheapest</span>
-                <strong>
-                  {formatPrice(cheapest.price)} <span className="where">{cheapest.where}</span>
-                </strong>
-              </div>
-            )}
-            {topOffer && (
-              <div className="line">
-                <span>Best offer</span>
-                <strong>
-                  {formatPrice(topOffer.price)} <span className="where">{topOffer.where}</span>
-                </strong>
-              </div>
-            )}
-            {offerPool && (
-              <PushButton type="button" disabled={busy} onClick={() => onOpenPool(offerPool.address)}>
-                Sell into the pool
-              </PushButton>
-            )}
-            {ticket && mineHere[0] && (
-              <SellNow
-                chainId={chainId}
-                contract={address}
-                slug={os.slug}
-                tokenId={mineHere[0]}
-                title={name}
-                label="Sell into the top bid"
-              />
-            )}
-            {poolLines.map((p) => (
-              <PoolPriceLine
-                key={p.address}
-                pool={p}
-                swap={swap}
-                symbol={shownPair?.symbol}
-                price={shownPrices[p.address.toLowerCase()]}
-              />
-            ))}
-            {swap && (
-              <PairSwitch
-                label="Pool price in"
-                options={pairs.map((t) => t.symbol)}
-                value={shownPair?.symbol}
-                onChange={setPairSymbol}
-              />
-            )}
-          </Best>
-        )}
         {cheapest &&
           (cheapestPool ? (
             <Action type="button" data-best-buy disabled={busy} onClick={() => onOpenPool(cheapestPool.address)}>
@@ -840,6 +787,158 @@ export default function CollectionView({
             </Action>
           ) : null)}
       </Card>
+
+      {/* The art first: what you hold, then every piece. Prices, pools and markets follow. */}
+      {ticket && mineHere.length > 0 && (
+        <Card aria-label="Yours" data-yours>
+          <Eyebrow>
+            Yours · {mineHere.length}
+            {owned.partial ? '+' : ''}
+          </Eyebrow>
+          <Hint>
+            Sell any of them into its best bid. The ticket shows what you receive after fees; you confirm once.
+          </Hint>
+          <YoursList>
+            {mineHere.slice(0, 12).map((id) => (
+              <li key={id}>
+                <OwnedTile chainId={chainId} contract={address} id={id} />
+                <SellNow chainId={chainId} contract={address} slug={os.slug} tokenId={id} title={name} />
+              </li>
+            ))}
+          </YoursList>
+          {mineHere.length > 12 && (
+            <Hint>Showing 12 of {mineHere.length}. Open one by number below to sell another.</Hint>
+          )}
+        </Card>
+      )}
+
+      <Card aria-label="Gallery" data-gallery>
+        <Eyebrow>
+          Gallery
+          {gallery.items.length ? ` · ${gallery.items.length}${gallery.done ? '' : '+'}` : ''}
+          {!gallery.items.length && onchainSupply ? ` · ${onchainSupply.toLocaleString()} minted` : ''}
+        </Eyebrow>
+        {galleryItems.length > 0 ? (
+          <>
+            <Hint>
+              {gallery.items.length
+                ? 'Every piece, for sale or not. Press one to view it full screen.'
+                : `OpenSea is offline, so these are numbered #1 up to the minted count; a collection that starts at #0 or has burned pieces will differ. Press one to view it full screen.`}
+            </Hint>
+            <ArtGrid>
+              {galleryItems.map((g) => (
+                <GalleryTile
+                  key={g.tokenId}
+                  chainId={chainId}
+                  contract={address}
+                  item={g}
+                  onOpen={() => setViewing({ list: 'gallery', tokenId: g.tokenId })}
+                />
+              ))}
+            </ArtGrid>
+            {gallery.items.length > 0 && !gallery.done && (
+              <PushButton type="button" disabled={gallery.loading} onClick={() => gallery.more()}>
+                {gallery.loading ? 'Loading…' : 'Show more'}
+              </PushButton>
+            )}
+            {!gallery.items.length && onchainSupply !== undefined && onchainSupply > galleryLimit && (
+              <PushButton type="button" onClick={() => setGalleryLimit((n) => n + GALLERY_PAGE)}>
+                Show more ({(onchainSupply - galleryLimit).toLocaleString()} left)
+              </PushButton>
+            )}
+          </>
+        ) : gallery.loading || supplyRead.isLoading ? (
+          <Tiles>
+            {[0, 1, 2, 3].map((i) => (
+              <li key={i}>
+                <Skeleton h="140px" />
+              </li>
+            ))}
+          </Tiles>
+        ) : (
+          <Hint>Couldn&apos;t list its pieces right now. Enter a number below to see one.</Hint>
+        )}
+      </Card>
+
+      {viewing && viewingIndex >= 0 && (
+        <Viewer
+          unverified={unverified}
+          chainId={chainId}
+          contract={address}
+          slug={os.slug}
+          collectionName={name}
+          supply={os.info?.supply ?? onchainSupply}
+          items={viewerItems}
+          index={viewingIndex}
+          onIndex={(index) => setViewing({ ...viewing, tokenId: viewerItems[index]!.tokenId })}
+          onClose={() => setViewing(undefined)}
+          onOpen={(tokenId, buy) => {
+            setViewing(undefined)
+            onOpenItem(tokenId, buy)
+          }}
+        />
+      )}
+
+      {poolLines.length > 0 && (
+        <>
+          <Card aria-label="Pool prices">
+            <Eyebrow>Pools vs OpenSea</Eyebrow>
+            {/* The figures above already give OpenSea's prices: the price lines are here only to compare them with our pools. */}
+            {poolLines.length > 0 && (
+              <Best aria-label="Best prices">
+                {cheapest && (
+                  <div className="line">
+                    <span>Cheapest</span>
+                    <strong>
+                      {formatPrice(cheapest.price)} <span className="where">{cheapest.where}</span>
+                    </strong>
+                  </div>
+                )}
+                {topOffer && (
+                  <div className="line">
+                    <span>Best offer</span>
+                    <strong>
+                      {formatPrice(topOffer.price)} <span className="where">{topOffer.where}</span>
+                    </strong>
+                  </div>
+                )}
+                {offerPool && (
+                  <PushButton type="button" disabled={busy} onClick={() => onOpenPool(offerPool.address)}>
+                    Sell into the pool
+                  </PushButton>
+                )}
+                {ticket && mineHere[0] && (
+                  <SellNow
+                    chainId={chainId}
+                    contract={address}
+                    slug={os.slug}
+                    tokenId={mineHere[0]}
+                    title={name}
+                    label={`Sell #${mineHere[0]} into its best bid`}
+                  />
+                )}
+                {poolLines.map((p) => (
+                  <PoolPriceLine
+                    key={p.address}
+                    pool={p}
+                    swap={swap}
+                    symbol={shownPair?.symbol}
+                    price={shownPrices[p.address.toLowerCase()]}
+                  />
+                ))}
+                {swap && (
+                  <PairSwitch
+                    label="Pool price in"
+                    options={pairs.map((t) => t.symbol)}
+                    value={shownPair?.symbol}
+                    onChange={setPairSymbol}
+                  />
+                )}
+              </Best>
+            )}
+          </Card>
+        </>
+      )}
 
       {noPoolYet && (
         <Card aria-label="Start the first pool" data-start-pool>
@@ -1067,96 +1166,6 @@ export default function CollectionView({
           <Hint>Random pools work only for ERC-721.</Hint>
         )}
       </Card>
-
-      {ticket && mineHere.length > 0 && (
-        <Card aria-label="Yours" data-yours>
-          <Eyebrow>
-            Yours · {mineHere.length}
-            {owned.partial ? '+' : ''}
-          </Eyebrow>
-          <Hint>
-            Sell any of them into its best bid in one step. What you receive, after fees, shows before you sign.
-          </Hint>
-          <YoursList>
-            {mineHere.slice(0, 12).map((id) => (
-              <li key={id}>
-                <OwnedTile chainId={chainId} contract={address} id={id} />
-                <SellNow chainId={chainId} contract={address} slug={os.slug} tokenId={id} title={name} />
-              </li>
-            ))}
-          </YoursList>
-          {mineHere.length > 12 && (
-            <Hint>Showing 12 of {mineHere.length}. Open one by number below to sell another.</Hint>
-          )}
-        </Card>
-      )}
-
-      <Card aria-label="Gallery" data-gallery>
-        <Eyebrow>
-          Gallery
-          {gallery.items.length ? ` · ${gallery.items.length}${gallery.done ? '' : '+'}` : ''}
-          {!gallery.items.length && onchainSupply ? ` · ${onchainSupply.toLocaleString()} minted` : ''}
-        </Eyebrow>
-        {galleryItems.length > 0 ? (
-          <>
-            <Hint>
-              {gallery.items.length
-                ? 'Every piece, for sale or not. Press one to view it full screen.'
-                : `OpenSea is offline, so these are numbered #1 up to the minted count; a collection that starts at #0 or has burned pieces will differ. Press one to view it full screen.`}
-            </Hint>
-            <ArtGrid>
-              {galleryItems.map((g) => (
-                <GalleryTile
-                  key={g.tokenId}
-                  chainId={chainId}
-                  contract={address}
-                  item={g}
-                  onOpen={() => setViewing({ list: 'gallery', tokenId: g.tokenId })}
-                />
-              ))}
-            </ArtGrid>
-            {gallery.items.length > 0 && !gallery.done && (
-              <PushButton type="button" disabled={gallery.loading} onClick={() => gallery.more()}>
-                {gallery.loading ? 'Loading…' : 'Show more'}
-              </PushButton>
-            )}
-            {!gallery.items.length && onchainSupply !== undefined && onchainSupply > galleryLimit && (
-              <PushButton type="button" onClick={() => setGalleryLimit((n) => n + GALLERY_PAGE)}>
-                Show more ({(onchainSupply - galleryLimit).toLocaleString()} left)
-              </PushButton>
-            )}
-          </>
-        ) : gallery.loading || supplyRead.isLoading ? (
-          <Tiles>
-            {[0, 1, 2, 3].map((i) => (
-              <li key={i}>
-                <Skeleton h="140px" />
-              </li>
-            ))}
-          </Tiles>
-        ) : (
-          <Hint>Couldn&apos;t list its pieces right now. Enter a number below to see one.</Hint>
-        )}
-      </Card>
-
-      {viewing && viewingIndex >= 0 && (
-        <Viewer
-          unverified={unverified}
-          chainId={chainId}
-          contract={address}
-          slug={os.slug}
-          collectionName={name}
-          supply={os.info?.supply ?? onchainSupply}
-          items={viewerItems}
-          index={viewingIndex}
-          onIndex={(index) => setViewing({ ...viewing, tokenId: viewerItems[index]!.tokenId })}
-          onClose={() => setViewing(undefined)}
-          onOpen={(tokenId, buy) => {
-            setViewing(undefined)
-            onOpenItem(tokenId, buy)
-          }}
-        />
-      )}
 
       <Card aria-label="Find one NFT">
         <Eyebrow>Find one NFT</Eyebrow>

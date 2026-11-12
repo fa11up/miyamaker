@@ -605,7 +605,7 @@ export default function Viewer({
           )}
           {os.offer && mine && ticket ? (
             <button className="buy sell" type="button" onClick={sell} disabled={ticket.busy} data-viewer-sell>
-              SELL NOW · {formatPrice(os.offer.price)} BID
+              SELL NOW · BID {formatPrice(os.offer.price)} BEFORE FEES
             </button>
           ) : (
             os.offer && <p className="sub">Best offer {formatPrice(os.offer.price)}</p>

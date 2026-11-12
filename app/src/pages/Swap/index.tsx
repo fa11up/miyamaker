@@ -405,7 +405,13 @@ export default function TradePage() {
   }
 
   // A finished trade changes listings, offers, owners and balances: read them again.
-  const afterTrade = () => queryClient.invalidateQueries()
+  // Not the open review's own fill data (os-fill, os-sweep): re-asking OpenSea for an order just filled would show the
+  // success as 'someone else bought it'.
+  const afterTrade = () =>
+    queryClient.invalidateQueries({
+      predicate: (q) => q.queryKey[0] !== 'os-fill' && q.queryKey[0] !== 'os-sweep',
+    })
+  const ticketVisible = rail === 'nft' && (!narrow || sheetOpen)
 
   // A sale or mint opens that NFT's page in the NFT tab.
   const openActivity = (r: ActivityRow) =>

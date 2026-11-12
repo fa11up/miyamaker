@@ -31,7 +31,7 @@ import {
 import { markGone, noteBuyOutcome, sessionStore, UNCONFIRMED_BUY_WORDS, unconfirmedHashes } from './sweep'
 import { Action, Card, ConfirmCheck, Head, Hint, LinkButton, Mono, Prose, Stat, SwitchNote } from './ui'
 import { useFillFee } from './useFillFee'
-import { fetchFulfillment, useOpenSeaCollection } from './useMarkets'
+import { fetchFulfillment, useOpenSeaCollection, useOpenSeaItem } from './useMarkets'
 
 const Lines = styled.dl`
   margin: 0;
@@ -95,7 +95,10 @@ export default function FillReview({
   onGone,
   onBusy,
   oneClick,
+  visible = true,
 }: {
+  /** The ticket is on screen: one click opens the wallet only then. */
+  visible?: boolean
   /**
    * The terminal's BUY / SELL NOW: each wallet step (an approval if owed, then the fill) opens by itself once, as soon as
    * it is ready, so pressing BUY is the whole flow. Never after an error (a retry is pressed), never past a consent box.
@@ -125,7 +128,13 @@ export default function FillReview({
   const wrongChain = isConnected && walletChain !== chainId
   const osChain = OPENSEA_CHAIN[chainId]
   // The collection's own creator fee payees (cached): any other payee in the order is shown as "Other fee".
-  const creatorFees = useOpenSeaCollection(chainId, contract).info?.fees.map((f) => f.recipient)
+  const collection = useOpenSeaCollection(chainId, contract)
+  const creatorFees = collection.info?.fees.map((f) => f.recipient)
+  // Whether OpenSea flags this NFT, read here (the caller's flag may have been read before it loaded). One click waits
+  // until it is known; a flag found here asks for the yes like one passed in.
+  const live = useOpenSeaItem(chainId, contract, collection.slug, tokenId)
+  const isFlagged = !!flagged || !!live.nft?.suspicious
+  const flagKnown = side === 'sell' || flagged === true || !!live.nft
 
   // A buy of this listing sent earlier this session that we couldn't see land: offering it again could pay twice.
   const [heldBack] = useState(() => side === 'buy' && unconfirmedHashes(sessionStore()).has(order.hash))
@@ -356,7 +365,7 @@ export default function FillReview({
   const short = side === 'buy' && !!ok && isShort(balance, ok.total, fee, ok.currency.native)
   const gasShort = !!ok && !short && !ok.currency.native && isShort(nativeBalance.data?.value, 0n, fee, true)
   const totalUsd = ok && (symbol === 'ETH' || symbol === 'WETH') ? ethInUsd(ok.total, ethUsd) : ''
-  const mustAgree = side === 'buy' && ((flagged && !agreedFlagged) || (unverified && !agreedUnverified))
+  const mustAgree = side === 'buy' && ((isFlagged && !agreedFlagged) || (unverified && !agreedUnverified))
 
   const action = (() => {
     if (tx.tx.phase === 'wallet') return { label: 'Confirm in wallet…', disabled: true }
@@ -405,7 +414,8 @@ export default function FillReview({
         label: finish,
         step: `One signature: lets OpenSea's contract ${lets}, then ${finishVerb}s, all or nothing.`,
         disabled: mustAgree,
-        wallet: true,
+        // A blanket approval for the whole collection is never opened without a press.
+        auto: nftState === 'needs-all' ? undefined : 'fill',
         onClick: () => tx.runBatch('fill', [...owed, fillCall], 'approve'),
       }
     }
@@ -420,7 +430,7 @@ export default function FillReview({
                 ok.fromYou
               )} for the fees, out of what you receive. Then sell.`,
         disabled: mustAgree,
-        wallet: true,
+        auto: 'approve',
         onClick: () => tx.run('approve', tokenAllow),
       }
 
@@ -431,7 +441,7 @@ export default function FillReview({
           nftState === 'needs-all'
             ? `${numbered}this lets OpenSea's contract ${moveWords}. Then sell.`
             : `${numbered}let OpenSea's contract ${moveWords}. Then sell.`,
-        wallet: true,
+        auto: nftState === 'needs-all' ? undefined : 'approve',
         onClick: () => tx.run('approve', nftAllow),
       }
 
@@ -439,21 +449,29 @@ export default function FillReview({
       label: finish,
       step: stepsDone > 0 ? `${numbered}${finishVerb}.` : undefined,
       disabled: mustAgree,
-      wallet: true,
+      auto: 'fill',
       onClick: fill,
     }
-  })() as { label: string; step?: string; disabled?: boolean; wallet?: boolean; onClick?: () => void }
+  })() as { label: string; step?: string; disabled?: boolean; auto?: 'approve' | 'fill'; onClick?: () => void }
 
-  // One click: a wallet step that is ready opens once (keyed by the steps already done and what it is). An error
-  // leaves the phase at 'error', so nothing fires again until the person presses.
+  // One click (buys only: a sale shows what you receive and waits for one press). A wallet step that is ready opens
+  // once, keyed by the order, the account, the steps done and the step. Only while the ticket is on screen; never after
+  // an error (the phase stays 'error' until a press); an approval only as the first step (a read lagging behind a
+  // landed approval can't ask for it again); the fill only once its network fee is known (so 'not enough' shows first)
+  // and once OpenSea has said whether the NFT is flagged.
   const fired = useRef(new Set<string>())
   const readyStep =
     oneClick &&
-    action.wallet &&
+    visible &&
+    side === 'buy' &&
+    action.auto &&
+    (action.auto === 'fill' || stepsDone === 0) &&
+    (action.auto !== 'fill' || fee !== undefined) &&
+    flagKnown &&
     !action.disabled &&
     action.onClick &&
     (tx.tx.phase === 'idle' || (tx.tx.phase === 'done' && tx.tx.id === 'approve'))
-      ? `${order.hash}:${stepsDone}:${action.label}`
+      ? `${order.hash}:${me}:${stepsDone}:${action.auto}`
       : undefined
   useEffect(() => {
     if (!readyStep || fired.current.has(readyStep)) return
@@ -525,7 +543,7 @@ export default function FillReview({
         </>
       ) : null}
 
-      {side === 'buy' && flagged && (
+      {side === 'buy' && isFlagged && (
         <>
           <StatusBox tone="error" role="alert" data-fill-flagged>
             <span>
@@ -535,6 +553,7 @@ export default function FillReview({
           <ConfirmCheck checked={agreedFlagged} onChange={setAgreedFlagged} disabled={tx.busy}>
             I understand
           </ConfirmCheck>
+          {oneClick && <Hint>Ticking this opens your wallet to buy.</Hint>}
         </>
       )}
       {side === 'buy' && unverified && (
@@ -545,6 +564,7 @@ export default function FillReview({
           <ConfirmCheck checked={agreedUnverified} onChange={setAgreedUnverified} disabled={tx.busy}>
             I checked this is the right collection
           </ConfirmCheck>
+          {oneClick && <Hint>Ticking this opens your wallet to buy.</Hint>}
         </>
       )}
 
