@@ -1,148 +1,43 @@
 'use strict'
 
-const { app, BrowserWindow, shell, screen, session } = require('electron')
+const { app, BrowserWindow, dialog, protocol, shell, screen, session } = require('electron')
 const fs = require('fs')
-const http = require('http')
 const path = require('path')
+const { serve } = require('./serve')
 
-const HOST = '127.0.0.1'
 const SMOKE = process.env.MIYA_DESKTOP_SMOKE === '1'
+const DEV_URL = 'http://localhost:5173/music'
+// One fixed origin, so saved songs and kits in localStorage and IndexedDB are there on the next launch.
+// 1.0.0 used a new 127.0.0.1 port each launch, and that work cannot be reached from here.
+const SCHEME = 'app'
+const APP_HOST = 'music'
+const START_URL = `${SCHEME}://${APP_HOST}/music`
 
-const MIME = {
-  '.html': 'text/html; charset=utf-8',
-  '.js': 'text/javascript; charset=utf-8',
-  '.mjs': 'text/javascript; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-  '.json': 'application/json',
-  '.webmanifest': 'application/manifest+json',
-  '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg',
-  '.gif': 'image/gif',
-  '.svg': 'image/svg+xml',
-  '.webp': 'image/webp',
-  '.ico': 'image/x-icon',
-  '.woff': 'font/woff',
-  '.woff2': 'font/woff2',
-  '.ttf': 'font/ttf',
-  '.otf': 'font/otf',
-  '.mp3': 'audio/mpeg',
-  '.wav': 'audio/wav',
-  '.ogg': 'audio/ogg',
-  '.mp4': 'video/mp4',
-  '.webm': 'video/webm',
-  '.wasm': 'application/wasm',
-  '.txt': 'text/plain; charset=utf-8',
-  '.map': 'application/json',
-  '.pdf': 'application/pdf',
-}
+// Has to run before ready. standard + secure make it a secure context, so the mic, MIDI and worklets work.
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: SCHEME,
+    privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, corsEnabled: true },
+  },
+])
 
 function distDir() {
   if (app.isPackaged) return path.join(process.resourcesPath, 'app')
   return path.join(__dirname, '..', '..', 'app', 'dist')
 }
 
-function fileFor(root, urlPath) {
-  let pathname
-  try {
-    pathname = decodeURIComponent((urlPath || '/').split('?')[0])
-  } catch {
-    return null
-  }
-  const rel = pathname.replace(/^[/\\]+/, '')
-  const full = path.resolve(root, rel)
-  const base = path.resolve(root)
-  if (full !== base && !full.startsWith(base + path.sep)) return null
-  return full
-}
-
-function sendFile(req, res, filePath) {
-  const stat = fs.statSync(filePath)
-  const type = MIME[path.extname(filePath).toLowerCase()] || 'application/octet-stream'
-  const headers = {
-    'Content-Type': type,
-    'Accept-Ranges': 'bytes',
-    'Cache-Control': 'no-cache',
-  }
-  const range = req.headers.range
-  if (range) {
-    const match = /^bytes=(\d*)-(\d*)$/.exec(range)
-    if (!match) {
-      res.writeHead(416, { 'Content-Range': `bytes */${stat.size}` })
-      res.end()
-      return
-    }
-    const start = match[1] === '' ? 0 : Number(match[1])
-    const end = match[2] === '' ? stat.size - 1 : Number(match[2])
-    if (!Number.isFinite(start) || !Number.isFinite(end) || start > end || start >= stat.size) {
-      res.writeHead(416, { 'Content-Range': `bytes */${stat.size}` })
-      res.end()
-      return
-    }
-    res.writeHead(206, {
-      ...headers,
-      'Content-Length': end - start + 1,
-      'Content-Range': `bytes ${start}-${end}/${stat.size}`,
-    })
-    if (req.method === 'HEAD') {
-      res.end()
-      return
-    }
-    fs.createReadStream(filePath, { start, end }).pipe(res)
-    return
-  }
-  res.writeHead(200, { ...headers, 'Content-Length': stat.size })
-  if (req.method === 'HEAD') {
-    res.end()
-    return
-  }
-  fs.createReadStream(filePath).pipe(res)
-}
-
-function startServer(root) {
-  const server = http.createServer((req, res) => {
-    const target = fileFor(root, req.url || '/')
-    if (!target) {
-      res.writeHead(400)
-      res.end('Bad path')
-      return
-    }
-    let stat = null
-    try {
-      stat = fs.statSync(target)
-    } catch {
-      stat = null
-    }
-    if (stat && stat.isDirectory()) {
-      const index = path.join(target, 'index.html')
-      if (fs.existsSync(index)) {
-        sendFile(req, res, index)
-        return
-      }
-    }
-    if (stat && stat.isFile()) {
-      sendFile(req, res, target)
-      return
-    }
-    const index = path.join(root, 'index.html')
-    if (!path.extname(target) && fs.existsSync(index)) {
-      sendFile(req, res, index)
-      return
-    }
-    res.writeHead(404)
-    res.end('Not found')
-  })
-  return new Promise((resolve, reject) => {
-    server.once('error', reject)
-    server.listen(0, HOST, () => {
-      const addr = server.address()
-      resolve({ server, port: typeof addr === 'object' && addr ? addr.port : 0 })
-    })
-  })
-}
-
 function allowMedia(permission) {
   return permission === 'media' || permission === 'microphone' || permission === 'midi' || permission === 'midiSysex'
+}
+
+// Same page as the one we opened. URL.origin is "null" for a custom scheme, so compare scheme and host.
+function sameApp(url, start) {
+  try {
+    const next = new URL(url)
+    return next.protocol === start.protocol && next.host === start.host
+  } catch {
+    return false
+  }
 }
 
 function openExternal(url) {
@@ -223,14 +118,7 @@ async function createWindow(startUrl) {
     return { action: 'deny' }
   })
   win.webContents.on('will-navigate', (event, url) => {
-    let next
-    try {
-      next = new URL(url)
-    } catch {
-      event.preventDefault()
-      return
-    }
-    if (next.origin === startUrl.origin) return
+    if (sameApp(url, startUrl)) return
     event.preventDefault()
     openExternal(url)
   })
@@ -249,34 +137,41 @@ if (!gotLock) {
     mainWindow.focus()
   })
   app.whenReady().then(async () => {
-    session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
-      callback(allowMedia(permission))
-    })
     const dev = process.argv.includes('--dev')
-    let server = null
-    let start
-    if (dev) {
-      start = new URL('http://localhost:5173/music')
-    } else {
+    const start = new URL(dev ? DEV_URL : START_URL)
+    // Mic and MIDI, only for our own page.
+    session.defaultSession.setPermissionRequestHandler((_wc, permission, callback, details) => {
+      callback(allowMedia(permission) && sameApp(details && details.requestingUrl, start))
+    })
+    session.defaultSession.setPermissionCheckHandler((_wc, permission, requestingOrigin) => {
+      return allowMedia(permission) && sameApp(requestingOrigin, start)
+    })
+    if (!dev) {
       const root = distDir()
       if (!fs.existsSync(path.join(root, 'index.html'))) {
         console.error('Missing web build at ' + root)
+        dialog.showErrorBox('MiyaMusicMaker', 'The web build is missing at ' + root + '.')
         app.exit(1)
         return
       }
-      const started = await startServer(root)
-      server = started.server
-      start = new URL(`http://${HOST}:${started.port}/music`)
+      protocol.handle(SCHEME, (request) => serve(root, request))
     }
-    await createWindow(start)
-    const closeServer = () => {
-      if (server) server.close()
+    app.on('window-all-closed', () => app.quit())
+    try {
+      await createWindow(start)
+    } catch (err) {
+      if (!dev) throw err
+      console.error(err)
+      if (SMOKE) {
+        app.exit(1)
+        return
+      }
+      dialog.showErrorBox(
+        'MiyaMusicMaker',
+        'The Vite dev server is not running at http://localhost:5173.\n\nStart it with: cd app && yarn dev\nThen run npm run dev again.'
+      )
+      app.exit(1)
     }
-    app.on('before-quit', closeServer)
-    app.on('window-all-closed', () => {
-      closeServer()
-      app.quit()
-    })
   }).catch((err) => {
     console.error(err)
     app.exit(1)

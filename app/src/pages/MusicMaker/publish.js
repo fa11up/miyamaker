@@ -1,6 +1,7 @@
 import { bounceOrder, bounceSeconds, renderBounce } from './audio/engine.js'
 import { captureKit, captureSong } from './audio/song.js'
 import { songValue } from './audio/arrange.js'
+import { DESKTOP_PUBLISH_NOTE, isDesktopApp } from './media/desktop.js'
 import { assertPadsRead, model, unreadPads } from './model.js'
 
 /** Pads whose sample could not be read. The release dialog can check this before it offers anything. */
@@ -14,7 +15,8 @@ export async function buildPublish(intent) {
   // A pad whose sample did not load would be silent in the WAV and missing from the pack, for good.
   assertPadsRead(intent.startsWith('mint') ? 'Mint' : 'Upload')
   const name = model.songName || 'Song'
-  const bpm = model.bpm
+  // The song's own tempo, the one the bounce renders at, so the minted length matches the file.
+  const bpm = songValue(model, 'bpm')
   const packKind = intent === 'upload-kit' || intent === 'mint-kit'
     ? 'kit'
     : intent === 'upload-bounce' || intent === 'mint-audio'
@@ -81,7 +83,7 @@ export function requestFiles(intent) {
     window.dispatchEvent(ask)
     if (!ask.defaultPrevented) {
       window.removeEventListener('miya-music-files', onFiles)
-      reject(new Error('Arweave and mint run inside miyamaker.com'))
+      reject(new Error(isDesktopApp() ? DESKTOP_PUBLISH_NOTE : 'Arweave and mint run inside miyamaker.com'))
     }
   })
 }

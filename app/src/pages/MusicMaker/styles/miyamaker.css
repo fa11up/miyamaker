@@ -358,6 +358,15 @@ h1, h2, h3, h4, p { margin: 0; }
   outline: none;
 }
 
+.file-menu .menu-note {
+  max-width: 220px;
+  margin: 0;
+  padding: 4px 24px;
+  color: var(--ink-muted);
+  font-size: 12px;
+  white-space: normal;
+}
+
 .file-menu hr {
   margin: 3px 2px;
   border: none;
@@ -4582,6 +4591,7 @@ input[type="range"]:focus-visible {
 }
 
 @media (pointer: coarse) {
+  .strum-bar > .btn,
   .strum-roots .btn,
   .strum-banks .btn,
   .strum-bank .btn { min-height: 32px; }

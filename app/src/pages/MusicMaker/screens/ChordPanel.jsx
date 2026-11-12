@@ -52,6 +52,38 @@ function applyShape(y) {
   shapeHeld('piano:', { bend: liveBend, y, axis: clampAxis(model.pianoAxis) })
 }
 
+/**
+ * Finger gestures still running. Each one adds its own stop, which releases its notes and listeners.
+ * A surface that closes under a held finger stops them all, so no note is left looping.
+ */
+export function useGestures() {
+  const live = useRef(null)
+  if (!live.current) live.current = new Set()
+  useEffect(() => {
+    const running = live.current
+    return () => {
+      for (const stop of [...running]) stop()
+      running.clear()
+    }
+  }, [])
+  return live.current
+}
+
+/** Escape closes an open menu here and goes no further, so it never toggles Rec. */
+function useMenuEscape(open, setOpen) {
+  useEffect(() => {
+    if (!open) return undefined
+    const key = (event) => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      event.stopPropagation()
+      setOpen(false)
+    }
+    window.addEventListener('keydown', key, true)
+    return () => window.removeEventListener('keydown', key, true)
+  }, [open, setOpen])
+}
+
 function FitName({ name }) {
   const box = useRef(null)
   const text = useRef(null)
@@ -87,6 +119,7 @@ function ChordSettings() {
     window.addEventListener('pointerdown', down)
     return () => window.removeEventListener('pointerdown', down)
   }, [open])
+  useMenuEscape(open, setOpen)
   const bend = clampBend(model.pianoBend)
   const lead = clampLead(model.pianoLeadLo, model.pianoLeadHi)
   const axis = clampAxis(model.pianoAxis)
@@ -181,6 +214,7 @@ export function PitchWheel({ className = '' }) {
   const [bend, setBend] = useState(0)
   const [live, setLive] = useState(false)
   const range = clampBend(model.pianoBend)
+  const gestures = useGestures()
   const down = (event) => {
     if (event.button != null && event.button !== 0) return
     event.preventDefault()
@@ -189,6 +223,7 @@ export function PitchWheel({ className = '' }) {
     const id = event.pointerId
     setLive(true)
     const at = (ev) => {
+      if (ev.pointerId !== id) return
       const rect = host.getBoundingClientRect()
       const y = placeY(ev, rect)
       const semi = (0.5 - y) * 2 * clampBend(model.pianoBend)
@@ -198,7 +233,8 @@ export function PitchWheel({ className = '' }) {
       applyShape(y)
     }
     const up = (ev) => {
-      if (ev.pointerId !== id) return
+      if (ev && ev.pointerId !== id) return
+      gestures.delete(up)
       window.removeEventListener('pointermove', at)
       window.removeEventListener('pointerup', up)
       window.removeEventListener('pointercancel', up)
@@ -208,6 +244,7 @@ export function PitchWheel({ className = '' }) {
       setPerformBend(0, { live: false })
       applyShape(0.8)
     }
+    gestures.add(up)
     window.addEventListener('pointermove', at)
     window.addEventListener('pointerup', up)
     window.addEventListener('pointercancel', up)
@@ -270,6 +307,7 @@ function BankTab() {
     window.addEventListener('pointerdown', down)
     return () => window.removeEventListener('pointerdown', down)
   }, [open])
+  useMenuEscape(open, setOpen)
   return (
     <div className="mmm-file chord-bank-tab" ref={root}>
       <button
@@ -383,11 +421,14 @@ function LeadStrip() {
   const rootName = ROOTS[root] || 'C'
   const harmony = harmonyName()
   const [lit, setLit] = useState(null)
+  const gestures = useGestures()
   const down = (event) => {
     if (event.button != null && event.button !== 0) return
     event.preventDefault()
     const host = event.currentTarget
     const id = event.pointerId
+    // Each finger holds its own note, so lifting one leaves the other sounding.
+    const hold = `piano:lead:${id}`
     let held = null
     const at = (ev) => {
       const rect = host.getBoundingClientRect()
@@ -398,26 +439,30 @@ function LeadStrip() {
       return { midi: notes[index], y: placeY(ev, rect) }
     }
     const play = (ev) => {
+      if (ev.pointerId !== id) return
       const hit = at(ev)
       if (hit.midi === held) {
         applyShape(hit.y)
         return
       }
-      if (held != null) noteOff('piano:lead')
+      if (held != null) noteOff(hold)
       held = hit.midi
       setLit(hit.midi)
-      if (hit.midi != null) playNote(hit.midi, 'piano:lead', velocityAt(hit.y), root)
+      if (hit.midi != null) playNote(hit.midi, hold, velocityAt(hit.y), root)
       applyShape(hit.y)
     }
     const up = (ev) => {
-      if (ev.pointerId !== id) return
-      if (held != null) noteOff('piano:lead')
+      if (ev && ev.pointerId !== id) return
+      gestures.delete(up)
+      const was = held
+      noteOff(hold)
       held = null
-      setLit(null)
+      setLit((cur) => (cur === was ? null : cur))
       window.removeEventListener('pointermove', play)
       window.removeEventListener('pointerup', up)
       window.removeEventListener('pointercancel', up)
     }
+    gestures.add(up)
     window.addEventListener('pointermove', play)
     window.addEventListener('pointerup', up)
     window.addEventListener('pointercancel', up)
@@ -453,14 +498,15 @@ function LeadStrip() {
   )
 }
 
-function stopRoot() {
-  for (let i = 0; i < 8; i++) noteOff(`piano:root:${i}`)
+function stopRoot(id) {
+  for (let i = 0; i < 8; i++) noteOff(`piano:root:${id}:${i}`)
 }
 
 function RootPiano() {
   const board = rootBoard(model.chordHand ? 1 : 2)
   const ref = useRef(null)
   const [lit, setLit] = useState(null)
+  const gestures = useGestures()
   const keyAt = (clientX, clientY) => {
     const node = ref.current
     if (!node) return null
@@ -483,6 +529,7 @@ function RootPiano() {
     const id = event.pointerId
     let held = null
     const play = (ev) => {
+      if (ev.pointerId !== id) return
       const rect = node.getBoundingClientRect()
       const y = placeY(ev, rect)
       const raw = keyAt(ev.clientX, ev.clientY)
@@ -490,7 +537,7 @@ function RootPiano() {
         applyShape(y)
         return
       }
-      stopRoot()
+      stopRoot(id)
       held = raw
       setLit(raw)
       if (raw != null) {
@@ -505,19 +552,23 @@ function RootPiano() {
           scale: model.pianoScale || '',
           inversion: model.pianoInv | 0,
         })
-        notes.forEach((tone, index) => playNote(tone, `piano:root:${index}`, velocityAt(y), pc))
+        // Ids stay under piano:root: so the pad's choke group spares them. The finger keeps chords apart.
+        notes.forEach((tone, index) => playNote(tone, `piano:root:${id}:${index}`, velocityAt(y), pc))
       }
       applyShape(y)
     }
     const up = (ev) => {
-      if (ev.pointerId !== id) return
-      stopRoot()
+      if (ev && ev.pointerId !== id) return
+      gestures.delete(up)
+      const was = held
+      stopRoot(id)
       held = null
-      setLit(null)
+      setLit((cur) => (cur === was ? null : cur))
       window.removeEventListener('pointermove', play)
       window.removeEventListener('pointerup', up)
       window.removeEventListener('pointercancel', up)
     }
+    gestures.add(up)
     window.addEventListener('pointermove', play)
     window.addEventListener('pointerup', up)
     window.addEventListener('pointercancel', up)

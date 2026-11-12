@@ -86,10 +86,32 @@ function decodeString(result) {
   return text
 }
 
-export async function tokenUri(contract, id) {
-  const data = `0x0e89341c${hexId(id)}`
-  const uri = decodeString(await ethCall(contract, data))
-  return uri.replace('{id}', hexId(id))
+/** ERC-1155 `uri(uint256)`. Its answer may hold `{id}`, the token id as 64 hex digits. */
+const URI_1155 = '0x0e89341c'
+/** ERC-721 `tokenURI(uint256)`. Milady and the rest of ECOSYSTEM answer this one, not `uri`. */
+const TOKEN_URI_721 = '0xc87b56dd'
+
+/**
+ * The token's metadata link. An ERC-721 (or an ECOSYSTEM contract) is asked `tokenURI` first, anything else `uri`;
+ * when the first reverts or answers empty, the other one is tried. Only the 1155 answer has `{id}` filled in.
+ * `call` stands in for the RPC in tests.
+ */
+export async function tokenUri(contract, id, { standard = '', call = ethCall } = {}) {
+  const hex = hexId(id)
+  const as721 = standard === 'ERC-721' || ECOSYSTEM_BY.has(String(contract).toLowerCase())
+  const read721 = async () => decodeString(await call(contract, `${TOKEN_URI_721}${hex}`))
+  const read1155 = async () => decodeString(await call(contract, `${URI_1155}${hex}`)).split('{id}').join(hex)
+  let failure = null
+  for (const read of as721 ? [read721, read1155] : [read1155, read721]) {
+    try {
+      const uri = await read()
+      if (uri) return uri
+    } catch (err) {
+      failure = failure || err
+    }
+  }
+  if (failure) throw failure
+  return ''
 }
 
 /** ipfs.io returns "blocked" for some of these pictures. Filebase answers them and allows the browser to read. */
@@ -305,6 +327,7 @@ export async function loadWalletPacks(address, { fetchImpl = fetch, maxPages = M
   const groups = new Map()
   const seen = new Set()
   let fetched = 0
+  const from721 = new Set(erc721.items)
   for (const item of [...erc721.items, ...erc1155.items]) {
     const contract = typeof item.token?.address_hash === 'string' ? item.token.address_hash : ''
     if (!/^0x[0-9a-fA-F]{40}$/.test(contract)) continue
@@ -324,7 +347,7 @@ export async function loadWalletPacks(address, { fetchImpl = fetch, maxPages = M
       } else {
         fetched += 1
         try {
-          const uri = metadataUrl(await tokenUri(contract, item.id))
+          const uri = metadataUrl(await tokenUri(contract, item.id, { standard: from721.has(item) ? 'ERC-721' : 'ERC-1155' }))
           if (!uri) throw new Error('no metadata link')
           const meta = await fetchJsonCapped(uri, { limit: META_BYTES, timeoutMs: NET_MS, fetchImpl })
           if (meta && typeof meta === 'object') {

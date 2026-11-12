@@ -179,15 +179,32 @@ export function writeAuto(model, id, value) {
  * Playback writes automation and pattern tempos onto the song itself, so the mixer and pads hear them.
  * The song's own values are kept here the first time playback moves them, and put back on stop and
  * while the song is captured (save, undo, session). A value the user moves by hand while playing is theirs.
+ * Each kept value remembers the object it was read from: a pad, bus or fx slot that a kit load, paste or
+ * undo replaced is another song's, and its kept value is dropped instead of written onto the new one.
+ * The song's values themselves (tempo, swing, master) live on the model, so a song load or undo calls
+ * resetPlayValues.
+ * A hand edit to exactly the value playback is holding cannot be told apart from playback's own write. The
+ * tempo field and the faders write the model directly, so there is no one place to mark hand edits; such an
+ * edit is put back to the song's value on stop.
  */
 const playBase = new Map()
 const playLast = new Map()
+
+/** The live slot for a kept target, or null when the target is gone or now another object. */
+function keptSlot(model, id) {
+  const kept = playBase.get(id)
+  const at = slotOf(model, id)
+  if (!kept || !at || at.obj !== kept.obj) return null
+  return at
+}
 
 /** Like writeAuto, but the first move keeps the song's own value to put back later. */
 export function playWrite(model, id, value) {
   const at = slotOf(model, id)
   if (!at) return false
-  if (!playBase.has(id)) playBase.set(id, at.obj[at.key])
+  const kept = keptSlot(model, id)
+  // A value the user moved since playback last wrote it is the song's now: Stop keeps it, not the old one.
+  if (!kept || changed(at.obj[at.key], playLast.get(id))) playBase.set(id, { obj: at.obj, value: at.obj[at.key] })
   const mix = writeAuto(model, id, value)
   playLast.set(id, at.obj[at.key])
   return mix
@@ -196,7 +213,7 @@ export function playWrite(model, id, value) {
 /** Forget targets the user has changed since playback last wrote them: their value is now the song's. */
 function forgetEdited(model) {
   for (const [id, last] of playLast) {
-    const at = slotOf(model, id)
+    const at = keptSlot(model, id)
     if (!at || changed(at.obj[at.key], last)) {
       playBase.delete(id)
       playLast.delete(id)
@@ -204,10 +221,20 @@ function forgetEdited(model) {
   }
 }
 
+/**
+ * The song's values were replaced (a song load, an undo). Forget what playback kept without writing it onto
+ * the new song. `seq` is the pattern still playing, if any: its own tempo is taken up again.
+ */
+export function resetPlayValues(model, seq = null) {
+  playBase.clear()
+  playLast.clear()
+  if (seq && Number.isFinite(seq.bpm)) playWrite(model, 'bpm', seq.bpm)
+}
+
 /** The song's own value for a target while playback may have moved it. */
 export function songValue(model, id) {
   forgetEdited(model)
-  if (playBase.has(id)) return playBase.get(id)
+  if (playBase.has(id)) return playBase.get(id).value
   const at = slotOf(model, id)
   return at ? at.obj[at.key] : undefined
 }
@@ -216,9 +243,9 @@ export function songValue(model, id) {
 export function restorePlayValues(model) {
   forgetEdited(model)
   let mix = false
-  for (const [id, value] of playBase) {
-    const at = slotOf(model, id)
-    if (at) at.obj[at.key] = value
+  for (const [id, kept] of playBase) {
+    const at = keptSlot(model, id)
+    if (at) at.obj[at.key] = kept.value
     if (mixTarget(id)) mix = true
   }
   playBase.clear()
@@ -231,11 +258,11 @@ export function withSongValues(model, fn) {
   forgetEdited(model)
   if (!playBase.size) return fn()
   const live = []
-  for (const [id, value] of playBase) {
-    const at = slotOf(model, id)
+  for (const [id, kept] of playBase) {
+    const at = keptSlot(model, id)
     if (!at) continue
     live.push([at, at.obj[at.key]])
-    at.obj[at.key] = value
+    at.obj[at.key] = kept.value
   }
   try {
     return fn()

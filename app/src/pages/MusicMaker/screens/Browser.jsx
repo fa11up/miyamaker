@@ -62,8 +62,19 @@ export function SampleBrowser() {
       if (path.some((node) => node.classList?.contains?.('ctx-menu'))) return
       setMenu(null)
     }
+    // Capture phase, ahead of the app's own keys: Escape here only closes the menu and never reaches Rec.
+    const key = (event) => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      event.stopPropagation()
+      setMenu(null)
+    }
     window.addEventListener('pointerdown', down)
-    return () => window.removeEventListener('pointerdown', down)
+    window.addEventListener('keydown', key, true)
+    return () => {
+      window.removeEventListener('pointerdown', down)
+      window.removeEventListener('keydown', key, true)
+    }
   }, [menu])
 
   function toggle(id) {
@@ -280,7 +291,7 @@ export function SampleBrowser() {
                             ? importPictureUrl(link.url, name, { toPad: true, index: model.selected })
                             : importRemote(link.url, model.selected, name)
                           job.catch((error) => {
-                            model.browserNote = error.message
+                            model.browserNote = error?.message || 'Could not read that file'
                             touch(false)
                           })
                         }}
@@ -633,7 +644,7 @@ async function walkHandle(dirHandle, prefix, depth = 1, count = { files: 0, capp
 
 function importFileFromHandle(row) {
   readDirectoryFile(row.handle).then((file) => importFile(file, model.selected)).catch((error) => {
-    model.browserNote = error.message
+    model.browserNote = error?.message || 'Could not open that file'
     touch(false)
   })
 }

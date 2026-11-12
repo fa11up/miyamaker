@@ -28,10 +28,17 @@ export const SAMPLE_MEDIA_LIMIT = 24 * 1024 * 1024
 /** Where the same-origin sample proxy answers. api/_lib/samplemedia.ts serves this path. */
 export const SAMPLE_MEDIA_PATH = '/api/sample-media'
 
-/** A host on the list, or a subdomain gateway under one that serves a CID per subdomain. */
+/**
+ * arweave.net answers a transaction with a redirect to its sandbox subdomain: the 32-byte id in base32, 52 letters.
+ * Arweave's own gateway serves those with the same bytes as arweave.net/<id>, so only that exact shape is let in,
+ * never any other name under arweave.net.
+ */
+const ARWEAVE_SANDBOX = /^[a-z2-7]{52}\.arweave\.net$/
+
+/** A host on the list, or a subdomain gateway under one that serves a CID (or an Arweave sandbox) per subdomain. */
 export function isMediaHost(hostname) {
   const host = String(hostname || '').toLowerCase()
-  return HOSTS.has(host) || host.endsWith('.ipfs.dweb.link') || host.endsWith('.ipfs.nftstorage.link')
+  return HOSTS.has(host) || host.endsWith('.ipfs.dweb.link') || host.endsWith('.ipfs.nftstorage.link') || ARWEAVE_SANDBOX.test(host)
 }
 
 export function allowedMediaUrl(raw) {

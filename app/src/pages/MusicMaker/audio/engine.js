@@ -19,7 +19,7 @@ import { createBufferCache, finiteOr, heldForPort, liveVoices, locateStep, playF
 import { importKitFile, importSongFile } from './song.js'
 import { SongChanged, loadTicket, songId } from '../jobs.js'
 import { defaultPatch, mixNote, quantizeTake, renderSynth, takeDepth, takeMaxSamples, takeSeconds } from './synth.js'
-import { BUS_COUNT, TRACK_VEL, audioBank, budgetNote, model, currentPattern, currentSequence, ensurePattern, stepCount, trackerFields, commitTrackerNote, setUndoBatch, touch, rememberSample, idbSet, selectPad, flushSave } from '../model.js'
+import { BUS_COUNT, TRACK_VEL, audioBank, budgetNote, model, currentPattern, currentSequence, ensurePattern, stepCount, trackerFields, commitTrackerNote, patchTrackerEvent, setUndoBatch, touch, rememberSample, idbSet, selectPad, flushSave } from '../model.js'
 
 setUndoBatch({ begin: beginUndo, end: endUndo })
 
@@ -1566,15 +1566,22 @@ function grainFraction(v, now) {
 
 /** Semitones the pitch wheel is holding. Notes written while it is up keep that bend. */
 let performBend = 0
-/** Notes this bend may still retune. Cleared when the wheel springs back, so the last pitch stays. */
+/**
+ * Notes this bend may still retune, with the pattern and pad each was written to. Cleared when the wheel
+ * springs back, so the last pitch stays.
+ */
 const bendTakes = []
 
 function rememberBend(wrote, base) {
   if (!wrote) return
-  bendTakes.push({ row: wrote.row, lane: wrote.lane, base: Number(base) || 0 })
+  bendTakes.push({ pattern: wrote.pattern, row: wrote.row, lane: wrote.lane, pad: wrote.pad, base: Number(base) || 0 })
 }
 
-/** Write the wheel onto the notes it is holding. A spring back leaves those pitches where they were. */
+/**
+ * Write the wheel onto the notes it is holding. A spring back leaves those pitches where they were.
+ * Only notes still in the pattern on screen and still the pad that was played are retuned, and the retune
+ * is one undo step with the notes it bends.
+ */
 export function setPerformBend(semi, { live = true } = {}) {
   const next = Math.max(-24, Math.min(24, Number(semi) || 0))
   performBend = live ? next : 0
@@ -1584,18 +1591,15 @@ export function setPerformBend(semi, { live = true } = {}) {
     return
   }
   if (!model.tracker.edit || !bendTakes.length) return
+  const at = model.pattern || 0
   const seq = currentPattern()
-  let changed = false
   for (const take of bendTakes) {
+    if (take.pattern !== at) continue
     const ev = seq.steps[take.row]?.[take.lane]
-    if (!ev || ev.off) continue
+    if (!ev || ev.off || ev.pad !== take.pad) continue
     const pitch = Math.max(-60, Math.min(67, Math.round(take.base + next)))
-    if ((ev.pitch | 0) !== pitch) {
-      ev.pitch = pitch
-      changed = true
-    }
+    if ((ev.pitch | 0) !== pitch) patchTrackerEvent(take.row, take.lane, { pitch }, { step: false })
   }
-  if (changed) touch(false)
 }
 
 function captureHit(index, velocity, pitch, when) {
@@ -2396,8 +2400,9 @@ export function heldNotes() {
 
 export function releaseKeyboardNotes() {
   for (const id of [...held.keys()]) {
-    // key: is the computer keyboard, touch: the on-screen phone keys.
-    if (String(id).startsWith('key:') || String(id).startsWith('touch:')) releaseHeld(id)
+    // key: is the computer keyboard, touch: the on-screen phone keys, piano: the on-screen piano and chords.
+    const hold = String(id)
+    if (hold.startsWith('key:') || hold.startsWith('touch:') || hold.startsWith('piano:')) releaseHeld(id)
   }
 }
 

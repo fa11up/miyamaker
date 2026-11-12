@@ -973,7 +973,7 @@ export function commitTrackerNote({ pad = 0, vel = TRACK_VEL, pitch = 0, off = f
     model.tracker.focus = true
     writeLane(writeRow, lane, ev)
   })
-  return { row: writeRow, lane }
+  return { row: writeRow, lane, pattern: model.pattern || 0, pad: ev.pad }
 }
 
 export function patchTrackerEvent(row, lane, patch, { step = true } = {}) {

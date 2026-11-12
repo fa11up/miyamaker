@@ -1,3 +1,5 @@
 node_modules/
 release/
 *.log
+# prepare.js writes the icon the build uses here
+build/generated/

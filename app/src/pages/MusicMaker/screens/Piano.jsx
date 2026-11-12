@@ -19,7 +19,7 @@ import {
   tunedPitch,
   visibleKeys,
 } from '../audio/piano.js'
-import { ChordPanel } from './ChordPanel.jsx'
+import { ChordPanel, useGestures } from './ChordPanel.jsx'
 import { noteName } from '../keys.js'
 import { TRACK_VEL, clampPianoHeight, model, save, touch, trackerFields } from '../model.js'
 import { useModel } from '../useModel.js'
@@ -109,6 +109,9 @@ function KeyMap() {
 function Board({ lit, onLit }) {
   const view = visibleKeys(model.pianoFrom, model.pianoWhites)
   const boardRef = useRef(null)
+  const gestures = useGestures()
+  // Key under each finger, so two fingers light two keys.
+  const fingers = useRef(new Map())
   const keyAt = (clientX, clientY) => {
     const board = boardRef.current
     if (!board) return null
@@ -129,28 +132,38 @@ function Board({ lit, onLit }) {
     event.preventDefault()
     const board = event.currentTarget
     const id = event.pointerId
+    // Each finger holds its own note: a second finger adds a key, and lifting one leaves the other sounding.
+    const hold = `piano:key:${id}`
     let held = null
+    const light = () => onLit([...fingers.current.values()].filter((midi) => midi != null))
     const play = (ev) => {
+      if (ev.pointerId !== id) return
       const midi = keyAt(ev.clientX, ev.clientY)
       if (midi === held) return
-      if (held != null) noteOff('piano:key')
+      if (held != null) noteOff(hold)
       held = midi
-      onLit(midi)
-      if (midi != null) playAt(Number(midi), 'piano:key', pressVelocity(ev, board.getBoundingClientRect()))
+      fingers.current.set(id, midi)
+      light()
+      if (midi != null) playAt(Number(midi), hold, pressVelocity(ev, board.getBoundingClientRect()))
     }
     const up = (ev) => {
-      if (ev.pointerId !== id) return
-      if (held != null) noteOff('piano:key')
+      if (ev && ev.pointerId !== id) return
+      gestures.delete(up)
+      noteOff(hold)
       held = null
-      onLit(null)
+      fingers.current.delete(id)
+      light()
       board.removeEventListener('pointermove', play)
       board.removeEventListener('pointerup', up)
       board.removeEventListener('pointercancel', up)
+      board.removeEventListener('lostpointercapture', up)
     }
+    gestures.add(up)
     board.setPointerCapture?.(id)
     board.addEventListener('pointermove', play)
     board.addEventListener('pointerup', up)
     board.addEventListener('pointercancel', up)
+    board.addEventListener('lostpointercapture', up)
     play(event)
   }
   return (
@@ -166,7 +179,7 @@ function Board({ lit, onLit }) {
         <button
           key={midi}
           type="button"
-          className={`piano-white ${lit === String(midi) ? 'on' : ''}`}
+          className={`piano-white ${lit.includes(String(midi)) ? 'on' : ''}`}
           data-midi={midi}
           aria-label={noteName(midi - 60)}
           tabIndex={-1}
@@ -178,7 +191,7 @@ function Board({ lit, onLit }) {
         <button
           key={midi}
           type="button"
-          className={`piano-black ${lit === String(midi) ? 'on' : ''}`}
+          className={`piano-black ${lit.includes(String(midi)) ? 'on' : ''}`}
           data-midi={midi}
           aria-label={noteName(midi - 60)}
           tabIndex={-1}
@@ -197,11 +210,14 @@ function Strum() {
     inversion: model.pianoInv | 0,
   })
   const host = useRef(null)
+  const gestures = useGestures()
   const down = (event) => {
     if (event.button != null && event.button !== 0) return
     event.preventDefault()
     const el = event.currentTarget
     const id = event.pointerId
+    // Two fingers on one string are two notes, so the finger is part of the id.
+    const hold = (index) => `piano:strum:${id}:${index}`
     let last = -1
     const at = (x) => {
       const rect = el.getBoundingClientRect()
@@ -209,25 +225,30 @@ function Strum() {
       return Math.max(0, Math.min(notes.length - 1, Math.floor(t * notes.length)))
     }
     const play = (ev) => {
+      if (ev.pointerId !== id) return
       const index = at(ev.clientX)
       if (index === last) return
-      if (last >= 0) noteOff(`piano:strum:${last}`)
+      if (last >= 0) noteOff(hold(last))
       last = index
       const midi = notes[index]
-      if (midi != null) playAt(midi, `piano:strum:${index}`, pressVelocity(ev, el.getBoundingClientRect()))
+      if (midi != null) playAt(midi, hold(index), pressVelocity(ev, el.getBoundingClientRect()))
     }
     const up = (ev) => {
-      if (ev.pointerId !== id) return
-      if (last >= 0) noteOff(`piano:strum:${last}`)
+      if (ev && ev.pointerId !== id) return
+      gestures.delete(up)
+      if (last >= 0) noteOff(hold(last))
       last = -1
       el.removeEventListener('pointermove', play)
       el.removeEventListener('pointerup', up)
       el.removeEventListener('pointercancel', up)
+      el.removeEventListener('lostpointercapture', up)
     }
+    gestures.add(up)
     el.setPointerCapture?.(id)
     el.addEventListener('pointermove', play)
     el.addEventListener('pointerup', up)
     el.addEventListener('pointercancel', up)
+    el.addEventListener('lostpointercapture', up)
     play(event)
   }
   const rootPc = model.pianoRoot | 0
@@ -419,7 +440,7 @@ function usePianoRoom() {
 
 export function Piano() {
   useModel()
-  const [lit, setLit] = useState(null)
+  const [lit, setLit] = useState([])
   const room = usePianoRoom()
   const roomRef = useRef(room)
   roomRef.current = room

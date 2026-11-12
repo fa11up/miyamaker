@@ -170,6 +170,8 @@ export function MiyaMusicMaker() {
       window.removeEventListener('blur', blur)
       document.removeEventListener('visibilitychange', hidden)
       watch?.disconnect()
+      // A numpad glide still running when the window closes would keep ticking with no one to stop it.
+      stopPorta()
     }
   }, [])
 
@@ -590,10 +592,12 @@ function SurfaceMenu() {
           }
           swallow.current = false
           window.clearTimeout(hold.current)
+          // A finger that slides off the button is not a hold, so leaving clears this too.
           hold.current = window.setTimeout(openMenu, 420)
         }}
         onPointerUp={() => window.clearTimeout(hold.current)}
         onPointerCancel={() => window.clearTimeout(hold.current)}
+        onPointerLeave={() => window.clearTimeout(hold.current)}
         onContextMenu={(event) => {
           event.preventDefault()
           openMenu()
@@ -634,8 +638,19 @@ function useMenuCloser(open, root, setOpen) {
       if (event.composedPath?.().includes(node)) return
       setOpen(false)
     }
+    // Capture phase, ahead of the app's own keys: Escape here only closes the menu and never reaches Rec.
+    const key = (event) => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      event.stopPropagation()
+      setOpen(false)
+    }
     window.addEventListener('pointerdown', down)
-    return () => window.removeEventListener('pointerdown', down)
+    window.addEventListener('keydown', key, true)
+    return () => {
+      window.removeEventListener('pointerdown', down)
+      window.removeEventListener('keydown', key, true)
+    }
   }, [open, root, setOpen])
 }
 
