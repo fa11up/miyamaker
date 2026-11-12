@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { commitTrackerNote, currentPattern, ensurePattern, model, noteRuns } from '../src/pages/MusicMaker/model.js'
+import * as music from '../src/pages/MusicMaker/model.js'
+
+// model.js is JSDoc-typed for the app's own calls; the test pokes at its state directly.
+const { currentPattern, noteRuns } = music
+const model = music.model as any
+const commitTrackerNote = music.commitTrackerNote as (note: Record<string, unknown>) => void
+const ensurePattern = music.ensurePattern as (index: number) => any
 
 test('a recorded chord keeps every note, and the sequence lists each one', () => {
   const prev = model.pattern
@@ -18,7 +24,7 @@ test('a recorded chord keeps every note, and the sequence lists each one', () =>
   commitTrackerNote({ pad: 0, vel: 0.8, pitch: -12, row: 0, live: false })
   commitTrackerNote({ pad: 0, vel: 0.8, pitch: -8, row: 0, live: false })
   commitTrackerNote({ pad: 0, vel: 0.8, pitch: -5, row: 0, live: false })
-  const lanes = seq.steps[0].filter((ev) => ev && ev.pad === 0).map((ev) => ev.pitch)
+  const lanes = seq.steps[0].filter((ev: any) => ev && ev.pad === 0).map((ev: any) => ev.pitch)
   assert.deepEqual(lanes, [-12, -8, -5])
   assert.deepEqual(noteRuns(seq.steps, 0).map((run) => run.pitch), [-12, -8, -5])
 

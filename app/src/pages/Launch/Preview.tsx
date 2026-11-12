@@ -70,13 +70,18 @@ const Facts = styled.dl`
   }
 `
 
-/** The price in words, per accepted token: "0.01 ETH or 25 USDC each". */
+/** The price in words, per accepted token: "0.01 ETH or 25 USDC each" ("…; free for wallets on a list"). */
 export function priceLine(form: LaunchForm, chainId: number): string {
   const accepted = parseAccepted(form.tokens, chainId)
   const tokens = accepted.ok ? accepted.tokens : []
   if (form.type === 'drop') {
-    const words = form.phases[0] ? phasePriceWords(form.phases[0], tokens) : '—'
-    return words === '—' || words === 'Free' ? words : `${words} each`
+    // The public price leads; a free list phase beside it is said after it, not in its place.
+    const pub = form.phases.find((p) => p.access !== 'list')
+    const main = pub ?? form.phases[0]
+    const words = main ? phasePriceWords(main, tokens) : '—'
+    const head = words === '—' || words === 'Free' ? words : `${words} each`
+    const freeList = !!pub && form.phases.some((p) => p.access === 'list' && phasePriceWords(p, tokens) === 'Free')
+    return freeList && head !== '—' ? `${head}; free for wallets on a list` : head
   }
 
   if (form.type === 'auction') {

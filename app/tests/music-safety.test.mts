@@ -360,8 +360,8 @@ test('a png or jpg in a wallet can become a sample, and a Milady one can fill a 
   assert.ok(result.packs.some((pack: any) => !pack.ecosystem && pack.tokens.length === 1))
   const one = kitPictures(result.packs)
   assert.equal(one.total, 1)
-  assert.match(one.picks[0].url, /milady\.png$/)
-  assert.equal(one.picks[0].name, 'Milady 7')
+  assert.match(one.picks[0]!.url, /milady\.png$/)
+  assert.equal(one.picks[0]!.name, 'Milady 7')
 
   const many = kitPictures([{
     ecosystem: true,

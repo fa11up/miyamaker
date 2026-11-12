@@ -3009,8 +3009,8 @@ button.mix-insert-title {
   .comp-grid { grid-template-columns: minmax(0, 1fr); }
   .edit-screen .synth-grid > .group:nth-child(2) { grid-column: auto; order: 0; }
   .mix {
-    overflow-x: auto;
-    overflow-y: hidden;
+    flex-wrap: wrap;
+    overflow-y: auto;
   }
   .strip {
     flex: 0 0 52px;

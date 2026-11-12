@@ -26,6 +26,7 @@ const {
   parseRoyaltyPct,
   parseSymbol,
   phaseLine,
+  revealLink,
   txPlan,
   upgradeForm,
   validateStep,
@@ -120,6 +121,28 @@ test('links: only http(s), ipfs and ar', () => {
   }
 
   assert.deepEqual(parseLink('', false), { ok: true, uri: '' })
+})
+
+test('reveal links: the host is named only when it is miyamaker.com; a missing final slash is caught', () => {
+  assert.deepEqual(revealLink('https://www.miyamaker.com/reveal/miyamaker/'), {
+    host: 'www.miyamaker.com',
+    miyamaker: true,
+    slash: true,
+  })
+  assert.deepEqual(revealLink(' https://www.miyamaker.com/reveal/miyamaker '), {
+    host: 'www.miyamaker.com',
+    miyamaker: true,
+    slash: false,
+  })
+  assert.deepEqual(revealLink('http://127.0.0.1:8787/reveal/miyamaker/'), {
+    host: '127.0.0.1:8787',
+    miyamaker: false,
+    slash: true,
+  })
+  assert.equal(revealLink('https://evil.miyamaker.com.example/reveal/x/')?.miyamaker, false)
+  for (const not of ['ipfs://bafy/', 'ar://abc/', 'https://x.io/reveals/a/', 'https://x.io/reveal/a/1', 'https://x.io/reveal/']) {
+    assert.equal(revealLink(not), undefined, not)
+  }
 })
 
 test('ETH amounts go through parseEther exactly', () => {

@@ -5,6 +5,7 @@
  *
  * Pure (only viem types), so node:test can load it. The reads themselves are in usePay.ts.
  */
+import { verifyProof } from '../../api/_lib/allowlist'
 import { isEth, sameToken } from './tokens'
 
 /** Read again, but the read failed: nothing is approved on a guess. */
@@ -54,14 +55,19 @@ type Phase = {
   start: bigint
   end: bigint
   merkleRoot?: string
+  maxPerWallet?: number
   supplyCap: number
   prices: readonly { token: string; price: bigint }[]
 }
 
+/** An allowlist claim: the wallet that pays (the drop checks the proof and the limit against it) and its proof. */
+export type ListClaim = { account: string; proof: readonly string[]; walletMinted?: bigint }
+
 /**
  * A drop's phase read again: still running, room left (its own cap and the public supply) and still priced in
  * `token`. The price is the phase's own (fixed for the phase, but the artist can set new phases). `sold` is what this
- * phase has sold.
+ * phase has sold. An allowlist phase needs `claim`: its proof must still prove the paying wallet under the phase's
+ * root as read now (the artist can replace the phases), and the wallet must have room under the per-wallet limit.
  */
 export function phaseGate(
   phase: Phase | undefined,
@@ -69,14 +75,31 @@ export function phaseGate(
   qty: number,
   nowSec: number,
   sold: bigint | undefined,
-  publicRemaining: bigint | undefined
+  publicRemaining: bigint | undefined,
+  claim?: ListClaim
 ): { ok: true; price: bigint } | { ok: false; error: string } {
   if (!phase) return { ok: false, error: 'This sale phase has ended. Reload to see what is on now.' }
   const now = BigInt(nowSec)
   if (now < phase.start) return { ok: false, error: 'This sale phase has not started yet.' }
   if (phase.end !== 0n && now >= phase.end) return { ok: false, error: 'This sale phase has ended. Reload to see what is on now.' }
   if (phase.merkleRoot && !/^0x0*$/.test(phase.merkleRoot)) {
-    return { ok: false, error: 'This sale phase is now for an allowlist only. Reload to see what is on now.' }
+    if (!claim) return { ok: false, error: 'This sale phase is now for an allowlist only. Reload to see what is on now.' }
+    if (!verifyProof(phase.merkleRoot, claim.account, claim.proof)) {
+      return { ok: false, error: "This phase's list has changed. Reload to check your wallet again." }
+    }
+  } else if (claim) {
+    return { ok: false, error: 'This sale phase is no longer for a list. Reload to see what is on now.' }
+  }
+  if (claim && phase.maxPerWallet && claim.walletMinted !== undefined) {
+    if (claim.walletMinted + BigInt(qty) > BigInt(phase.maxPerWallet)) {
+      return {
+        ok: false,
+        error:
+          claim.walletMinted >= BigInt(phase.maxPerWallet)
+            ? 'This wallet has already claimed all it can in this phase.'
+            : 'That is more than this wallet can still mint in this phase.',
+      }
+    }
   }
   if (publicRemaining !== undefined && publicRemaining < BigInt(qty)) {
     return { ok: false, error: publicRemaining === 0n ? 'Sold out.' : 'There are not that many pieces left.' }
