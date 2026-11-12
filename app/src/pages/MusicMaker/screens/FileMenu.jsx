@@ -14,6 +14,7 @@ import {
 } from '../audio/song.js'
 import { beginUndo, endUndo } from '../history.js'
 import { sameSong, songId } from '../jobs.js'
+import { DESKTOP_VIDEO_NOTE, isDesktopApp } from '../media/desktop.js'
 import { MEDIA_RE, rememberDirectory } from '../media/library.js'
 import { importPictureUrl, pictureKitDoc } from '../media/pictures.js'
 import { isAddress, kitPictures, loadWalletPacks, plainName, requestAccount, walletSummary } from '../media/nft.js'
@@ -34,6 +35,8 @@ let walletRequest = 0
 let walletFor = ''
 /** A kit build still reading pictures. A newer read or a newer kit drops it. */
 let kitRequest = 0
+/** Aborts the picture the kit build is reading now, so Cancel does not wait for a slow host. */
+let kitAbort = null
 
 function clearPacks() {
   model.nftPacks = []
@@ -53,6 +56,8 @@ export function FileMenu() {
   const [imageFile, setImageFile] = useState(null)
   const [imageSet, setImageSet] = useState(() => ({ ...IMAGE_LOADER }))
   const [kitAsk, setKitAsk] = useState(false)
+  // A kit build reads pictures for a while. It keeps the Wallet window closable and has its own Cancel.
+  const [kitBusy, setKitBusy] = useState(false)
   const [busy, setBusy] = useState(false)
   const windowId = model.fileWindow || ''
 
@@ -93,7 +98,20 @@ export function FileMenu() {
     touch(false)
   }
 
+  /** Drops a kit build in flight: its answer is ignored and the picture being read stops. */
+  function stopKit() {
+    kitRequest += 1
+    kitAbort?.abort()
+    kitAbort = null
+    setKitBusy(false)
+  }
+
   function closeWindow() {
+    // Closing the window cancels a kit still being built, so it never replaces the kit later behind the user's back.
+    if (kitAbort) {
+      stopKit()
+      note('Kit cancelled. The kit you were editing is unchanged.')
+    }
     setVideoTake(null)
     model.fileWindow = ''
     touch(false)
@@ -226,7 +244,7 @@ export function FileMenu() {
     }
     model.wallet = who
     const request = ++walletRequest
-    kitRequest += 1
+    stopKit()
     setKitAsk(false)
     if (walletFor !== who.toLowerCase()) clearPacks()
     walletFor = who.toLowerCase()
@@ -278,13 +296,17 @@ export function FileMenu() {
       note('No png or jpg from a Milady collection in this read')
       return
     }
+    kitAbort?.abort()
     const request = ++kitRequest
+    const abort = new AbortController()
+    kitAbort = abort
     const song = songId()
     setKitAsk(false)
-    setBusy(true)
+    setKitBusy(true)
     try {
       const built = await pictureKitDoc(picks, {
         alive: () => request === kitRequest,
+        signal: abort.signal,
         onEach: (pick, i) => {
           if (request !== kitRequest) return
           note(`Reading ${plainName(pick.name) || 'picture'} (${i + 1}/${picks.length})`)
@@ -306,7 +328,10 @@ export function FileMenu() {
     } catch (error) {
       if (request === kitRequest) note(error.message || 'Could not make that kit')
     } finally {
-      if (request === kitRequest) setBusy(false)
+      if (request === kitRequest) {
+        if (kitAbort === abort) kitAbort = null
+        setKitBusy(false)
+      }
     }
   }
 
@@ -430,7 +455,7 @@ export function FileMenu() {
                 // A different account: its packs are not the ones on screen, and a read in flight is stale.
                 if (walletFor && e.target.value.trim().toLowerCase() !== walletFor) {
                   walletRequest += 1
-                  kitRequest += 1
+                  stopKit()
                   walletFor = ''
                   clearPacks()
                   setKitAsk(false)
@@ -439,11 +464,11 @@ export function FileMenu() {
                 touch(false)
               }}
             />
-            <button type="submit" className="btn" disabled={busy}>Read</button>
+            <button type="submit" className="btn" disabled={busy || kitBusy}>Read</button>
             <button
               type="button"
               className="btn"
-              disabled={busy}
+              disabled={busy || kitBusy}
               onClick={() => requestAccount().then((account) => refreshWallet(account)).catch((error) => note(error.message))}
             >
               Wallet
@@ -463,15 +488,29 @@ export function FileMenu() {
                   : `${kit.total} Milady picture${kit.total === 1 ? '' : 's'} can become a kit, about a second each.`}
                 {' '}The kit you are editing is replaced.
               </p>
-              {!kitAsk && (
+              {kitBusy && (
                 <div className="dialog-actions">
-                  <button type="button" className="btn" disabled={busy} onClick={() => setKitAsk(true)}>Make a kit</button>
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={() => {
+                      stopKit()
+                      note('Kit cancelled. The kit you were editing is unchanged.')
+                    }}
+                  >
+                    Cancel kit
+                  </button>
                 </div>
               )}
-              {kitAsk && (
+              {!kitAsk && !kitBusy && (
                 <div className="dialog-actions">
-                  <button type="button" className="btn" disabled={busy} onClick={makeKit}>Replace kit</button>
-                  <button type="button" className="btn" disabled={busy} onClick={() => setKitAsk(false)}>Cancel</button>
+                  <button type="button" className="btn" disabled={busy || kitBusy} onClick={() => setKitAsk(true)}>Make a kit</button>
+                </div>
+              )}
+              {kitAsk && !kitBusy && (
+                <div className="dialog-actions">
+                  <button type="button" className="btn" disabled={busy || kitBusy} onClick={makeKit}>Replace kit</button>
+                  <button type="button" className="btn" disabled={busy || kitBusy} onClick={() => setKitAsk(false)}>Cancel</button>
                 </div>
               )}
             </>
@@ -486,8 +525,8 @@ export function FileMenu() {
                     {token.links.map((link) => (
                       <div key={link.url} className="dialog-actions">
                         <span className="hint">{plainName(link.name)}</span>
-                        <button type="button" className="btn free-width" disabled={busy} onClick={() => (link.kind === 'image' ? keepPicture(link.url, plainName(token.name), false) : keepRemote(link.url, plainName(token.name), false))}>Cache</button>
-                        <button type="button" className="btn free-width" disabled={busy} onClick={() => (link.kind === 'image' ? keepPicture(link.url, plainName(token.name), true) : keepRemote(link.url, plainName(token.name), true))}>Pad</button>
+                        <button type="button" className="btn free-width" disabled={busy || kitBusy} onClick={() => (link.kind === 'image' ? keepPicture(link.url, plainName(token.name), false) : keepRemote(link.url, plainName(token.name), false))}>Cache</button>
+                        <button type="button" className="btn free-width" disabled={busy || kitBusy} onClick={() => (link.kind === 'image' ? keepPicture(link.url, plainName(token.name), true) : keepRemote(link.url, plainName(token.name), true))}>Pad</button>
                       </div>
                     ))}
                   </div>
@@ -500,7 +539,8 @@ export function FileMenu() {
       )}
       {windowId === 'video' && (
         <Dialog title={videoTake ? 'Video sample' : 'Video link'} onClose={closeWindow} busy={busy}>
-          {!videoTake && (
+          {isDesktopApp() && <p className="hint">{DESKTOP_VIDEO_NOTE}</p>}
+          {!videoTake && !isDesktopApp() && (
             <>
               <input
                 className="field"

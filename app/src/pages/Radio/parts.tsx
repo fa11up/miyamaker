@@ -275,7 +275,7 @@ export const Bead = styled.button.attrs({ type: 'button' })<{ $size: number; $li
       ? `radial-gradient(circle at 36% 28%, #fff 0 8%, #e2ffd2 22%, #7be05f 52%, #23762a 86%, #0e3d17 100%)`
       : `radial-gradient(circle at 36% 28%, #fff 0 8%, #e4e8f4 22%, #a2aac2 52%, #565d7c 84%, #2b2f48 100%)`};
   box-shadow: 0 0 0 1px #10101d, 0 2px 3px rgba(2, 1, 10, 0.75),
-    ${({ $orb, $lit }) => ($orb && $lit ? '0 0 calc(8px + var(--lvl) * 16px) #ff5ce8' : '0 0 0 transparent')};
+    ${({ $orb, $lit }) => ($orb && $lit ? '0 0 12px #ff5ce8' : '0 0 0 transparent')};
   svg {
     filter: drop-shadow(0 1px 0 rgba(255, 255, 255, 0.5));
   }

@@ -590,6 +590,8 @@ export default function TV() {
   const live = liveQuery.data
   const liveIds = live?.ids
   const onKick = channel.kind === 'iframe' && channel.sources[0].provider === 'kick'
+  // The server's word on Kick: true it asked and nobody is on, false it couldn't ask (or the list itself failed).
+  const kickChecked = liveQuery.isError && !live ? false : live?.kickChecked
   // Kick plays only who the server says is on. No list means nothing to play, never a guess at who might be.
   const sources: Source[] =
     channel.kind !== 'iframe'
@@ -694,13 +696,20 @@ export default function TV() {
   // The radio's sound control comes with something to hear.
   const hasSound = (isRadio && !!radio.current) || isPublic || source?.provider === 'youtube'
   // The bar is on every channel. Where we cannot turn the sound, it says why instead of pretending to.
+  // Kick with nobody to play is about who's live, not about sound, so it is asked before the source is.
   const soundNote = hasSound
     ? ''
+    : onKick && !source
+    ? liveQuery.isPending
+      ? 'Checking who is live.'
+      : kickChecked === false
+      ? "Couldn't check who's live."
+      : 'Nobody is live right now.'
     : source?.provider === 'kick'
-      ? "Kick's player sets its own volume: use the controls in the picture."
-      : isRadio
-        ? 'Pick a station to turn it up or down.'
-        : 'This channel has no sound.'
+    ? "Kick's player sets its own volume: use the controls in the picture."
+    : isRadio
+    ? 'Pick a station to turn it up or down.'
+    : 'This channel has no sound.'
   const tapes = airList(
     useQuery({
       queryKey: ['public-access'],
@@ -886,7 +895,7 @@ export default function TV() {
                       volume={tvVolume}
                       muted={tvMuted}
                       checkingLive={liveQuery.isPending}
-                      kickChecked={liveQuery.isError && !live ? false : live?.kickChecked}
+                      kickChecked={kickChecked}
                       onAutoMuted={() => {
                         autoMuted.current = true
                         setTvMuted(true)
