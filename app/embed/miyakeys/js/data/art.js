@@ -235,7 +235,10 @@ export const EMOJI = {
   crown: "1f451",
 };
 
-export const emojiUrl = (cp) => "https://cdn.jsdelivr.net/gh/jdecked/twemoji@15.1.0/assets/72x72/" + cp + ".png";
+/* Twemoji 15.1.0 72x72 PNGs (CC-BY 4.0), copied into public/embed/miyakeys/emoji/ (see ATTRIBUTION.txt there): the
+   frame's CSP allows images from this site only. Add a file there when adding an emoji here. */
+export const EMOJI_CREDIT = "Emoji: Twemoji by Twitter, Inc and other contributors, CC-BY 4.0";
+export const emojiUrl = (cp) => "/embed/miyakeys/emoji/" + cp + ".png";
 
 /** Codepoint string (e.g. "1f431" or "2764-fe0f") → native emoji character(s). */
 export function emojiChar(cp) {
