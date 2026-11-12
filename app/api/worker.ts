@@ -5,6 +5,7 @@ import { mainnet } from 'viem/chains'
 
 import { ALLOWLIST_BODY_LIMIT, ALLOWLIST_PATH, d1AllowlistStore, handleAllowlistRequest } from './_lib/allowlist'
 import { jsonReply, noSniff, readCappedText } from './_lib/body'
+import { handleLayersRequest, LAYERS_PROXY_PATH } from './_lib/layers'
 import { edgeCache, handleMarketRequest, MARKET_PREFIX, openSeaReader } from './_lib/market'
 import { handleOpenSeaRequest, OPENSEA_PROXY_PATH, quoteBigInts } from './_lib/opensea'
 import { d1TapeStore, handlePublicAccessRequest, PUBLIC_ACCESS_PATH, youtubeLookup } from './_lib/publicaccess'
@@ -157,6 +158,10 @@ export default {
         clientKey,
         listLimiter: revealListLimiter,
       })
+    }
+
+    if (url.pathname === LAYERS_PROXY_PATH || url.pathname.startsWith(`${LAYERS_PROXY_PATH}/`)) {
+      return handleLayersRequest(request)
     }
 
     if (url.pathname.startsWith('/commercials/')) {
