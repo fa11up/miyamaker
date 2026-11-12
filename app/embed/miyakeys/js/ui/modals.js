@@ -12,12 +12,17 @@ const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ESC[c]);
 
 const $ = (id) => document.getElementById(id);
 
+/* Stops the gallery's thumbnail drawing when the modal closes or shows something else. */
+let stopThumbs = null;
+
 export function closeModal() {
+  if (stopThumbs) { stopThumbs(); stopThumbs = null; }
   $('modal').classList.remove('open');
   syncNav('builder');
 }
 
 export function openModal(title, html) {
+  if (stopThumbs) { stopThumbs(); stopThumbs = null; }
   $('modalTitle').textContent = title;
   $('modalBody').innerHTML = html;
   $('modal').classList.add('open');
@@ -63,7 +68,7 @@ export function openLibrary() {
 const HEX_COLOR = /^#[0-9a-f]{3,8}$/i;
 
 function thumbnailOrGradient(src, snap) {
-  if (src) return `<img src="${esc(src)}" alt="">`;
+  if (src) return `<img src="${esc(src)}" alt="" loading="lazy" decoding="async">`;
   // Community builds are visitor input: only plain hex colours reach the style.
   const a = snap?.customColors?.a?.bg;
   const m = snap?.customColors?.m?.bg;
@@ -74,8 +79,11 @@ function thumbnailOrGradient(src, snap) {
 }
 
 function communityCardHtml(t, thumbs) {
-  return `<button type="button" class="galCard" data-community="${esc(t.id)}">${thumbnailOrGradient(thumbs[t.id], t.snap)}<div class="cap"><div class="nm">${esc(t.name)}</div><div class="tg">${esc(t.layout || '')}</div></div></button>`;
+  return `<button type="button" class="galCard" data-community="${esc(t.id)}"><span class="thumb">${thumbnailOrGradient(thumbs[t.id], t.snap)}</span><div class="cap"><div class="nm">${esc(t.name)}</div><div class="tg">${esc(t.layout ? t.layout + '%' : '')}</div></div></button>`;
 }
+
+/** At most this many community cards: each one is a WebGL thumbnail. The rest are counted, not hidden silently. */
+export const GALLERY_SHOWN = 60;
 
 function showCommunityOffline(grid) {
   grid.innerHTML = '<div class="hint" style="grid-column:1/-1">Community gallery offline. <button class="linkish" id="galleryRetry">Retry</button></div>';
@@ -99,7 +107,7 @@ export function openGallery() {
           <div class="cap"><div class="nm">${esc(b.name)}</div><div class="tg">${esc(cwName(b.snap))}</div></div></button>`,
       ).join('') + '</div>';
   } else {
-    html += '<div class="secTitle">YOUR BUILDS</div><div class="hint" style="margin-bottom:16px">No saved builds yet. Use <strong>Save Build</strong> in the sidebar to save your first one.</div>';
+    html += '<div class="secTitle">YOUR BUILDS</div><div class="hint" style="margin-bottom:16px">Builds you share with <strong>Share to gallery</strong> are kept here until you close miyakeys.</div>';
   }
   openModal('Gallery', html);
 
@@ -112,11 +120,23 @@ export function openGallery() {
     if (!grid) return;
     if (community === null) { showCommunityOffline(grid); return; }
     if (community.length === 0) {
-      grid.innerHTML = '<div class="hint" style="grid-column:1/-1">No community builds yet. Be the first — hit <strong>Save Build</strong>.</div>';
+      grid.innerHTML = '<div class="hint" style="grid-column:1/-1">No community builds yet. Be the first: press <strong>Share to gallery</strong>.</div>';
       return;
     }
-    const { thumbs: th } = window.__MODKEYS__ || { thumbs: {} };
-    grid.innerHTML = community.map((t) => communityCardHtml(t, th)).join('');
+    const { thumbs: th, renderThumbs } = window.__MODKEYS__ || { thumbs: {} };
+    const shown = community.slice(0, GALLERY_SHOWN);
+    grid.innerHTML = shown.map((t) => communityCardHtml(t, th)).join('') +
+      (community.length > shown.length
+        ? `<div class="hint" style="grid-column:1/-1">Showing ${shown.length} of ${community.length} builds. The rest are on <a class="linkish" href="https://www.nuroctane.xyz/modkeys" target="_blank" rel="noopener">nuroctane.xyz/modkeys</a>.</div>`
+        : '');
+    /* Thumbnails are drawn a few at a time after the cards show (each card has its colours until then). */
+    if (renderThumbs) {
+      stopThumbs = renderThumbs(shown, (id, url) => {
+        const card = [...grid.querySelectorAll('[data-community]')].find((c) => c.dataset.community === id);
+        const slot = card?.querySelector('.thumb');
+        if (slot) slot.innerHTML = thumbnailOrGradient(url, null);
+      });
+    }
   }).catch(() => {
     const grid = document.getElementById('communityGrid');
     if (grid) showCommunityOffline(grid);
@@ -147,6 +167,61 @@ export function openAccessories() {
       </button>`,
     ).join('') + '</div>',
   );
+}
+
+/* "Share to gallery": says plainly where the build goes before anything is sent. No prompt(): the frame is
+   sandboxed without modals, so the name is asked for here. */
+export function openShareDialog(defaultName) {
+  syncNav('builder');
+  openModal('Share to gallery',
+    `<form id="shareForm" class="shareForm">
+      <p class="hint" style="margin-bottom:12px">This build goes <strong>public</strong> in the community gallery on
+        <a class="linkish" href="https://www.nuroctane.xyz/modkeys" target="_blank" rel="noopener">nuroctane.xyz</a>,
+        which miyakeys shares with MODKEYS. Anyone can see and load it, and only nuroctane can remove it.
+        Key images are not shared.</p>
+      <label class="glabel" for="shareName">NAME</label>
+      <input class="keInput" id="shareName" type="text" maxlength="40" autocomplete="off" value="${esc(defaultName)}" style="width:100%;margin:6px 0 14px">
+      <div class="shareRow">
+        <button type="button" class="libBtn" id="shareCancel">Cancel</button>
+        <button type="submit" class="libBtn shareGo" id="shareGo">Share publicly</button>
+      </div>
+      <p class="hint" id="shareStatus" role="status" aria-live="polite" style="margin-top:12px"></p>
+    </form>`,
+  );
+  const form = $('shareForm');
+  const input = $('shareName');
+  input?.focus();
+  input?.select();
+  $('shareCancel')?.addEventListener('click', closeModal);
+  form?.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const go = $('shareGo');
+    const share = window.__MODKEYS__?.shareBuild;
+    if (!share || !go || go.disabled) return;
+    go.disabled = true;
+    go.textContent = 'Sharing…';
+    const status = $('shareStatus');
+    const result = await share(input?.value ?? '');
+    /* The person may have closed the dialog or opened another while it was sending: then a toast says it. */
+    if (!(status && $('shareForm') === form)) { toast(result.message); return; }
+    status.textContent = result.message;
+    go.textContent = result.ok ? 'Shared' : 'Share publicly';
+    go.disabled = result.ok;
+    const cancel = $('shareCancel');
+    if (cancel && result.ok) cancel.textContent = 'Close';
+  });
+}
+
+/** The share link, to copy by hand when the clipboard is not available here. */
+export function showLinkDialog(url) {
+  syncNav('builder');
+  openModal('Share link',
+    `<p class="hint" style="margin-bottom:10px">Copy this link to share the build. Anyone with it can open the build.</p>
+     <input class="keInput" id="shareLink" type="text" readonly value="${esc(url)}" style="width:100%">`,
+  );
+  const input = $('shareLink');
+  input?.focus();
+  input?.select();
 }
 
 /* modal body event delegation */

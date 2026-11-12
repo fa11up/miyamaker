@@ -5,7 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>miyakeys — Keyboard Configurator</title>
     <link rel="icon" type="image/png" href="/embed/miyakeys/miyakeys-logo.png" />
-    <link rel="preconnect" href="https://cdn.jsdelivr.net" />
     <link rel="stylesheet" href="./css/variables.css" />
     <link rel="stylesheet" href="./css/layout.css" />
     <link rel="stylesheet" href="./css/components.css" />
@@ -58,7 +57,7 @@
           <button class="saveRow" id="saveBuild">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
               <path d="M17.5 21l-5.5-4-5.5 4V5a2 2 0 012-2h7a2 2 0 012 2z" stroke-linejoin="round" />
-            </svg>Save Build
+            </svg>Share to gallery
           </button>
           <div style="margin-top:12px;border-top:1px solid rgba(255,255,255,0.08);padding-top:12px">
             <div style="font-size:10.5px;font-weight:700;letter-spacing:0.16em;color:var(--sideTx2);margin:0 6px 8px">EXPORT</div>
@@ -168,8 +167,8 @@
             <div class="fhead">
               <h3>FEATURED BUILDS</h3>
               <div class="farrows">
-                <button id="scrollL">&larr;</button>
-                <button id="scrollR">&rarr;</button>
+                <button id="scrollL" aria-label="Previous row" title="Previous row">&uarr;</button>
+                <button id="scrollR" aria-label="Next row" title="Next row">&darr;</button>
               </div>
             </div>
             <div class="btrack" id="builds"></div>
@@ -280,7 +279,7 @@
         <button class="mBarBtn" id="saveBuild">
           <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
             <path d="M17.5 21l-5.5-4-5.5 4V5a2 2 0 012-2h7a2 2 0 012 2z" stroke-linejoin="round" />
-          </svg>Save Build
+          </svg>Share to gallery
         </button>
         <button class="mBarBtn" id="mExportToggle">Export &#9662;</button>
       </div>
@@ -315,10 +314,6 @@
       </div>
     </div>
 
-    <script type="module">
-      import { selectShell } from './js/shell.js';
-      selectShell();
-      import('./js/app.js').then(({ mountModkeys }) => mountModkeys());
-    </script>
+    <script type="module" src="./js/boot.js"></script>
   </body>
 </html>

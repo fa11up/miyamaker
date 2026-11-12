@@ -58,23 +58,23 @@
 /* View pills: a single full-width horizontal bar pinned to the BOTTOM of the
    stage. The previous top-left flex-wrap pushed "3D"/"Explode" onto a second
    row that overlapped the scene and fell outside #pillInd's tracking, so they
-   read as missing. One non-wrapping scrollable row shows all five, and the
+   read as missing. One row (wrapping to two when too narrow) shows all five, and the
    active state is a solid button background (no absolutely-positioned slider
    to fall out of sync). */
 .mShell .pills {
   position: absolute; left: 8px; right: 8px; bottom: 8px; top: auto;
   transform: none; /* override desktop .pills translateX(-50%) that pushed row off-screen */
-  display: flex; flex-wrap: nowrap; gap: 3px; padding: 3px;
+  display: flex; gap: 3px; padding: 3px;
   background: var(--panel); /* fallback */
   background: color-mix(in srgb, var(--panel) 88%, transparent);
   -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
   border: 1px solid var(--line); border-radius: 11px;
   max-width: none;
-  overflow-x: auto; scrollbar-width: none;
+  /* Wraps rather than scrolling sideways: five icon buttons fit one row on any phone, and a narrower frame gets two. */
+  flex-wrap: wrap;
 }
-.mShell .pills::-webkit-scrollbar { display: none; }
 .mShell .pills button {
-  height: 36px; padding: 0; border-radius: 8px; flex: 1 1 0;
+  height: 36px; padding: 0; border-radius: 8px; flex: 1 1 0; min-width: 40px;
   display: flex; align-items: center; justify-content: center;
   color: var(--ink2); touch-action: manipulation;
 }
