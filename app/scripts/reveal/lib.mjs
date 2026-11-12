@@ -123,7 +123,7 @@ export async function pool(items, n, work) {
  *   head       the newest block
  *   published  assignments.json's `assignments`
  * Returns { problems: string[], checked, pending }: pending = minted tokens the chain can already draw but the list
- * does not have yet (the site's cron runs every minute, so a few are normal right after a mint).
+ * does not have yet (the site's cron runs every 15 minutes, so a few are normal right after a mint).
  */
 export function checkDraws({ supply, mints, headers, head, published }) {
   const problems = []

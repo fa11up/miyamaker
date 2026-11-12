@@ -43,7 +43,8 @@
   // here or as secrets. Without REVEAL_DEV=1 the reveal reads only RPC_URL_1 and attaches only https://www.miyamaker.com.
   "r2_buckets": [{ "binding": "REVEAL", "bucket_name": "miyamaker-reveal" }],
   // The reveal's cron: reads new mints and draws their pieces (runRevealCron). Needs RPC_URL_1 (archive, e.g. Alchemy).
-  "triggers": { "crons": ["* * * * *"] },
+  // Every 15 minutes (owner, 2026-11-12): a minter sees the cover for up to ~16 minutes before their piece.
+  "triggers": { "crons": ["*/15 * * * *"] },
   "workers_dev": false,
   "routes": [
     { "pattern": "www.miyamaker.com", "custom_domain": true },

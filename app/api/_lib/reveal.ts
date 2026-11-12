@@ -13,7 +13,7 @@
  * Nothing is attached or drawn until provenance.json and every piece's image, metadata and salt are loaded and checked:
  * a drawn piece is always one the site can serve and prove.
  *
- * The draw (revealdraw.mjs) runs in the cron (runRevealCron, every minute): Transfer-from-zero logs are read forward in
+ * The draw (revealdraw.mjs) runs in the cron (runRevealCron, every 15 minutes): Transfer-from-zero logs are read forward in
  * chunks from blocks CONFIRMATIONS deep, checked against totalSupply() at the chunk's last block (so an RPC that drops
  * logs is caught, not believed), stored, then drawn in token order. Writes are D1 batches (one transaction each) guarded
  * by compare-and-set on the collection's counters and the tables' keys, so an overlapping run, a retry or an RPC error
@@ -765,12 +765,13 @@ const RPC_BUDGET = 40
 const HEADERS_PER_CALL = 50
 /** Draws written per run: a few thousand rows in one transaction at most. */
 const MAX_DRAWS_PER_RUN = 2000
-const LOCK_MS = 55_000
+const LOCK_MS = 5 * 60_000
 /**
  * Marketplace refreshes per run, one every REFRESH_GAP_MS: about 2 a second, under OpenSea's per-key rate limit, and
- * done well inside the run's lock. 50 a minute keeps up with a busy mint (3,000 an hour). A 429 ends the run's refreshes.
+ * done well inside the run's lock. 100 a run every 15 minutes is 400 an hour; holders can also press refresh on OpenSea
+ * themselves. A 429 ends the run's refreshes.
  */
-const REFRESH_PER_RUN = 50
+const REFRESH_PER_RUN = 100
 const REFRESH_GAP_MS = 500
 /** A token whose refresh failed waits 2, 4, 8 ... minutes (at most 6 hours) and the others go first meanwhile. */
 const REFRESH_BACKOFF_MS = 2 * 60_000
