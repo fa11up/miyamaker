@@ -1,5 +1,5 @@
 import { state } from '../core/state.js';
-import { LAYOUTS } from '../data/layouts.js';
+import { layoutOf } from '../data/layouts.js';
 import { PROFILES, PLATES, CASES, SWITCHES } from '../data/components.js';
 import { effectiveColorway } from '../core/update.js';
 import { getEffectiveText, getEffectiveFg, getEffectiveBg, getEffectiveFontSize, getOverride, keyId } from '../core/perKey.js';
@@ -15,7 +15,7 @@ const KLE_PROFILES = {
 };
 
 export function exportKLE() {
-  const L = LAYOUTS[state.layout];
+  const L = layoutOf(state.layout);
   const rows = L.rows();
   const cw = effectiveColorway();
   const profileName = KLE_PROFILES[state.profile] || state.profile;
@@ -133,7 +133,7 @@ export function validateKLE(json) {
       }
       if (lastWasObj) return false;
     }
-    const L = LAYOUTS[state.layout];
+    const L = layoutOf(state.layout);
     const expectedKeys = L.rows().reduce((sum, r) => sum + r.length, 0);
     return totalStrings === expectedKeys;
   } catch {

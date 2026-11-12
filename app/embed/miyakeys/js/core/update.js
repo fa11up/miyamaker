@@ -1,8 +1,8 @@
 import * as THREE from 'three-miyakeys';
-import { cleanSnap } from './cleanSnap.js';
+import { validBuild } from './validBuild.js';
 import gsap from 'gsap';
 import { state, stateSlice } from './state.js';
-import { LAYOUTS } from '../data/layouts.js';
+import { layoutOf } from '../data/layouts.js';
 import { COLORWAYS } from '../data/colorways.js';
 import { CASES, FINISHES, PLATES, SWITCHES, MATERIALS, PROFILES, GAP } from '../data/components.js';
 import {
@@ -167,7 +167,7 @@ function applyColorwayFields(s, { instant = true } = {}) {
 
 /** Per-key bg/image etc. need mesh rebuild — legends alone are not enough. */
 function applyPerKeyOverridesField(ov) {
-  state.perKeyOverrides = ov && typeof ov === 'object' ? ov : {};
+  state.perKeyOverrides = ov && typeof ov === 'object' ? ov : Object.create(null);
   buildKeys();
 }
 
@@ -223,7 +223,7 @@ function applyInstant(s) {
   }
   if (s.extras) {
     state.extras = Object.assign({}, state.extras, s.extras);
-    knobGroup.visible = LAYOUTS[state.layout].knob && state.extras.knob;
+    knobGroup.visible = layoutOf(state.layout).knob && state.extras.knob;
     cableGroup.visible = state.extras.cable;
     wristGroup.visible = state.extras.wrist;
   }
@@ -308,7 +308,7 @@ function apply3D(patch, animate) {
   }
   if (patch.light) applyLight();
   if (patch.extras !== undefined) {
-    knobGroup.visible = LAYOUTS[state.layout].knob && state.extras.knob;
+    knobGroup.visible = layoutOf(state.layout).knob && state.extras.knob;
     cableGroup.visible = state.extras.cable;
     wristGroup.visible = state.extras.wrist;
   }
@@ -327,12 +327,12 @@ function apply3D(patch, animate) {
  * Instant apply so customColors + per-key faces + board tints all stick.
  */
 export function loadSnap(snap, opts = {}) {
-  if (!snap || typeof snap !== 'object') return;
-  const patch = cleanSnap(snap);
-  if (opts.selectedPreset !== undefined) patch.selectedPreset = opts.selectedPreset;
-  else if (patch.selectedPreset === undefined) patch.selectedPreset = null;
+  /* Only a build's own fields, each checked (validBuild.js): never view, tool, theme, section or selection. */
+  const patch = validBuild(snap);
+  if (!patch) return;
+  patch.selectedPreset = opts.selectedPreset !== undefined ? opts.selectedPreset : null;
   /* Full snap: missing overrides must clear leftover photo colours from prior build */
-  if (patch.perKeyOverrides === undefined) patch.perKeyOverrides = {};
+  if (patch.perKeyOverrides === undefined) patch.perKeyOverrides = Object.create(null);
   if (patch.customColors === undefined) patch.customColors = null;
   if (patch.caseCustomColor === undefined) patch.caseCustomColor = null;
   if (patch.plateColor === undefined) patch.plateColor = null;
@@ -350,8 +350,10 @@ export function setState(patch, opts) {
   if (_syncUI) _syncUI(opts.skipPanel);
 }
 
-export function undo() {
-  const snap = undoHistory();
+/* A history entry is a whole earlier stateSlice(), so it goes back through the same allowlist as any other build:
+   undo restores the build, not the viewer's theme, tool or view. */
+function restore(entry) {
+  const snap = validBuild(entry);
   if (!snap) return false;
   Object.assign(state, snap);
   applyInstant(snap);
@@ -362,13 +364,14 @@ export function undo() {
   return true;
 }
 
+export function undo() {
+  const snap = undoHistory();
+  if (!snap) return false;
+  return restore(snap);
+}
+
 export function redo() {
   const snap = redoHistory();
   if (!snap) return false;
-  Object.assign(state, snap);
-  applyInstant(snap);
-  if (snap.layout) rebuildBoard();
-  else if (snap.profile) buildKeys();
-  if (_syncUI) _syncUI();
-  return true;
+  return restore(snap);
 }

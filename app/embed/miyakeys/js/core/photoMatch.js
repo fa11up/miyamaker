@@ -11,7 +11,7 @@
  *
  * Corners stay in full-image pixel space for the UI handles.
  */
-import { LAYOUTS } from '../data/layouts.js';
+import { layoutOf } from '../data/layouts.js';
 import { state } from './state.js';
 import { keyId, setOverride, getSelectedIds } from './perKey.js';
 
@@ -793,7 +793,7 @@ export function photoPartStatePatch(part) {
  * Layout-normalised (u,v) for each key centre in current layout.
  */
 export function layoutKeyUVs(layoutId) {
-  const L = LAYOUTS[layoutId || state.layout];
+  const L = layoutOf(layoutId || state.layout);
   const rows = L.rows();
   const totalW = L.total;
   const totalH = rows.length;

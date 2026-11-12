@@ -1,5 +1,5 @@
 import { state } from '../core/state.js';
-import { LAYOUTS } from '../data/layouts.js';
+import { layoutOf } from '../data/layouts.js';
 import { COLORWAYS } from '../data/colorways.js';
 import { CASES, FINISHES, PLATES, SWITCHES, MATERIALS, EXTRAS } from '../data/components.js';
 import { effectiveColorway } from '../core/update.js';
@@ -7,7 +7,7 @@ import { getOverride, getAllEntries, keyId } from '../core/perKey.js';
 import { exportKLE } from './kle.js';
 
 export function generateSpec() {
-  const L = LAYOUTS[state.layout];
+  const L = layoutOf(state.layout);
   const cw = effectiveColorway();
   const cwName = state.customColors ? 'Custom' : COLORWAYS[state.colorway].name;
   const countKeys = L.rows().reduce((sum, r) => sum + r.length, 0);

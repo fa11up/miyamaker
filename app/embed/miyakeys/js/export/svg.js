@@ -1,5 +1,5 @@
 import { state } from '../core/state.js';
-import { LAYOUTS } from '../data/layouts.js';
+import { layoutOf } from '../data/layouts.js';
 import { effectiveColorway } from '../core/update.js';
 import {
   getEffectiveText, getEffectiveFg, getEffectiveBg, getEffectiveFontSize,
@@ -36,7 +36,7 @@ function legendTexts(x, y, w, h, label, fg, fs, glow) {
 }
 
 export function generateSVG() {
-  const L = LAYOUTS[state.layout];
+  const L = layoutOf(state.layout);
   const rows = L.rows();
   const cw = effectiveColorway();
   const colorMap = { a: cw.a.bg, m: cw.m.bg, x: cw.x.bg };

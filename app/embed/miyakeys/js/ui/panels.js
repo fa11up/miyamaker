@@ -1,5 +1,5 @@
 import { state } from '../core/state.js';
-import { LAYOUTS } from '../data/layouts.js';
+import { LAYOUTS, layoutOf } from '../data/layouts.js';
 import { COLORWAYS, PANEL_SWATCHES } from '../data/colorways.js';
 import { CASES, FINISHES, PLATES, SWITCHES, MATERIALS, EXTRAS, PROFILES, LIGHT_COLORS } from '../data/components.js';
 import { setState, effectiveColorway, applyLight } from '../core/update.js';
@@ -7,8 +7,8 @@ import {
   getOverride, setOverride, setOverrides, clearOverride, clearAllOverrides,
   getSelectedIds, selectKey, clearSelection, KNOB_ID, isKnobId,
 } from '../core/perKey.js';
-import { loadImage, validateImageFile } from '../core/imageLoader.js';
-import { EMOJI, emojiUrl } from '../data/art.js';
+import { loadImage, validateImageFile, MAX_PHOTO_SIZE } from '../core/imageLoader.js';
+import { EMOJI, EMOJI_CREDIT, emojiUrl } from '../data/art.js';
 import { rebuildKey, rebuildKnob, getKeyLabel, updateKeyLegend, updateSelectionChrome } from '../core/keyboard.js';
 import { applyPlateFinish, matCase, matStem, sRGB } from '../core/scene.js';
 import { toast } from './toast.js';
@@ -88,7 +88,7 @@ export function syncUI(skipPanel) {
   $('dotCase').style.background = effectiveCaseHex();
   $('dotPlate').style.background = state.plateColor || PLATES[state.plate].c;
   $('dotLight').style.cssText = lightDotStyle();
-  $('layoutVal').textContent = LAYOUTS[state.layout].pct;
+  $('layoutVal').textContent = layoutOf(state.layout).pct;
   document.querySelectorAll('#builds .bcard').forEach((b) =>
     b.classList.toggle('on', b.dataset.id === state.selectedPreset),
   );
@@ -131,7 +131,7 @@ const PANELS = {
     Object.entries(LAYOUTS).map(([id, l]) => [id, l.pct]),
     state.layout, 'layout',
   )}</div>
-<div class="grp"><div class="glabel">${LAYOUTS[state.layout].name}</div><div class="hint">${LAYOUTS[state.layout].tag}</div></div>`,
+<div class="grp"><div class="glabel">${layoutOf(state.layout).name}</div><div class="hint">${layoutOf(state.layout).tag}</div></div>`,
 
   keycaps: () => {
     const cw = effectiveColorway();
@@ -168,7 +168,7 @@ const PANELS = {
   <div class="glabel">KEY IMAGE</div>
   <div class="hint">Double-click a key to select it, then upload an image below.</div>
   <input type="file" id="keImageSidebar" accept="image/png,image/jpeg" class="keFile">
-  <div class="keHint">PNG or JPG &middot; max 25 MB</div>
+  <div class="keHint">PNG or JPG &middot; max 3 MB</div>
   <div id="keSidebarPreview"></div>
 </div>`;
   },
@@ -385,6 +385,7 @@ function buildCustomizePanel() {
       `<button type="button" class="emojiBtn ${ov.markId === id ? 'on' : ''}" data-emoji="${id}" title="${id}">
         <img src="${emojiUrl(EMOJI[id])}" alt="${id}" width="22" height="22"></button>`).join('')}
   </div>
+  <div class="hint" style="margin-top:4px;font-size:10.5px"><a class="linkish" href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener">${EMOJI_CREDIT}</a></div>
   <div class="keRow" style="margin-top:8px">
     <label class="libBtn" style="cursor:pointer;flex:1;text-align:center">Upload image…
       <input type="file" id="cuImage" accept="image/png,image/jpeg,image/webp" style="display:none">
@@ -619,7 +620,7 @@ export function setupPanelEvents() {
     if (ev.target.id === 'resetAllKeys') {
       clearAllOverrides();
       clearSelection();
-      state.perKeyOverrides = {};
+      state.perKeyOverrides = Object.create(null);
       import('../core/keyboard.js').then((k) => {
         if (k.buildKeys) k.buildKeys();
         if (k.rebuildKnob) k.rebuildKnob();
@@ -866,7 +867,7 @@ export function setupPanelEvents() {
     if (ev.target.id === 'photoMatchFile') {
       const file = ev.target.files?.[0];
       if (!file) return;
-      const err = validateImageFile(file);
+      const err = validateImageFile(file, MAX_PHOTO_SIZE);
       if (err) { toast(err); ev.target.value = ''; return; }
       try {
         await loadPhotoFile(file);

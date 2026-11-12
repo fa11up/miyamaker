@@ -1,9 +1,9 @@
 import { state } from '../core/state.js';
-import { LAYOUTS } from '../data/layouts.js';
+import { layoutOf } from '../data/layouts.js';
 import { generateSVG } from './svg.js';
 
 export async function exportPDF() {
-  const L = LAYOUTS[state.layout];
+  const L = layoutOf(state.layout);
   const cwName = state.customColors ? 'Custom' : state.colorway;
   const svgString = generateSVG();
 
@@ -23,7 +23,7 @@ export async function exportPDF() {
   doc.setFontSize(8);
   const lightBit = `${state.light.mode}/${state.light.color}`;
   doc.text(
-    `miyakeys — ${LAYOUTS[state.layout].pct} — ${cwName} — ${state.profile} — ${state.sw} — ${lightBit} — ${new Date().toISOString().slice(0, 10)}`,
+    `miyakeys — ${layoutOf(state.layout).pct} — ${cwName} — ${state.profile} — ${state.sw} — ${lightBit} — ${new Date().toISOString().slice(0, 10)}`,
     10,
     totalH + 22,
   );

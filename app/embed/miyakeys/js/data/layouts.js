@@ -144,3 +144,10 @@ export const LAYOUTS = {
     tag: "Nav column and rotary knob",
   },
 };
+
+export const DEFAULT_LAYOUT = "75";
+
+/** The layout for an id, or the default one: a bad id (from anywhere) never leaves the board without a layout. */
+export function layoutOf(id) {
+  return Object.hasOwn(LAYOUTS, String(id)) ? LAYOUTS[String(id)] : LAYOUTS[DEFAULT_LAYOUT];
+}

@@ -1,5 +1,5 @@
 import * as THREE from 'three-miyakeys';
-import { LAYOUTS } from '../data/layouts.js';
+import { layoutOf } from '../data/layouts.js';
 import { COLORWAYS } from '../data/colorways.js';
 import { PROFILES, SWITCHES, GAP } from '../data/components.js';
 import { state } from './state.js';
@@ -259,7 +259,7 @@ export function buildCase() {
   disposeGroup(knobGroup);
   disposeGroup(cableGroup);
   disposeGroup(wristGroup);
-  const L = LAYOUTS[state.layout];
+  const L = layoutOf(state.layout);
   boardW = L.total + 1.0;
   boardD = 6.0;
   const bottom = new THREE.Mesh(
@@ -426,7 +426,7 @@ export function buildKeys() {
   disposeGroup(capsGroup);
   disposeGroup(switchGroup);
   disposeGroup(keyGlowGroup);
-  const L = LAYOUTS[state.layout], rows = L.rows(), center = L.total / 2;
+  const L = layoutOf(state.layout), rows = L.rows(), center = L.total / 2;
   const prof = PROFILES[state.profile];
   const cw = effectiveColorway();
   rows.forEach((row, ri) => {
@@ -441,7 +441,7 @@ export function buildKeys() {
 }
 
 export function rebuildKey(ri, ci) {
-  const L = LAYOUTS[state.layout], rows = L.rows(), center = L.total / 2;
+  const L = layoutOf(state.layout), rows = L.rows(), center = L.total / 2;
   const prof = PROFILES[state.profile];
   const cw = effectiveColorway();
   if (ri >= rows.length) return;
@@ -621,7 +621,7 @@ export function rebuildKnob() {
     }
   });
   disposeGroup(knobGroup);
-  const L = LAYOUTS[state.layout];
+  const L = layoutOf(state.layout);
   if (!L?.knob) {
     knobGroup.visible = false;
     return;
@@ -741,7 +741,7 @@ export function syncKnobColorway() {
   const cw = effectiveColorway();
   matKnob.color.copy(sRGB(cw.x.bg));
   /* tick / art may use new fg — light rebuild */
-  if (LAYOUTS[state.layout]?.knob && state.extras.knob) rebuildKnob();
+  if (layoutOf(state.layout).knob && state.extras.knob) rebuildKnob();
 }
 
 export function rebuildBoard() {

@@ -1,9 +1,13 @@
-const MAX_IMAGE_SIZE = 25 * 1024 * 1024;
+/* A key's image travels with the build (undo, share links) and is checked there against MAX_IMAGE_DATA in
+   validBuild.js: 3 MB of file is just under that as base64. A key face is drawn at 256 px, so more buys nothing. */
+const MAX_IMAGE_SIZE = 3 * 1024 * 1024;
+/** A photo to match colours from is read once and never kept in the build. */
+export const MAX_PHOTO_SIZE = 25 * 1024 * 1024;
 const ALLOWED_TYPES = ['image/png', 'image/jpeg'];
 
-export function validateImageFile(file) {
+export function validateImageFile(file, maxSize = MAX_IMAGE_SIZE) {
   if (!ALLOWED_TYPES.includes(file.type)) return 'Only PNG and JPG files are accepted.';
-  if (file.size > MAX_IMAGE_SIZE) return 'File size must be under 25 MB.';
+  if (file.size > maxSize) return `Images must be under ${Math.round(maxSize / 1024 / 1024)} MB.`;
   return null;
 }
 

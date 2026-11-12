@@ -28,7 +28,8 @@ const state = {
   /** Mobile multi-select toggle */
   multiSelectMode: false,
   customColors: null,
-  perKeyOverrides: {},
+  /** Per-key edits by row-col / "knob". No prototype: see perKey.js. */
+  perKeyOverrides: Object.create(null),
   /**
    * Customize photo-match: which board parts adopt colours from the photo.
    * keys = per-key median copy; case/plate/light/switch = role tints.
