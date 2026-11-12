@@ -246,10 +246,12 @@ function SnapControl() {
           }
           swallow.current = false
           window.clearTimeout(hold.current)
+          // A finger that slides off the button is not a hold, so leaving clears this too.
           hold.current = window.setTimeout(openMenu, 420)
         }}
         onPointerUp={() => window.clearTimeout(hold.current)}
         onPointerCancel={() => window.clearTimeout(hold.current)}
+        onPointerLeave={() => window.clearTimeout(hold.current)}
         onContextMenu={(event) => {
           event.preventDefault()
           openMenu()
@@ -495,6 +497,7 @@ export function Sequencer() {
         onPointerMove={move}
         onPointerUp={end}
         onPointerCancel={end}
+        onLostPointerCapture={end}
       >
         <div className={`part view-${seqUi.view}`} data-coach="seq" ref={gridRef}>
           <div
@@ -655,8 +658,10 @@ export function Sequencer() {
     if (e.button !== 0) return
     const grid = gridRef.current
     if (!grid) return
-    pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY })
-    if (pointers.current.size >= 2) {
+    // A finger counts only once its gesture is armed (capture adds it). A press that armed nothing
+    // stays out, or it would sit in the map and turn the next lone finger into a pinch.
+    if (pointers.current.size >= 1 && !pointers.current.has(e.pointerId)) {
+      pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY })
       const g = gesture.current
       gesture.current = null
       if (g?.frame) cancelAnimationFrame(g.frame)
@@ -774,6 +779,7 @@ export function Sequencer() {
   }
 
   function capture(e) {
+    pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY })
     const node = frameRef.current
     try { node?.setPointerCapture(e.pointerId) } catch { /* already gone */ }
   }

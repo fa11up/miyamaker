@@ -59,8 +59,19 @@ export function Tracker() {
       if (path.some((node) => node.classList?.contains?.('ctx-menu'))) return
       setMenu(null)
     }
+    // Capture phase, ahead of the tracker's own keys: Escape only closes the menu and never reaches Rec.
+    const key = (event) => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      event.stopPropagation()
+      setMenu(null)
+    }
     window.addEventListener('pointerdown', down)
-    return () => window.removeEventListener('pointerdown', down)
+    window.addEventListener('keydown', key, true)
+    return () => {
+      window.removeEventListener('pointerdown', down)
+      window.removeEventListener('keydown', key, true)
+    }
   }, [menu])
   useEffect(() => {
     if (!model.playing) return
