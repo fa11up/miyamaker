@@ -27,9 +27,12 @@ const Picker = styled.div`
   }
 `
 
+/** Colours per row of the picker: up and down on the pad move by a whole row. */
+const TINT_COLUMNS = 4
+
 const Tints = styled.div`
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(${TINT_COLUMNS}, minmax(0, 1fr));
   gap: 8px;
   button {
     all: unset;
@@ -96,7 +99,7 @@ export default function GameSelect({ onMint, onFrenPet }: { onMint: () => void; 
               <span>Shell: {tintOf(look.tint).name}</span>
             </div>
             <div>
-              <span>◀▶ Choose</span>
+              <span>✚ Choose</span>
             </div>
             <div>
               <span>Ⓐ Done</span>
@@ -107,7 +110,12 @@ export default function GameSelect({ onMint, onFrenPet }: { onMint: () => void; 
         b={{ label: 'Back', onClick: () => setLookOpen(false) }}
         select={{ label: 'Next color', onClick: () => step(1) }}
         start={done}
-        dpad={{ left: () => step(-1), right: () => step(1) }}
+        dpad={{
+          left: () => step(-1),
+          right: () => step(1),
+          up: () => step(-TINT_COLUMNS),
+          down: () => step(TINT_COLUMNS),
+        }}
       />
     )
   }
