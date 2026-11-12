@@ -2,9 +2,29 @@
 
 You can make music with this, even if you never have.
 
+Make music every day. A little time at the instrument keeps you creative, and it keeps you at one with God's creation.
+
 It is a drum machine, a little keyboard, and a pattern writer that live in the browser. Sixty-four pads are waiting. A starter kit is already loaded, and pattern 00 is a short demo. Press Play. Then change it until it sounds like yours.
 
 You do not need to read music. You do not need a controller. The computer keyboard is enough to finish a song. A Launchpad, an MPC, an MPD, an MPK, or almost any other USB MIDI controller can play it too.
+
+## What the pages are
+
+These are the parts of the instrument. The keys come after, once the pages make sense.
+
+**Pads** are drums. Sixteen pads are one bank. Banks A, B, C, and D are sixty-four instruments.
+
+**Keys** plays the selected pad as a melody, one note at a time.
+
+**Chords** chooses a harmony. The buttons do not play. The piano plays that chord, and the strip above it plays one note.
+
+**Sequence** is the beat, painted on the pad rows. **Tracker** is the same pattern as a spreadsheet. The row in the middle is the one you are hearing or editing.
+
+**Arranger** chains patterns into a song. A new part waits until the one that is playing finishes.
+
+**Sample** trims the wave on a pad. **Synth** draws a new sound onto a pad. **Mixer** balances sixteen buses. **FX** is an effect you hold while the song plays.
+
+On a phone the same pages stay. SHIFT sits where a thumb can hold it, and the pads stay in reach.
 
 ## Hear something in the first minute
 
@@ -15,7 +35,7 @@ You do not need to read music. You do not need a controller. The computer keyboa
 
 The pads on screen are the keys `1 2 3 4`, then `Q W E R`, then `A S D F`, then `Z X C V`. That is one bank of sixteen. Banks **A B C D** are the other instruments. `[` and `]` change bank.
 
-Drop a sound file onto the window and it lands on the selected pad. You can also drag a row out of the browser onto a pad. The top button on the left rail hides the sample browser. The button under it opens the arranger. Drag the divider to resize that column, and drag it to the outer edge to close it.
+Drop a sound file onto the window and it lands on the selected pad. You can also drag a row out of the browser onto a pad. The top button on the left rail hides the sample browser. The button under it opens the arranger. With both open, the bar between them drags. The buttons open and close that column.
 
 On the Sample page, **Rec mic** records the microphone. A video link or a picture can become a sample too, from the **FILE** menu. The video window crops the in and out points, downsamples, slices a long clip, and can put the result on a pad right away. A start time in the link is the suggested in point. None of that is required. The starter kit is already something you can play.
 
@@ -27,15 +47,49 @@ The **Off / Pads / Keys** button is the whole instrument. **Off** hides the on-s
 
 **Keys** plays the selected pad as a melody. On the computer, `Z` is C, `Q` and comma are the next C, and `I` is the C above that. `A` and Caps Lock stop the note. The button shows the octave, like `Keys 3`. Numpad `/` and `*` move that octave.
 
-Press `/` to cycle Off, Pads, and Keys. The **?** button on a page draws the map and the other notes.
+Press `/` to cycle Off, Pads, Keys, Chords, and Strum. On a phone it also reaches FX. The surface button in the top row cycles the same list. Hold that button, right-click it, or Shift-click it, and the list opens. The **?** button on a page draws the map and the other notes.
 
 That is enough to make a beat and a bass line. Pick a drum pad, play it in Pad. Pick a tone you like, switch to Keys, and play a note at a time.
+
+## The chord panel
+
+Chords is the third on-screen palette, beside Keys and Strum. Open it from the surface button in the top row. That button cycles the palettes. Hold it, right-click it, or Shift-click it to open the list. Drag the bar above the panel if you want it taller.
+
+The panel is three regions, left to right, with a small gap between them.
+
+The pitch wheel is the narrow column on the left. Push it up and the note you are holding goes sharp. Push it down and the note goes flat. Let go and it springs back to the center line. The default reach is two octaves up and two octaves down. **Set**, the small button at the top left of the panel, changes that reach, one semitone at a time, and it will not go past two octaves.
+
+The fifteen buttons are the harmony. They are three columns and five rows. They do not play a sound by themselves. They choose what the piano on the right will play. **A**, **B**, and **C** under the grid are banks, in the same way the pad banks are. A is chord types. B is modes. C is other scales. A name that does not fit scrolls inside the button. Press the lit button again to clear it. With nothing chosen, the piano plays a major chord on the key you touch. The strip above it is every half step, and a touch there plays that one note. The keys do not play single notes.
+
+The right side is a lead strip over a piano.
+
+The strip is the melody. Its divisions follow the harmony you chose, and they retune as soon as the root or that harmony changes. A major chord lays out the major scale. A mode or another scale lays out that scale. The root stripe is pink and named for the current root. The default span is four octaves around the root:
+
+| Place on the strip | Note |
+| --- | --- |
+| Left edge | One octave under the root |
+| A quarter of the way | The root |
+| The middle | One octave above the root |
+| Three quarters | Two octaves above the root |
+| Right edge | Three octaves above the root |
+
+A small mark on the strip is an octave of the root. **Set** can move the low end and the high end. The low end stays within three octaves under the root. The high end stays within six octaves above it, and it always stays above the low end.
+
+The piano under the strip is an ordinary keyboard, with rounded keys and a shine on the face. On a wide window, and on a large tablet, it runs C3 through C5. On a phone, including landscape, it is one octave, C3 through C4. The harmony buttons stop at the left third of the panel, and that one octave fills the rest. The key you touch becomes the root, and it sounds the whole chord in that octave: the chord button you lit, or degrees 1, 3, and 5 of a scale, or a major chord if nothing is lit. The lead strip is the single notes. Touch higher on a key and the note is quieter. Touch lower and it is louder. That up-and-down position is velocity unless you change it. **Set** can point it at the filter or the pan instead. Those choices stay in the menu.
+
+On a phone the pitch wheel and SHIFT share a slim left column. The wheel is the upper key. SHIFT is the lower key, and a coral bar marks it. Hold SHIFT and drag the tracker with the other thumb to edit the cell. Hold it with a numpad slot, then − or +, and the knobs on that slot bend. Shift-click the surface button to open its list. The bank letter above the wheel opens the three harmony banks, so that row stays off the phone face. The left strip itself is only a Tabs button. Browser, Arranger, Manual, and MIDI stay inside it, so the strip stays narrow.
+
+**Set** also holds the tuning (Equal, Just, Pythagorean, meantone, Werckmeister) and the inversion of a chord.
+
+This layout is the one drawn in [@koolskull’s post on 11 Nov 2026](https://x.com/koolskull/status/2120560722858197426): a pitch wheel, chord buttons that set the harmony, and a four-octave lead strip over a root piano. The note under that drawing, [the reply the same day](https://x.com/koolskull/status/2120562507899453673), says the panel is the simple shape of a Korg Gadget chord page, the strip is there because of the Omnichord, and it is not trying to be the Orchid by Telepathic Instruments. Keys, Chords, and Strum stay three separate screens.
+
+The description in this section is open source under the [Source Seppuku License](https://wiki.remilia.org/Source_Seppuku_License). The rest of this program stays under the license named in the repository README.
 
 ## The 64 instruments
 
 Banks A, B, C, and D hold sixteen pads each. The pad you are on is the selected instrument. The Sample page trims it, tunes it, and sets how it plays: one shot, while you hold it, or looping. Pads in the same choke group cut each other off, which is how a closed hat silences an open hat.
 
-The Synth page draws a sound and stores it on a pad. The Mixer page is sixteen buses and the master. The FX page is ten performance slots. Hold Shift and a numpad digit while the song plays, or hold the on-screen numpad key on that page. Repeat locks one note value, from a half note to a 128th, to the project tempo and retriggers it. Slice rearranges a run of those notes. Grain sprays short pieces and is not a retrigger. Tracker notes play once. A one-shot plays once even while the pad is held. Gate lasts only as long as the hold. Loop repeats from LP to the end until you let go.
+The Synth page draws a sound and stores it on a pad. While that page is open, the on-screen keys, the chord piano, the strum plate, and a MIDI note play the patch you are editing. **Take** records that playing into 64 KB. 8-bit is the longest, about a second and a half. 32-bit is the shortest, under half a second. 16-bit and 24-bit sit between them. **Take to pad** stores the recording on the selected pad. **Render to pad** still stores the patch itself. The Mixer page is sixteen buses and the master. The FX page is ten performance slots. Hold Shift and a numpad digit while the song plays, or hold the on-screen numpad key on that page. Repeat locks one note value, from a half note to a 128th, to the project tempo and retriggers it. Slice rearranges a run of those notes. Grain sprays short pieces and is not a retrigger. Tracker notes play once. A one-shot plays once even while the pad is held. Gate lasts only as long as the hold. Loop repeats from LP to the end until you let go.
 
 You can ignore every one of those pages until you want them.
 
@@ -67,7 +121,7 @@ Record quantizes to the grid. There is a natural-feel option on the Sequence pag
 
 ## Arrange the song
 
-The left column is the sample browser. The button under it opens the arranger in the same column. With both open, drag the bar between them. Drag that bar to the outer edge and the column closes. On a narrow window, opening one closes the other, and each takes the full width of its area.
+The left column is the sample browser. The button under it opens the arranger in the same column. With both open, drag the bar between them. The buttons open and close that column. On a narrow window, opening one closes the other, and each takes the full width of its area.
 
 **+ pattern** opens four banks, `00–3F`, `40–7F`, `80–BF`, and `C0–FF`. Pick a slot, named or empty. The new part is a cell in the song order. Click the cell to launch it. **Wait** holds the launch until the part that is playing finishes. **Now** starts it as soon as you tap it. **Grid** switches on the beat and keeps the step. **Order** walks the cells and returns to the first. **Once** plays through and stops. **Loop** on a cell repeats that section.
 
@@ -75,15 +129,15 @@ The bar along the bottom of a cell is the loop position. Only the cell that is a
 
 ## The mixer
 
-Sixteen buses, eight on a page. Tap a channel and its five effect slots open. Tap another channel and the slots follow. The EQ under the slots follows that channel too. Its header can point the EQ at another channel or at the output.
+All sixteen buses sit in one row. On a phone, scroll that row sideways. Tap a channel and its five effect slots follow. Soloing a channel lights the red mute button on every other channel. Those lights go out when the solo does. The EQ under the slots follows that channel too. Its header can point the EQ at another channel or at the output.
 
-The graph runs from low cut on the left to high cut on the right. Drag a point to tune it. Right-click a point, or hold SHIFT and tap it, to choose low cut, bell, or high cut, and to make that band duck when it gets loud. The compressor after the EQ draws the gain it is taking off. A limiter sits after the master compressor and does not pass 0 dBFS.
+The graph runs from low cut on the left to high cut on the right. Drag a point to tune it. Right-click a point, or hold SHIFT and tap it, to choose low cut, bell, or high cut, and to make that band duck when it gets loud. Tap the channel name above the effect slots to hide those knobs. The compressor after the EQ draws the gain it is taking off. MB at the end of its header turns that compressor into four bands. Drag a divider to move the split, or drag inside a band to set its threshold. A limiter sits after the master compressor and does not pass 0 dBFS.
 
 ## On a phone
 
-A narrow window keeps one row: Menu, Play, Rec, the tempo, Off/Pads/Keys, one bank, and one screen. Menu holds the file commands, save, export, and mint. Pads and keys sit at the bottom, where a thumb can reach them. SHIFT sits at the lower left. Hold it and drag the tracker with the other thumb.
+A narrow window keeps one row: Menu, Play, Rec, the tempo, the surface, one bank, and one screen. Menu holds the file commands, save, export, and mint. The surface button cycles Off, Pads, Keys, Chords, Strum, and FX. Hold it, right-click it, or Shift-click it, and that list opens. Pads and keys sit at the bottom, where a thumb can reach them. The left strip is narrow. Tabs at the top of it keeps Browser, Arranger, Manual, and MIDI. SHIFT sits at the lower left, marked with a coral bar. On the chord panel that strip is only Tabs, and SHIFT moves under the pitch wheel. The root piano there is one octave. Hold SHIFT and drag the tracker with the other thumb.
 
-Ctrl and an arrow, or R1 and the d-pad on a handheld controller, change page. The d-pad alone moves like the arrow keys.
+Hold Shift and Ctrl, then an arrow, to change page. One press moves one screen. On a PlayStation pad hold R1 and Triangle, on Switch hold R and X, on Xbox hold RB and Y, then press the d-pad or the left stick. The d-pad alone moves like the arrow keys.
 
 ## The manual
 
@@ -93,7 +147,7 @@ The **?** on a page opens a short card. Show me draws a line to the real button.
 
 The Tracker is a spreadsheet of notes. Sixteen lanes run sideways. A cell is a note, an instrument, a velocity, and a tiny timing nudge.
 
-Press Esc or Rec to edit. On a note, `Z` is C and `Q` is the next C. `A` is note off. The instrument column is the pad number in hex.
+Press Esc or Rec to edit. On a note, `Z` is C and `Q` is the next C. `A` is note off. The instrument column is the pad number in hex. While Rec is on, the on-screen pads, the piano keys, and the chord piano write into this pattern from any page. Each note of a chord takes the next lane of that step. The sequence page stacks those notes on that pad’s row.
 
 Shift and the arrows change the cell you are on, and the cursor stays there. On a note, Shift+Left and Shift+Right move one semitone. Shift+Up and Shift+Down move one octave. On the other columns, Shift+Up and Shift+Down change the left digit, and Shift+Left and Shift+Right change the right digit. The digits wrap. Left and Right on SL or LP walk each pair of digits before they leave the column.
 
@@ -107,7 +161,7 @@ Right-click a column header and choose **Show/hide SL/LP columns** if you want t
 
 **SAVE** writes the song. **Save as** asks for a name and stores a `.m1ya` file. A `.k1t` file is only the kit: the pads, their sounds, and their settings. A song can carry a kit inside it, and it also stores the patterns, the mixer, and the FX.
 
-**NEW** starts a song, a folder, a kit, or a slice. **FILE** opens songs and kits from the disk, from a link, or from sounds in a wallet.
+**NEW** starts a song, a folder, a kit, or a slice. **FILE** opens songs and kits from the disk, from a link, or from a wallet. A png or a jpg on a token can become a sample, and Make a kit fills up to 16 pads from Milady pictures in that wallet.
 
 On [miyamaker.com](https://www.miyamaker.com/) the same instrument can **Publish to Arweave** a song, a kit, or a bounce, and mint the song, the kit, or the bounce as an edition. **Mint song** stores the bounce and the `.m1ya`. **Mint kit** stores the bounce and the `.k1t`. **Mint audio** stores the bounce only. The bounce can play in miya radio. Publishing is public and permanent: anyone can download the file, it can never be deleted, and a song or kit carries every sample in it, mic recordings too. Storage is paid in real ETH on Ethereum mainnet (files under about 90 KB are free), and the dialog shows the price before you press anything.
 

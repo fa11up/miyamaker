@@ -8,9 +8,20 @@ const HOSTS = new Set([
   'api.ravepigs.dev',
   'gateway.pinata.cloud',
   'ipfs.io',
+  // ipfs.io answers "blocked" for some of these pictures. Filebase is the gateway the rest of the app reads.
+  'ipfs.filebase.io',
   'dweb.link',
   'nftstorage.link',
   'w3s.link',
+  // Public picture hosts for wallet png and jpg. The proxy still returns bytes, with the same cap.
+  'miladymaker.net',
+  'www.miladymaker.net',
+  'remilio.org',
+  'www.remilio.org',
+  'bonklerimg.remilia.org',
+  'yayo.fund',
+  'www.yayo.fund',
+  'arweave.net',
 ])
 
 export const SAMPLE_MEDIA_LIMIT = 24 * 1024 * 1024

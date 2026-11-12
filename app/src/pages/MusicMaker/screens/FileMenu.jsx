@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import { cacheRemote, importFile, importRemote, readVideoLink } from '../audio/engine.js'
-import { importImageFile } from '../audio/imageSpectrum.js'
+import { IMAGE_LOADER, importImageFile } from '../audio/imageSpectrum.js'
 import {
   captureKit,
   captureSong,
   downloadKit,
   downloadSong,
   importSongUrl,
+  loadKitIfCurrent,
   storeKitFile,
   storeSongFile,
   syncProfileSongs,
@@ -14,7 +15,8 @@ import {
 import { beginUndo, endUndo } from '../history.js'
 import { sameSong, songId } from '../jobs.js'
 import { MEDIA_RE, rememberDirectory } from '../media/library.js'
-import { isAddress, loadWalletPacks, plainName, requestAccount, walletSummary } from '../media/nft.js'
+import { importPictureUrl, pictureKitDoc } from '../media/pictures.js'
+import { isAddress, kitPictures, loadWalletPacks, plainName, requestAccount, walletSummary } from '../media/nft.js'
 import { model, touch } from '../model.js'
 import { useModel } from '../useModel.js'
 import { Dialog } from '../widgets.jsx'
@@ -30,6 +32,8 @@ const SESSION_FILES_MAX = 2000
 let walletRequest = 0
 /** The address being read, or whose packs are shown. */
 let walletFor = ''
+/** A kit build still reading pictures. A newer read or a newer kit drops it. */
+let kitRequest = 0
 
 function clearPacks() {
   model.nftPacks = []
@@ -47,7 +51,8 @@ export function FileMenu() {
   const [videoUrl, setVideoUrl] = useState('')
   const [videoTake, setVideoTake] = useState(null)
   const [imageFile, setImageFile] = useState(null)
-  const [imageSet, setImageSet] = useState({ columns: 64, bins: 32, octave: 4, octaves: 4, speed: 8 })
+  const [imageSet, setImageSet] = useState(() => ({ ...IMAGE_LOADER }))
+  const [kitAsk, setKitAsk] = useState(false)
   const [busy, setBusy] = useState(false)
   const windowId = model.fileWindow || ''
 
@@ -221,6 +226,8 @@ export function FileMenu() {
     }
     model.wallet = who
     const request = ++walletRequest
+    kitRequest += 1
+    setKitAsk(false)
     if (walletFor !== who.toLowerCase()) clearPacks()
     walletFor = who.toLowerCase()
     note('Reading the wallet')
@@ -251,6 +258,55 @@ export function FileMenu() {
       note(error.message || 'Could not read that file')
     } finally {
       setBusy(false)
+    }
+  }
+
+  async function keepPicture(url, name, toPad) {
+    setBusy(true)
+    try {
+      await importPictureUrl(url, name, { toPad, index: model.selected })
+    } catch (error) {
+      note(error.message || 'Could not read that picture')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function makeKit() {
+    const picks = kitPictures(model.nftPacks).picks
+    if (!picks.length) {
+      note('No png or jpg from a Milady collection in this read')
+      return
+    }
+    const request = ++kitRequest
+    const song = songId()
+    setKitAsk(false)
+    setBusy(true)
+    try {
+      const built = await pictureKitDoc(picks, {
+        alive: () => request === kitRequest,
+        onEach: (pick, i) => {
+          if (request !== kitRequest) return
+          note(`Reading ${plainName(pick.name) || 'picture'} (${i + 1}/${picks.length})`)
+        },
+      })
+      if (request !== kitRequest || built.cancelled) return
+      if (!built.made) {
+        note(built.error || 'None of those pictures could be read')
+        return
+      }
+      const ok = await loadKitIfCurrent(built.doc, song)
+      if (request !== kitRequest) return
+      if (!ok) {
+        note('The song changed. The kit was not replaced.')
+        return
+      }
+      const extra = built.skipped ? ` ${built.skipped} could not be read${built.error ? `: ${built.error}` : ''}.` : ''
+      note(`Milady kit loaded, ${built.made} pad${built.made === 1 ? '' : 's'}.${extra}`)
+    } catch (error) {
+      if (request === kitRequest) note(error.message || 'Could not make that kit')
+    } finally {
+      if (request === kitRequest) setBusy(false)
     }
   }
 
@@ -286,6 +342,7 @@ export function FileMenu() {
   const packs = model.nftPacks || []
   const locked = model.nftLocked || []
   const unknown = model.nftUnknown || []
+  const kit = kitPictures(packs)
 
   return (
     <div className="mmm-file" ref={root}>
@@ -355,7 +412,7 @@ export function FileMenu() {
       )}
       {windowId === 'wallet' && (
         <Dialog title="Wallet" onClose={closeWindow} busy={busy}>
-          <p className="hint">Read a wallet for audio and video on its tokens. Nothing is signed and nothing is sent.</p>
+          <p className="hint">Read a wallet for audio, video, and pictures on its tokens. A png or a jpg becomes a sample the same way Image does. Nothing is signed and nothing is sent.</p>
           <form
             className="dialog-actions"
             onSubmit={(e) => {
@@ -373,8 +430,10 @@ export function FileMenu() {
                 // A different account: its packs are not the ones on screen, and a read in flight is stale.
                 if (walletFor && e.target.value.trim().toLowerCase() !== walletFor) {
                   walletRequest += 1
+                  kitRequest += 1
                   walletFor = ''
                   clearPacks()
+                  setKitAsk(false)
                   setBusy(false)
                 }
                 touch(false)
@@ -396,6 +455,27 @@ export function FileMenu() {
           {unknown.map((pack) => (
             <div key={pack.id} className="hint">{plainName(pack.name)}: could not check this wallet</div>
           ))}
+          {kit.total > 0 && (
+            <>
+              <p className="hint">
+                {kit.total > kit.picks.length
+                  ? `${kit.total} Milady pictures. A kit uses the first ${kit.picks.length}, about a second each.`
+                  : `${kit.total} Milady picture${kit.total === 1 ? '' : 's'} can become a kit, about a second each.`}
+                {' '}The kit you are editing is replaced.
+              </p>
+              {!kitAsk && (
+                <div className="dialog-actions">
+                  <button type="button" className="btn" disabled={busy} onClick={() => setKitAsk(true)}>Make a kit</button>
+                </div>
+              )}
+              {kitAsk && (
+                <div className="dialog-actions">
+                  <button type="button" className="btn" disabled={busy} onClick={makeKit}>Replace kit</button>
+                  <button type="button" className="btn" disabled={busy} onClick={() => setKitAsk(false)}>Cancel</button>
+                </div>
+              )}
+            </>
+          )}
           <div className="lib-list">
             {packs.map((pack) => (
               <div key={pack.id}>
@@ -406,8 +486,8 @@ export function FileMenu() {
                     {token.links.map((link) => (
                       <div key={link.url} className="dialog-actions">
                         <span className="hint">{plainName(link.name)}</span>
-                        <button type="button" className="btn free-width" disabled={busy} onClick={() => keepRemote(link.url, plainName(token.name), false)}>Cache</button>
-                        <button type="button" className="btn free-width" disabled={busy} onClick={() => keepRemote(link.url, plainName(token.name), true)}>Pad</button>
+                        <button type="button" className="btn free-width" disabled={busy} onClick={() => (link.kind === 'image' ? keepPicture(link.url, plainName(token.name), false) : keepRemote(link.url, plainName(token.name), false))}>Cache</button>
+                        <button type="button" className="btn free-width" disabled={busy} onClick={() => (link.kind === 'image' ? keepPicture(link.url, plainName(token.name), true) : keepRemote(link.url, plainName(token.name), true))}>Pad</button>
                       </div>
                     ))}
                   </div>

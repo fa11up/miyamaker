@@ -1,11 +1,11 @@
 /** Manual pages. The order and the five groups follow the K-OS-III manual. English only. */
 
 export const CATEGORIES = [
-  { id: 'foundations', label: 'FOUNDATIONS', blurb: 'Start here. No earlier knowledge.' },
-  { id: 'song', label: 'THE SONG', blurb: 'Patterns, the sequence, the tracker, and the arranger.' },
-  { id: 'sounds', label: 'SOUNDS', blurb: 'Samples, pictures, the synth, and the mixer.' },
-  { id: 'further', label: 'GOING FURTHER', blurb: 'Effects, the phone, and how notes end.' },
-  { id: 'reference', label: 'REFERENCE', blurb: 'Save, export, mint, and the keys.' },
+  { id: 'foundations', label: 'FOUNDATIONS', blurb: 'The window, the pads, and the first beat. No earlier knowledge.' },
+  { id: 'song', label: 'THE SONG', blurb: 'A pattern is one loop. Sequence and Tracker edit it. The arranger plays the loops as a song.' },
+  { id: 'sounds', label: 'SOUNDS', blurb: 'A sample is the recording on a pad. The synth draws one. The mixer balances the buses.' },
+  { id: 'further', label: 'GOING FURTHER', blurb: 'Chords, effects you hold, the phone, and how a note ends.' },
+  { id: 'reference', label: 'REFERENCE', blurb: 'How a song is kept, then the keys.' },
 ]
 
 export const ARTICLES = [
@@ -18,6 +18,7 @@ export const ARTICLES = [
     see: ['top-bar', 'play-a-pad'],
     body: [
       'Miya Music Maker is a sampler and a tracker in one window. You play pads, draw a pattern, and arrange those patterns into a song.',
+      'Make music every day. A little time at the instrument keeps you creative, and it keeps you at one with God\'s creation.',
       'The ? on each page opens a short card. Each step shows a picture of the button, and Show me draws a white line to the real one. You can drag the card by its title.',
       'This Manual is the longer book. FILE, then Manual, opens it. On a narrow window the same item is inside Menu.',
     ],
@@ -58,7 +59,7 @@ export const ARTICLES = [
     see: ['sequence', 'play-a-pad'],
     body: [
       'Open Sequence. [[Draw]] paints a hit on a pad row. [[Erase]] clears it. The note on the hit is the same note the tracker shows.',
-      '[[Note]], [[Vel]], and [[Bus FX]] choose what a drag changes. [[Select]] a hit, then the lower left handle moves it, the lower right handle changes its length, and the handle on the right moves it to another pad.',
+      '[[Note]], [[Vel]], and [[Bus FX]] choose what a drag changes. [[Select]] a hit. Handles inside the grid, just above the scrollbars, move it in time, change its length, and move it to another pad. [[Add]] keeps the hits you already chose. [[Copy]] and [[Paste]] use the paste line.',
       'Press [[Play]]. The song plays the pattern you are looking at, unless the arranger is running the song order.',
     ],
   },
@@ -70,9 +71,9 @@ export const ARTICLES = [
     one: 'Sixteen pad rows, and the same hits as the tracker.',
     see: ['draw-a-beat', 'patterns'],
     body: [
-      'The rows are the sixteen pads of this bank. A hit shows its note. Each step can hold its own note. The tracker shows the same hits.',
-      '[[Draw]] paints. [[Erase]] clears. [[Select]] a hit. The lower left handle moves it in time. The lower right handle changes how many steps it lasts. The handle on the right moves it to another pad.',
-      '[[Note]] sets the pitch. [[Vel]] sets how hard. [[Bus FX]] is the pad’s send, so the whole row shares it. A dry bus becomes a filter while you drag. Zoom widens the steps. Drag a pad name, or the bar numbers, to scroll.',
+      'The rows are the sixteen pads of this bank. A hit shows its note. Each step can hold its own note. The tracker shows the same hits. While Rec is on, the on-screen pads, the piano keys, and the chord piano write into this pattern. Each note of a chord takes the next lane, and that pad’s row stacks every one of them.',
+      '[[Draw]] paints. [[Erase]] clears. [[Select]] a hit. Handles inside the grid, just above the scrollbars, move it in time, change how many steps it lasts, and move it to another pad. [[Add]] adds the next hit you tap. [[Copy]] puts the hits on a paste line. Drag that line, then [[Paste]].',
+      '[[Note]] sets the pitch. [[Vel]] sets how hard. [[Bus FX]] is the pad’s send, so the whole row shares it. A dry bus becomes a filter while you drag. Pinch, or the mouse wheel, zooms the notes under the pointer. Shift-scroll moves the grid. Drag a pad name, or the bar numbers, to scroll.',
       '− bar and + bar change the pattern length. Double copies the pattern onto itself.',
     ],
   },
@@ -84,8 +85,8 @@ export const ARTICLES = [
     one: 'The marked cell, Rec, the trackpad, and a block selection.',
     see: ['sequence', 'patterns', 'shortcuts'],
     body: [
-      '[[Rec]] on: the marked cell is where edits land, and the pattern can change. Rec off: the pattern does not change, stopped or playing. While it plays with Rec off, the play row follows the sound and the cursor stays put. Escape toggles Rec.',
-      'Arrows move the cursor. Drag empty grid space and the cursor walks the way your finger points. Hold [[SHIFT]] at the lower left and drag with the other thumb to edit the cell under the cursor.',
+      'Opening the tracker leaves [[Rec]] off. Escape toggles it, on this page and on the others, and it stays that way when you change page. Rec on: the marked cell is where edits land, and the pattern can change. The on-screen pads, the piano keys, and the chord piano write here from any page. Each note of a chord takes the next lane. Rec off: the pattern does not change, stopped or playing. While it plays with Rec off, the play row follows the sound. Follow keeps that row in the middle of the grid, and a small level meter sits on it. On the tracker, Rec does not start playback.',
+      'Arrows move the cursor. Left and right wrap around the pattern, and the cell you are editing stays in the middle. Drag empty grid space and the cursor walks the way your finger points. Hold [[SHIFT]] at the lower left and drag with the other thumb to edit the cell under the cursor.',
       'Shift and the arrows edit the column you are on, and only while Rec is on. On NOTE, Shift+Left and Shift+Right are one semitone. Shift+Up and Shift+Down are one octave.',
       'Shift+Alt and the arrows mark a rectangle from the cell you started on. Left and right step by column: NOTE, INST, VEL, MOVE, and SL and LP when those columns are open. Up and down step by row. A plain arrow drops the block.',
       'Cmd+C or Ctrl+C copies only the columns inside the block. Cmd+V or Ctrl+V pastes them with the cursor as the top-left. Delete removes only those columns. NOTE delete removes the hit. VEL delete sets the velocity to 0 and leaves the note. Shift+arrows change every selected cell of those columns, each column by its own rule.',
@@ -143,6 +144,7 @@ export const ARTICLES = [
       'FILE, then Video link, opens a crop window. Set the in point, the out point, the rate, and the pad. A start time in the link is the suggested in point.',
       'YouTube, Odysee, LBRY, and X are the hosts it reads. The crop stays in Cache until you put it on a pad.',
       'Image turns a picture into a Cache sample. You choose the resolution, the bins, the octave, and the speed. It does not land on a pad until you load it.',
+      'Wallet reads the tokens for audio, video, and png or jpg pictures. Cache and Pad use the same picture reader as Image. Make a kit turns up to 16 Milady pictures from that read into one-second pads and replaces the kit.',
     ],
   },
   {
@@ -155,6 +157,8 @@ export const ARTICLES = [
     body: [
       'The Synth page replaces the selected pad’s patch. A preset replaces the whole patch.',
       'The knobs are the oscillators, the filter, and the envelope. Drag a knob up or down. Shift on a knob jumps by a larger step.',
+      'While this page is open, the on-screen keys, the chord piano, the strum plate, and a MIDI note play the patch.',
+      'Take records that playing into 64 KB. 8-bit is the longest. 32-bit is the shortest. Take to pad stores the recording on the selected pad. Render to pad still stores the patch itself.',
     ],
   },
   {
@@ -165,8 +169,8 @@ export const ARTICLES = [
     one: 'Buses, sends, and the limiter.',
     see: ['sequence', 'numpad-fx'],
     body: [
-      'There are sixteen buses, eight on a page. [[1–8]] and 9–16 switch the page. Tap a channel to open its five effect slots. Tap another channel and the slots change. Empty slots stay off.',
-      'The EQ under the slots follows that channel. Its header menu can switch to another channel or to Output. Drag a point. Right-click it, or hold SHIFT and tap it, for low cut, bell, or high cut. Dynamic ducks that band when it jumps up. The compressor after the EQ draws the gain it is taking off.',
+      'All sixteen buses sit in one row. On a phone, scroll that row sideways. Tap a channel and its five effect slots follow. Each slot is a menu and a knob. Tap the channel name to hide them. Empty slots stay off. Soloing a channel lights the red mute button on the others.',
+      'The EQ under the slots follows that channel. Its header menu can switch to another channel or to Output. Drag a point. Right-click it, or hold SHIFT and tap it, for low cut, bell, or high cut. Dynamic ducks that band when it jumps up. The compressor after the EQ draws the gain it is taking off. MB turns it into four bands. Drag a divider to move a split.',
       'Pads on one bus share that bus, including its reverb. Bus FX on the sequence page edits the pad’s send.',
       'The limiter sits after the master compressor and does not pass 0 dBFS.',
     ],
@@ -180,8 +184,27 @@ export const ARTICLES = [
     see: ['mixer', 'shortcuts'],
     body: [
       'On the FX page, hold a numpad key. A short tap selects that slot so you can edit it. Keys you hold at the same time run in the order you pressed them.',
+      'On a wider window this page is a column on the right. The keys, the bend, and the slot sit together at the top. Drag the column’s outer edge to resize it. On a phone it still fills the page.',
+      'Hold Shift and a numpad key, then hold [[−]] or [[+]]. The knobs on the held slots bend. Porta is how fast they move.',
       'Repeat locks a note value to the project tempo. Slice rearranges those notes. Grain can stretch. Wander steps a filter’s resonance.',
       'Presets on this page save with the song.',
+    ],
+  },
+  {
+    slug: 'chord-panel',
+    category: 'further',
+    level: 'beginner',
+    title: 'Chord panel',
+    one: 'Pick a harmony, then play it from the piano.',
+    see: ['phone', 'shortcuts'],
+    body: [
+      'Chords is its own screen, next to Keys and Strum. From the left: a pitch wheel, fifteen harmony buttons, and a lead strip over a piano.',
+      'The wheel bends the notes you are holding, up to two octaves by default, and springs back to the center when you let go. Set, at the top left, changes that range.',
+      'The fifteen buttons do not play a sound. They choose the harmony. A, B, and C are three banks. A long name scrolls inside its button. The lead strip above the piano follows that choice and plays one note. With nothing chosen, the strip is every half step.',
+      'By default the strip runs from one octave under the root to three octaves above it. The root sits a quarter of the way across. The octave above the root is the middle. Set can move those ends.',
+      'The piano under the strip plays chords, not single notes. The key you touch is the root. A chord button plays that chord. A scale plays degrees 1, 3, and 5. With nothing chosen it plays a major chord. On a phone, including landscape, the piano is one octave, C3 to C4. The harmony buttons stop at the left third, and that octave fills the rest. A wide tablet keeps C3 to C5. Higher on a key is quieter. Lower on a key is louder. Set can point that up-and-down position at the filter or the pan instead.',
+      'On a phone the pitch wheel and SHIFT share the left column. SHIFT is the lower key, with a coral bar. Hold it to edit the tracker, to bend a numpad slot, or to open the surface list. The bank letter above the wheel opens the three harmony banks.',
+      'The layout follows a sketch posted by @koolskull on 11 Nov 2026, and the note under it about Korg Gadget, the Omnichord, and the Orchid. The write-up in the MusicMaker README is released under the Source Seppuku License.',
     ],
   },
   {
@@ -193,8 +216,9 @@ export const ARTICLES = [
     see: ['top-bar', 'tracker'],
     body: [
       'On a narrow window the top row is Menu, Play, Rec, the tempo, the surface, one bank, and one screen. Menu holds Manual, the file commands, save, export, and mint.',
-      '[[SHIFT]] sits at the lower left, in the same strip as Browser and Arranger. Hold it and drag the tracker with the other thumb.',
-      'Ctrl and an arrow, or R1 and the d-pad, change page. The d-pad alone is the arrow keys.',
+      'The left strip stays a real column. [[?]] for the page you are on sits at the top of it. On a phone, Tabs under that opens Browser, Arranger, Manual, and MIDI, and the sequence tools stack in the same column. [[SHIFT]] stays at the lower left, beside the on-screen keys, marked with a coral bar. Hold SHIFT and drag the tracker with the other thumb. On the chord panel SHIFT sits under the pitch wheel.',
+      'The surface button cycles Off, Pads, Keys, Chords, Strum, and on a phone, FX. Hold it, right-click it, or Shift-click it, and the list opens. Keys, Chords, and Strum are separate screens. Keys draws a piano. The thin strip is all 88 keys. Drag the window to move it, and drag either edge to change how many keys show. Drag the bar above the keys to make them taller. Chords is the pitch wheel, the fifteen harmony buttons, the lead strip, and the root piano. On a phone that piano is one octave, and the harmony buttons stay in the left third.',
+      'Hold Shift and Ctrl, then an arrow, to change page. One press moves one screen. On a PlayStation pad hold R1 and Triangle. On Switch hold R and X. On Xbox hold RB and Y. Then press the d-pad or the left stick. A PS1 pad on a USB adapter uses that same R1 and Triangle hold. The d-pad alone is the arrow keys.',
     ],
   },
   {
@@ -229,10 +253,15 @@ export const ARTICLES = [
     category: 'reference',
     level: 'intermediate',
     title: 'Shortcuts',
-    one: 'The keys that are always available.',
+    one: 'What each page is, then the keys.',
     see: ['tracker', 'phone'],
     body: [
-      'Space is play and stop. Escape toggles Rec on the tracker when no window is open. Arrows move the tracker cursor. Shift and the arrows edit one column while Rec is on.',
+      'Make music every day. A little time at the instrument keeps you creative, and it keeps you at one with God\'s creation.',
+      'Pads are the drums, sixteen to a bank. Keys plays the selected pad as a melody. Chords chooses a harmony: the piano plays the chord, and the strip plays one note.',
+      'Sequence paints the beat. Tracker is that same pattern as a spreadsheet, and the row in the middle is the one you are on. The arranger chains patterns into a song.',
+      'Sample trims a wave. Synth draws a sound. The mixer balances the buses. FX is an effect you hold while the song plays. On a phone, SHIFT stays under the thumb.',
+      'The keys below are the shortcuts.',
+      'Space is play and stop. Escape toggles Rec on every page when no window is open, and that switch stays as you change page. Arrows move the tracker cursor. Shift and the arrows edit one column while Rec is on.',
       'Shift+Alt and the arrows mark a block. Cmd+C or Ctrl+C copies it. Cmd+V or Ctrl+V pastes it. Delete changes only the columns in the block.',
       'The square button beside the play surface opens two keyboard diagrams. Those diagrams list the rest of the keys.',
     ],
@@ -246,7 +275,9 @@ export const ARTICLES = [
     see: ['welcome', 'tracker'],
     body: [
       'Pad: one sound you can hit. Bank: sixteen pads, A through D. Pattern: one grid of hits. Lane: one column of the tracker, sixteen of them.',
-      'Rec: record. On the tracker it arms editing. It does not start playback by itself.',
+      'Rec: record. Opening the tracker leaves it off. Escape toggles it on every page. On the tracker it arms editing and does not start playback. On the other pages the same switch arms pad overdub.',
+      'Chord panel: pitch wheel, fifteen harmony buttons, a lead strip, and a root piano. The buttons choose the harmony and do not play. The keys play that chord. The lead strip plays one note. On a phone the piano is one octave and SHIFT sits under the wheel.',
+      'SHIFT: the hold key with the coral bar. Tracker edit, numpad bend, and the surface list.',
       'Bounce: a WAV of the song as it plays. Kit: the pads, saved as .k1t. Song: the patterns and the kit, saved as .m1ya.',
       'Mint: an Ethereum edition through miyamints. The audio is permanent on Arweave, and the token points at it.',
     ],

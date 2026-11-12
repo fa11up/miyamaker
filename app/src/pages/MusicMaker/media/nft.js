@@ -1,6 +1,7 @@
 /** Read-only wallet listing. No signatures, no transfers. */
 
 import { fetchCapped, fetchJsonCapped } from './capped.js'
+import { ECOSYSTEM } from './ecosystem.js'
 
 export const COLLECTIONS = [
   {
@@ -11,7 +12,14 @@ export const COLLECTIONS = [
 ]
 
 const AUDIO_EXT = /\.(wav|mp3|m4a|aac|ogg|flac|aiff|aif|mp4|webm|mov|m4v)(\?|#|$)/i
+const PICTURE_EXT = /\.(png|jpe?g)(\?|#|$)/i
+/** A picture field with one of these is not a sample. Gif, webp, and svg stay out. */
+const SKIP_EXT = /\.(gif|webp|svg|avif|bmp|json|html?)(\?|#|$)/i
 const RPC = 'https://ethereum.publicnode.com'
+const ECOSYSTEM_BY = new Map(ECOSYSTEM.map((c) => [c.contract.toLowerCase(), c]))
+
+/** How many Milady pictures a generated kit uses. One pad each, and the song can hold them. */
+export const KIT_PADS = 16
 
 /** Pages of 50 per token type: past this the listing says it is partial instead of reading on. */
 export const MAX_PAGES = 40
@@ -84,12 +92,84 @@ export async function tokenUri(contract, id) {
   return uri.replace('{id}', hexId(id))
 }
 
+/** ipfs.io returns "blocked" for some of these pictures. Filebase answers them and allows the browser to read. */
+const IPFS_GATEWAY = 'https://ipfs.filebase.io/ipfs/'
+
+/**
+ * An https URL the reader can try. ipfs:// and the public gateways that refuse or rate-limit
+ * become the Filebase gateway, which is on the sample-host list. A png or jpg is a picture.
+ * Gif, webp, and svg are not.
+ */
+export function mediaUrl(raw, { picture = false } = {}) {
+  const https = toHttps(raw)
+  if (!https) return null
+  if (PICTURE_EXT.test(https)) return { url: https, kind: 'image' }
+  if (AUDIO_EXT.test(https)) return { url: https, kind: 'audio' }
+  if (SKIP_EXT.test(https)) return null
+  if (picture && !hasExt(https)) return { url: https, kind: 'image' }
+  if (!picture) return { url: https, kind: 'audio' }
+  return null
+}
+
+function toHttps(raw) {
+  const text = String(raw || '').trim()
+  if (!text || text.startsWith('data:') || text.length > 2048) return ''
+  if (text.startsWith('ipfs://')) return ipfsHttps(text.slice(7).replace(/^ipfs\//, ''))
+  if (text.startsWith('ar://')) {
+    const id = text.slice(5).replace(/^\/+/, '')
+    if (!/^[\w-]{32,100}$/.test(id)) return ''
+    return `https://arweave.net/${id}`
+  }
+  let url
+  try { url = new URL(text) } catch { return '' }
+  if (url.username || url.password) return ''
+  if (url.protocol === 'http:') url.protocol = 'https:'
+  if (url.protocol !== 'https:') return ''
+  const host = url.hostname.toLowerCase()
+  // Public IPFS gateways, including a CID subdomain, become Filebase. dweb.link answers 429 and ipfs.io answers "blocked".
+  const sub = host.match(/^(?:www\.)?([^./]+)\.ipfs\.(?:dweb\.link|nftstorage\.link)$/)
+  // CIDv1 is lowercase base32, so the hostname does not change it. A CIDv0 is case-sensitive and is left as given.
+  if (sub && /^baf[a-z2-7]{10,}$/.test(sub[1])) {
+    const rest = url.pathname.replace(/^\//, '')
+    return ipfsHttps(`${sub[1]}${rest ? `/${rest}` : ''}`, url.search)
+  }
+  const gateway = host === 'ipfs.io' || host === 'dweb.link' || host === 'nftstorage.link' || host === 'w3s.link'
+    || host === 'mypinata.cloud' || host.endsWith('.mypinata.cloud')
+    || host === 'cloudflare-ipfs.com'
+  if (gateway && url.pathname.startsWith('/ipfs/')) return ipfsHttps(url.pathname.slice('/ipfs/'.length), url.search)
+  return url.href
+}
+
+function ipfsHttps(rest, search = '') {
+  const path = String(rest || '').replace(/^\/+/, '')
+  if (!path || path.includes('..')) return ''
+  return `${IPFS_GATEWAY}${path}${search}`
+}
+
+function hasExt(url) {
+  try {
+    const last = new URL(url).pathname.split('/').filter(Boolean).pop() || ''
+    return /\.[a-z0-9]{1,8}$/i.test(last)
+  } catch {
+    return false
+  }
+}
+
+function pictureLabel(url) {
+  const ext = String(url).match(PICTURE_EXT)
+  if (!ext) return 'picture'
+  return ext[1].toLowerCase() === 'jpeg' ? 'jpg' : ext[1].toLowerCase()
+}
+
 /** Media links anywhere in metadata. Depth, nodes visited and links found are all bounded. */
 function walkLinks(node, path, found, depth = 0, budget = { left: MAX_WALK }) {
   if (found.length >= MAX_LINKS || budget.left <= 0 || depth > MAX_DEPTH) return
   budget.left -= 1
   if (typeof node === 'string') {
-    if (node.length < 2048 && AUDIO_EXT.test(node)) found.push({ name: plainName(path, 80) || fileName(node), url: node })
+    if (node.length < 2048 && (AUDIO_EXT.test(node) || PICTURE_EXT.test(node))) {
+      const media = mediaUrl(node)
+      if (media) found.push({ name: plainName(path, 80) || fileName(media.url), url: media.url, kind: media.kind })
+    }
     return
   }
   if (!node || typeof node !== 'object') return
@@ -112,36 +192,65 @@ function fileName(url) {
   }
 }
 
-function pushLink(list, name, url) {
-  if (!url || typeof url !== 'string' || url.startsWith('data:')) return
-  if (url.length > 2048 || list.length >= MAX_LINKS || list.some((item) => item.url === url)) return
-  list.push({ name: plainName(name, 80) || fileName(url), url })
+function pushLink(list, name, url, picture = false) {
+  const media = mediaUrl(url, { picture })
+  if (!media || list.length >= MAX_LINKS || list.some((item) => item.url === media.url)) return
+  const label = media.kind === 'image' ? pictureLabel(media.url) : (plainName(name, 80) || fileName(media.url))
+  list.push({ name: label, url: media.url, kind: media.kind })
 }
 
 export function linksFromItem(item) {
   const links = []
   pushLink(links, 'animation', item?.animation_url)
+  pushLink(links, 'picture', item?.image_url, true)
   if (AUDIO_EXT.test(item?.media_url || '')) pushLink(links, 'media', item.media_url)
+  else if (PICTURE_EXT.test(item?.media_url || '')) pushLink(links, 'picture', item.media_url, true)
   const meta = item?.metadata
   if (meta && typeof meta === 'object') {
     pushLink(links, 'animation', meta.animation_url)
     pushLink(links, 'audio', meta.audio || meta.audio_url)
+    pushLink(links, 'picture', meta.image, true)
+    pushLink(links, 'picture', meta.image_url, true)
     const nested = []
     try {
       walkLinks(meta, '', nested)
     } catch {
       /* metadata too odd to walk: the links found so far stay */
     }
-    nested.forEach((link) => pushLink(links, link.name, link.url))
+    nested.forEach((link) => pushLink(links, link.name, link.url, link.kind === 'image'))
   }
   return links
 }
 
-/** An https URL for token metadata. ipfs:// goes through a public gateway. Anything else is not read. */
+/**
+ * One png or jpg per Milady token in this read, up to KIT_PADS. `total` counts the rest,
+ * so the screen can say the kit is the first ones.
+ */
+export function kitPictures(packs, limit = KIT_PADS) {
+  const picks = []
+  let total = 0
+  const cap = Math.max(0, limit | 0)
+  for (const pack of packs || []) {
+    if (!pack?.ecosystem) continue
+    for (const token of pack.tokens || []) {
+      const link = (token?.links || []).find((item) => item?.kind === 'image' && item.url)
+      if (!link) continue
+      total += 1
+      if (picks.length < cap) {
+        picks.push({
+          url: link.url,
+          name: plainName(token.name, 80) || link.name || 'picture',
+          collection: plainName(pack.name, 80),
+        })
+      }
+    }
+  }
+  return { picks, total }
+}
+
+/** An https URL for token metadata. ipfs:// and a blocked public gateway go through Filebase. */
 function metadataUrl(uri) {
-  const text = String(uri || '').trim()
-  if (text.startsWith('ipfs://')) return `https://ipfs.io/ipfs/${text.slice(7).replace(/^ipfs\//, '')}`
-  return /^https:\/\//i.test(text) ? text : ''
+  return toHttps(uri)
 }
 
 /**
@@ -201,6 +310,7 @@ export async function loadWalletPacks(address, { fetchImpl = fetch, maxPages = M
     if (!/^0x[0-9a-fA-F]{40}$/.test(contract)) continue
     const key = contract.toLowerCase()
     seen.add(key)
+    const eco = ECOSYSTEM_BY.get(key)
     const known = COLLECTIONS.find((c) => c.contract.toLowerCase() === key)
     let links = []
     try {
@@ -208,7 +318,7 @@ export async function loadWalletPacks(address, { fetchImpl = fetch, maxPages = M
     } catch {
       links = []
     }
-    if (!links.length && known) {
+    if (!links.length && (known || eco)) {
       if (fetched >= MAX_META_READS) {
         notLoaded += 1
       } else {
@@ -218,7 +328,12 @@ export async function loadWalletPacks(address, { fetchImpl = fetch, maxPages = M
           if (!uri) throw new Error('no metadata link')
           const meta = await fetchJsonCapped(uri, { limit: META_BYTES, timeoutMs: NET_MS, fetchImpl })
           if (meta && typeof meta === 'object') {
-            links = linksFromItem({ ...item, metadata: meta, animation_url: meta.animation_url })
+            links = linksFromItem({
+              ...item,
+              metadata: meta,
+              animation_url: meta.animation_url,
+              image_url: meta.image || item.image_url,
+            })
             if (!item.metadata) item.metadata = { name: meta.name }
           }
         } catch {
@@ -226,13 +341,16 @@ export async function loadWalletPacks(address, { fetchImpl = fetch, maxPages = M
         }
       }
     }
+    // A listed audio collection with nothing readable still shows, so a holder sees it.
+    // A Milady picture collection only shows when a png or jpg was actually found.
     if (!links.length && !known) continue
     if (!groups.has(key)) {
       groups.set(key, {
         id: key,
-        name: known?.name || plainName(item.token?.name, 80) || 'Collection',
+        name: eco?.name || known?.name || plainName(item.token?.name, 80) || 'Collection',
         contract,
         known: !!known,
+        ecosystem: !!eco,
         tokens: [],
       })
     }
@@ -278,5 +396,5 @@ export function walletSummary(result, songs = 0) {
     return `Showing ${count} token${count === 1 ? '' : 's'} with media${songNote}. More not loaded: the wallet list was cut short. Read again to try the rest.`
   }
   if (count) return `${count} tokens with media${songNote}`
-  return songs ? `${songs} songs from this wallet` : 'No audio or video in this wallet yet'
+  return songs ? `${songs} songs from this wallet` : 'No audio, video, or pictures in this wallet yet'
 }

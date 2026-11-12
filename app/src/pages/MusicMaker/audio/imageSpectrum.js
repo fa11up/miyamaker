@@ -16,6 +16,17 @@ function clampNum(value, min, max, fallback) {
   return Math.max(min, Math.min(max, n))
 }
 
+/** The Image… dialog. Eight seconds at the default speed. */
+export const IMAGE_LOADER = { columns: 64, bins: 32, octave: 4, octaves: 4, speed: 8 }
+
+/**
+ * One pad of a wallet kit. Thirty-two columns at this speed is one second, so sixteen pads fit in a song.
+ * The octave walks so the bank is not sixteen copies of one pitch.
+ */
+export function kitHitSettings(index) {
+  return { columns: 32, bins: 24, octave: 2 + ((index | 0) % 4), octaves: 2, speed: 32 }
+}
+
 /** Turn picture columns into a short spectrum. Bottom of the image is low. */
 export function imageToPcm(image, settings = {}) {
   const width = image?.width | 0
@@ -123,18 +134,17 @@ export function imageSize(b) {
   return null
 }
 
-export async function importImageFile(file, settings) {
-  if (!file) throw new Error('Choose an image first')
-  if (file.size > IMAGE_BYTES) throw new Error('That image is over 20 MB. Use a smaller one.')
-  // A small file can still decode to a huge bitmap. The size in its header is checked before decoding.
-  const size = imageSize(new Uint8Array(await file.slice(0, 256 * 1024).arrayBuffer()))
-  if (size && size.width * size.height > IMAGE_PIXELS) {
-    throw new Error(`That image is ${size.width}×${size.height}. Use one under ${Math.round(IMAGE_PIXELS / 1e6)} megapixels.`)
-  }
-  const bmp = await createImageBitmap(file)
+function tooWide(width, height) {
+  return `That image is ${width}×${height}. Use one under ${Math.round(IMAGE_PIXELS / 1e6)} megapixels.`
+}
+
+/** Pixels to a spectrum. The bitmap is closed. */
+async function pcmFromBitmap(bmp, settings) {
   if (bmp.width * bmp.height > IMAGE_PIXELS) {
+    const width = bmp.width
+    const height = bmp.height
     bmp.close?.()
-    throw new Error(`That image is ${bmp.width}×${bmp.height}. Use one under ${Math.round(IMAGE_PIXELS / 1e6)} megapixels.`)
+    throw new Error(tooWide(width, height))
   }
   const maxW = 480
   const scale = bmp.width > maxW ? maxW / bmp.width : 1
@@ -146,8 +156,28 @@ export async function importImageFile(file, settings) {
   const g = canvas.getContext('2d', { willReadFrequently: true })
   g.drawImage(bmp, 0, 0, width, height)
   bmp.close?.()
-  const image = g.getImageData(0, 0, width, height)
-  const { pcm, sr } = imageToPcm(image, settings)
+  return imageToPcm(g.getImageData(0, 0, width, height), settings)
+}
+
+/** Png or jpg bytes, checked before they are decoded. */
+export async function pcmFromImageBytes(bytes, settings) {
+  const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)
+  if (u8.byteLength > IMAGE_BYTES) throw new Error('That image is over 20 MB. Use a smaller one.')
+  const size = imageSize(u8)
+  if (!size) throw new Error('That picture is not a png or a jpg')
+  if (size.width * size.height > IMAGE_PIXELS) throw new Error(tooWide(size.width, size.height))
+  const type = u8[0] === 0x89 ? 'image/png' : 'image/jpeg'
+  const bmp = await createImageBitmap(new Blob([u8], { type }))
+  return pcmFromBitmap(bmp, settings)
+}
+
+export async function importImageFile(file, settings) {
+  if (!file) throw new Error('Choose an image first')
+  if (file.size > IMAGE_BYTES) throw new Error('That image is over 20 MB. Use a smaller one.')
+  // A small file can still decode to a huge bitmap. The size in its header is checked before decoding.
+  const size = imageSize(new Uint8Array(await file.slice(0, 256 * 1024).arrayBuffer()))
+  if (size && size.width * size.height > IMAGE_PIXELS) throw new Error(tooWide(size.width, size.height))
+  const { pcm, sr } = await pcmFromBitmap(await createImageBitmap(file), settings)
   const title = String(file.name || 'image').replace(/\.[^.]+$/, '').replace(/\s+/g, ' ').trim().slice(0, 80) || 'image'
   await cachePcm('imports', title, pcm, sr, 'wav')
   model.browserNote = `${title} is in Cache. Load it onto a pad to keep it in a song.`

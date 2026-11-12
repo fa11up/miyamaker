@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { COACH } from '../coachTopics.js'
+import { COACH, COACH_DAILY } from '../coachTopics.js'
 import { model, setScreen, touch } from '../model.js'
 import { useModel } from '../useModel.js'
 import { ChromeGlyph } from '../widgets.jsx'
@@ -171,6 +171,8 @@ export function CoachLayer() {
             <ChromeGlyph kind="close" />
           </button>
         </div>
+        <p className="coach-blurb">{COACH_DAILY}</p>
+        {topic.blurb && <p className="coach-blurb">{topic.blurb}</p>}
         <ol>
           {topic.steps.map((step) => (
             <li key={step.text}>

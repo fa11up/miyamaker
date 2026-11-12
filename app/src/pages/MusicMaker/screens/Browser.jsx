@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { decodePreview, importFile, importRemote, sliceOnto } from '../audio/engine.js'
+import { importPictureUrl } from '../media/pictures.js'
 import { sliceCount } from '../audio/slice.js'
 import {
   cachedPreview,
@@ -103,10 +104,17 @@ export function SampleBrowser() {
   }
 
   async function showNft(link, tokenName) {
-    setPick({ kind: 'nft', name: tokenName || link.name, url: link.url })
+    setPick({ kind: 'nft', name: tokenName || link.name, url: link.url, image: link.kind === 'image' })
     setPreview(null)
-    model.browserNote = 'The wave appears after it is loaded onto a pad. Video hosts often block a preview fetch.'
+    model.browserNote = link.kind === 'image'
+      ? 'A png or a jpg becomes a sample the same way Image does. Load it onto a pad to keep it.'
+      : 'The wave appears after it is loaded onto a pad. Video hosts often block a preview fetch.'
     touch(false)
+  }
+
+  function loadNft(pick) {
+    if (pick?.image) return importPictureUrl(pick.url, pick.name, { toPad: true, index: model.selected })
+    return importRemote(pick.url, model.selected, pick.name)
   }
 
   async function loadPick() {
@@ -133,7 +141,7 @@ export function SampleBrowser() {
         const file = await readDirectoryFile(pick.handle)
         await importFile(file, model.selected)
       } else if (pick.kind === 'nft') {
-        await importRemote(pick.url, model.selected, pick.name)
+        await loadNft(pick)
       }
     } catch (error) {
       model.browserNote = error.message || 'Could not load that file'
@@ -157,7 +165,7 @@ export function SampleBrowser() {
         const file = await readDirectoryFile(pick.handle)
         await importFile(file, model.selected)
       } else if (pick?.kind === 'nft') {
-        await importRemote(pick.url, model.selected, pick.name)
+        await loadNft(pick)
       } else if (!audioBank.get(model.selected)?.pcm) {
         model.browserNote = 'Choose a file, or put a sample on the selected pad'
         touch(false)
@@ -262,10 +270,16 @@ export function SampleBrowser() {
                         className={`browser-row can-drag ${pick?.url === link.url ? 'on' : ''}`}
                         style={{ paddingLeft: 40 }}
                         onClick={() => showNft(link, plainText(token.name))}
-                        onPointerDown={(event) => armSampleDrag(event, { kind: 'remote', url: link.url, name: plainText(token.name) || link.name })}
+                        onPointerDown={(event) => armSampleDrag(event, link.kind === 'image'
+                          ? { kind: 'picture', url: link.url, name: plainText(token.name) || link.name }
+                          : { kind: 'remote', url: link.url, name: plainText(token.name) || link.name })}
                         onDoubleClick={() => {
+                          const name = plainText(token.name) || (link.kind === 'image' ? 'picture' : 'nft')
                           showNft(link, plainText(token.name))
-                          importRemote(link.url, model.selected, plainText(token.name) || 'nft').catch((error) => {
+                          const job = link.kind === 'image'
+                            ? importPictureUrl(link.url, name, { toPad: true, index: model.selected })
+                            : importRemote(link.url, model.selected, name)
+                          job.catch((error) => {
                             model.browserNote = error.message
                             touch(false)
                           })

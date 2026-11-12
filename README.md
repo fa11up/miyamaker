@@ -49,11 +49,11 @@ The chart draws the rise for the copies you set, and at most 240 of them, and it
 
 ## MiyaMusicMaker
 
-MiyaMusicMaker is a drum machine, a keyboard, a tracker, and a song arranger in one window. A starter kit is already loaded. Pattern `00` is a short demo. Click the window once, so the browser will make sound, then press Play.
+MiyaMusicMaker is a drum machine, a keyboard, a tracker, and a song arranger in one window. A starter kit is already loaded. Pattern `00` is a short demo. Click the window once, so the browser will make sound, then press Play. Make music every day. A little time at the instrument keeps you creative, and it keeps you at one with God's creation.
 
 Sixty-four pads sit in banks A through D. The Sequence page and the Tracker page edit the same pattern. The arranger chains those patterns into a song. The bar under the playing cell shows how far that loop has gone. A cell that is waiting for the current loop to finish is the only one that blinks.
 
-Songs save as `.m1ya`. Kits save as `.k1t`. From the site, or from a local checkout, you can publish a song, a kit, or a bounce to Arweave, and mint it as an edition. Publishing is public and permanent, and storage is paid in real ETH on Ethereum mainnet. The full map of the instrument, including MIDI controllers, the phone layout, and the tracker keys, is [app/src/pages/MusicMaker/README.md](app/src/pages/MusicMaker/README.md).
+Songs save as `.m1ya`. Kits save as `.k1t`. From the site, or from a local checkout, you can publish a song, a kit, or a bounce to Arweave, and mint it as an edition. Publishing is public and permanent, and storage is paid in real ETH on Ethereum mainnet. The full map of the instrument, including MIDI controllers, the phone layout, the chord panel, and the tracker keys, is [app/src/pages/MusicMaker/README.md](app/src/pages/MusicMaker/README.md). The chord-panel section of that guide is released under the [Source Seppuku License](https://wiki.remilia.org/Source_Seppuku_License).
 
 ## Layout
 

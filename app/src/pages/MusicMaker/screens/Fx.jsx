@@ -4,6 +4,7 @@ import { holdNumpadFx, pushNumpadFx, releaseNumpadFx } from '../audio/engine.js'
 import { model, touch } from '../model.js'
 import { useModel } from '../useModel.js'
 import { HelpButton, Knob } from '../widgets.jsx'
+import { startPorta, stopPorta } from './porta.js'
 
 const ORDER = [7, 8, 9, 4, 5, 6, 1, 2, 3, 0]
 
@@ -122,19 +123,62 @@ export function NumpadGrid() {
   )
 }
 
-export function Fx() {
-  useModel()
+function bendButton(label, dir) {
+  const down = (event) => {
+    if (event.button != null && event.button !== 0) return
+    event.preventDefault()
+    const id = event.pointerId
+    startPorta(dir)
+    const up = (ev) => {
+      if (ev.pointerId !== id) return
+      window.removeEventListener('pointerup', up)
+      window.removeEventListener('pointercancel', up)
+      stopPorta(dir)
+    }
+    window.addEventListener('pointerup', up)
+    window.addEventListener('pointercancel', up)
+  }
+  return (
+    <button
+      type="button"
+      className="btn"
+      aria-label={dir < 0 ? 'Bend held slots down' : 'Bend held slots up'}
+      onPointerDown={down}
+    >
+      {label}
+    </button>
+  )
+}
+
+export function Portamento() {
+  const speed = Math.max(1, Math.min(255, model.porta | 0 || 72))
+  return (
+    <div className="fx-porta">
+      {bendButton('−', -1)}
+      <label className="fx-porta-speed">
+        <span>Porta {speed}</span>
+        <input
+          type="range"
+          min={1}
+          max={255}
+          value={speed}
+          aria-label="Portamento speed"
+          onChange={(e) => {
+            model.porta = Math.max(1, Math.min(255, Number(e.target.value) || 1))
+            touch(true)
+          }}
+        />
+      </label>
+      {bendButton('+', 1)}
+    </div>
+  )
+}
+
+function SlotEditor() {
   const index = model.fxEdit || 0
   const slot = model.numpadFx[index]
   const type = slot.type
   return (
-    <div className="screen fx-screen">
-      <div className="screen-head">
-        <HelpButton title="FX" topic="fx" />
-      </div>
-      <FxPresets />
-      <div className="fx-layout">
-      <NumpadGrid />
       <fieldset className="group fx-edit">
         <legend>Numpad {index}</legend>
         <label className="fx-field">
@@ -270,6 +314,36 @@ export function Fx() {
           )}
         </div>
       </fieldset>
+  )
+}
+
+export function Fx({ dock = false }) {
+  useModel()
+  if (dock) {
+    return (
+      <div className="fx-dock">
+        <div className="fx-dock-pack">
+          <div className="screen-head">
+            <HelpButton title="FX" topic="fx" />
+          </div>
+          <FxPresets />
+          <NumpadGrid />
+          <Portamento />
+          <SlotEditor />
+        </div>
+      </div>
+    )
+  }
+  return (
+    <div className="screen fx-screen">
+      <div className="screen-head">
+        <HelpButton title="FX" topic="fx" />
+      </div>
+      <FxPresets />
+      <Portamento />
+      <div className="fx-layout">
+        <NumpadGrid />
+        <SlotEditor />
       </div>
     </div>
   )

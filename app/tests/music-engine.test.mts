@@ -39,7 +39,7 @@ import {
   stepsBehind,
 } from '../src/pages/MusicMaker/audio/voices.js'
 import { createKnee } from '../src/pages/MusicMaker/audio/knee.js'
-import { createFx, factoryFxSlots, normalizeFxPresets, normalizeSlot, repeatAmount } from '../src/pages/MusicMaker/audio/numpadFx.js'
+import { createFx, factoryFxSlots, glideSlot, normalizeFxPresets, normalizeSlot, repeatAmount } from '../src/pages/MusicMaker/audio/numpadFx.js'
 import { parseXm } from '../src/pages/MusicMaker/audio/module.js'
 import { bounceOrder } from '../src/pages/MusicMaker/audio/engine.js'
 
@@ -457,6 +457,31 @@ test('numpad FX chain follows press order, and move, stretch, and wander change 
   assert.equal(saved[0]!.slots[0]!.type, 'grain')
   assert.equal(factoryFxSlots('Slices')[0]!.type, 'slice')
   assert.equal(factoryFxSlots('Retrig')[0]!.type, 'repeat')
+})
+
+test('portamento glides knob bytes and leaves menus where they are', () => {
+  const carry: Record<string, number> = {}
+  let slot = { type: 'filter', a: 10, b: 0, c: 4, div: 2, mix: 80 }
+  slot = glideSlot(slot, 1, 0.4, carry)
+  assert.equal(slot.a, 10)
+  assert.equal(slot.div, 2)
+  slot = glideSlot(slot, 1, 0.4, carry)
+  assert.equal(slot.a, 11)
+  assert.equal(slot.b, 1)
+  assert.equal(slot.c, 5)
+  assert.equal(slot.mix, 80)
+  const slice = { type: 'slice', a: 3, b: 2, c: 10, div: 4, mix: 200 }
+  const bent = glideSlot(slice, -1, 3, {})
+  assert.equal(bent.a, 3)
+  assert.equal(bent.b, 2)
+  assert.equal(bent.div, 4)
+  assert.equal(bent.c, 7)
+  assert.equal(bent.mix, 197)
+  const repeat = glideSlot({ type: 'repeat', a: 128, b: 5, c: 0, div: 3, mix: 255 }, 1, 2, {})
+  assert.equal(repeat.a, 128)
+  assert.equal(repeat.div, 3)
+  assert.equal(repeat.b, 7)
+  assert.equal(glideSlot({ type: 'grain', a: 254, b: 0, c: 0, div: 1, mix: 1 }, 1, 10, {}).a, 255)
 })
 
 test('undo re-renders only synth pads whose patch changed', async () => {

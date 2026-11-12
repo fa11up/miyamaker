@@ -91,6 +91,35 @@ export function normalizeFxPresets(raw) {
   return out
 }
 
+/** Continuous knob bytes. Menus (type, division, pattern, fill, direction) stay put. */
+const PORTA_FIELDS = {
+  repeat: ['b'],
+  slice: ['c', 'mix'],
+  grain: ['a', 'b', 'c', 'mix'],
+  filter: ['a', 'b', 'c'],
+  chorus: ['a', 'b'],
+  flange: ['a', 'b'],
+}
+
+export function portaFields(type) {
+  return PORTA_FIELDS[type] || []
+}
+
+/** Glide one slot. `carry` keeps the fraction so a slow bend still reaches the next byte. */
+export function glideSlot(slot, direction, amount, carry) {
+  const fields = portaFields(slot?.type)
+  const next = { ...slot }
+  const bag = carry || {}
+  const step = (direction < 0 ? -1 : 1) * (Number(amount) || 0)
+  for (const key of fields) {
+    const raw = (bag[key] ?? (slot[key] | 0)) + step
+    const clamped = Math.max(0, Math.min(255, raw))
+    bag[key] = clamped
+    next[key] = Math.round(clamped)
+  }
+  return next
+}
+
 export function normalizeNumpadFx(raw) {
   const next = defaultNumpadFx()
   if (!Array.isArray(raw)) return next
