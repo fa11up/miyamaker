@@ -2,6 +2,7 @@ import { useConnectModal } from '@rainbow-me/rainbowkit'
 import { useEffect, useState } from 'react'
 import styled from 'styled-components/macro'
 import type { Address } from 'viem'
+import { parseAbi } from 'viem'
 import { useAccount, useReadContract, useSwitchChain } from 'wagmi'
 
 import LoadingHourglass from '@/assets/loading_hourglass.gif'
@@ -24,12 +25,20 @@ import { KIND, MODE, MODE_HINT, MODE_LABEL } from './pool'
 import { MAX_SWEEP, pickCheapest, sessionStore, sumPrices, sweepable, unconfirmedHashes } from './sweep'
 import SweepReview from './SweepReview'
 import { Action, Card, Chips, Field, Head, Hint, LinkButton, Mono, Prose, PushButton, SwitchNote } from './ui'
-import { useMarketListings, useMarketSales, useOpenSeaCollection, useOpenSeaNftImage } from './useMarkets'
+import {
+  useCollectionGallery,
+  useMarketListings,
+  useMarketSales,
+  useOpenSeaCollection,
+  useOpenSeaNftImage,
+} from './useMarkets'
 import type { PoolPrice } from './usePoolPrices'
 import { pairsFor, poolSide, usePoolPrices } from './usePoolPrices'
 import type { Pool } from './usePools'
 import { poolFactoryFor, useNftMeta, usePoolsForCollection } from './usePools'
 import { Best, OutLink, PairSwitch, VenueList, VenueRow } from './venueUi'
+import type { ViewerItem } from './Viewer'
+import Viewer from './Viewer'
 
 const Hero = styled.div`
   display: grid;
@@ -148,6 +157,67 @@ const TileButton = styled.button`
 `
 
 const TILE_PAGE = 24
+const GALLERY_PAGE = 48
+const SUPPLY_ABI = parseAbi(['function totalSupply() view returns (uint256)'])
+
+/* The gallery: bigger tiles, art first, the number over the corner. */
+const ArtGrid = styled.ul`
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+  gap: 6px;
+  .narrow & {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  button {
+    position: relative;
+    display: block;
+    width: 100%;
+    padding: 0;
+    border: 1px solid ${color.dark};
+    background: #000;
+    cursor: zoom-in;
+  }
+  button:hover,
+  button:focus-visible {
+    border-color: ${color.accent};
+    outline: none;
+  }
+  .num {
+    position: absolute;
+    left: 0;
+    bottom: 0;
+    padding: 1px 6px;
+    background: rgba(0, 0, 0, 0.8);
+    color: #fff;
+    font-size: ${text.xs};
+  }
+`
+
+function GalleryTile({
+  chainId,
+  contract,
+  item,
+  onOpen,
+}: {
+  chainId: SupportedChainId
+  contract: Address
+  item: ViewerItem
+  onOpen: () => void
+}) {
+  // OpenSea's gallery carries the picture; numbered tiles (OpenSea offline) read their own metadata.
+  const meta = useNftMeta(chainId, item.image ? undefined : contract, KIND.ERC721, BigInt(item.tokenId))
+  return (
+    <li>
+      <button type="button" onClick={onOpen} aria-label={`#${item.tokenId}. View full screen`}>
+        <NftImage src={item.image || meta.image} alt="" variant="thumb" />
+        <span className="num">#{item.tokenId}</span>
+      </button>
+    </li>
+  )
+}
 
 const SweepBar = styled.div`
   display: grid;
@@ -361,7 +431,8 @@ export default function CollectionView({
   chainId: SupportedChainId
   address: Address
   onBack: () => void
-  onOpenItem: (tokenId: string) => void
+  /** The NFT's own page; `buy` opens its buy review there. */
+  onOpenItem: (tokenId: string, buy?: boolean) => void
   onOpenPool: (pool: Address) => void
   /** Told while a trade is in flight, when the page must not change. */
   onBusy?: (busy: boolean) => void
@@ -398,6 +469,27 @@ export default function CollectionView({
   const [sweepBusy, setSweepBusy] = useState(false)
   const listed = (listings.listings ?? []).filter((l) => l.tokenId)
   const shownListings = listed.slice(0, tileLimit)
+
+  // The gallery: every piece, for sale or not (OpenSea), else by number from the contract (ids 1 up) when OpenSea is
+  // offline. The viewer steps through whichever list it was opened from.
+  const gallery = useCollectionGallery(os.slug)
+  const supplyRead = useReadContract({
+    address,
+    abi: SUPPLY_ABI,
+    functionName: 'totalSupply',
+    chainId,
+    query: { staleTime: 60_000, enabled: gallery.needsKey || !!gallery.error },
+  })
+  const onchainSupply = typeof supplyRead.data === 'bigint' ? Number(supplyRead.data) : undefined
+  const [galleryLimit, setGalleryLimit] = useState(GALLERY_PAGE)
+  const galleryItems: ViewerItem[] = gallery.items.length
+    ? gallery.items
+    : onchainSupply
+      ? Array.from({ length: Math.min(onchainSupply, galleryLimit) }, (_, i) => ({ tokenId: String(i + 1) }))
+      : []
+  const listedItems: ViewerItem[] = listed.map((l) => ({ tokenId: l.tokenId!, price: l.price }))
+  const [viewing, setViewing] = useState<{ list: 'gallery' | 'listed'; index: number }>()
+  const viewerItems = viewing?.list === 'listed' ? listedItems : galleryItems
   // A buy of it still unconfirmed this session is not swept again: it may yet land.
   const stillUnconfirmed = unconfirmedHashes(sessionStore())
   const canSweep = sweepable(
@@ -745,7 +837,7 @@ export default function CollectionView({
                   chainId={chainId}
                   contract={address}
                   listing={l}
-                  onOpen={() => onOpenItem(l.tokenId!)}
+                  onOpen={() => setViewing({ list: 'listed', index: listed.indexOf(l) })}
                 />
               ))}
             </Tiles>
@@ -843,6 +935,68 @@ export default function CollectionView({
           <Hint>Random pools work only for ERC-721.</Hint>
         )}
       </Card>
+
+      <Card aria-label="Gallery" data-gallery>
+        <Eyebrow>
+          Gallery
+          {gallery.items.length ? ` · ${gallery.items.length}${gallery.done ? '' : '+'}` : ''}
+          {!gallery.items.length && onchainSupply ? ` · ${onchainSupply.toLocaleString()} minted` : ''}
+        </Eyebrow>
+        {galleryItems.length > 0 ? (
+          <>
+            <Hint>Every piece, for sale or not. Press one to view it full screen.</Hint>
+            <ArtGrid>
+              {galleryItems.map((g, i) => (
+                <GalleryTile
+                  key={g.tokenId}
+                  chainId={chainId}
+                  contract={address}
+                  item={g}
+                  onOpen={() => setViewing({ list: 'gallery', index: i })}
+                />
+              ))}
+            </ArtGrid>
+            {gallery.items.length > 0 && !gallery.done && (
+              <PushButton type="button" disabled={gallery.loading} onClick={() => gallery.more()}>
+                {gallery.loading ? 'Loading…' : 'Show more'}
+              </PushButton>
+            )}
+            {!gallery.items.length && onchainSupply !== undefined && onchainSupply > galleryLimit && (
+              <PushButton type="button" onClick={() => setGalleryLimit((n) => n + GALLERY_PAGE)}>
+                Show more ({(onchainSupply - galleryLimit).toLocaleString()} left)
+              </PushButton>
+            )}
+          </>
+        ) : gallery.loading || supplyRead.isLoading ? (
+          <Tiles>
+            {[0, 1, 2, 3].map((i) => (
+              <li key={i}>
+                <Skeleton h="140px" />
+              </li>
+            ))}
+          </Tiles>
+        ) : (
+          <Hint>Couldn&apos;t list its pieces right now. Enter a number below to see one.</Hint>
+        )}
+      </Card>
+
+      {viewing && viewerItems[viewing.index] && (
+        <Viewer
+          chainId={chainId}
+          contract={address}
+          slug={os.slug}
+          collectionName={name}
+          supply={os.info?.supply ?? onchainSupply}
+          items={viewerItems}
+          index={viewing.index}
+          onIndex={(index) => setViewing({ ...viewing, index })}
+          onClose={() => setViewing(undefined)}
+          onOpen={(tokenId, buy) => {
+            setViewing(undefined)
+            onOpenItem(tokenId, buy)
+          }}
+        />
+      )}
 
       <Card aria-label="Find one NFT">
         <Eyebrow>Find one NFT</Eyebrow>

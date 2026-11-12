@@ -28,6 +28,7 @@ import ItemView from './ItemView'
 import { OPENSEA_CHAIN } from './markets'
 import type { PoolMode } from './pool'
 import { filterPools, MODE, MODE_HINT, MODE_LABEL, poolTitle } from './pool'
+import House from '../terminal/House'
 import PoolView from './PoolView'
 import { Card, Field, Head, Hint, LinkButton, Prose, PushButton, SwitchNote } from './ui'
 import {
@@ -373,6 +374,8 @@ export default function NftTrade({
   // A chosen place survives going back: each page's settings and scroll, and the table's order.
   const [tableSort, setTableSort] = useState<Sort<CollectionColumn>>()
   const places = useRef<Record<string, CollectionPlace>>({})
+  // The NFT the viewer's BUY opened: its page opens straight on the buy review.
+  const buyNext = useRef<string>()
   const scrolls = useRef<Record<string, number>>({})
   const bodyRef = useRef<HTMLDivElement>(null)
   const viewKey = collection
@@ -471,6 +474,7 @@ export default function NftTrade({
             contract={collection.address}
             tokenId={collection.tokenId}
             onBack={() => onOpenCollection({ chainId, address: collection.address })}
+            autoBuy={buyNext.current === `${collection.address}/${collection.tokenId}`.toLowerCase()}
             onOpenPool={(p) => onOpenPool(p)}
             onBusy={setPageBusy}
           />
@@ -480,7 +484,10 @@ export default function NftTrade({
             chainId={chainId}
             address={collection.address}
             onBack={() => onOpenCollection(undefined)}
-            onOpenItem={(tokenId) => onOpenCollection({ chainId, address: collection.address, tokenId })}
+            onOpenItem={(tokenId, buy) => {
+              buyNext.current = buy ? `${collection.address}/${tokenId}`.toLowerCase() : undefined
+              onOpenCollection({ chainId, address: collection.address, tokenId })
+            }}
             onOpenPool={(p) => onOpenPool(p)}
             onBusy={setPageBusy}
             place={places.current[viewKey]}
@@ -581,6 +588,7 @@ export default function NftTrade({
         </StatusBox>
       )}
 
+      {section !== 'pools' && !query && chainId === 1 && <House onOpen={openCollection} />}
       {section !== 'pools' && !query && <CollectionTable chainId={chainId} onOpen={openCollection} sort={tableSort} onSort={setTableSort} />}
 
       {section !== 'pools' && !query && yours.length > 0 && (

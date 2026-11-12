@@ -332,7 +332,7 @@ const Keys = styled.nav`
   padding: 0 ${space[3]} ${space[2]};
   background: #000;
   border-bottom: 1px solid ${color.dark};
-  overflow-x: auto;
+  flex-wrap: wrap;
   button {
     display: inline-flex;
     align-items: stretch;

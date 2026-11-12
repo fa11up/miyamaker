@@ -48,6 +48,23 @@ export interface CleanMetadata {
   description: string
   image: string
   externalUrl: string
+  /** `attributes` as plain text pairs: at most 40, each trait and value at most 60 characters. */
+  attributes: { trait: string; value: string }[]
+}
+
+/** The metadata's `attributes` (OpenSea style: trait_type + value), cleaned. Anything else in the list is dropped. */
+export function cleanAttributes(raw: unknown): { trait: string; value: string }[] {
+  if (!Array.isArray(raw)) return []
+  const out: { trait: string; value: string }[] = []
+  for (const a of raw) {
+    if (!a || typeof a !== 'object') continue
+    const o = a as Record<string, unknown>
+    const trait = cleanText(o.trait_type ?? o.traitType ?? o.type, 60)
+    const value = cleanText(o.value, 60)
+    if (trait && value) out.push({ trait, value })
+    if (out.length >= 40) break
+  }
+  return out
 }
 
 export function sanitizeMetadata(raw: unknown, resolve: Resolve = (u) => u): CleanMetadata {
@@ -57,6 +74,7 @@ export function sanitizeMetadata(raw: unknown, resolve: Resolve = (u) => u): Cle
     description: cleanText(obj.description, 600),
     image: safeImageUrl(obj.image ?? obj.image_url ?? obj.imageUrl, resolve),
     externalUrl: safeLinkUrl(obj.external_url ?? obj.externalUrl),
+    attributes: cleanAttributes(obj.attributes ?? obj.traits),
   }
 }
 

@@ -277,6 +277,20 @@ export const Section = styled.section`
 const Table = styled.table`
   width: 100%;
   border-collapse: collapse;
+  /* The house collection (Miyamaker): amber, with a bar down its edge. */
+  tr.house td {
+    background: #140e00;
+  }
+  tr.house td:first-child {
+    box-shadow: inset 3px 0 0 ${color.accent};
+  }
+  tr.house .words {
+    color: ${color.accent};
+    font-weight: 700;
+  }
+  tr.house .words::before {
+    content: '★ ';
+  }
   font-size: ${text.sm};
   font-variant-numeric: tabular-nums;
   th {
@@ -547,7 +561,7 @@ function CollectionRow({
   const ethUsd = useEthUsd()
   const dash = loading ? '…' : '–'
   return (
-    <tr onClick={() => onOpen(address)}>
+    <tr onClick={() => onOpen(address)} className={slug === 'miyamaker' ? 'house' : undefined}>
       <td>
         <button
           type="button"

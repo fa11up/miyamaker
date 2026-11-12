@@ -3,17 +3,29 @@ import { useEffect, useState } from 'react'
 
 import type { MarketListing, MarketSale } from '../../../../api/_lib/market'
 import { MARKET_PREFIX } from '../../../../api/_lib/market'
-import type { OsCollection, OsNft, OsOrder, OsSearchHit, OsStats, OwnedGroup, Price } from './markets'
+import type {
+  GalleryItem,
+  OsCollection,
+  OsNft,
+  OsOrder,
+  OsSearchHit,
+  OsStats,
+  OwnedGroup,
+  Price,
+  TraitCounts,
+} from './markets'
 import {
   accountNftsPage,
   groupAccountNfts,
   OPENSEA_CHAIN,
   parseCollection,
+  parseCollectionNfts,
   parseNft,
   parseOfferAggregate,
   parseOrder,
   parseSearch,
   parseStats,
+  parseTraitCounts,
 } from './markets'
 import { goneHashes, sessionStore } from './sweep'
 
@@ -463,4 +475,68 @@ export function fetchFulfillment(
   signal?: AbortSignal
 ): Promise<unknown> {
   return call({ query: { op }, body, signal })
+}
+
+/** How many NFTs hold each trait value in a collection (OpenSea /traits), for rarity in the viewer. */
+export function useCollectionTraits(slug: string | undefined) {
+  const { configured } = useOpenSeaConfigured()
+  const q = useQuery({
+    queryKey: ['os-traits', slug],
+    enabled: !!slug && configured,
+    ...common,
+    staleTime: 10 * 60_000,
+    queryFn: async ({ signal }): Promise<TraitCounts> =>
+      parseTraitCounts(await orNone(get({ op: 'traits', slug: slug! }, signal))),
+  })
+  return q.data
+}
+
+/**
+ * The collection's NFTs, all of them, a page of 50 at a time (OpenSea /collection/<slug>/nfts). `more` loads the next
+ * page; `done` says there is none. Pages are kept in order; a failed page can be asked again.
+ */
+export function useCollectionGallery(slug: string | undefined) {
+  const { configured, known } = useOpenSeaConfigured()
+  const [pages, setPages] = useState<{ items: GalleryItem[]; next?: string }[]>([])
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<unknown>()
+  const load = async (cursor?: string, reset = false) => {
+    if (!slug || !configured) return
+    setLoading(true)
+    setError(undefined)
+    try {
+      const page = parseCollectionNfts(
+        await get({ op: 'collection_nfts', slug, ...(cursor ? { next: cursor } : {}) })
+      )
+      setPages((all) => (reset ? [page] : [...all, page]))
+    } catch (e) {
+      setError(e)
+    } finally {
+      setLoading(false)
+    }
+  }
+  useEffect(() => {
+    setPages([])
+    if (slug && configured) load(undefined, true)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [slug, configured])
+  const last = pages[pages.length - 1]
+  return {
+    items: pages.flatMap((p) => p.items),
+    loading: !known || loading,
+    needsKey: (known && !configured) || needsKey(error),
+    error: error && !needsKey(error) ? (error as Error) : undefined,
+    done: pages.length > 0 && !last?.next,
+    more: () => (last?.next && !loading ? load(last.next) : undefined),
+  }
+}
+
+/** One NFT's sales in the last week (from the collection's sales feed), newest first. */
+export function useItemSales(slug: string | undefined, tokenId: string | undefined) {
+  const { sales, loading, error } = useMarketSales(slug)
+  return {
+    sales: tokenId && sales ? sales.filter((s) => s.tokenId === tokenId) : undefined,
+    loading,
+    error,
+  }
 }

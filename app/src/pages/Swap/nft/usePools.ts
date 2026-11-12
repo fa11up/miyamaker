@@ -255,7 +255,12 @@ export function useNftMeta(chainId: SupportedChainId, collection: Address | unde
   const filled = raw?.replace(/\{id\}/g, id.toString(16).padStart(64, '0'))
   const meta = useMetadata(filled)
   const clean = meta.data ? sanitizeMetadata(meta.data, resolveUri) : undefined
-  return { name: clean?.name, image: clean?.image, loading: uri.isLoading || meta.isLoading }
+  return {
+    name: clean?.name,
+    image: clean?.image,
+    attributes: clean?.attributes,
+    loading: uri.isLoading || meta.isLoading,
+  }
 }
 
 /**
