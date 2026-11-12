@@ -313,6 +313,13 @@ export function readPasted(text: string): { parsed: ParsedList; root?: `0x${stri
   return entry
 }
 
+/** "Make it a free claim (1 per wallet)": free in `token` and only that, and exactly 1 per wallet, whatever was typed. */
+export const freeClaim = (p: PhaseForm, token: string): PhaseForm => ({ ...p, prices: { [token.toLowerCase()]: '0' }, maxPerWallet: '1' })
+
+/** The holder lists made on `chainId`: a list of mainnet holders means nothing to a drop on another chain. */
+export const snapshotsFor = (chainId: number, list: readonly Snapshot[] = SNAPSHOTS): Snapshot[] =>
+  list.filter((s) => s.chainId === chainId)
+
 /** The holder snapshot a phase points at, if it is one of the lists this build ships. */
 export const snapshotOf = (root: string, list: readonly Snapshot[] = SNAPSHOTS): Snapshot | undefined =>
   root ? list.find((s) => s.root.toLowerCase() === root.toLowerCase()) : undefined
@@ -508,7 +515,7 @@ export function validateStep(step: StepKey, f: LaunchForm, ctx: ValidationContex
       if (!s.ok) e.supply = s.error
       const reserve = parseReserve(f.ownerReserve, s.ok ? s.n : 100_000)
       if (!reserve.ok) e.ownerReserve = reserve.error
-      const ph = buildPhases(f.phases, ctx.now, tokens)
+      const ph = buildPhases(f.phases, ctx.now, tokens, snapshotsFor(ctx.chainId))
       if (!ph.ok) e.phases = accepted.ok ? ph.error : undefined
       else if (s.ok && reserve.ok && ph.phases.some((p) => p.supplyCap > s.n - reserve.n)) {
         e.phases = `A phase can sell at most ${(s.n - reserve.n).toLocaleString('en-US')} pieces.`
@@ -620,7 +627,7 @@ export function buildDropArgs(f: LaunchForm, r: Resolved, now: bigint, chainId: 
   const sym = parseSymbol(f.symbol)
   const supply = parseWhole(f.supply, { min: 1, max: 100_000, label: 'Supply' })
   const tokens = acceptedOrThrow(f, chainId)
-  const phases = buildPhases(f.phases, now, tokens)
+  const phases = buildPhases(f.phases, now, tokens, snapshotsFor(chainId))
   const royalty = parseRoyaltyPct(f.royaltyPct)
   const reveal = parseLink(f.revealUri, false)
   const reserve = parseReserve(f.ownerReserve, supply.ok ? supply.n : 100_000)

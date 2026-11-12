@@ -28,9 +28,10 @@ import {
   parseWhole,
   phaseFieldsBad,
   phaseList,
+  freeClaim,
   readPasted,
+  snapshotsFor,
 } from '@/miyamints/launch'
-import { SNAPSHOTS } from '@/miyamints/snapshots'
 import { pctLabel } from '@/miyamints/split'
 import type { PayToken } from '@/miyamints/tokens'
 import { buildPrices, ETH, MAX_TOKENS, sameToken } from '@/miyamints/tokens'
@@ -528,13 +529,17 @@ function PhaseAccess({
   phase,
   onChange,
   error,
+  chainId,
 }: {
   phase: PhaseForm
   onChange: (patch: Partial<PhaseForm>) => void
   error?: boolean
+  /** The chain the drop goes to: only holder lists made there are offered. */
+  chainId: number
 }) {
   const [fileNote, setFileNote] = useState('')
-  const list = phaseList(phase)
+  const SNAPSHOTS = snapshotsFor(chainId)
+  const list = phaseList(phase, SNAPSHOTS)
   const pasted = phase.listSource === 'pasted' ? readPasted(phase.listText || '') : undefined
   const onFile = async (file: File | undefined) => {
     setFileNote('')
@@ -651,8 +656,11 @@ export function SaleStep({
   errors,
   tokens: offered,
   note,
+  chainId,
 }: StepProps & {
   tokens: readonly PayToken[]
+  /** The chain the launch goes to. */
+  chainId: number
   /** Something changed in the draft on its own (a token miya dropped was taken off): said at the top. */
   note?: string
 }) {
@@ -848,6 +856,7 @@ export function SaleStep({
           </legend>
           <PhaseAccess
             phase={p}
+            chainId={chainId}
             error={!!errors.phases}
             onChange={(patch) =>
               set(
@@ -865,9 +874,7 @@ export function SaleStep({
                   set(
                     'phases',
                     form.phases.map((x, n) =>
-                      n === i
-                        ? { ...x, prices: { [free.address.toLowerCase()]: '0' }, maxPerWallet: x.maxPerWallet || '1' }
-                        : x,
+                      n === i ? freeClaim(x, free.address) : x,
                     ),
                   )
                 }}

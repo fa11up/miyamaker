@@ -25,6 +25,7 @@ import {
   parseVault,
   phaseLine,
   phaseList,
+  snapshotsFor,
   STEP_ORDER,
   txPlan,
   upgradeForm,
@@ -883,7 +884,14 @@ export default function LaunchPage() {
                     />
                   )}
                   {step === 'sale' && (
-                    <SaleStep form={form} set={set} errors={shownErrors} tokens={offeredTokens} note={delisted} />
+                    <SaleStep
+                      form={form}
+                      set={set}
+                      errors={shownErrors}
+                      tokens={offeredTokens}
+                      note={delisted}
+                      chainId={net.chainId}
+                    />
                   )}
                   {step === 'align' && (
                     <AlignStep
@@ -949,10 +957,10 @@ export default function LaunchPage() {
                               <Fragment key={i}>
                                 <dt>{form.phases.length > 1 ? `Phase ${i + 1}` : 'Sale'}</dt>
                                 <dd>
-                                  {phaseLine(p, acceptedTokens.ok ? acceptedTokens.tokens : [])}
+                                  {phaseLine(p, acceptedTokens.ok ? acceptedTokens.tokens : [], snapshotsFor(net.chainId))}
                                   {p.access === 'list' &&
                                     (() => {
-                                      const l = phaseList(p)
+                                      const l = phaseList(p, snapshotsFor(net.chainId))
                                       return l.ok ? (
                                         <>
                                           {' '}
