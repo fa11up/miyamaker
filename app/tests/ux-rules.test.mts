@@ -9,8 +9,18 @@ import { test } from 'node:test'
 
 import { code, hits, outside, walk } from './source-scan.mts'
 
-const SRC = walk('src')
+// The app's own source and the pages it frames (embed/: miyakeys), which live inside its windows too.
+const ROOTS = ['src', 'embed']
+const SRC = ROOTS.flatMap((d) => walk(d))
+/** The same, with stylesheets. */
+const SRC_CSS = ROOTS.flatMap((d) => walk(d, true))
 const TSX = SRC.filter((p) => /\.[jt]sx$/.test(p))
+
+test('the rule scans cover the framed pages (embed/) as well as src/', () => {
+  assert.ok(SRC.includes('embed/miyakeys/js/app.js'))
+  assert.ok(SRC_CSS.includes('embed/miyakeys/css/components.css'))
+  assert.ok(SRC_CSS.includes('embed/miyakeys/css/mobile.css'))
+})
 
 test('raw error text never reaches the screen', () => {
   const ALLOW = [
@@ -40,7 +50,7 @@ test('raw error text never reaches the screen', () => {
 
 test('every looping animation stops for prefers-reduced-motion', () => {
   const ALLOW: string[] = []
-  const found = walk('src', true).filter(
+  const found = SRC_CSS.filter(
     (p) =>
       /\binfinite\b/.test(code(p)) &&
       !/prefers-reduced-motion|useReducedMotion|reducedMotion|reduceMotion/.test(readFileSync(p, 'utf8'))
@@ -53,7 +63,7 @@ test('no sideways scrolling inside a window', () => {
     // The taskbar is the desktop's own strip, not a window: its buttons scroll when there are many.
     'src/components/TaskBar/index.tsx',
   ]
-  const found = walk('src', true).flatMap((p) =>
+  const found = SRC_CSS.flatMap((p) =>
     hits(p, /overflow-x:\s*(auto|scroll)|overflowX:\s*['"](auto|scroll)['"]/g)
   )
   assert.deepEqual(outside(found, ALLOW), [])
