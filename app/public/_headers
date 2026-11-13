@@ -1,0 +1,7 @@
+# Workers static assets: headers for files served straight from dist/ (paths the Worker does not run first for; see
+# run_worker_first in wrangler.jsonc). Responses the Worker builds set their own headers (api/worker.ts).
+#
+# miyakeys runs in a sandboxed frame with an opaque origin (src/pages/Miyakeys), so its module scripts and styles,
+# which Vite emits under /assets/ with crossorigin, are cross-origin loads from "null". These are public build files.
+/assets/*
+  Access-Control-Allow-Origin: *

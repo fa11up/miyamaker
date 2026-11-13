@@ -13,6 +13,7 @@ export const APP_LOADERS: Record<string, () => Promise<{ default: React.Componen
   radio: () => import('@/pages/Radio'),
   dropmusic: () => import('@/pages/DropMusic'),
   music: () => import('@/pages/MusicMaker'),
+  miyakeys: () => import('@/pages/Miyakeys'),
   traits: () => import('@/pages/MiyaMakerStudio'),
 }
 

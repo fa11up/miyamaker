@@ -62,6 +62,7 @@ const TV = lazy(APP_LOADERS.tv!)
 const Radio = lazy(APP_LOADERS.radio!)
 const DropMusic = lazy(APP_LOADERS.dropmusic!)
 const MusicMaker = lazy(APP_LOADERS.music!)
+const Miyakeys = lazy(APP_LOADERS.miyakeys!)
 const MiyaMakerStudio = lazy(APP_LOADERS.traits!)
 
 export default function DynamicWrapper({ identifier }: { identifier: string }) {
@@ -93,6 +94,8 @@ export default function DynamicWrapper({ identifier }: { identifier: string }) {
         return <DropMusic />
       case 'music':
         return <MusicMaker />
+      case 'miyakeys':
+        return <Miyakeys />
       case 'traits':
         return <MiyaMakerStudio />
       default:

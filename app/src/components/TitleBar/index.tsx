@@ -65,6 +65,7 @@ export type TitleSkin =
   | 'upload'
   | 'display'
   | 'traits'
+  | 'miyakeys'
 
 const MARK: Record<TitleSkin, string> = {
   miyanet: '✦',
@@ -80,6 +81,7 @@ const MARK: Record<TitleSkin, string> = {
   upload: '◎',
   display: '▣',
   traits: '✎',
+  miyakeys: '⌨',
 }
 
 const StyledTitleBar = styled.div`
@@ -470,6 +472,31 @@ const StyledTitleBar = styled.div`
     }
     ${ChromeButton}:hover {
       background: #dcdcdc;
+    }
+  }
+
+  /* miyakeys: an anodised black case, cream keycaps for buttons. */
+  &[data-skin='miyakeys'] {
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.1) 0%, rgba(255, 255, 255, 0) 50%),
+      linear-gradient(90deg, #0f0f11, #1d1d21 60%, #2a2a30);
+    color: #f1ece1;
+    .mark {
+      color: #d4572a;
+    }
+    .title-bar {
+      letter-spacing: 0.14em;
+    }
+    ${ChromeButton} {
+      border-radius: 4px;
+      color: #1a1a1e;
+      background: linear-gradient(180deg, #fbf8f1, #e6dfcf);
+      box-shadow: inset 0 -2px 0 #c9c0ab, 0 0 0 1px #000;
+    }
+    ${ChromeButton}:hover {
+      background: #fffdf8;
+    }
+    ${ChromeButton}:active {
+      box-shadow: inset 0 1px 0 #c9c0ab, 0 0 0 1px #000;
     }
   }
 

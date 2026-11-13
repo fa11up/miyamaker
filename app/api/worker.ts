@@ -1,4 +1,5 @@
 // Cloudflare Worker: the keyed RPC and NFT index (api/_lib/rpc.ts), the 0x and OpenSea proxies (keys injected server-side, see api/_lib), the apex -> www redirect,
+// miyakeys's gallery and page headers (api/_lib/miyakeys.ts),
 // the per-mint reveal (/reveal/*, and its every-minute cron: api/_lib/reveal.ts), and everything else from the static build in dist/ (wrangler.jsonc).
 import { createPublicClient, http } from 'viem'
 import { mainnet } from 'viem/chains'
@@ -7,6 +8,17 @@ import { ALLOWLIST_BODY_LIMIT, ALLOWLIST_PATH, d1AllowlistStore, handleAllowlist
 import { jsonReply, noSniff, readCappedText } from './_lib/body'
 import { handleLayersRequest, LAYERS_PROXY_PATH } from './_lib/layers'
 import { edgeCache, handleMarketRequest, MARKET_PREFIX, openSeaReader } from './_lib/market'
+import {
+  d1ShareCap,
+  embedResponse,
+  GALLERY_BODY_LIMIT,
+  GALLERY_READ_RATE,
+  GALLERY_WRITE_RATE,
+  handleMiyakeysGallery,
+  isEmbedPath,
+  MIYAKEYS_GALLERY_PATH,
+  miyakeysSecret,
+} from './_lib/miyakeys'
 import { handleOpenSeaRequest, OPENSEA_PROXY_PATH, quoteBigInts } from './_lib/opensea'
 import { d1TapeStore, handlePublicAccessRequest, PUBLIC_ACCESS_PATH, youtubeLookup } from './_lib/publicaccess'
 import { handleSampleMediaRequest, SAMPLE_MEDIA_PATH, SAMPLE_MEDIA_RATE } from './_lib/samplemedia'
@@ -70,6 +82,11 @@ type Env = {
   REVEAL_ORIGIN?: string
   /** Wallets that can remove any station track, comma-separated. */
   STATION_ADMINS?: string
+  /**
+   * miyakeys's shares carry HMAC(this, visitor) as x-miyakeys-client, so nuroctane.xyz can throttle one visitor without
+   * their address (api/_lib/miyakeys.ts clientTag). Unset, or under 32 characters (ignored, with a warning) = no header.
+   */
+  MIYAKEYS_CLIENT_SECRET?: string
 }
 
 const APEX = 'miyamaker.com'
@@ -119,6 +136,20 @@ const tvState = (env: Env) => (tvCache ??= sharedCache(env.DB ? d1SharedState(en
 // A kit reads one sample per pad at once. A video link costs more: it makes three or more upstream fetches.
 const sampleMediaLimiter = createRateLimiter(SAMPLE_MEDIA_RATE)
 const videoAudioLimiter = createRateLimiter(VIDEO_AUDIO_RATE)
+// miyakeys's community gallery, forwarded to nuroctane.xyz (api/_lib/miyakeys.ts). These two are per isolate; the
+// site-wide share cap is in D1 (d1ShareCap).
+const miyakeysReadLimiter = createRateLimiter(GALLERY_READ_RATE)
+const miyakeysWriteLimiter = createRateLimiter(GALLERY_WRITE_RATE)
+// Without a DB binding the D1 share caps are off (only the per-isolate limit holds): said once per isolate, not hidden.
+let miyakeysNoDbWarned = false
+const miyakeysShareCap = (env: Env) => {
+  if (env.DB) return d1ShareCap(env.DB)
+  if (!miyakeysNoDbWarned) {
+    miyakeysNoDbWarned = true
+    console.warn('miyakeys: no DB binding, so the per-visitor and site-wide share caps are off (bind D1 as DB)')
+  }
+  return undefined
+}
 // assignments.json is every draw (a few MB at sell-out): a verifier reads it once.
 const revealListLimiter = createRateLimiter({ capacity: 10, perSecond: 0.2 })
 
@@ -160,6 +191,10 @@ export default {
       })
     }
 
+    // miyakeys's page and files: its CSP, and CORS for its sandboxed (opaque-origin) frame. Its hashed scripts and
+    // styles under /assets/* skip the Worker: public/_headers gives those CORS. A path that is not one of its files is a
+    // 404, not the desktop's index.html (the asset store's single-page fallback).
+    if (isEmbedPath(url.pathname)) return embedResponse(await env.ASSETS.fetch(request), url.pathname)
     if (url.pathname === LAYERS_PROXY_PATH || url.pathname.startsWith(`${LAYERS_PROXY_PATH}/`)) {
       return handleLayersRequest(request)
     }
@@ -326,6 +361,21 @@ async function api(request: Request, env: Env, url: URL): Promise<Response> {
         clientKey,
         limiter: allowlistLimiter,
         writeLimiter: allowlistWriteLimiter,
+      }
+    )
+  }
+
+  if (url.pathname === MIYAKEYS_GALLERY_PATH) {
+    const body = request.method === 'POST' ? await readCappedText(request, GALLERY_BODY_LIMIT) : undefined
+    return handleMiyakeysGallery(
+      { method: request.method, url: request.url, headers: request.headers, body },
+      {
+        clientKey,
+        readLimiter: miyakeysReadLimiter,
+        writeLimiter: miyakeysWriteLimiter,
+        shareCap: miyakeysShareCap(env),
+        clientSecret: miyakeysSecret(env.MIYAKEYS_CLIENT_SECRET),
+        cache: edge(),
       }
     )
   }

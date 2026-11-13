@@ -4,6 +4,7 @@ import ExecutableIcon from 'assets/create_new.png?preset=icon&resize=true'
 import FilesIcon from 'assets/folder.png?preset=icon&resize=true'
 import AuctionIcon from 'assets/icon/auction.png?preset=icon&resize=true'
 import DropMusicIcon from 'assets/icon/drop_music.png?preset=icon&resize=true'
+import MiyakeysIcon from 'assets/icon/miyakeys.png?preset=icon&resize=true'
 import MusicIcon from 'assets/icon/music_maker.png?preset=icon&resize=true'
 import TraitIcon from 'assets/create_new.png?preset=icon&resize=true'
 import RadioIcon from 'assets/icon/radio.png?preset=icon&resize=true'
@@ -175,6 +176,18 @@ const Pages: Record<string, Page> = {
     minSize: {
       width: 1180,
       height: 760,
+    },
+  },
+  miyakeys: {
+    id: 'miyakeys',
+    path: '/miyakeys',
+    label: 'miyakeys',
+    icon: MiyakeysIcon[0],
+    // A frame: the trail's copies would be blank, so it moves as one piece.
+    noTrail: true,
+    minSize: {
+      width: 1240,
+      height: 780,
     },
   },
   traits: {

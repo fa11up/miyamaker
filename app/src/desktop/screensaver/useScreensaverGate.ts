@@ -2,6 +2,7 @@ import { useIsFetching, useIsMutating } from '@tanstack/react-query'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { DESKTOP_EVENTS } from '../prefs'
+import { ACTIVITY_EVENT } from './activity'
 import { idleRemaining, isTextEntry } from './idle'
 import { anythingPlaying } from './playing'
 
@@ -13,7 +14,8 @@ function modalOpen() {
 }
 
 /**
- * Decides when the screensaver runs. Activity anywhere resets the timer; it never starts while a
+ * Decides when the screensaver runs. Activity anywhere resets the timer, including activity a framed app reports
+ * (activity.ts: keys and pointers in a frame never reach this window); it never starts while a
  * text field is focused, a dialog/wallet prompt is open, a wallet request is pending (wagmi
  * mutations), a transaction is being confirmed (wagmi receipt queries), or the radio or miyaTV is playing.
  */
@@ -31,7 +33,11 @@ export function useScreensaverGate({ enabled, delayMinutes }: { enabled: boolean
     }
 
     ACTIVITY_EVENTS.forEach((type) => window.addEventListener(type, bump, { passive: true, capture: true }))
-    return () => ACTIVITY_EVENTS.forEach((type) => window.removeEventListener(type, bump, { capture: true }))
+    window.addEventListener(ACTIVITY_EVENT, bump)
+    return () => {
+      ACTIVITY_EVENTS.forEach((type) => window.removeEventListener(type, bump, { capture: true }))
+      window.removeEventListener(ACTIVITY_EVENT, bump)
+    }
   }, [])
 
   useEffect(() => {
