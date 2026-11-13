@@ -1,9 +1,8 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import styled from 'styled-components/macro'
 import { useElementSize } from 'usehooks-ts'
 import type { Address } from 'viem'
-import { parseEventLogs } from 'viem'
-import { erc20Abi, zeroAddress } from 'viem'
+import { erc20Abi, parseEventLogs, zeroAddress } from 'viem'
 import { useBlockNumber, useTransactionReceipt } from 'wagmi'
 
 import LoadingHourglass from '@/assets/loading_hourglass.gif'
@@ -23,26 +22,26 @@ import { formatPrice } from './markets'
 import { DEFAULT_PAIR_SYMBOL, pairWords, pickPair } from './pairs'
 import type { CommitRow, FeeSymbol } from './pool'
 import {
-  directSendOnly,
   blocksToReveal,
+  chooseFeeToken,
   commitPhase,
-  freeUnits,
   depositPlan,
+  directSendOnly,
+  feeStep,
+  freeUnits,
   KIND,
   KIND_LABEL,
   MAX_DRAW_UNITS,
-  chooseFeeToken,
-  feeStep,
   noRandomWhy,
   offeredFees,
   parseTokenIds,
-  pickLocks,
-  poolTitle,
   pickFeeTotal,
   pickFeeWords,
-  tokenAmountText,
+  pickLocks,
+  poolTitle,
   redeemCost,
   revealWords,
+  tokenAmountText,
   unitsText,
   wholeUnits,
 } from './pool'
@@ -64,19 +63,19 @@ import {
   Stat,
   SwitchNote,
 } from './ui'
+import { useOpenSeaCollection } from './useMarkets'
 import { pairsFor, poolSide, usePoolPrices } from './usePoolPrices'
 import type { Pool } from './usePools'
-import { useOpenSeaCollection } from './useMarkets'
 import {
   HELD_PAGE,
   useApprovedForAll,
+  useFeeToken,
   useHeldIds,
   useMyCommits,
-  useOwnedInCollection,
   useNextDraw,
+  useOwnedInCollection,
   useOwnership,
   usePool,
-  useFeeToken,
 } from './usePools'
 import { PairSwitch } from './venueUi'
 
@@ -222,6 +221,9 @@ export default function PoolView({
   // The oldest pending draw, anyone's: it locks NFTs against picking until it is revealed.
   const nextDraw = useNextDraw(chainId, drawsOk ? poolAddress : undefined, info.nextRevealId, info.nextCommitId)
   const block = useBlockNumber({ chainId, watch: drawsOk && (myCommits.commits.length > 0 || !!nextDraw.draw) })
+  // Open draws couldn't be listed (the draw count or a draw's read failed): a paid draw may be among them, so the page
+  // says so and holds a new random buy instead of showing none.
+  const drawsUnknown = drawsOk && !!me && (info.nextCommitId === undefined || myCommits.failed) && !info.loading
   // Pick fee: the token the picker pays in (IMD or INFER, among those the pool offers), their balance and allowance.
   const [feeWanted, setFeeWanted] = useState<FeeSymbol>()
   const feeChoice = pool ? chooseFeeToken(pool, feeWanted) : undefined
@@ -229,6 +231,9 @@ export default function PoolView({
   const feeWallet = useFeeToken(chainId, feeToken, me, poolAddress)
   // The fee approval just landed: the allowance read can lag it, and must not ask again.
   const [feeAllowed, setFeeAllowed] = useState<{ key: string; amount: bigint }>()
+  // What the approval just sent covers, kept until the allowance read catches up (also when a wallet that doesn't
+  // batch sends the approval alone).
+  const pendingFeeAllow = useRef<{ key: string; amount: bigint }>()
 
   // Buy (pick): ids chosen from the pool. Buy (random): how many.
   const [picked, setPicked] = useState<string[]>([])
@@ -255,7 +260,7 @@ export default function PoolView({
   const owned = useOwnedInCollection(chainId, pool?.collection, me)
   const ownedForPool = useMemo(
     () => (owned.nfts || []).filter((n) => n.contract.toLowerCase() === pool?.collection.toLowerCase()),
-    [owned.nfts, pool?.collection],
+    [owned.nfts, pool?.collection]
   )
   const sellIds = useMemo(() => selling.map((s) => BigInt(s)), [selling])
   const ownership = useOwnership(chainId, pool?.collection, pool?.kind ?? KIND.ERC721, me, sellIds)
@@ -279,7 +284,9 @@ export default function PoolView({
       setPicked([])
       setFeeAllowed(undefined)
     }
+
     if (id === 'approve') setAllowedBy(me)
+    if (id === 'approve-fee' && pendingFeeAllow.current) setFeeAllowed(pendingFeeAllow.current)
     if (id === 'deposit-one') setSelling((list) => list.slice(1))
     else if (id.startsWith('deposit')) {
       setSelling([])
@@ -350,7 +357,7 @@ export default function PoolView({
             <Mono>{shortAddress(poolAddress)}</Mono> is not a MiyaPool. MiyaMaker&apos;s pool factory on {chain.name}{' '}
             didn&apos;t make it, so nothing here can trade with it. Don&apos;t approve or send anything to it.
           </Prose>
-        ) : info.factoryCheckFailed ? (
+        ) : info.factoryCheckFailed || info.readFailed ? (
           <Prose>
             Couldn&apos;t check that <Mono>{shortAddress(poolAddress)}</Mono> is a MiyaPool.{' '}
             <LinkButton type="button" onClick={() => info.refetch()}>
@@ -433,10 +440,11 @@ export default function PoolView({
   const redeem = () => me && tx.run('redeem', redeemCall())
   const approveFee = () => {
     if (!me || !feeToken) return
-    const done = { key: feeKey, amount: feeTotal }
+    pendingFeeAllow.current = { key: feeKey, amount: feeTotal }
     if (batches) tx.runBatch('redeem', [approveFeeCall(), redeemCall()], 'approve-fee')
-    else tx.run('approve-fee', approveFeeCall()).then((ok) => ok && setFeeAllowed(done))
+    else tx.run('approve-fee', approveFeeCall())
   }
+
   const commit = () =>
     me &&
     tx.run('commit', {
@@ -471,6 +479,7 @@ export default function PoolView({
     setSide('sell')
     setSelling((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]))
   }
+
   const addTyped = () => {
     const { ids, error } = parseTokenIds(typed)
     setTypedError(error)
@@ -489,7 +498,7 @@ export default function PoolView({
   }
 
   const notOwned = selling.filter(
-    (_, i) => ownership.held[i] !== undefined && ownership.held[i]! < amountFor(selling[i]!),
+    (_, i) => ownership.held[i] !== undefined && ownership.held[i]! < amountFor(selling[i]!)
   )
   const checking = selling.length > 0 && ownership.held.some((h) => h === undefined) && ownership.loading
   const ownershipUnknown = selling.length > 0 && !checking && ownership.held.some((h) => h === undefined)
@@ -498,7 +507,7 @@ export default function PoolView({
     pool.kind,
     selling.length,
     approval.approved || (!!me && allowedBy === me) || undefined,
-    directSendOnly(chainId),
+    directSendOnly(chainId)
   )
 
   const deposit = () => {
@@ -591,6 +600,13 @@ export default function PoolView({
           onClick: () => reveal(draw),
         }
       }
+
+      if (random && drawsUnknown)
+        return {
+          label: 'Check again',
+          step: "We couldn't check your open draws, so a new random buy waits until we can. A draw you paid for is safe.",
+          onClick: refresh,
+        }
 
       if (pool.held === undefined)
         return { label: 'Check again', step: "We couldn't read how many NFTs the pool holds.", onClick: refresh }
@@ -728,7 +744,8 @@ export default function PoolView({
           </Chips>
         </Head>
         <Prose data-pool-rules>
-          Sell an NFT in: get 1 {symbol}. {pool.randomEnabled === false ? '' : `Random NFT out: 1 ${symbol} each, no fee. `}
+          Sell an NFT in: get 1 {symbol}.{' '}
+          {pool.randomEnabled === true ? `Random NFT out: 1 ${symbol} each, no fee. ` : ''}
           Pick the NFT you want: {pickPrice} each.
           {offered.length > 0 && ' The fee goes to the INFER/IMD alignment vault, credited to you.'}
           {pool.randomEnabled === false && ` ${noRandomWhy(pool.kind, chainId)}`}
@@ -783,6 +800,18 @@ export default function PoolView({
         </Segmented>
       )}
 
+      {side === 'buy' && drawsUnknown && (
+        <Hint role="status" data-draws-unknown>
+          Couldn&apos;t check your open draws. A draw you paid for is still yours.{' '}
+          <LinkButton type="button" onClick={refresh}>
+            Check again
+          </LinkButton>
+        </Hint>
+      )}
+      {side === 'buy' && drawsOk && myCommits.partial && myCommits.commits.length === 0 && (
+        <Hint>Only the newest open draws were checked; an older draw of yours may not show here.</Hint>
+      )}
+
       {side === 'buy' && drawsOk && myCommits.commits.length > 0 && (
         <Card aria-label="Your draws">
           <Eyebrow>Your draws</Eyebrow>
@@ -800,10 +829,10 @@ export default function PoolView({
                     {block.data === undefined
                       ? 'checking the block'
                       : phase === 'waiting'
-                        ? `ready in ${left} block${left === 1 ? '' : 's'}`
-                        : phase === 'late'
-                          ? 'late: revealing picks a new block'
-                          : 'ready'}
+                      ? `ready in ${left} block${left === 1 ? '' : 's'}`
+                      : phase === 'late'
+                      ? 'late: revealing picks a new block'
+                      : 'ready'}
                   </span>
                   <PushButton
                     type="button"
@@ -872,7 +901,9 @@ export default function PoolView({
             <Hint>
               {random
                 ? `You cannot choose: a block picks for you. Each costs 1 ${symbol}, no fee.`
-                : `Tap the NFTs you want. Each costs ${pickPrice}.${randomOk ? ` Random costs 1 ${symbol}, no fee.` : ''}`}
+                : `Tap the NFTs you want. Each costs ${pickPrice}.${
+                    randomOk ? ` Random costs 1 ${symbol}, no fee.` : ''
+                  }`}
             </Hint>
             {!random && lockedShown > 0 && (
               <Hint style={{ color: color.warning }} data-pool-locked>

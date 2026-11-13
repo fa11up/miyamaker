@@ -6,7 +6,7 @@ import { test } from 'node:test'
 
 import { bestQuote, formatPrice, priceDecimals } from '../src/pages/Swap/nft/markets.ts'
 import type { PriceAnswer, PriceRequest } from '../src/pages/Swap/nft/pairs.ts'
-import { buyNeedsFee } from '../src/pages/Swap/nft/pool.ts'
+import { buyNeedsFee, poolBuyQuote } from '../src/pages/Swap/nft/pool.ts'
 import {
   askFromProbe,
   DEFAULT_PAIR_SYMBOL,
@@ -114,15 +114,21 @@ test('a pool priced in ETH competes with OpenSea in the cheapest line', () => {
   assert.equal(bestQuote([offer, bid], 'highest')!.venue, 'MiyaPool')
 })
 
-test('pools compare at the pool-token price; a pick fee is named, never priced', () => {
-  const os = { venue: 'OpenSea', price: { amount: (72n * E18) / 100n, decimals: 18, symbol: 'ETH' } }
+test('pools rank at the pool-token price only when 1 token is the whole cost; a fee-only pool is not ranked', () => {
+  const os = { where: 'on OpenSea', price: { amount: (72n * E18) / 100n, decimals: 18, symbol: 'ETH' } }
   const token = { amount: (70n * E18) / 100n, decimals: 18, symbol: 'ETH' }
-  // Pick-only (ERC-1155 or Robinhood Chain) with a fee: still the token price, the fee said beside it.
+  // Pick-only (ERC-1155 or Robinhood Chain) with a fee: the token price isn't the cost, so it can't win.
   const pickOnly = { imdFee: E18, inferFee: 0n, randomEnabled: false }
   assert.equal(buyNeedsFee(pickOnly), true)
-  const where = buyNeedsFee(pickOnly) ? 'MiyaPool, plus the pick fee' : 'MiyaPool'
-  assert.equal(bestQuote([os, { venue: where, price: token }])!.venue, 'MiyaPool, plus the pick fee')
-  assert.equal(buyNeedsFee({ ...pickOnly, randomEnabled: true }), false)
+  assert.equal(poolBuyQuote(pickOnly, token), undefined)
+  // Random on: 1 token buys a random NFT, and the line says so.
+  const random = poolBuyQuote({ ...pickOnly, randomEnabled: true }, token)!
+  assert.equal(random.where, 'on MiyaPool (a random NFT)')
+  assert.equal(bestQuote([os, random])!.where, 'on MiyaPool (a random NFT)')
+  // Free picks: any NFT for 1 token.
+  assert.equal(poolBuyQuote({ imdFee: 0n, inferFee: 0n, randomEnabled: false }, token)!.where, 'on MiyaPool')
+  // Unknown fees count as a fee.
+  assert.equal(poolBuyQuote({ randomEnabled: false }, token), undefined)
 })
 
 test('prices show sensible decimals: dollars to the cent, big amounts whole', () => {

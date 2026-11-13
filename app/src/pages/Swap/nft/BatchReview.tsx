@@ -38,7 +38,9 @@ import { formatAmount, OPENSEA_CHAIN, usesSeaportItself } from './markets'
 import { heldAmount, KIND } from './pool'
 import type { FeeSymbol, PoolBatchPlan, PoolRef, PoolStep } from './poolBatch'
 import {
+  checkPoolCalls,
   collectionBatchAbi,
+  contractCall,
   planPoolBatch,
   poolBatchAbi,
   readPoolReceipt,
@@ -223,6 +225,10 @@ const osSimProblemWords = (buying: boolean) =>
   buying
     ? "The check didn't match what you're buying, so nothing was sent. Buy them one by one."
     : "The check didn't match the offers you're accepting, so nothing was sent. Sell them one by one."
+
+/** A pool buy's pick fee as words after its token cost (" + 4 IMD"), or nothing when picks are free. */
+const feePart = (plan: PoolBatchPlan) =>
+  plan.totals.fee ? ` + ${tokensText(plan.totals.fee.amount)} ${plan.totals.fee.symbol}` : ''
 
 /** The review itself; BatchReview below starts it over when the person asks to review again. */
 function Review({
@@ -639,7 +645,7 @@ function Review({
     queries: poolPlans.map((plan, i) => {
       const step = poolConfirms(plan)[0]
       return {
-        queryKey: ['pool-batch-sim', poolVenues[i]?.venue, step?.call?.data, me?.toLowerCase()],
+        queryKey: ['pool-batch-sim', chainId, poolVenues[i]?.venue, step?.call?.data, me?.toLowerCase()],
         enabled: !!plan && !!step && !running && !cancelled,
         staleTime: 30_000,
         gcTime: 0,
@@ -710,7 +716,18 @@ function Review({
           title: `${s.title} · ${label}`,
           label: plan.side === 'buy' ? s.title : `Allow the ${label}`,
           words: s.words,
-          press: () => tx.run(`pool-approve-${ref.address}`, { ...s.call!, chainId }),
+          press: () => {
+            const id = `pool-approve-${ref.address}`
+            // The same check as every confirm: only this pool, only this batch's exact fee.
+            const check = checkPoolCalls([s.call], plan)
+            const write = check.ok && s.call ? contractCall(s.call, ref) : undefined
+            if (!write) {
+              tx.refuse(id, check.problems.join(' ') || "This approval isn't one we can check, so it wasn't sent.")
+              return
+            }
+
+            tx.run(id, { ...write, chainId })
+          },
         })
       if (s.key === 'get-tokens')
         gates.push({
@@ -943,7 +960,7 @@ function Review({
   const sent = Object.keys(runs).length > 0
   const osTotal = osPlan?.totals.total ?? 0n
   const tokenParts = poolPlans.flatMap((p) =>
-    p && p.totals.units > 0n ? [`${tokensText(p.totals.tokens)} ${p.pool.symbol}`] : []
+    p && p.totals.units > 0n ? [`${tokensText(p.totals.tokens)} ${p.pool.symbol}${feePart(p)}`] : []
   )
   const finishWords = [osPlan && osJobReady ? `${ethText(osTotal)} ${buying ? 'ETH' : feeSymbol}` : '', ...tokenParts]
     .filter(Boolean)
@@ -1212,13 +1229,18 @@ function Review({
                 {plan && (
                   <Lines>
                     <div>
-                      <dt>Fees</dt>
-                      <dd>None</dd>
+                      <dt>{buying ? 'Pick fee' : 'Fees'}</dt>
+                      <dd>
+                        {plan.totals.fee
+                          ? `${tokensText(plan.totals.fee.amount)} ${plan.totals.fee.symbol}, to the alignment vault`
+                          : 'None'}
+                      </dd>
                     </div>
                     <div className="total">
                       <dt>{buying ? 'You pay' : 'You get'}</dt>
                       <dd>
                         {tokensText(plan.totals.tokens)} {plan.pool.symbol}
+                        {feePart(plan)}
                       </dd>
                     </div>
                     {buying && plan.totals.have !== undefined && (

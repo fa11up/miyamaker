@@ -508,7 +508,11 @@ function planBuy(input: BuyInput): PoolBatchPlan {
       else if (offers.length) {
         const options = offers.map((o) => ({ ...o, total: o.fee * units, wallet: input.feeWallet?.[o.symbol] }))
         const words = options.map((o) => `${tokensText(o.total)} ${o.symbol}`).join(' or ')
-        const enough = options.find((o) => o.wallet?.balance !== undefined && o.wallet.balance >= o.total)
+        const covers = (o: (typeof options)[number]) => o.wallet?.balance !== undefined && o.wallet.balance >= o.total
+        // A token already allowed for the whole fee saves an approval; otherwise IMD first.
+        const enough =
+          options.find((o) => covers(o) && o.wallet?.allowance !== undefined && o.wallet.allowance >= o.total) ??
+          options.find(covers)
         const unread = options.some((o) => o.wallet?.balance === undefined)
         if (!enough) {
           blocked ??= unread
@@ -694,9 +698,10 @@ export type CheckResult = { ok: boolean; problems: string[]; notes: string[] }
  */
 export function checkPoolCalls(
   calls: readonly (Call | undefined)[],
-  ctx: { account: Address; pool: PoolRef }
+  ctx: { account: Address; pool: PoolRef; totals?: { fee?: { token: Address; amount: bigint } } }
 ): CheckResult {
   const { account, pool } = ctx
+  const fee = ctx.totals?.fee
   const problems: string[] = []
   const notes: string[] = []
   const isFeeToken = (a: string) => (!!pool.imd && same(a, pool.imd)) || (!!pool.infer && same(a, pool.infer))
@@ -765,9 +770,34 @@ export function checkPoolCalls(
 
       if (!same(d.args[0], pool.address))
         problems.push(`${where}: lets ${d.args[0]} spend your fee token, not the pool.`)
+      // With a plan in hand, the approval is exactly this batch's pick fee in its token, never more.
+      else if (fee && (!same(call.to, fee.token) || d.args[1] !== fee.amount))
+        problems.push(`${where}: approves ${d.args[1]} of ${call.to}, not this batch's pick fee.`)
     } else problems.push(`${where} calls ${call.to}, which is not the pool, its collection or a fee token.`)
   })
   return { ok: problems.length === 0, problems, notes }
+}
+
+/**
+ * A planned call as a contract write ({ address, abi, functionName, args }), the shape useTx.run simulates and sends.
+ * Decoded with the one ABI its target takes (the pool, its collection, or a fee token); undefined when it is none of them.
+ */
+export function contractCall(call: Call, pool: PoolRef) {
+  const isFee = (!!pool.imd && same(call.to, pool.imd)) || (!!pool.infer && same(call.to, pool.infer))
+  const abi = same(call.to, pool.address)
+    ? poolBatchAbi
+    : same(call.to, pool.collection)
+    ? collectionBatchAbi
+    : isFee
+    ? feeTokenAbi
+    : undefined
+  if (!abi) return undefined
+  try {
+    const d = decodeFunctionData({ abi: abi as typeof poolBatchAbi, data: call.data })
+    return { address: call.to, abi, functionName: d.functionName, args: d.args, value: call.value }
+  } catch {
+    return undefined
+  }
 }
 
 /* ---------- simulation ---------- */

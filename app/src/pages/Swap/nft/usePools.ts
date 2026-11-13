@@ -4,28 +4,18 @@ import type { Address } from 'viem'
 import { erc20Abi, isAddress, zeroAddress } from 'viem'
 import { useReadContract, useReadContracts } from 'wagmi'
 
-import { isRevert } from '@/hooks/readFailure'
-
 import type { SupportedChainId } from '@/config/wagmi'
 import { miyamintsAddresses } from '@/constants/contracts'
 import { fetchOwnedNftsPage, NFT_INDEX_CHAINS, NftIndexOff } from '@/desktop/files/indexer'
 import { parseAlchemyOwnedNfts } from '@/desktop/files/indexer/parse'
 import { cleanText, sanitizeMetadata } from '@/desktop/files/sanitize'
+import { isRevert } from '@/hooks/readFailure'
 import { useMetadata } from '@/utils/nftMetadata'
 import { resolveUri } from '@/utils/resolveUri'
 
 import { erc721Abi, erc1155Abi, poolAbi, poolFactoryAbi, poolVaultAbi, vaultConfigAbi } from './abi'
 import type { CommitRow, PoolKind, PoolSummary } from './pool'
-import {
-  asKind,
-  factoryMadePool,
-  heldAmount,
-  KIND,
-  pendingFor,
-  poolIndexes,
-  poolLookup,
-  v2PoolFactory,
-} from './pool'
+import { asKind, factoryMadePool, heldAmount, KIND, pendingFor, poolIndexes, poolLookup, v2PoolFactory } from './pool'
 
 /**
  * The v2 MiyaPoolFactory on a chain, from env or contracts/deployments (undefined = not deployed there yet). A v1
@@ -109,7 +99,10 @@ function usePoolSummaries(chainId: SupportedChainId, addresses: Address[]) {
     return out
   }, [addresses, reads.data, names.data])
 
-  return { pools, loading: reads.isLoading, error: reads.error, refetch: reads.refetch }
+  // A collection or kind read that failed without a revert: the node didn't answer, which says nothing about a pool.
+  const unanswered =
+    reads.data?.some((r, i) => i % fields.length < 2 && r.status === 'failure' && !isRevert(r.error)) ?? false
+  return { pools, loading: reads.isLoading, error: reads.error, unanswered, refetch: reads.refetch }
 }
 
 /** The newest pools of the factory on `chainId`. */
@@ -225,7 +218,13 @@ export function useFeeToken(
     allowFailure: true,
     contracts: [
       { address: token, abi: erc20Abi, functionName: 'balanceOf', args: [owner || zeroAddress], chainId },
-      { address: token, abi: erc20Abi, functionName: 'allowance', args: [owner || zeroAddress, pool || zeroAddress], chainId },
+      {
+        address: token,
+        abi: erc20Abi,
+        functionName: 'allowance',
+        args: [owner || zeroAddress, pool || zeroAddress],
+        chainId,
+      },
     ],
     query: { enabled: !!token && !!owner && !!pool },
   })
@@ -259,8 +258,16 @@ export function usePoolsForCollection(chainId: SupportedChainId, factory: Addres
     pools: summaries.pools,
     /** The factory says this collection has no pool yet (false until the lookup is done; a failed read is never free). */
     free: !!collection && !!factory && found.state === 'none' && !read.isError,
-    /** The lookup failed, so "no pool" can't be told apart from "couldn't check". */
-    checkFailed: !!collection && !!factory && (read.isError || (!read.isLoading && found.state === 'unknown')),
+    /**
+     * The lookup failed, or it found a pool whose own reads failed: either way "no pool" can't be told apart from
+     * "couldn't check".
+     */
+    checkFailed:
+      !!collection &&
+      !!factory &&
+      (read.isError ||
+        (!read.isLoading && found.state === 'unknown') ||
+        (found.state === 'found' && !summaries.loading && summaries.pools.length === 0)),
     loading: read.isLoading || summaries.loading,
     refetch: () => {
       read.refetch()
@@ -306,6 +313,8 @@ export function usePool(chainId: SupportedChainId, pool: Address | undefined, ow
     notFromFactory: fromFactory === false,
     /** The factory could not be asked, so whether it made this pool is unknown. */
     factoryCheckFailed: !!claimed && (!factory || made.isError),
+    /** The address's own reads got no answer (not a revert), so "no pool here" can't be said. */
+    readFailed: !claimed && (!!summary.error || summary.unanswered),
     /** Undefined when the read failed: the held list can't be paged without it. */
     heldIdsCount: ok<bigint>(count) === undefined ? undefined : Number(ok<bigint>(count)),
     /** Undefined when the read failed: free NFTs for a random draw are then unknown. */
@@ -471,10 +480,13 @@ export function useOwnedInCollection(chainId: number, collection: Address | unde
         if (pageKey) params.set('pageKey', pageKey)
         // eslint-disable-next-line no-await-in-loop -- each page needs the previous page's key
         const body = (await fetchOwnedNftsPage(chainId, params, signal)) as { pageKey?: unknown }
-        nfts.push(...parseAlchemyOwnedNfts(body, chainId, { sanitize: sanitizeMetadata, cleanText, resolve: resolveUri }).nfts)
+        nfts.push(
+          ...parseAlchemyOwnedNfts(body, chainId, { sanitize: sanitizeMetadata, cleanText, resolve: resolveUri }).nfts
+        )
         pageKey = typeof body?.pageKey === 'string' && body.pageKey ? body.pageKey : undefined
         if (!pageKey) return { nfts, partial: false }
       }
+
       return { nfts, partial: true }
     },
   })
@@ -521,7 +533,10 @@ export function useOwnership(
   const held = ids.map((_, i) => {
     const r = reads.data?.[i]
     return heldAmount(
-      r && (r.status === 'success' ? { status: 'success', result: r.result } : { status: 'failure', reverted: isRevert(r.error) }),
+      r &&
+        (r.status === 'success'
+          ? { status: 'success', result: r.result }
+          : { status: 'failure', reverted: isRevert(r.error) }),
       kind === KIND.ERC721,
       owner
     )

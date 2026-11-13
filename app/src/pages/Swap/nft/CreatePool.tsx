@@ -91,7 +91,11 @@ export function CreatePool({
     (free || !rules.noVault)
 
   const minWords = (min: bigint | undefined, symbol: FeeSymbol) =>
-    min === undefined ? (rules.loading ? 'checking the least amount…' : "couldn't read the least amount") : `at least ${tokenAmountText(min)} ${symbol}, or 0`
+    min === undefined
+      ? rules.loading
+        ? 'checking the least amount…'
+        : "couldn't read the least amount"
+      : `at least ${tokenAmountText(min)} ${symbol}, or 0`
 
   const start = () =>
     ready &&
@@ -115,20 +119,21 @@ export function CreatePool({
   return (
     <>
       <Prose>
-        A pool lets anyone swap one of these NFTs for 1 pool token and back. There is one pool per collection, and anyone
-        can start it. Taking an NFT out:
+        A pool lets anyone swap one of these NFTs for 1 pool token and back. There is one pool per collection, and
+        anyone can start it. Taking an NFT out:
       </Prose>
       <Hint>
         <b>Random:</b> always 1 token per NFT, no fee, and a future block picks which one.{' '}
         {randomOn(chainId) ? 'ERC-721 collections only.' : `Not on ${chain.name}: pools there have pick only.`}
         <br />
-        <b>Pick:</b> choose the NFT, for 1 token plus the pick fee you set here, paid in IMD or INFER (the picker chooses
-        among the ones you offer). The fee goes to the INFER/IMD alignment vault as the picker&apos;s own contribution, so
-        they earn a share of its fees. Leave both at 0 and picks are free.
+        <b>Pick:</b> choose the NFT, for 1 token plus the pick fee you set here, paid in IMD or INFER (the picker
+        chooses among the ones you offer). The fee goes to the INFER/IMD alignment vault as the picker&apos;s own
+        contribution, so they earn a share of its fees. Leave both at 0 and picks are free.
       </Hint>
       {rules.noVault ? (
         <Hint role="status">
-          {chain.name} has no alignment vault yet, so pools here have no pick fee: picks cost 1 token, the same as random.
+          {chain.name} has no alignment vault yet, so pools here have no pick fee: picks cost 1 token, the same as
+          random.
         </Hint>
       ) : (
         <>
@@ -161,9 +166,7 @@ export function CreatePool({
           </FeeRow>
           {inferError && <Hint role="alert">{inferError}</Hint>}
           {!imdError && !inferError && (
-            <Hint>
-              {feeSummary} Whoever starts the pool sets this for everyone, and it can never be changed.
-            </Hint>
+            <Hint>{feeSummary} Whoever starts the pool sets this for everyone, and it can never be changed.</Hint>
           )}
         </>
       )}
@@ -188,9 +191,23 @@ export function CreatePool({
         </>
       ) : (
         <>
-          <PushButton type="button" data-create-pool disabled={create.busy || !ready} onClick={start}>
-            {free ? 'Start the pool with free picks' : 'Start the pool with this pick fee'}
-          </PushButton>
+          {create.unconfirmed ? (
+            // It may still land: a second create would only fail (one pool per collection), so check instead.
+            <PushButton
+              type="button"
+              data-create-pool
+              onClick={() => {
+                create.reset()
+                onCreated()
+              }}
+            >
+              Check whether the pool started
+            </PushButton>
+          ) : (
+            <PushButton type="button" data-create-pool disabled={create.busy || !ready} onClick={start}>
+              {free ? 'Start the pool with free picks' : 'Start the pool with this pick fee'}
+            </PushButton>
+          )}
           <Hint>One transaction on {chain.name}. You pay only the network fee.</Hint>
         </>
       )}

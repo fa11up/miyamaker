@@ -23,7 +23,7 @@ import { CreatePool } from './CreatePool'
 import type { OsOrder, Price } from './markets'
 import { bestQuote, collectionUrl, formatAmount, formatPrice, lowerPrice, venuesFor } from './markets'
 import { DEFAULT_PAIR_SYMBOL, pickPair } from './pairs'
-import { buyNeedsFee, KIND, pickFeeAmounts } from './pool'
+import { buyNeedsFee, KIND, pickFeeAmounts, picksFreeOf, poolBuyQuote } from './pool'
 import type { PoolRef } from './poolBatch'
 import { MAX_SWEEP, pickCheapest, sessionStore, sumPrices, sweepable, unconfirmedHashes } from './sweep'
 import SweepReview from './SweepReview'
@@ -554,17 +554,27 @@ function PoolHeldPicks({
         </Tiles>
       ) : (
         <Tiles>
-          {held.ids.slice(0, HELD_PAGE).map((idn) => {
+          {held.ids.slice(0, HELD_PAGE).map((idn, i) => {
             const id = idn.toString()
             const on = picked(id)
+            // An open random draw could pick it: it can be taken out of the batch, never put in (as on the pool page).
+            const locked = held.lockedAt(i) === true
             return (
               <li key={id} style={{ position: 'relative' }}>
                 <Tick
                   type="button"
                   aria-pressed={on}
-                  aria-label={on ? `Take #${id} out of the batch` : `Add #${id} to the batch`}
-                  title={on ? 'In the batch' : 'Add to the batch'}
-                  disabled={disabled}
+                  aria-label={
+                    on
+                      ? `Take #${id} out of the batch`
+                      : locked
+                      ? `#${id} is locked by an open random draw`
+                      : `Add #${id} to the batch`
+                  }
+                  title={
+                    on ? 'In the batch' : locked ? 'Locked: an open random draw could pick it' : 'Add to the batch'
+                  }
+                  disabled={disabled || (locked && !on)}
                   onClick={() => onTick(id)}
                   data-batch-tick
                 >
@@ -789,19 +799,15 @@ export default function CollectionView({
   const shownPrices = usePoolPrices(chainId, poolAddresses, shownPair)
   const poolsWithNfts = pools.pools.filter((p) => p.held !== undefined && p.held > 0n)
   // `where` reads after the price: an OpenSea listing or offer is "on OpenSea"; a pool's bid is a sale into it.
-  // Buying from a pool costs 1 pool token, compared at the token's price. Where random is off, a pick also pays a fee
-  // in IMD or INFER: it is named in the line, not priced (the app has no IMD/INFER price).
-  const poolBuy = (p: Pool) => ({
-    where: buyNeedsFee(p) ? 'on MiyaPool, plus the pick fee' : 'on MiyaPool',
-    price: poolSide(ethPrices[p.address.toLowerCase()], 'ask'),
-  })
+  // Buying from a pool, ranked against OpenSea only where 1 pool token is the whole cost (pool.ts poolBuyQuote).
+  const poolBuy = (p: Pool) => poolBuyQuote(p, poolSide(ethPrices[p.address.toLowerCase()], 'ask'))
 
   // OpenSea's stat can be lower than anything its listings call returns: show the lowest known, and what can be bought.
   const floor: Price | undefined = lowerPrice(os.stats?.floor, listings.floor)
   // Compared as shown: raw amounts can differ below the rounding, and "0.687 ETH, cheapest here 0.687 ETH" says nothing.
   const buyHere =
     listings.floor && floor && formatPrice(listings.floor) !== formatPrice(floor) ? listings.floor : undefined
-  const cheapest = bestQuote([{ where: 'on OpenSea', price: floor }, ...poolsWithNfts.map(poolBuy)])
+  const cheapest = bestQuote([{ where: 'on OpenSea', price: floor }, ...poolsWithNfts.flatMap((p) => poolBuy(p) ?? [])])
   const topOffer = bestQuote(
     [
       { where: 'on OpenSea', price: os.bestOffer?.price },
@@ -814,7 +820,7 @@ export default function CollectionView({
   )
   const poolLines = swap ? pools.pools : poolsWithNfts
   // The one Buy button goes wherever is cheapest right now.
-  const cheapestPool = poolsWithNfts.find((p) => poolBuy(p).where === cheapest?.where)
+  const cheapestPool = poolsWithNfts.find((p) => !!cheapest && poolBuy(p)?.where === cheapest.where)
   const cheapestListing = canSweep[0] ?? listed[0]
   // One pool per collection (v2): its bid is the only pool line.
   const offerPool = pools.pools.find(() => topOffer?.where === 'sell into MiyaPool')
@@ -854,6 +860,8 @@ export default function CollectionView({
     symbol: p.symbol,
     ethAsk: poolAsk(p),
     ethBid: poolBid(p),
+    // Unknown fees count as a fee: the bar never says a pick is fee-free before it knows.
+    pickFee: !picksFreeOf(p),
   }))
   const sellBids = useOpenSeaBids(os.slug, sellIds)
   const poolOptions: PoolOption[] = pools.pools.map((p) => ({
@@ -889,6 +897,21 @@ export default function CollectionView({
   const reviewBatch = (side: 'buy' | 'sell') => {
     const picks = side === 'buy' ? buyPicks : sellBatch
     if (!picks.length) return
+    // The terminal's ticket keeps the pool details it opens with, so a buy waits until the pick fee and its tokens
+    // are read (the inline review reads them live).
+    const feeKnown = (r: PoolRef) =>
+      r.imdFee !== undefined &&
+      r.inferFee !== undefined &&
+      (r.imdFee === 0n || !!r.imd) &&
+      (r.inferFee === 0n || !!r.infer) &&
+      r.randomEnabled !== undefined
+    if (ticket && side === 'buy' && picks.some((p) => p.venue === 'pool') && !poolRefs.every(feeKnown)) {
+      setFull({ side, words: "Still reading the pool's pick fee. Try again in a moment." })
+      feeRules.refetch()
+      pools.refetch()
+      return
+    }
+
     setFull(undefined)
     if (ticket)
       ticket.open({ kind: 'batch', side, picks, pools: poolRefs, chainId, contract: address, title: name, unverified })
@@ -922,8 +945,16 @@ export default function CollectionView({
 
   let poolNote = 'No pool for this collection yet. Start one above.'
   if (pools.checkFailed) poolNote = "Couldn't check for a pool."
-  if (pools.pools.length)
-    poolNote = 'Sell an NFT in for 1 pool token. Take one out for 1 token (random) or 1 token plus the pick fee (pick).'
+  const thePool = pools.pools[0]
+  if (thePool) {
+    // Only the ways out this pool has: no random on ERC-1155 or Robinhood Chain pools, no fee where picks are free.
+    const fee = pickFeeAmounts(thePool)
+    const ways = [
+      thePool.randomEnabled === true ? '1 token (random)' : '',
+      fee === 'free' ? '1 token (pick)' : `1 token plus the pick fee${fee === undefined ? '' : ` of ${fee}`} (pick)`,
+    ].filter(Boolean)
+    poolNote = `Sell an NFT in for 1 pool token. Take one out for ${ways.join(' or ')}.`
+  }
 
   // Only once the factory has said so: a failed lookup is not "no pool".
   const noPoolYet = !!factory && pools.free

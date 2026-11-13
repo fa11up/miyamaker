@@ -2,8 +2,10 @@
 // usePools.poolFactoryFor. Once DeployMiyaPoolV2 writes the v2 factory into deployments/<chainId>.json, pools come on.
 // Run: yarn test
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { test } from 'node:test'
+import { fileURLToPath } from 'node:url'
 
 import { V1_POOL_FACTORIES, v2PoolFactory } from '../src/pages/Swap/nft/pool.ts'
 
@@ -25,7 +27,21 @@ test('mainnet: the deployments file names either the v1 factory (pools off) or a
   else assert.ok(V1_POOL_FACTORIES[1]!.some((a) => a.toLowerCase() === String(mainnet.miyaPoolFactoryV1).toLowerCase()))
 })
 
-test('usePools reads the factory through the v1 guard', () => {
+test('usePools reads the factory through the v1 guard, and nothing else in src reads it directly', () => {
   const src = readFileSync(new URL('../src/pages/Swap/nft/usePools.ts', import.meta.url), 'utf8')
   assert.match(src, /v2PoolFactory\(chainId, miyamintsAddresses\(chainId\)\.miyaPoolFactory\)/)
+  const root = fileURLToPath(new URL('../src/', import.meta.url))
+  const allowed = new Set(['pages/Swap/nft/usePools.ts', 'constants/contracts.ts'])
+  const direct: string[] = []
+  const walk = (dir: string) => {
+    for (const e of readdirSync(join(root, dir), { withFileTypes: true })) {
+      const rel = dir ? `${dir}/${e.name}` : e.name
+      if (e.isDirectory()) walk(rel)
+      else if (/\.(ts|tsx|js|jsx|mts)$/.test(e.name) && !allowed.has(rel)) {
+        if (/\.miyaPoolFactory\b/.test(readFileSync(join(root, rel), 'utf8'))) direct.push(rel)
+      }
+    }
+  }
+  walk('')
+  assert.deepEqual(direct, [], 'read the factory with usePools.poolFactoryFor, which skips the v1 factory')
 })

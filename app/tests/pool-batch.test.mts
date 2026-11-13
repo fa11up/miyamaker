@@ -22,6 +22,7 @@ import { erc721Abi, erc1155Abi, poolAbi } from '../src/pages/Swap/nft/abi.ts'
 import {
   checkPoolCalls,
   collectionBatchAbi,
+  contractCall,
   explainPoolError,
   feeTokenAbi,
   MAX_DRAW,
@@ -313,6 +314,41 @@ test('pick fee: INFER when IMD is short, no approval when already allowed, block
   assert.match(noAllowance.blocked!, /couldn't check what the pool may take of your IMD/)
   const feeUnknown = planPoolBatch({ ...base, pool: { ...pool, imdFee: undefined } })
   assert.match(feeUnknown.blocked!, /couldn't read this pool's pick fee/)
+})
+
+test('the fee token already approved for the whole fee is chosen first, saving an approval', () => {
+  const plan = planPoolBatch({
+    side: 'buy', chainId: 1, account: ME, pool: p721(false, { imdFee: 2n * E18, inferFee: 3500n * E18 }),
+    balance: POOL_UNIT, items: [{ id: 2n }], poolHeld: held(2),
+    feeWallet: { IMD: { balance: 10n * E18, allowance: 0n }, INFER: { balance: 9000n * E18, allowance: 3500n * E18 } },
+  })
+  assert.equal(plan.totals.fee?.symbol, 'INFER')
+  assert.deepEqual(plan.steps.map((s) => s.key), ['redeem'])
+})
+
+test('a fee approval becomes a contract write useTx can simulate, and the checker holds it to the exact fee', () => {
+  const pool = p721(false, { imdFee: 2n * E18 })
+  const plan = planPoolBatch({
+    side: 'buy', chainId: 1, account: ME, pool, balance: POOL_UNIT, items: [{ id: 2n }], poolHeld: held(2),
+    feeWallet: { IMD: { balance: 10n * E18, allowance: 0n } },
+  })
+  const approve = plan.steps[0]!
+  assert.equal(approve.key, 'approve')
+  const write = contractCall(approve.call!, pool)!
+  assert.equal(write.address, IMD)
+  assert.equal(write.functionName, 'approve')
+  assert.deepEqual(write.args, [POOL, 2n * E18])
+  // Re-encoding the write gives the planned call back byte for byte.
+  assert.equal(encodeFunctionData({ abi: write.abi as typeof feeTokenAbi, functionName: 'approve', args: write.args as unknown as [Address, bigint] }), approve.call!.data)
+  // Sells' setApprovalForAll and the redeem decode too; anything else is refused.
+  assert.equal(contractCall(plan.steps[1]!.call!, pool)!.functionName, 'redeem')
+  assert.equal(contractCall({ to: EVE, data: approve.call!.data, value: 0n }, pool), undefined)
+
+  assert.ok(checkPoolCalls([approve.call], plan).ok)
+  const more = { to: IMD, data: encodeFunctionData({ abi: feeTokenAbi, functionName: 'approve', args: [POOL, 2n ** 255n] }), value: 0n }
+  assert.equal(checkPoolCalls([more], plan).ok, false, 'an approval above the fee is refused')
+  const otherToken = { to: INFER, data: approve.call!.data, value: 0n }
+  assert.equal(checkPoolCalls([otherToken], plan).ok, false, 'an approval on the other fee token is refused')
 })
 
 test('picks from a random pool skip NFTs an open draw has locked, and an unread lock blocks', () => {

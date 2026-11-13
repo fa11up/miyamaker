@@ -107,9 +107,16 @@ export function checkFee(
 ): { ok: true } | { ok: false; unknown?: boolean; error: string } {
   if (amount === 0n) return { ok: true }
   if (minimum === undefined)
-    return { ok: false, unknown: true, error: `Couldn't read the vault's least ${symbol} amount, so this can't be checked.` }
+    return {
+      ok: false,
+      unknown: true,
+      error: `Couldn't read the vault's least ${symbol} amount, so this can't be checked.`,
+    }
   if (amount < minimum)
-    return { ok: false, error: `The vault takes at least ${tokenAmountText(minimum)} ${symbol}. Use that or more, or 0.` }
+    return {
+      ok: false,
+      error: `The vault takes at least ${tokenAmountText(minimum)} ${symbol}. Use that or more, or 0.`,
+    }
   return { ok: true }
 }
 
@@ -161,6 +168,22 @@ export function pickFeeWords(fees: PickFees): string {
  */
 export const buyNeedsFee = (pool: PickFees & { randomEnabled?: boolean }) =>
   !(pool.randomEnabled === true || picksFreeOf(pool))
+
+/**
+ * A pool's line in the best-price comparison: 1 pool token at its price buys a random NFT where random is on, or a
+ * picked one where picks are free. Where every way out pays a pick fee in IMD or INFER, the token price is not the cost
+ * (the app has no IMD/INFER price), so the pool isn't ranked: undefined. Its own line names the fee instead.
+ */
+export function poolBuyQuote<P>(
+  pool: PickFees & { randomEnabled?: boolean },
+  price: P
+): { where: string; price: P } | undefined {
+  if (buyNeedsFee(pool)) return undefined
+  return {
+    where: pool.randomEnabled === true && !picksFreeOf(pool) ? 'on MiyaPool (a random NFT)' : 'on MiyaPool',
+    price,
+  }
+}
 
 /** The fee step of a pick: nothing to pay, approve the pool for the total first, or ready to pick. */
 export function feeStep(
@@ -250,7 +273,7 @@ export function depositPlan(
   kind: PoolKind,
   count: number,
   approvedForAll: boolean | undefined,
-  directOnly = false,
+  directOnly = false
 ): DepositPlan {
   if (kind === KIND.ERC1155) return 'transfer-1155'
   if (count <= 1) return 'transfer-721'
@@ -330,7 +353,7 @@ export function filterPools<T extends PoolSummary>(pools: T[], query: string): T
   const q = query.trim().toLowerCase()
   if (!q) return pools
   return pools.filter((p) =>
-    [p.symbol, p.name, p.collectionName || '', p.address, p.collection].some((s) => s.toLowerCase().includes(q)),
+    [p.symbol, p.name, p.collectionName || '', p.address, p.collection].some((s) => s.toLowerCase().includes(q))
   )
 }
 
@@ -373,6 +396,7 @@ export function pickLocks(picked: readonly string[], lockOf: (id: string) => boo
     if (l === undefined) unknown.push(id)
     else if (l) locked.push(id)
   }
+
   return { locked, unknown }
 }
 
