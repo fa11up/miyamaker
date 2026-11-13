@@ -627,9 +627,12 @@ and in INFER into the live default vault and checks `pendingOf(picker, token)`.
 
 Consequences the owner accepted or should know:
 - The vault's minimums and payment-token list are owner-settable (Safe). Raising `minContribution(token)` above a
-  pool's fixed fee, or delisting IMD/INFER, makes picks in that token revert forever for that pool (random redeems and
-  the other fee token are unaffected; a pool offering only that token becomes random-only). Nothing in the pool can
-  adapt, by design (fixed fees).
+  pool's fee for what a pick pays (fee × pieces), or delisting IMD/INFER, makes picks in that token revert for that
+  pool. Random redeems and the other fee token are unaffected, but ERC-1155 pools and every pool on chain 4663 have no
+  random redeems: one whose only fee token is refused can't give out any NFT, ever. Nothing in the pool can adapt, by
+  design (fixed fees). **Owner rule (2026-11-13): the Safe never delists IMD or INFER and never raises their
+  `minContribution` while MiyaPools use them; such a change waits for a redeployed pool system.** Lowering a minimum
+  is safe.
 - Anyone can create a collection's pool first and fix its fees for everyone (squatting). An absurd fee makes picks
   impossible in practice; random redeems still work.
 - A pick now costs the vault's contribution path: about 430-540k gas on the live vault (fork), against ~80-90k for a v1
