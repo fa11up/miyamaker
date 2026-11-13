@@ -315,9 +315,23 @@ export default function PoolView({
         <LinkButton type="button" onClick={onBack}>
           ← All pools
         </LinkButton>
-        <Prose>
-          There is no pool at <Mono>{shortAddress(poolAddress)}</Mono> on {chain.name}. It may be on another network.
-        </Prose>
+        {info.notFromFactory ? (
+          <Prose>
+            <Mono>{shortAddress(poolAddress)}</Mono> is not a MiyaPool. MiyaMaker&apos;s pool factory on {chain.name}{' '}
+            didn&apos;t make it, so nothing here can trade with it. Don&apos;t approve or send anything to it.
+          </Prose>
+        ) : info.factoryCheckFailed ? (
+          <Prose>
+            Couldn&apos;t check that <Mono>{shortAddress(poolAddress)}</Mono> is a MiyaPool.{' '}
+            <LinkButton type="button" onClick={() => info.refetch()}>
+              Check again
+            </LinkButton>
+          </Prose>
+        ) : (
+          <Prose>
+            There is no pool at <Mono>{shortAddress(poolAddress)}</Mono> on {chain.name}. It may be on another network.
+          </Prose>
+        )}
       </Card>
     )
   }

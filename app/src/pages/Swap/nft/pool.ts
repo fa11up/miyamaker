@@ -170,6 +170,16 @@ export type PoolSummary = {
   held?: bigint
 }
 
+/**
+ * Whether `address` is the pool the factory made for its collection and mode: the factory's poolOf answer must be that
+ * same address. A pool page opened from a link shows only such a pool, never any contract that answers collection()
+ * and mode(). undefined = not answered yet (or the read failed).
+ */
+export function factoryMadePool(poolOfAnswer: string | undefined, address: string): boolean | undefined {
+  if (poolOfAnswer === undefined) return undefined
+  return poolOfAnswer.toLowerCase() === address.toLowerCase()
+}
+
 /** Pools whose name, ticker, collection name or addresses match `query` (case-insensitive). */
 export function filterPools<T extends PoolSummary>(pools: T[], query: string): T[] {
   const q = query.trim().toLowerCase()
