@@ -19,9 +19,12 @@ import { isSwapChain, PINNED_TOKENS, sameAddress, SWAP_CHAINS } from './constant
 import { Chip } from './floor/retro'
 import { color, font, space, text } from './floor/tokens'
 import { Tape, TokenTable, useBoard } from './MarketBoard'
+import BatchReview from './nft/BatchReview'
 import FillReview from './nft/FillReview'
 import NftTrade from './nft/NftTrade'
+import { pickPair } from './nft/pairs'
 import SweepReview from './nft/SweepReview'
+import { pairsFor } from './nft/usePoolPrices'
 import type { ActivityRow } from './terminal/activity'
 import { ActivityPanel, ActivityTape } from './terminal/ActivityView'
 import type { Command, TerminalTab } from './terminal/command'
@@ -405,12 +408,21 @@ export default function TradePage() {
   }
 
   // A finished trade changes listings, offers, owners and balances: read them again.
-  // Not the open review's own fill data (os-fill, os-sweep): re-asking OpenSea for an order just filled would show the
-  // success as 'someone else bought it'.
+  // Not the open review's own fill data (os-fill, os-sweep, os-batch): re-asking OpenSea for an order just filled would
+  // show the success as 'someone else bought it'.
   const afterTrade = () =>
     queryClient.invalidateQueries({
-      predicate: (q) => q.queryKey[0] !== 'os-fill' && q.queryKey[0] !== 'os-sweep',
+      predicate: (q) => !['os-fill', 'os-sweep', 'os-batch', 'os-batch-sim'].includes(String(q.queryKey[0])),
     })
+
+  // A pool token is the only token here that isn't on the list, and the ticket is about it.
+  const swapPoolToken = (p: { chainId: SwapChainId; sell?: SwapToken; buy?: SwapToken }) => {
+    const pinned = (t?: SwapToken) => PINNED_TOKENS[p.chainId].some((x) => sameAddress(x.address, t?.address))
+    const subject = pinned(p.buy) ? p.sell : p.buy
+    setPreset({ ...p, key: Date.now() })
+    if (subject) openToken({ chainId: p.chainId, address: subject.address }, true)
+  }
+
   const ticketVisible = rail === 'nft' && (!narrow || sheetOpen)
 
   // A sale or mint opens that NFT's page in the NFT tab.
@@ -644,6 +656,59 @@ export default function TradePage() {
                         onGone={afterTrade}
                         onBusy={setTicketBusy}
                       />
+                    ) : nftTicket.kind === 'batch' ? (
+                      <BatchReview
+                        key={nftTicket.key}
+                        side={nftTicket.side}
+                        picks={nftTicket.picks}
+                        pools={nftTicket.pools}
+                        chainId={nftTicket.chainId}
+                        contract={nftTicket.contract}
+                        title={nftTicket.title}
+                        unverified={nftTicket.unverified}
+                        onClose={closeNftTicket}
+                        onDone={afterTrade}
+                        onBusy={setTicketBusy}
+                        onOneByOne={(list) => {
+                          const t = nftTicket
+                          // Buys: the sweep, one transaction each. A sale: that one NFT's own ticket.
+                          if (t.side === 'buy')
+                            openNftTicket({
+                              kind: 'sweep',
+                              listings: list.map((p) => p.order),
+                              chainId: t.chainId,
+                              contract: t.contract,
+                              title: t.title,
+                              unverified: t.unverified,
+                            })
+                          else if (list[0])
+                            openNftTicket({
+                              kind: 'fill',
+                              side: 'sell',
+                              order: list[0].order,
+                              chainId: t.chainId,
+                              contract: t.contract,
+                              tokenId: list[0].tokenId,
+                              title: t.title,
+                            })
+                        }}
+                        onGetTokens={(pool) => {
+                          const c = nftTicket.chainId
+                          if (!isSwapChain(c)) return
+                          swapPoolToken({
+                            chainId: c,
+                            sell: pickPair(pairsFor(c), 'ETH'),
+                            buy: {
+                              chainId: c,
+                              address: pool.address,
+                              symbol: pool.symbol,
+                              name: `${pool.symbol} pool token`,
+                              decimals: 18,
+                              tint: color.accentDark,
+                            },
+                          })
+                        }}
+                      />
                     ) : (
                       <SweepReview
                         key={nftTicket.key}
@@ -698,14 +763,7 @@ export default function TradePage() {
                   visible={view === 'nft' || view === 'pools' || view === 'search'}
                   onOpenPool={openPool}
                   onOpenCollection={(c) => openCollection(c)}
-                  onSwapToken={(p) => {
-                    // Pool tokens are the only ones here that aren't on the list, and the ticket is about them.
-                    const pinned = (t?: SwapToken) =>
-                      PINNED_TOKENS[p.chainId].some((x) => sameAddress(x.address, t?.address))
-                    const subject = pinned(p.buy) ? p.sell : p.buy
-                    setPreset({ ...p, key: Date.now() })
-                    if (subject) openToken({ chainId: p.chainId, address: subject.address }, true)
-                  }}
+                  onSwapToken={swapPoolToken}
                 />
               </Pane>
 

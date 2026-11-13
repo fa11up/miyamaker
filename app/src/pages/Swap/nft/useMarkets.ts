@@ -375,6 +375,35 @@ export function useOpenSeaItem(
   }
 }
 
+/**
+ * The best OpenSea bid for each of several NFTs (item and collection offers), sharing useOpenSeaItem's cache. Per id:
+ * the order, null when there is none or OpenSea could not be asked, undefined while asking. `failed` lists the ids whose
+ * read failed, so "no bid" is not claimed for them.
+ */
+export function useOpenSeaBids(slug: string | undefined, ids: readonly string[]) {
+  const { configured, known } = useOpenSeaConfigured()
+  const qs = useQueries({
+    queries: ids.map((id) => ({
+      queryKey: ['os-nft-offer', slug, id],
+      enabled: !!slug && configured,
+      ...common,
+      queryFn: async ({ signal }: { signal: AbortSignal }): Promise<OsOrder | null> =>
+        parseOrder(await orNone(get({ op: 'nft_offer', slug: slug!, id }, signal))) || null,
+    })),
+  })
+  const bids: Record<string, OsOrder | null | undefined> = {}
+  const failed: string[] = []
+  ids.forEach((id, i) => {
+    const q = qs[i]!
+    if (known && (!configured || !slug)) bids[id] = null
+    else if (q.isError) {
+      bids[id] = null
+      failed.push(id)
+    } else bids[id] = q.data === undefined ? undefined : q.data
+  })
+  return { bids, failed }
+}
+
 /** One NFT's picture from OpenSea (its cached copy works where the metadata host blocks browsers). */
 export function useOpenSeaNftImage(chainId: number, address: string | undefined, id: string | undefined) {
   const chain = OPENSEA_CHAIN[chainId]
