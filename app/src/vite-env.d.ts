@@ -20,6 +20,9 @@ declare module '*.gif' {
   export default value
 }
 
+/** desktop/miyamusicmaker/package.json's version, set by vite.config.ts. */
+declare const __MMM_VERSION__: string
+
 interface Window {
   ethereum?: any
   toggleDevtools: undefined | (() => void)

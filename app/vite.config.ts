@@ -15,6 +15,15 @@ import svgr from 'vite-plugin-svgr'
 import { ALLOWLIST_BODY_LIMIT, ALLOWLIST_PATH, handleAllowlistRequest, memoryAllowlistStore } from './api/_lib/allowlist'
 import { BODY_LIMIT } from './api/_lib/body'
 import { handleMarketRequest, MARKET_PREFIX, memoryCache, openSeaReader } from './api/_lib/market'
+import {
+  EMBED_CSP,
+  EMBED_PREFIX,
+  GALLERY_BODY_LIMIT,
+  GALLERY_READ_RATE,
+  GALLERY_WRITE_RATE,
+  handleMiyakeysGallery,
+  MIYAKEYS_GALLERY_PATH,
+} from './api/_lib/miyakeys'
 import { handleOpenSeaRequest, OPENSEA_PROXY_PATH, quoteBigInts } from './api/_lib/opensea'
 import { handlePublicAccessRequest, memoryTapeStore, PUBLIC_ACCESS_PATH, youtubeLookup } from './api/_lib/publicaccess'
 import { handleNftRequest, handleRpcRequest, NFT_PREFIX, RPC_BODY_LIMIT, RPC_PREFIX } from './api/_lib/rpc'
@@ -22,6 +31,7 @@ import { handleSampleMediaRequest, SAMPLE_MEDIA_PATH, SAMPLE_MEDIA_RATE } from '
 import { kickOnAir, kickReader } from './api/_lib/tvkick'
 import { handleVideoAudioRequest, VIDEO_AUDIO_COST, VIDEO_AUDIO_PATH, VIDEO_AUDIO_RATE } from './api/_lib/videoaudio'
 import { handleTvLiveRequest, TV_LIVE_PATH } from './api/_lib/tvlive'
+import { handleLayersRequest, LAYERS_PROXY_PATH } from './api/_lib/layers'
 import { gatewayContentType, handleStationRequest, memoryStore, STATION_PATH } from './api/_lib/station'
 import { clientKey, createRateLimiter, handleZeroExRequest, PROXY_PREFIX, sameOrigin } from './api/_lib/zeroex'
 
@@ -191,6 +201,29 @@ function marketDevProxy(env: Record<string, string>): Plugin {
   }
 }
 
+/** Dev stand-in for the layers proxy. koolskull.com serves the pictures and does not send CORS. */
+function layersDevProxy(): Plugin {
+  return {
+    name: 'miya-layers-dev-proxy',
+    configureServer(server) {
+      server.middlewares.use(LAYERS_PROXY_PATH, async (req, res) => {
+        try {
+          const host = req.headers.host || 'localhost'
+          const rest = (req.url || '/').split('?')[0] || '/'
+          const path = rest.startsWith(LAYERS_PROXY_PATH) ? rest : `${LAYERS_PROXY_PATH}${rest.startsWith('/') ? rest : `/${rest}`}`
+          const response = await handleLayersRequest(new Request(`http://${host}${path}`, { method: req.method }))
+          res.statusCode = response.status
+          response.headers.forEach((value, key) => res.setHeader(key, value))
+          res.end(Buffer.from(await response.arrayBuffer()))
+        } catch (error) {
+          res.statusCode = 502
+          res.end(error instanceof Error ? error.message : 'Could not reach the layers.')
+        }
+      })
+    },
+  }
+}
+
 /** Dev-only stand-in for the Worker's station route, kept in memory. STATION_ADMINS from the shell. */
 function stationDevProxy(): Plugin {
   const store = memoryStore()
@@ -315,6 +348,126 @@ function sampleMediaDevProxy(): Plugin {
   }
 }
 
+/**
+ * The PWA plugin adds its manifest link and service-worker registration to every page it builds. miyakeys's page runs
+ * in a sandboxed frame with an opaque origin and a CSP of its own (api/_lib/miyakeys.ts): it can register no service
+ * worker and load no manifest, so both come out of that page.
+ */
+function embedWithoutPwa(): Plugin {
+  return {
+    name: 'miya-embed-without-pwa',
+    // The PWA plugin is enforce: 'post'; this one is too, and comes after it in the list, so it runs after it.
+    enforce: 'post',
+    transformIndexHtml: {
+      order: 'post',
+      handler(html, ctx) {
+        if (!/(^|\/)embed\/miyakeys\/index\.html$/.test(ctx.filename.replace(/\\/g, '/'))) return html
+        return html
+          .replace(/<link rel="manifest"[^>]*>/g, '')
+          .replace(/<script id="vite-plugin-pwa:register-sw"[^>]*><\/script>/g, '')
+      },
+    },
+  }
+}
+
+/**
+ * Whether dev answers a request from `Origin: null` (miyakeys's sandboxed frame, or any site's) with CORS: the embed's
+ * own files and packages under node_modules only. The path is judged as Vite will read it, decoded: a path that does
+ * not decode, or has a `.` or `..` segment (`/node_modules/%2e%2e/src/...`) or a backslash, is refused. Self-contained
+ * (tests/miyakeys-bridge.test.mts runs it from this file's text).
+ */
+function miyakeysDevOpen(url: string, prefix: string): boolean {
+  let pathname: string
+  try {
+    pathname = decodeURIComponent(url.split('?')[0] || '')
+  } catch {
+    return false
+  }
+  // Vite reads //vite/ and /%2Fvite/ as /vite/: repeated slashes are folded before anything is judged.
+  pathname = pathname.replace(/\/{2,}/g, '/')
+  if (pathname.includes('\\') || pathname.includes('\0') || pathname.split('/').some((seg) => seg === '.' || seg === '..')) return false
+  // Vite writes its WebSocket token into its own client files (vite/dist/client/*) whatever URL serves them, so the
+  // vite package is never opened, by /node_modules or by /@fs.
+  if (/\/node_modules\/(vite|@vite|@vitejs)\//i.test(pathname)) return false
+  if (pathname.startsWith(`${prefix}/`) || pathname.startsWith('/node_modules/')) return true
+  return /^\/@fs\/[^?]*\/node_modules\//.test(pathname)
+}
+
+/**
+ * Dev serves miyakeys's page the way the Worker does (api/_lib/miyakeys.ts): its CSP and headers, in the same sandbox
+ * as the site (src/pages/Miyakeys). The sandboxed frame's origin is opaque, so its module requests say `Origin: null`,
+ * which Vite's own CORS check refuses. They are answered here, for the page's own files and the packages it imports
+ * only (node_modules, also through /@fs when node_modules is a link; see miyakeysDevOpen); the desktop's sources stay
+ * closed to other origins, as Vite keeps them. The React refresh preamble Vite adds to every page is an inline script
+ * the CSP refuses, and the page has no React: it comes out of this page. So does /@vite/client (no hot reload in the
+ * frame; reload it by hand): that file holds Vite's WebSocket token, and any site's sandboxed frame also says
+ * `Origin: null`, so it is never opened to "null" (nor /@vite/env, which only the client imports).
+ */
+function miyakeysEmbedDev(): Plugin {
+  const isEmbedPage = (filename: string) => /(^|\/)embed\/miyakeys\/index\.html$/.test(filename.replace(/\\/g, '/'))
+  return {
+    name: 'miya-miyakeys-embed-dev',
+    apply: 'serve',
+    transformIndexHtml: {
+      order: 'post',
+      handler(html, ctx) {
+        if (!isEmbedPage(ctx.filename)) return html
+        return html
+          .replace(/<script type="module">\s*import \{ injectIntoGlobalHook \}[\s\S]*?<\/script>\s*/, '')
+          .replace(/<script type="module" src="[^"]*\/@vite\/client"><\/script>\s*/g, '')
+      },
+    },
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        const url = req.url || ''
+        const pathname = url.split('?')[0] || ''
+        if (req.headers.origin === 'null' && miyakeysDevOpen(url, EMBED_PREFIX)) {
+          res.setHeader('access-control-allow-origin', '*')
+        }
+
+        if (pathname === `${EMBED_PREFIX}/` || pathname === `${EMBED_PREFIX}/index.html`) {
+          res.setHeader('content-security-policy', EMBED_CSP)
+          res.setHeader('referrer-policy', 'no-referrer')
+          res.setHeader('x-content-type-options', 'nosniff')
+        }
+
+        next()
+      })
+    },
+  }
+}
+
+/** Dev-only stand-in for the Worker's miyakeys gallery route (api/_lib/miyakeys.ts): the same checks, the real gallery. */
+function miyakeysGalleryDevProxy(): Plugin {
+  const guards = {
+    clientKey,
+    readLimiter: createRateLimiter(GALLERY_READ_RATE),
+    writeLimiter: createRateLimiter(GALLERY_WRITE_RATE),
+  }
+  return {
+    name: 'miya-miyakeys-gallery-dev-proxy',
+    configureServer(server) {
+      server.middlewares.use(MIYAKEYS_GALLERY_PATH, async (req, res) => {
+        const body = await devBody(req, res, GALLERY_BODY_LIMIT)
+        if (body === undefined) return
+        const rest = (req.url || '').replace(/^\/(?=\?|$)/, '')
+        const response = await handleMiyakeysGallery(
+          {
+            method: req.method || 'GET',
+            url: `http://${devHost(req)}${MIYAKEYS_GALLERY_PATH}${rest}`,
+            headers: devHeaders(req),
+            body: req.method === 'POST' ? body : undefined,
+          },
+          guards
+        )
+        res.statusCode = response.status
+        response.headers.forEach((value, key) => res.setHeader(key, value))
+        res.end(await response.text())
+      })
+    },
+  }
+}
+
 /** Dev-only stand-in for the Worker's video-audio route. Page hosts are checked in api/_lib/videoaudio.ts. */
 function videoAudioDevProxy(): Plugin {
   const limiter = createRateLimiter(VIDEO_AUDIO_RATE)
@@ -378,16 +531,25 @@ function publicAccessDevProxy(): Plugin {
   }
 }
 
+/** The desktop program's version, from its own package.json. The MiyaOS corner shows it inside the program. */
+const MMM_VERSION: string = JSON.parse(
+  fs.readFileSync(path.resolve(__dirname, '../desktop/miyamusicmaker/package.json'), 'utf8')
+).version
+
 export default defineConfig(({ mode }) => ({
   base: '/',
+  define: { __MMM_VERSION__: JSON.stringify(MMM_VERSION) },
   plugins: [
     rpcDevProxy(loadEnv(mode, __dirname, ['RPC_URL_', 'ALCHEMY_API_KEY'])),
+    layersDevProxy(),
     zeroExDevProxy(loadEnv(mode, __dirname, ['ZEROX_'])),
     openSeaDevProxy(loadEnv(mode, __dirname, ['OPENSEA_'])),
     stationDevProxy(),
     allowlistDevProxy(),
     publicAccessDevProxy(),
     sampleMediaDevProxy(),
+    miyakeysGalleryDevProxy(),
+    miyakeysEmbedDev(),
     videoAudioDevProxy(),
     tvLiveDevProxy(loadEnv(mode, __dirname, ['YOUTUBE_'])),
     marketDevProxy(loadEnv(mode, __dirname, ['OPENSEA_'])),
@@ -543,14 +705,23 @@ export default defineConfig(({ mode }) => ({
           },
         ],
         navigateFallback: 'index.html',
-        navigateFallbackDenylist: [/^\/api\//, /^\/surf(\/|$)/, /^\/reveal\//, /^\/allowlists\//],
+        // /embed/* are pages of their own (the miyakeys window's frame), not the desktop.
+        navigateFallbackDenylist: [/^\/api\//, /^\/surf(\/|$)/, /^\/reveal\//, /^\/allowlists\//, /^\/miyamaker-layers(\/|$)/, /^\/embed\//],
         cleanupOutdatedCaches: true,
       },
     }),
+    embedWithoutPwa(),
   ],
   build: {
     // No source maps in the deployed bundle: 'hidden' would still copy the .map files into dist/ (and so publish them).
     sourcemap: false,
+    rollupOptions: {
+      // The desktop, and miyakeys as its own page for its window's frame (src/pages/Miyakeys).
+      input: {
+        main: path.resolve(__dirname, 'index.html'),
+        miyakeys: path.resolve(__dirname, 'embed/miyakeys/index.html'),
+      },
+    },
   },
   resolve: {
     alias: [

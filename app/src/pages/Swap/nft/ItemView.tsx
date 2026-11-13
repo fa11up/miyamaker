@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import styled from 'styled-components/macro'
 import type { Address } from 'viem'
 import { useAccount, useReadContract } from 'wagmi'
@@ -9,8 +9,9 @@ import { chains, explorerUrl, mainnet } from '@/config/wagmi'
 import { cleanText } from '@/desktop/files/sanitize'
 
 import { isFeatured } from '../board'
-import { Chip, Eyebrow, Skeleton, StatusBox } from '../floor/retro'
+import { Chip, Eyebrow, Skeleton } from '../floor/retro'
 import { color, space } from '../floor/tokens'
+import { useTicket } from '../terminal/ticket'
 import { erc721Abi } from './abi'
 import FillReview from './FillReview'
 import type { OsOrder } from './markets'
@@ -22,6 +23,7 @@ import { useOpenSeaCollection, useOpenSeaItem } from './useMarkets'
 import type { Pool } from './usePools'
 import { poolFactoryFor, useNftMeta, usePoolsForCollection } from './usePools'
 import { OutLink, VenueList, VenueRow } from './venueUi'
+import Viewer from './Viewer'
 
 const Layout = styled.div`
   display: grid;
@@ -57,10 +59,13 @@ export default function ItemView({
   onBack,
   onOpenPool,
   onBusy,
+  autoBuy,
 }: {
   chainId: SupportedChainId
   contract: Address
   tokenId: string
+  /** Opened from the viewer's BUY: show the buy review as soon as the listing is known. */
+  autoBuy?: boolean
   onBack: () => void
   onOpenPool: (pool: Address) => void
   /** Told while a trade is in flight, when the page must not change. */
@@ -102,10 +107,41 @@ export default function ItemView({
     if (fee === undefined) return `1 ${p.symbol} plus the pool's pick fee`
     return fee === 'free' ? `1 ${p.symbol}` : `1 ${p.symbol} plus ${fee}`
   }
+
   let noPoolNote = 'No pool for this collection yet.'
   if (pools.loading) noPoolNote = 'Looking for a pool…'
   if (pools.checkFailed) noPoolNote = "Couldn't check for a pool."
   if (pools.pools.length) noPoolNote = 'Not in the pool right now.'
+  // In the terminal, Buy and Accept open its ticket (straight to the wallet); elsewhere, the review below.
+  const ticket = useTicket()
+  const startFill = (side: 'buy' | 'sell', order: OsOrder) => {
+    if (!ticket) {
+      setReview({ side, order })
+      return
+    }
+
+    ticket.open({
+      kind: 'fill',
+      side,
+      order,
+      chainId,
+      contract,
+      tokenId,
+      title: collectionName,
+      flagged: !!item.nft?.suspicious,
+      unverified: side === 'buy' ? unverified : undefined,
+    })
+  }
+
+  // Read once on mount: the flag is used up as soon as this page opens.
+  const wantsBuy = useRef(autoBuy)
+  const autoBought = useRef(false)
+  useEffect(() => {
+    if (!wantsBuy.current || autoBought.current || !listing || listingIsMine) return
+    autoBought.current = true
+    startFill('buy', listing)
+  }, [listing, listingIsMine])
+  const [viewing, setViewing] = useState(false)
 
   return (
     <>
@@ -116,7 +152,21 @@ export default function ItemView({
       <Card aria-label={title} data-item-view>
         <Layout>
           <div className="pic">
-            <NftImage src={item.nft?.image || meta.image} alt={title} fit="contain" />
+            <button
+              type="button"
+              onClick={() => setViewing(true)}
+              aria-label={`View ${title} full screen`}
+              style={{
+                display: 'block',
+                width: '100%',
+                padding: 0,
+                border: 'none',
+                background: 'none',
+                cursor: 'zoom-in',
+              }}
+            >
+              <NftImage src={item.nft?.image || meta.image} alt={title} fit="contain" />
+            </button>
           </div>
           <div className="meta">
             <Head>
@@ -146,21 +196,45 @@ export default function ItemView({
             {listing && !listingIsMine && !review && (
               <Action
                 type="button"
-                disabled={busy}
-                onClick={() => setReview({ side: 'buy', order: listing })}
+                disabled={busy || !!ticket?.busy}
+                onClick={() => startFill('buy', listing)}
                 data-item-buy
               >
                 Buy for {formatPrice(listing.price)}
               </Action>
             )}
             {mine && item.offer && !review && (
-              <Action type="button" disabled={busy} onClick={() => setReview({ side: 'sell', order: item.offer! })}>
-                Accept {formatPrice(item.offer.price)} offer
+              <Action
+                type="button"
+                disabled={busy || !!ticket?.busy}
+                onClick={() => startFill('sell', item.offer!)}
+                data-item-sell
+              >
+                Sell now · {formatPrice(item.offer.price)} bid
               </Action>
             )}
           </div>
         </Layout>
       </Card>
+
+      {viewing && (
+        <Viewer
+          chainId={chainId}
+          contract={contract}
+          slug={os.slug}
+          collectionName={collectionName}
+          supply={os.info?.supply}
+          items={[{ tokenId, image: item.nft?.image || meta.image }]}
+          index={0}
+          onIndex={() => {}}
+          onClose={() => setViewing(false)}
+          unverified={unverified}
+          onOpen={(_, buy) => {
+            setViewing(false)
+            if (buy && listing && !listingIsMine) startFill('buy', listing)
+          }}
+        />
+      )}
 
       {review && (
         <FillReview

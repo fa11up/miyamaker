@@ -103,7 +103,7 @@ export const model = {
   pianoHeight: 240,
   help: false,
   about: false,
-  tracker: { row: 0, col: 0, pair: 0, focus: false, hex: '', sign: 1, edit: false, step: 1, follow: true, grains: false },
+  tracker: { row: 0, col: 0, pair: 0, focus: false, hex: '', sign: 1, edit: false, step: 1, follow: true, grains: false, zoom: 1 },
   library: null,
   wallet: '',
   fileWindow: '',
@@ -445,8 +445,10 @@ export function normalizeEvent(ev) {
     pitch: num(ev?.pitch, 0, -96, 96),
     nudge: int(ev?.nudge, 0, -50, 50),
     tail: 0,
+    cut: false,
   }
   delete out.tail
+  delete out.cut
   if (ev?.off) out.off = true
   else {
     if (Number.isFinite(ev?.sl)) out.sl = Math.max(0, Math.min(65535, ev.sl | 0))
@@ -459,6 +461,8 @@ export function normalizeEvent(ev) {
       const tail = Math.round(Number(ev.tail))
       if (tail >= 1 && tail <= 99) out.tail = tail
     }
+    // A new attack. The sequencer does not join this hit onto the previous step.
+    if (ev?.cut) out.cut = true
   }
   return out
 }
@@ -751,31 +755,58 @@ export function hitsFor(col, pad) {
   return out
 }
 
+function runTail(ev) {
+  const t = Math.round(Number(ev?.tail))
+  if (!Number.isFinite(t) || t < 1 || t >= 100) return 100
+  return t
+}
+
 /**
  * Bars on one sequence row. Each pitch is its own bar, so a chord shows every note.
- * Consecutive steps of one pitch join. Two notes of the same pitch on one step stay apart.
+ * Consecutive steps of one pitch join into a held note.
+ * A hit with `cut` starts its own note, so two chops can sit against each other.
+ * Two notes of the same pitch on one step stay apart.
  */
 export function noteRuns(steps, pad) {
   const n = steps?.length || 0
   const open = []
   const runs = []
+  const take = (run, hit, s) => {
+    run.end = s
+    run.tail = runTail(hit.ev)
+    run.slots.push({ step: s, lane: hit.lane })
+  }
   for (let s = 0; s < n; s++) {
     const hits = hitsFor(steps[s], pad)
     const used = new Set()
     for (const run of open) {
       if (run.end !== s - 1) continue
-      const idx = hits.findIndex((hit, i) => !used.has(i) && (hit.ev.pitch | 0) === run.pitch)
+      const idx = hits.findIndex((hit, i) => !used.has(i) && !hit.ev.cut && (hit.ev.pitch | 0) === run.pitch && hit.lane === run.lane)
       if (idx < 0) continue
       used.add(idx)
-      run.end = s
-      run.ev = hits[idx].ev
+      take(run, hits[idx], s)
+    }
+    for (const run of open) {
+      if (run.end === s || run.end !== s - 1) continue
+      const idx = hits.findIndex((hit, i) => !used.has(i) && !hit.ev.cut && (hit.ev.pitch | 0) === run.pitch)
+      if (idx < 0) continue
+      used.add(idx)
+      take(run, hits[idx], s)
     }
     for (let i = open.length - 1; i >= 0; i--) {
       if (open[i].end !== s) open.splice(i, 1)
     }
     hits.forEach((hit, i) => {
       if (used.has(i)) return
-      const run = { start: s, end: s, pitch: hit.ev.pitch | 0, ev: hit.ev }
+      const run = {
+        start: s,
+        end: s,
+        pitch: hit.ev.pitch | 0,
+        ev: hit.ev,
+        lane: hit.lane,
+        tail: runTail(hit.ev),
+        slots: [{ step: s, lane: hit.lane }],
+      }
       open.push(run)
       runs.push(run)
     })
@@ -942,7 +973,7 @@ export function commitTrackerNote({ pad = 0, vel = TRACK_VEL, pitch = 0, off = f
     model.tracker.focus = true
     writeLane(writeRow, lane, ev)
   })
-  return { row: writeRow, lane }
+  return { row: writeRow, lane, pattern: model.pattern || 0, pad: ev.pad }
 }
 
 export function patchTrackerEvent(row, lane, patch, { step = true } = {}) {

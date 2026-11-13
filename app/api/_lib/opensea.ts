@@ -89,6 +89,15 @@ export const GET_OPS: Record<string, GetOp> = {
     params: { slug: isSlug, id: isTokenId },
     path: (p) => `/api/v2/offers/collection/${e(p.slug!)}/nfts/${p.id}/best`,
   },
+  // Every trait value in a collection with how many hold it: rarity in the viewer.
+  traits: { params: { slug: isSlug }, path: (p) => `/api/v2/traits/${e(p.slug!)}` },
+  // A page of a collection's NFTs (all of them, for sale or not): the terminal's gallery.
+  collection_nfts: {
+    params: { slug: isSlug },
+    optional: { next: isCursor },
+    path: (p) => `/api/v2/collection/${e(p.slug!)}/nfts`,
+    query: (p) => ({ limit: '50', ...(p.next ? { next: p.next } : {}) }),
+  },
   search: {
     params: { query: isQuery, chain: isChain },
     path: () => `/api/v2/search`,

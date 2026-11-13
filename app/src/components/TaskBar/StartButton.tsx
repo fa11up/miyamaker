@@ -17,6 +17,7 @@ import LaunchList from '@/components/LaunchKit/LaunchList'
 import { preloadApp } from '@/constants/appLoaders'
 import { PROGRAM_GROUPS } from '@/constants/programs'
 import { setPrefs, startScreensaverPreview, useDesktopPrefs } from '@/desktop/prefs'
+import { ACTIVITY_EVENT, pressedFrame } from '@/desktop/screensaver/activity'
 import { keyOf } from '@/miyamints/collections'
 import { useMyLaunches } from '@/miyamints/useMyLaunches'
 import { useManageTarget, useOpenManage } from '@/miyamints/useOpenManage'
@@ -520,12 +521,23 @@ function StartMenu({ connected, displayName, chainName, onClose, onConnect, onWa
       closeRef.current()
     }
 
+    // A click into a framed app (miyakeys) reaches this page only as a window blur and the press the frame reports
+    // (activity.ts), so those close the menu too.
+    const onBlur = () => closeRef.current()
+    const onFramePress = (e: Event) => {
+      if (pressedFrame(e)) closeRef.current()
+    }
+
     document.addEventListener('keydown', onKey)
     document.addEventListener('pointerdown', onDown)
+    window.addEventListener('blur', onBlur)
+    window.addEventListener(ACTIVITY_EVENT, onFramePress)
     ref.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus()
     return () => {
       document.removeEventListener('keydown', onKey)
       document.removeEventListener('pointerdown', onDown)
+      window.removeEventListener('blur', onBlur)
+      window.removeEventListener(ACTIVITY_EVENT, onFramePress)
     }
   }, [])
 

@@ -1,6 +1,6 @@
 {
   "name": "miyamusicmaker",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "description": "Portable MiyaMusicMaker. The instrument is the web app, opened on /music.",
   "author": "Juan Larrazabal",
@@ -26,12 +26,14 @@
     "productName": "MiyaMusicMaker",
     "copyright": "Copyright © 2026 Juan Larrazabal",
     "asar": true,
+    "icon": "build/generated/icon.png",
     "directories": {
       "output": "release",
       "buildResources": "build"
     },
     "files": [
       "main.js",
+      "serve.js",
       "package.json"
     ],
     "extraResources": [

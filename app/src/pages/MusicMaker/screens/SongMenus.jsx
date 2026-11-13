@@ -11,6 +11,7 @@ import {
 } from '../audio/song.js'
 import { beginUndo, endUndo } from '../history.js'
 import { loadTicket, sameSong, songId } from '../jobs.js'
+import { DESKTOP_PUBLISH_NOTE, isDesktopApp } from '../media/desktop.js'
 import { ensureLibrary, newFolder } from '../media/library.js'
 import { idbGet, model, touch } from '../model.js'
 import { askPublish } from '../publish.js'
@@ -30,8 +31,19 @@ function useMenuCloser(open, root, setOpen) {
       if (event.composedPath?.().includes(node)) return
       setOpen(false)
     }
+    // Capture phase, ahead of the app's own keys: Escape here only closes the menu and never reaches Rec.
+    const key = (event) => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      event.stopPropagation()
+      setOpen(false)
+    }
     window.addEventListener('pointerdown', down)
-    return () => window.removeEventListener('pointerdown', down)
+    window.addEventListener('keydown', key, true)
+    return () => {
+      window.removeEventListener('pointerdown', down)
+      window.removeEventListener('keydown', key, true)
+    }
   }, [open, root, setOpen])
 }
 
@@ -288,8 +300,12 @@ export function NewMenu() {
   )
 }
 
-/** Arweave export and Ethereum mint. SAVE and the phone Menu both render this list. */
+/**
+ * Arweave export and Ethereum mint. SAVE and the phone Menu both render this list.
+ * The desktop app has no wallet or /api, so it shows one line saying where these work instead of rows that fail.
+ */
 export function ReleaseRows({ busy, onPublish }) {
+  if (isDesktopApp()) return <p className="menu-note">{DESKTOP_PUBLISH_NOTE}</p>
   return (
     <>
       <button type="button" disabled={busy} onClick={() => onPublish('upload-song')}>Publish song to Arweave…</button>

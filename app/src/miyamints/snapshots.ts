@@ -29,8 +29,8 @@ export const SNAPSHOTS: readonly Snapshot[] = /* snapshots:start */[
     "contract": "0x0000eC93127BAA929E58E97dd0095A2BFb38ec1D",
     "block": 26397157,
     "blockTime": 1794466007,
-    "root": "0x4cf1d03afd03ad1eec81b4bdf80d278f4c97325cca4d99c6ee247db42125b635",
-    "count": 677,
+    "root": "0xb22547da7aa43d4676c69679421e7cfd17ec548409eda8f8c5fae3ac17faadb8",
+    "count": 638,
     "contracts": 2
   },
   {
@@ -39,8 +39,8 @@ export const SNAPSHOTS: readonly Snapshot[] = /* snapshots:start */[
     "contract": "0x5Af0D9827E0c53E4799BB226655A1de152A425a5",
     "block": 26397157,
     "blockTime": 1794466007,
-    "root": "0x7d3aed4a692f85fb53db65fc780e9019e44648e3a5b957df917cb82b38dbb24e",
-    "count": 4507,
+    "root": "0x68e60a6d39291cec8621b2199869a15bcd7d25456434c91662ca721d0595111c",
+    "count": 4504,
     "contracts": 64
   }
 ]/* snapshots:end */

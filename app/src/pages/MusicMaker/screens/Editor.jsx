@@ -343,8 +343,20 @@ function PadPick({ pad }) {
       setBankOpen(false)
       setPadOpen(false)
     }
+    // Capture phase, ahead of the app's own keys: Escape here only closes the menu and never reaches Rec.
+    const key = (event) => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      event.stopPropagation()
+      setBankOpen(false)
+      setPadOpen(false)
+    }
     window.addEventListener('pointerdown', down)
-    return () => window.removeEventListener('pointerdown', down)
+    window.addEventListener('keydown', key, true)
+    return () => {
+      window.removeEventListener('pointerdown', down)
+      window.removeEventListener('keydown', key, true)
+    }
   }, [bankOpen, padOpen])
   const bank = model.bank | 0
   const local = model.selected % 16

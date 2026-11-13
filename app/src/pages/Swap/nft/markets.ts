@@ -192,6 +192,7 @@ const str = (v: unknown) => (typeof v === 'string' ? v : undefined)
 const obj = (v: unknown) =>
   v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : undefined
 const arr = (v: unknown) => (Array.isArray(v) ? v : [])
+const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : undefined)
 
 export type OsCollection = {
   slug: string
@@ -203,6 +204,8 @@ export type OsCollection = {
   verified: boolean
   disabled: boolean
   url?: string
+  /** How many NFTs OpenSea counts in it, for rarity shares. */
+  supply?: number
 }
 
 export function parseCollection(j: unknown): OsCollection | undefined {
@@ -226,6 +229,7 @@ export function parseCollection(j: unknown): OsCollection | undefined {
     verified: o.safelist_status === 'verified',
     disabled: o.is_disabled === true,
     url: str(o.opensea_url),
+    supply: num(o.total_supply),
   }
 }
 
@@ -318,7 +322,32 @@ export function parseOfferAggregate(j: unknown): { price: Price; count: number }
 /** Plain words for a fill planFill could not read: its own messages name fields, for developers. */
 const UNREADABLE = 'OpenSea sent an order we could not read. Nothing has moved. Try again.'
 
-export type OsNft = { name?: string; image?: string; owners: string[]; standard?: string; suspicious: boolean }
+export type OsTrait = { trait: string; value: string }
+export type OsNft = {
+  name?: string
+  image?: string
+  owners: string[]
+  standard?: string
+  suspicious: boolean
+  traits: OsTrait[]
+  /** OpenSea's rarity rank (1 = rarest), when it has one. */
+  rank?: number
+}
+
+const traitText = (v: unknown) =>
+  (typeof v === 'string' || typeof v === 'number' ? String(v) : '')
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u001f\u007f]/g, '')
+    .trim()
+    .slice(0, 60)
+
+/** OpenSea's `traits` list as plain pairs (at most 40). */
+export function parseTraits(list: unknown): OsTrait[] {
+  return arr(list)
+    .map((t) => ({ trait: traitText(obj(t)?.trait_type), value: traitText(obj(t)?.value) }))
+    .filter((t) => t.trait && t.value)
+    .slice(0, 40)
+}
 
 export function parseNft(j: unknown): OsNft | undefined {
   const n = obj(obj(j)?.nft)
@@ -331,7 +360,50 @@ export function parseNft(j: unknown): OsNft | undefined {
       .filter(Boolean),
     standard: str(n.token_standard),
     suspicious: n.is_suspicious === true,
+    traits: parseTraits(n.traits),
+    rank: num(obj(n.rarity)?.rank),
   }
+}
+
+/** /traits/<slug>: how many NFTs hold each value of each trait. Keys are lowercased so they match any casing. */
+export type TraitCounts = Record<string, Record<string, number>>
+export function parseTraitCounts(j: unknown): TraitCounts {
+  const counts = obj(obj(j)?.counts)
+  // No prototype: a trait or value named "constructor" or "__proto__" is just a key.
+  const out: TraitCounts = Object.create(null)
+  if (!counts) return out
+  for (const [trait, values] of Object.entries(counts).slice(0, 200)) {
+    const v = obj(values)
+    if (!v) continue
+    const row: Record<string, number> = Object.create(null)
+    for (const [value, n] of Object.entries(v).slice(0, 2000)) {
+      if (typeof n === 'number' && Number.isFinite(n) && n >= 0) row[value.toLowerCase()] = n
+    }
+    out[trait.toLowerCase()] = row
+  }
+  return out
+}
+
+/** Share of the collection holding a value (0..1), or undefined when the counts or the size are unknown. */
+export function traitShare(counts: TraitCounts | undefined, t: OsTrait, size: number | undefined) {
+  const row = counts && Object.hasOwn(counts, t.trait.toLowerCase()) ? counts[t.trait.toLowerCase()] : undefined
+  const n = row && Object.hasOwn(row, t.value.toLowerCase()) ? row[t.value.toLowerCase()] : undefined
+  return typeof n === 'number' && size && size > 0 ? Math.min(1, n / size) : undefined
+}
+
+export type GalleryItem = { tokenId: string; name?: string; image?: string }
+/** /collection/<slug>/nfts: one page of the gallery and the cursor for the next. */
+export function parseCollectionNfts(j: unknown): { items: GalleryItem[]; next?: string } {
+  const items = arr(obj(j)?.nfts)
+    .map(obj)
+    .map((n) => ({
+      tokenId: str(n?.identifier) || '',
+      name: str(n?.name) || undefined,
+      image: str(n?.display_image_url) || str(n?.image_url) || undefined,
+    }))
+    .filter((n) => /^[0-9]{1,78}$/.test(n.tokenId))
+  const next = str(obj(j)?.next)
+  return { items, next: next || undefined }
 }
 
 export type OsSearchHit = {

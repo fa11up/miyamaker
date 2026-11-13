@@ -1,4 +1,5 @@
 import { importFile, importRemote, noteOff, noteOn } from './audio/engine.js'
+import { withSongValues } from './audio/arrange.js'
 import { importPictureUrl } from './media/pictures.js'
 import { beginUndo, endUndo, stashUndo } from './history.js'
 import { loadCached, readDirectoryFile } from './media/library.js'
@@ -103,7 +104,8 @@ function clonePad(src, index) {
 export async function copyPad(index) {
   const src = model.pads[index]
   if (!src) return
-  const pad = clonePad(src, index)
+  // The pad's own levels, not the ones playback automation is holding right now.
+  const pad = withSongValues(model, () => clonePad(src, index))
   pad.mute = false
   pad.solo = false
   let entry = audioBank.get(index)

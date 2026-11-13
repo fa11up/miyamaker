@@ -1,0 +1,8 @@
+These 72x72 PNGs are Twemoji graphics, copied unchanged from jdecked/twemoji at tag v15.1.0
+(https://github.com/jdecked/twemoji, assets/72x72/<codepoint>.png).
+
+Copyright 2019 Twitter, Inc and other contributors. Graphics licensed under CC-BY 4.0:
+https://creativecommons.org/licenses/by/4.0/
+
+They are served from this site so the miyakeys frame loads nothing from a third-party CDN
+(its Content-Security-Policy allows images from this origin only).

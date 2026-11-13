@@ -39,11 +39,25 @@ const Tag = styled.span`
   z-index: 1;
   left: 8px;
   top: 8px;
+  /* A long caption (community notice and the sale) wraps instead of running over the art's edge. */
+  max-width: calc(100% - 16px);
   padding: 2px 7px;
   border-radius: 3px;
   background: rgba(12, 10, 24, 0.8);
   color: #fff;
   font-size: 13px;
+`
+
+const Notice = styled.p`
+  && {
+    margin: 0;
+    padding: 6px 9px;
+    border: 1px solid #ffd27a;
+    border-radius: 4px;
+    background: rgba(60, 40, 0, 0.55);
+    color: #ffe2a6;
+    font-size: 14px;
+  }
 `
 
 const Info = styled.div`
@@ -87,7 +101,8 @@ const Info = styled.div`
     font-size: 14px;
     overflow-wrap: anywhere;
   }
-  input:not([type='checkbox']) {
+  /* Low weight, so a themed field (handheld/Options) can dress itself. */
+  :where(input:not([type='checkbox']):not([type='radio'])) {
     width: 100%;
     min-height: 36px;
     padding: 0 8px;
@@ -139,6 +154,7 @@ export default function MintCart({
   supply,
   left,
   notes,
+  notice,
   quantity,
   maxQty,
   busy,
@@ -169,6 +185,8 @@ export default function MintCart({
   supply?: number
   left?: number
   notes?: ReactNode
+  /** Shown first on the Info screen, in a box: e.g. that a community mint is not made by miyamaker. */
+  notice?: ReactNode
   quantity: number
   maxQty: number
   busy: boolean
@@ -259,6 +277,7 @@ export default function MintCart({
                 <h2>{name}</h2>
                 {artist}
               </div>
+              {notice && <Notice role="note">{notice}</Notice>}
               {blurb && <p>{blurb}</p>}
               <HoloButton
                 type="button"

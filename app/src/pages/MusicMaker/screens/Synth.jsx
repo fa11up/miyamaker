@@ -24,15 +24,27 @@ export function Synth() {
     const id = window.setInterval(() => setTake(synthTakeStatus()), 80)
     return () => window.clearInterval(id)
   }, [take.on])
-  useEffect(() => () => {
-    if (synthTakeStatus().on) stopSynthTake()
+  const mounted = useRef(true)
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+      if (synthTakeStatus().on) stopSynthTake()
+    }
   }, [])
   const armTake = () => {
     if (synthTakeStatus().on) {
       setTake(stopSynthTake())
       return
     }
-    startSynthTake(depth).then((status) => setTake(status))
+    startSynthTake(depth).then((status) => {
+      // The take can start after the screen has closed. Nobody is left to stop it, so stop it here.
+      if (!mounted.current) {
+        if (synthTakeStatus().on) stopSynthTake()
+        return
+      }
+      setTake(status)
+    })
   }
   const edit = (partial) => {
     Object.assign(patch, partial)

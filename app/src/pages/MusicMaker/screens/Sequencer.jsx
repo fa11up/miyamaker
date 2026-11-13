@@ -1,8 +1,8 @@
 import { Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { BANKS, model, currentPattern, addBar, removeBar, doubleUp, stepCount, touch } from '../model.js'
+import { BANKS, model, currentPattern, addBar, removeBar, doubleUp, noteRuns, normalizeEvent, stepCount, touch } from '../model.js'
 import { syncMixer } from '../audio/engine.js'
-import { edgeParts, gridDiv, gridEnd, gridPlace, gridUnit } from '../audio/voices.js'
+import { chopParts, gridDiv, gridPlace, gridUnit } from '../audio/voices.js'
 import { useModel } from '../useModel.js'
 import { noteName } from '../keys.js'
 import { HelpButton, Slider } from '../widgets.jsx'
@@ -44,14 +44,19 @@ function currentPicks() {
   if (seqUi.picks.length) return seqUi.picks
   const hit = model.seqHit
   if (!hit) return []
-  return [{ id: seqUi.primaryId || 0, pad: hit.pad, start: hit.step, end: hit.end ?? hit.step }]
+  return [{ id: seqUi.primaryId || 0, pad: hit.pad, start: hit.step, end: hit.end ?? hit.step, lane: hit.lane }]
 }
 
 function showPicks(picks, primaryId = seqUi.primaryId) {
   seqUi.picks = picks
   const primary = picks.find((p) => p.id === primaryId) || picks[picks.length - 1] || null
   seqUi.primaryId = primary ? primary.id : null
-  model.seqHit = primary ? { step: primary.start, pad: primary.pad, end: primary.end } : null
+  model.seqHit = primary ? { step: primary.start, pad: primary.pad, end: primary.end, lane: primary.lane ?? null } : null
+}
+
+function hitOf(pick, run) {
+  if (pick.lane != null && run.lane != null) return pick.pad === run.pad && pick.lane === run.lane && pick.start === run.start
+  return pick.pad === run.pad && pick.start === run.start && pick.end === run.end
 }
 
 /** Copy the selected hits and drop a paste line on the next beat. */
@@ -62,10 +67,12 @@ export function copySeqSelection() {
   const anchor = Math.min(...picks.map((p) => p.start))
   const notes = []
   for (const p of picks) {
+    const run = resolvePick(seq, p)
+    if (!run) continue
     const evs = []
-    for (let s = p.start; s <= p.end; s++) {
-      const hit = readHit(seq.steps[s], p.pad)
-      if (hit) evs.push({ rel: s - anchor, ev: { ...hit.ev } })
+    for (const slot of run.slots) {
+      const ev = seq.steps[slot.step]?.[slot.lane]
+      if (ev && ev.pad === p.pad) evs.push({ rel: slot.step - anchor, ev: { ...ev } })
     }
     if (evs.length) notes.push({ pad: p.pad, evs })
   }
@@ -94,32 +101,27 @@ export function pasteSeqSelection() {
   if (at == null || at < 0) at = 0
   if (at + span >= n) at = Math.max(0, n - 1 - span)
   seqUi.pasteAt = at
-  for (const note of clip.notes) {
-    for (const item of note.evs) {
-      const s = at + item.rel
-      const col = seq.steps[s]
-      if (!col) continue
-      const pitch = item.ev.pitch | 0
-      for (let i = 0; i < col.length; i++) {
-        if (col[i] && col[i].pad === note.pad && (col[i].pitch | 0) === pitch) col[i] = null
-      }
-    }
-  }
   const picks = []
   for (const note of clip.notes) {
     let start = Infinity
     let end = -1
+    let lane0 = null
+    const firstRel = Math.min(...note.evs.map((item) => item.rel))
     for (const item of note.evs) {
       const s = at + item.rel
       const col = seq.steps[s]
       if (!col) continue
       const lane = col.findIndex((e) => !e)
       if (lane < 0) continue
-      col[lane] = { ...item.ev, pad: note.pad }
+      const ev = { ...item.ev, pad: note.pad }
+      if (item.rel === firstRel) ev.cut = true
+      else delete ev.cut
+      col[lane] = normalizeEvent(ev)
+      if (lane0 == null || s < start) lane0 = lane
       if (s < start) start = s
       if (s > end) end = s
     }
-    if (end >= 0) picks.push({ id: nextPickId(), pad: note.pad, start, end })
+    if (end >= 0) picks.push({ id: nextPickId(), pad: note.pad, start, end, lane: lane0 })
   }
   showPicks(picks, picks[picks.length - 1]?.id)
   if (seqUi.tool === 'erase') seqUi.tool = 'select'
@@ -133,10 +135,14 @@ export function deleteSeqSelection() {
   if (!picks.length) return false
   const seq = currentPattern()
   for (const p of picks) {
-    for (let s = p.start; s <= p.end; s++) {
-      const col = seq.steps[s]
-      const hit = readHit(col, p.pad)
-      if (hit) col[hit.lane] = null
+    const run = resolvePick(seq, p)
+    if (run) clearSlots(seq, run)
+    else {
+      for (let s = p.start; s <= p.end; s++) {
+        const col = seq.steps[s]
+        const hit = readHit(col, p.pad)
+        if (hit) col[hit.lane] = null
+      }
     }
   }
   showPicks([])
@@ -240,10 +246,12 @@ function SnapControl() {
           }
           swallow.current = false
           window.clearTimeout(hold.current)
+          // A finger that slides off the button is not a hold, so leaving clears this too.
           hold.current = window.setTimeout(openMenu, 420)
         }}
         onPointerUp={() => window.clearTimeout(hold.current)}
         onPointerCancel={() => window.clearTimeout(hold.current)}
+        onPointerLeave={() => window.clearTimeout(hold.current)}
         onContextMenu={(event) => {
           event.preventDefault()
           openMenu()
@@ -305,23 +313,20 @@ export function Sequencer() {
   const primary = picks.find((p) => p.id === seqUi.primaryId) || picks[picks.length - 1] || null
   if (primary) {
     const h = model.seqHit
-    if (!h || h.pad !== primary.pad || h.step !== primary.start || (h.end ?? h.step) !== primary.end) {
-      model.seqHit = { step: primary.start, pad: primary.pad, end: primary.end }
+    if (!h || h.pad !== primary.pad || h.step !== primary.start || (h.end ?? h.step) !== primary.end || h.lane !== primary.lane) {
+      model.seqHit = { step: primary.start, pad: primary.pad, end: primary.end, lane: primary.lane ?? null }
     }
   } else if (model.seqHit) model.seqHit = null
   const hit = model.seqHit
-  const selected = hit ? readHit(seq.steps[hit.step], hit.pad) : null
-  const from = hit ? Math.min(hit.step, hit.end ?? hit.step) : 0
-  const to = hit ? Math.max(hit.step, hit.end ?? hit.step) : 0
-  const lastHit = hit ? readHit(seq.steps[to], hit.pad) : null
-  const noteTail = eventTail(lastHit?.ev)
-  const noteEdge = to + noteTail / 100
+  const primaryRun = hit ? resolveHit(seq, hit) : null
+  const selected = primaryRun ? { lane: primaryRun.lane, ev: primaryRun.ev } : (hit ? readHit(seq.steps[hit.step], hit.pad) : null)
+  const span = primaryRun ? visualSpan(primaryRun) : null
   const snapOn = model.seqSnap !== false
   const endUnit = snapOn ? gridUnit(model.seqDiv) : 0.01
-  const endMax = hit ? nextWall(seq, hit.pad, from, to, steps) : steps
-  const endMin = from + endUnit
+  const endMax = primaryRun ? nextEdge(seq, primaryRun, steps) : steps
+  const endMin = span ? span.start + endUnit : endUnit
   const endCeiling = Math.max(endMin, endMax)
-  const endValue = Math.max(endMin, Math.min(endCeiling, noteEdge))
+  const endValue = span ? Math.max(endMin, Math.min(endCeiling, span.end)) : endMin
   const cellW = clamp(seqUi.cellW, CELL_MIN, CELL_MAX)
   const cellH = clamp(seqUi.cellH, ROW_MIN, ROW_MAX)
   const atMin = cellW <= CELL_MIN + 0.5 && cellH <= ROW_MIN + 0.5
@@ -329,9 +334,8 @@ export function Sequencer() {
   const showY = picks.length > 0 && seqUi.tool !== 'erase'
   const showX = showY || seqUi.pasteAt != null
   const pickKey = picks.map((p) => {
-    const last = readHit(seq.steps[p.end], p.pad)
-    const first = readHit(seq.steps[p.start], p.pad)
-    return `${p.id}:${p.pad}:${p.start}:${p.end}:${eventTail(last?.ev)}:${first?.ev?.nudge || 0}`
+    const run = resolvePick(seq, p)
+    return `${p.id}:${p.pad}:${p.lane ?? ''}:${p.start}:${p.end}:${run?.tail ?? 100}:${run?.ev?.nudge || 0}`
   }).join(',')
 
   useLayoutEffect(() => {
@@ -341,6 +345,12 @@ export function Sequencer() {
     setSlot(slotEl)
     if (!rail) return undefined
     const apply = () => {
+      // The desktop rail is an 18px strip for Browser, Arranger, and SHIFT.
+      // Sequence tools stay above the grid there. They stack only in the wider phone rail.
+      if (rail.clientWidth < 40) {
+        setDock(false)
+        return
+      }
       let used = 0
       for (const child of rail.children) {
         if (child === slotEl) continue
@@ -487,6 +497,7 @@ export function Sequencer() {
         onPointerMove={move}
         onPointerUp={end}
         onPointerCancel={end}
+        onLostPointerCapture={end}
       >
         <div className={`part view-${seqUi.view}`} data-coach="seq" ref={gridRef}>
           <div
@@ -508,6 +519,7 @@ export function Sequencer() {
               const pad = model.bank * 16 + local
               const fx = leadFx(pad)
               const amount = fx && fx.slot.type !== 'none' ? fx.slot.amount : 0
+              const runs = runsFor(seq, pad)
               return (
                 <Fragment key={pad}>
                   <div className="part-name" style={{ gridRow: local + 2 }} title={model.pads[pad].name}>{model.pads[pad].name}</div>
@@ -522,16 +534,18 @@ export function Sequencer() {
                       {seqUi.view === 'fx' && <span className="fx" style={{ height: `${Math.round(amount * 100)}%` }} />}
                     </div>
                   ))}
-                  {runsFor(seq, pad).map((run) => {
-                    const picked = picks.find((p) => p.pad === pad && p.start === run.start && p.end === run.end)
+                  {runs.map((run) => {
+                    const picked = picks.find((p) => hitOf(p, run))
+                    const box = visualSpan(run)
                     const tail = run.tail ?? 100
                     const missing = tail < 100 ? ((100 - tail) / 100) * Math.round(cellW) : 0
+                    const stacked = runs.some((other) => other !== run && spansOverlap(box, visualSpan(other)))
                     return (
                       <button
-                        key={`${run.start}-${run.pitch}`}
+                        key={`${run.lane}-${run.start}-${run.pitch}-${run.ev.nudge || 0}`}
                         type="button"
                         tabIndex={-1}
-                        className={`part-note${picked ? ' sel' : ''}${picked && picked.id === seqUi.primaryId ? ' primary' : ''}`}
+                        className={`part-note${stacked ? ' stacked' : ''}${picked ? ' sel' : ''}${picked && picked.id === seqUi.primaryId ? ' primary' : ''}`}
                         style={{
                           gridColumn: `${run.start + 2} / ${run.end + 3}`,
                           gridRow: local + 2,
@@ -541,6 +555,7 @@ export function Sequencer() {
                         data-pad={pad}
                         data-start={run.start}
                         data-end={run.end}
+                        data-lane={run.lane}
                         data-pitch={run.pitch}
                         aria-label={`${model.pads[pad].name} ${noteName(run.ev.pitch)} steps ${run.start + 1} to ${run.end + 1}`}
                       >
@@ -592,7 +607,7 @@ export function Sequencer() {
             value={Math.max(-24, Math.min(24, selected.ev.pitch | 0))}
             text={noteName(selected.ev.pitch)}
             onChange={(v) => {
-              for (let s = from; s <= to; s++) writeStep(s, hit.pad, { pitch: v })
+              if (primaryRun) patchSlots(seq, primaryRun, { pitch: v })
               touch(true)
             }}
           />
@@ -604,7 +619,7 @@ export function Sequencer() {
             value={selected.ev.vel}
             text={String(Math.round(selected.ev.vel * 127))}
             onChange={(v) => {
-              for (let s = from; s <= to; s++) writeStep(s, hit.pad, { vel: v })
+              if (primaryRun) patchSlots(seq, primaryRun, { vel: v })
               touch(true)
             }}
           />
@@ -616,7 +631,7 @@ export function Sequencer() {
             value={selected.ev.nudge || 0}
             text={`${selected.ev.nudge || 0}%`}
             onChange={(v) => {
-              for (let s = from; s <= to; s++) writeStep(s, hit.pad, { nudge: v })
+              if (primaryRun) patchSlots(seq, primaryRun, { nudge: v })
               touch(true)
             }}
           />
@@ -627,8 +642,8 @@ export function Sequencer() {
               max={endCeiling}
               step={endUnit}
               value={endValue}
-              text={formatLen(endValue - from)}
-              onChange={(v) => commitRunEdge(hit.pad, from, v)}
+              text={formatLen(span ? endValue - span.start : endValue)}
+              onChange={(v) => primaryRun && commitRunEdge(hit.pad, primaryRun.lane, primaryRun.start, v)}
             />
           </div>
           <button type="button" className="btn free-width" onClick={deleteSeqSelection}>
@@ -643,8 +658,10 @@ export function Sequencer() {
     if (e.button !== 0) return
     const grid = gridRef.current
     if (!grid) return
-    pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY })
-    if (pointers.current.size >= 2) {
+    // A finger counts only once its gesture is armed (capture adds it). A press that armed nothing
+    // stays out, or it would sit in the map and turn the next lone finger into a pinch.
+    if (pointers.current.size >= 1 && !pointers.current.has(e.pointerId)) {
+      pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY })
       const g = gesture.current
       gesture.current = null
       if (g?.frame) cancelAnimationFrame(g.frame)
@@ -688,7 +705,8 @@ export function Sequencer() {
     if (!at) return
     e.preventDefault()
     if (seqUi.tool === 'select') {
-      const run = runAt(currentPattern(), at.pad, at.step)
+      const place = pointInCell(at, e.clientX, e.clientY)
+      const run = runAtX(currentPattern(), at.pad, at.step + place.frac)
       if (!run) {
         if (!seqUi.add) showPicks([])
         if (!seqUi.add) touch(false)
@@ -696,34 +714,33 @@ export function Sequencer() {
         capture(e)
         return
       }
-      const item = { id: nextPickId(), pad: at.pad, start: run.start, end: run.end }
+      const item = { id: nextPickId(), pad: run.pad, start: run.start, end: run.end, lane: run.lane }
       if (seqUi.add) {
-        const i = seqUi.picks.findIndex((p) => p.pad === item.pad && p.start === item.start && p.end === item.end)
+        const i = seqUi.picks.findIndex((p) => hitOf(p, item))
         if (i >= 0) showPicks(seqUi.picks.filter((_, n) => n !== i))
         else showPicks(seqUi.picks.concat(item), item.id)
         touch(false)
         capture(e)
         return
       }
-      const existing = seqUi.picks.find((p) => p.pad === item.pad && p.start === item.start && p.end === item.end)
+      const existing = seqUi.picks.find((p) => hitOf(p, item))
       if (existing) showPicks(seqUi.picks, existing.id)
       else showPicks([item], item.id)
       touch(false)
       armHandle(grid, e, 'move')
       return
     }
-    gesture.current = { kind: 'paint', pointer: e.pointerId, seq: currentPattern(), last: at, dirty: false, fx: false, frame: 0 }
+    const mode = seqUi.tool === 'erase' ? 'erase' : (seqUi.view === 'fx' ? 'fx' : 'note')
+    gesture.current = { kind: 'paint', pointer: e.pointerId, seq: currentPattern(), last: at, dirty: false, fx: false, frame: 0, mode, stroke: null }
     capture(e)
-    paintAt(at, e.clientY)
+    if (mode === 'erase') eraseAt(at, e.clientX)
+    else if (mode === 'fx') paintFx(at, e.clientY)
+    else paintStroke(at, e.clientX, e.clientY, true)
   }
 
   function armHandle(grid, e, kind) {
     const live = currentPattern()
-    const runs = seqUi.picks.map((p) => {
-      const hit = readHit(live.steps[p.start], p.pad)
-      const last = readHit(live.steps[p.end], p.pad)
-      return { ...p, nudge: hit?.ev.nudge || 0, tail: eventTail(last?.ev) }
-    })
+    const runs = seqUi.picks.map((p) => gestureRun(live, p)).filter(Boolean)
     if (!runs.length) return
     const cell = grid.querySelector('.part-cell')?.getBoundingClientRect()
     gesture.current = {
@@ -762,6 +779,7 @@ export function Sequencer() {
   }
 
   function capture(e) {
+    pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY })
     const node = frameRef.current
     try { node?.setPointerCapture(e.pointerId) } catch { /* already gone */ }
   }
@@ -792,9 +810,18 @@ export function Sequencer() {
     if (g.kind === 'paint') {
       const cell = cellFromPoint(grid, e.clientX, e.clientY)
       if (!cell) return
-      const fromCell = g.last || cell
-      walkCells(grid, fromCell, cell, (at) => paintAt(at, e.clientY))
-      g.last = cell
+      if (g.mode === 'fx') {
+        const fromCell = g.last || cell
+        walkCells(grid, fromCell, cell, (at) => paintFx(at, e.clientY))
+        g.last = cell
+        return
+      }
+      if (g.mode === 'erase') {
+        eraseAt(cell, e.clientX)
+        return
+      }
+      if (g.stroke && cell.pad !== g.stroke.pad) paintStroke(cell, e.clientX, e.clientY, true)
+      else paintStroke(cell, e.clientX, e.clientY, false)
       return
     }
     if (g.kind === 'paste') {
@@ -844,54 +871,105 @@ export function Sequencer() {
     if (g.dirty) touch(true)
   }
 
-  function paintAt(at, clientY) {
+  function paintFx(at, clientY) {
     const g = gesture.current
-    const rect = at.el?.getBoundingClientRect()
-    const up = rect ? 1 - Math.max(0, Math.min(1, (clientY - rect.top) / Math.max(1, rect.height))) : 0.75
-    const column = (g?.seq || currentPattern()).steps[at.step]
-    if (!column) return
-    if (seqUi.tool === 'erase') {
-      const lane = column.findIndex((ev) => ev && ev.pad === at.pad)
-      if (lane < 0) return
-      column[lane] = null
-      seqUi.picks = seqUi.picks.filter((p) => !(p.pad === at.pad && at.step >= p.start && at.step <= p.end))
-      if (!seqUi.picks.some((p) => p.id === seqUi.primaryId)) {
-        seqUi.primaryId = seqUi.picks[seqUi.picks.length - 1]?.id || null
-      }
-      const p = seqUi.picks.find((x) => x.id === seqUi.primaryId) || null
-      model.seqHit = p ? { step: p.start, pad: p.pad, end: p.end } : null
+    const place = pointInCell(at, 0, clientY)
+    const led = leadFx(at.pad)
+    if (!led || !g) return
+    const amount = Math.round(place.up * 100) / 100
+    if (led.slot.type === 'none') led.slot.type = 'filter'
+    if (Math.abs(led.slot.amount - amount) >= 0.01) led.slot.amount = amount
+    g.fx = true
+    mark(g)
+  }
+
+  function eraseAt(at, clientX) {
+    const g = gesture.current
+    const seq = g?.seq || currentPattern()
+    const place = pointInCell(at, clientX, 0)
+    const run = runAtX(seq, at.pad, at.step + place.frac)
+    if (!run) return
+    clearSlots(seq, run)
+    seqUi.picks = seqUi.picks.filter((p) => !hitOf(p, run))
+    if (!seqUi.picks.some((p) => p.id === seqUi.primaryId)) {
+      seqUi.primaryId = seqUi.picks[seqUi.picks.length - 1]?.id || null
+    }
+    const p = seqUi.picks.find((x) => x.id === seqUi.primaryId) || null
+    model.seqHit = p ? { step: p.start, pad: p.pad, end: p.end, lane: p.lane ?? null } : null
+    mark(g)
+  }
+
+  function paintStroke(at, clientX, clientY, fresh) {
+    const g = gesture.current
+    if (!g) return
+    const seq = g.seq || currentPattern()
+    const place = pointInCell(at, clientX, clientY)
+    const x = at.step + place.frac
+    const snap = model.seqSnap !== false
+    const div = gridDiv(model.seqDiv)
+    const n = stepCount(seq)
+    const unit = snap ? gridUnit(div) : 1
+    const pitch = Math.max(-24, Math.min(24, Math.round(-24 + place.up * 48)))
+    const vel = Math.max(0.05, Math.min(1, place.up))
+
+    if (!fresh && g.stroke && at.pad === g.stroke.pad) {
+      if (seqUi.view === 'note') g.stroke.pitch = pitch
+      if (seqUi.view === 'vel') g.stroke.vel = vel
+      const minLen = snap ? gridUnit(div) : 1
+      let end = Math.max(g.stroke.visualStart + minLen, x)
+      end = capEnd(seq, g.stroke.pad, g.stroke.pitch, g.stroke.visualStart, end, g.stroke)
+      if (end < g.stroke.visualStart + 0.01) end = g.stroke.visualStart + minLen
+      const parts = chopParts(g.stroke.visualStart, end, n, snap, div)
+      const existing = runsFor(seq, g.stroke.pad).find((r) => r.lane === g.stroke.lane && r.start === g.stroke.step)
+      if (existing) clearSlots(seq, existing)
+      const run = writeChop(seq, g.stroke.pad, parts, g.stroke)
+      if (!run) return
+      g.stroke.lane = run.lane
+      g.stroke.step = run.start
+      showPicks([{ id: g.stroke.pickId, pad: run.pad, start: run.start, end: run.end, lane: run.lane }], g.stroke.pickId)
       mark(g)
       return
     }
-    if (seqUi.view === 'fx') {
-      const led = leadFx(at.pad)
-      if (!led) return
-      const amount = Math.round(up * 100) / 100
-      if (led.slot.type === 'none') led.slot.type = 'filter'
-      if (Math.abs(led.slot.amount - amount) >= 0.01) led.slot.amount = amount
-      g.fx = true
+
+    if (!fresh) return
+    const under = runAtX(seq, at.pad, x)
+    if (under) {
+      const patch = seqUi.view === 'note' ? { pitch } : { vel }
+      patchSlots(seq, under, patch)
+      g.stroke = null
+      const id = nextPickId()
+      showPicks([{ id, pad: under.pad, start: under.start, end: under.end, lane: under.lane }], id)
       mark(g)
       return
     }
-    let lane = column.findIndex((ev) => ev && ev.pad === at.pad)
-    if (lane < 0) {
-      lane = column.findIndex((ev) => !ev)
-      if (lane < 0) return
-      column[lane] = { pad: at.pad, vel: 0.9, pitch: 0, nudge: 0 }
+    const guess = chopParts(x, x + unit, n, snap, div)
+    const visualStart = guess.step + guess.nudge / 100
+    let visualEnd = guess.end + guess.tail / 100 + guess.nudge / 100
+    const room = capEnd(seq, at.pad, seqUi.view === 'note' ? pitch : 0, visualStart, visualEnd, null)
+    const parts = room < visualEnd - 0.001 && room > visualStart + 0.01
+      ? chopParts(visualStart, room, n, snap, div)
+      : guess
+    const proto = {
+      vel: seqUi.view === 'vel' ? vel : 0.9,
+      pitch: seqUi.view === 'note' ? pitch : 0,
+      cut: true,
+      lane: -1,
     }
-    const ev = column[lane]
-    if (seqUi.view === 'note') {
-      const pitch = Math.max(-24, Math.min(24, Math.round(-24 + up * 48)))
-      if ((ev.pitch | 0) !== pitch) ev.pitch = pitch
-    } else {
-      const vel = Math.max(0.05, Math.min(1, up))
-      if (Math.abs(ev.vel - vel) >= 0.01) ev.vel = vel
+    const run = writeChop(seq, at.pad, parts, proto)
+    if (!run) return
+    const pickId = nextPickId()
+    const drawn = visualSpan(run)
+    g.stroke = {
+      pad: run.pad,
+      lane: run.lane,
+      step: run.start,
+      visualStart: drawn.start,
+      pitch: proto.pitch,
+      vel: proto.vel,
+      cut: true,
+      pickId,
     }
-    const run = runAt(currentPattern(), at.pad, at.step)
-    const item = run
-      ? { id: nextPickId(), pad: at.pad, start: run.start, end: run.end }
-      : { id: nextPickId(), pad: at.pad, start: at.step, end: at.step }
-    showPicks([item], item.id)
+    showPicks([{ id: pickId, pad: run.pad, start: run.start, end: run.end, lane: run.lane }], pickId)
     mark(g)
   }
 }
@@ -920,15 +998,6 @@ function readHit(col, pad) {
   return { lane, ev: col[lane] }
 }
 
-/** How much of the last step a note fills. A missing tail is the whole step. */
-function eventTail(ev) {
-  const t = Number(ev?.tail)
-  if (!Number.isFinite(t)) return 100
-  const n = Math.round(t)
-  if (n < 1 || n >= 100) return 100
-  return n
-}
-
 function formatLen(steps) {
   const q = Math.round(Number(steps) * 100) / 100
   if (!Number.isFinite(q)) return '0'
@@ -936,160 +1005,202 @@ function formatLen(steps) {
   return String(q)
 }
 
-function nextWall(seq, pad, start, end, n) {
-  for (let s = end + 1; s < n; s++) {
-    if (readHit(seq.steps[s], pad)) return s
-  }
-  return n
+function pointInCell(cell, clientX, clientY) {
+  const rect = cell?.el?.getBoundingClientRect()
+  if (!rect || rect.width < 1 || rect.height < 1) return { frac: 0, up: 0.75 }
+  const frac = Math.max(0, Math.min(0.999, (clientX - rect.left) / rect.width))
+  const up = 1 - Math.max(0, Math.min(1, (clientY - rect.top) / rect.height))
+  return { frac, up }
 }
 
-function capEdge(edge, start, walls, n) {
-  let at = Number(edge)
-  if (!Number.isFinite(at)) at = start + 1
-  if (at < start + 0.01) at = start + 0.01
-  if (at > n) at = n
-  const stops = (walls || []).filter((s) => s > start && s < at).sort((a, b) => a - b)
-  if (stops.length) at = stops[0]
+function runsFor(seq, pad) {
+  const n = stepCount(seq)
+  return noteRuns(seq.steps, pad).filter((run) => run.start < n).map((run) => {
+    const end = Math.min(run.end, n - 1)
+    const slots = run.slots.filter((slot) => slot.step <= end)
+    const tail = end === run.end ? run.tail : 100
+    return { ...run, pad, end, tail, slots }
+  })
+}
+
+function visualSpan(run) {
+  const nudge = (Number(run?.ev?.nudge) || 0) / 100
+  const tail = (Number.isFinite(run?.tail) ? run.tail : 100) / 100
+  return { start: run.start + nudge, end: run.end + tail + nudge }
+}
+
+function spansOverlap(a, b) {
+  return a.start < b.end - 0.02 && b.start < a.end - 0.02
+}
+
+function resolvePick(seq, pick) {
+  if (!pick) return null
+  const runs = runsFor(seq, pick.pad)
+  if (pick.lane != null) {
+    const hit = runs.find((run) => run.lane === pick.lane && run.start === pick.start)
+    if (hit) return hit
+  }
+  return runs.find((run) => run.start === pick.start && run.end === pick.end)
+    || runs.find((run) => run.start === pick.start)
+    || null
+}
+
+function resolveHit(seq, hit) {
+  if (!hit) return null
+  return resolvePick(seq, { pad: hit.pad, start: hit.step, end: hit.end ?? hit.step, lane: hit.lane })
+}
+
+function runAtX(seq, pad, x) {
+  let found = null
+  for (const run of runsFor(seq, pad)) {
+    const span = visualSpan(run)
+    if (x >= span.start - 0.001 && x < span.end - 0.001) found = run
+  }
+  return found
+}
+
+/** The next same-pitch note on this row. A held note stops there instead of swallowing it. */
+function capEnd(seq, pad, pitch, visualStart, end, ignore) {
+  let at = end
+  for (const other of runsFor(seq, pad)) {
+    if (ignore && other.lane === ignore.lane && other.start === ignore.step) continue
+    if ((other.pitch | 0) !== (pitch | 0)) continue
+    const start = visualSpan(other).start
+    if (start > visualStart + 0.001 && start < at) at = start
+  }
   return at
 }
 
-function planParts(run, delta, snap, div, n, walls) {
-  const base = run.end + (Number.isFinite(run.tail) ? run.tail : 100) / 100
-  const min = run.start + (snap ? gridUnit(div) : 0.01)
-  let edge = gridEnd(base + (Number(delta) || 0), snap, n, div, min)
-  edge = capEdge(edge, run.start, walls, n)
-  return edgeParts(edge, run.start)
+function nextEdge(seq, run, n) {
+  return capEnd(seq, run.pad, run.pitch, visualSpan(run).start, n, { lane: run.lane, step: run.start })
 }
 
-function wallsFor(seq, run, runs, n) {
-  const walls = []
-  for (let s = 0; s < n; s++) {
-    if (s >= run.start && s <= run.end) continue
-    const other = runs.some((o) => o !== run && o.pad === run.pad && s >= o.start && s <= o.end)
-    if (other || readHit(seq.steps[s], run.pad)) walls.push(s)
+function clearSlots(seq, run) {
+  for (const slot of run.slots || []) {
+    const col = seq.steps[slot.step]
+    const ev = col?.[slot.lane]
+    if (ev && ev.pad === run.pad) col[slot.lane] = null
   }
-  return walls
 }
 
-function paintRun(seq, run, events, parts, written) {
-  const sample = events.filter((e) => e.runId === run.id)
-  const tailEv = sample[sample.length - 1]
-  if (!tailEv) return null
-  let end = parts.end
-  if (written) {
-    for (let s = run.start; s <= end; s++) {
-      if (written.has(`${run.pad}:${s}`)) {
-        end = s - 1
-        break
-      }
+function patchSlots(seq, run, patch) {
+  for (const slot of run.slots || []) {
+    const ev = seq.steps[slot.step]?.[slot.lane]
+    if (!ev || ev.pad !== run.pad) continue
+    if (patch.vel != null) ev.vel = Math.max(0.05, Math.min(1, patch.vel))
+    if (patch.pitch != null) ev.pitch = Math.max(-24, Math.min(24, patch.pitch | 0))
+    if (patch.nudge != null) ev.nudge = Math.max(-50, Math.min(50, Math.round(patch.nudge)))
+  }
+}
+
+function writeAt(seq, step, lane, ev, pad) {
+  const col = seq.steps[step]
+  if (!col) return -1
+  let at = lane | 0
+  if (at < 0 || at >= col.length || col[at]) {
+    at = col.findIndex((e) => !e)
+    if (at < 0) return -1
+  }
+  col[at] = normalizeEvent({ ...ev, pad })
+  return at
+}
+
+/** Write one note. `cut` stays on the attack. Later steps join it. Tail sits on the last step only. */
+function writeChop(seq, pad, parts, proto) {
+  const base = {
+    pad,
+    vel: proto.vel ?? 0.9,
+    pitch: proto.pitch | 0,
+    nudge: parts.nudge | 0,
+  }
+  if (Number.isFinite(proto.sl)) base.sl = proto.sl
+  if (Number.isFinite(proto.len) && Number.isFinite(proto.move)) {
+    base.len = proto.len
+    base.move = proto.move
+  }
+  const from = parts.step | 0
+  const to = parts.end | 0
+  if (to < from) return null
+  let startLane = null
+  for (let s = from; s <= to; s++) {
+    const ev = { ...base }
+    if (s === from && proto.cut) ev.cut = true
+    if (s === to && parts.tail < 100) ev.tail = parts.tail
+    const hint = s === from && proto.lane != null && proto.lane >= 0 ? proto.lane : (startLane != null ? startLane : -1)
+    const lane = writeAt(seq, s, hint, ev, pad)
+    if (lane < 0) {
+      if (startLane == null) return null
+      break
     }
+    if (startLane == null) startLane = lane
   }
-  if (end < run.start) return null
-  const tail = end === parts.end ? parts.tail : 100
-  let placed = false
-  for (let s = run.start; s <= end; s++) {
-    const orig = sample.find((e) => e.step === s)
-    const ev = { ...(orig ? orig.ev : tailEv.ev) }
-    if (s === end && tail < 100) ev.tail = tail
-    else delete ev.tail
-    const lane = orig ? orig.lane : tailEv.lane
-    if (!writeAt(seq, s, lane, ev, run.pad)) continue
-    if (written) written.add(`${run.pad}:${s}`)
-    placed = true
-  }
-  if (!placed) return null
-  return { end, tail }
+  if (startLane == null) return null
+  return runsFor(seq, pad).find((run) => run.lane === startLane && run.start === from) || null
 }
 
-function commitRunEdge(pad, start, edge) {
+function commitRunEdge(pad, lane, start, edge) {
   const seq = currentPattern()
-  const found = runAt(seq, pad, start)
+  const found = runsFor(seq, pad).find((run) => run.lane === lane && run.start === start)
+    || runsFor(seq, pad).find((run) => run.start === start)
   if (!found) return
   const n = stepCount(seq)
-  const events = []
-  for (let s = found.start; s <= found.end; s++) {
-    const hit = readHit(seq.steps[s], pad)
-    if (hit) events.push({ step: s, lane: hit.lane, ev: { ...hit.ev }, runId: 1 })
-  }
-  if (!events.length) return
-  const run = {
-    id: 1,
-    pad,
-    start: found.start,
-    end: found.end,
-    tail: eventTail(events[events.length - 1].ev),
-  }
-  const walls = []
-  for (let s = 0; s < n; s++) {
-    if (s >= run.start && s <= run.end) continue
-    if (readHit(seq.steps[s], pad)) walls.push(s)
-  }
-  const base = run.end + run.tail / 100
-  const parts = planParts(run, edge - base, model.seqSnap !== false, gridDiv(model.seqDiv), n, walls)
-  for (const item of events) {
-    const col = seq.steps[item.step]
-    if (col && col[item.lane] && col[item.lane].pad === pad) col[item.lane] = null
-  }
-  const wrote = paintRun(seq, run, events, parts, null)
+  const snap = model.seqSnap !== false
+  const div = gridDiv(model.seqDiv)
+  const span = visualSpan(found)
+  let end = Number(edge)
+  const wall = nextEdge(seq, found, n)
+  if (end > wall) end = wall
+  const parts = chopParts(span.start, end, n, snap, div)
+  const head = found.ev
+  clearSlots(seq, found)
+  const wrote = writeChop(seq, pad, parts, {
+    vel: head.vel,
+    pitch: head.pitch,
+    cut: !!head.cut,
+    lane: found.lane,
+    sl: head.sl,
+    len: head.len,
+    move: head.move,
+  })
   if (!wrote) return
-  seqUi.picks = seqUi.picks.map((p) => (p.pad === pad && p.start === found.start ? { ...p, end: wrote.end } : p))
+  seqUi.picks = seqUi.picks.map((p) => (
+    p.pad === pad && p.start === found.start && (p.lane == null || p.lane === found.lane)
+      ? { ...p, start: wrote.start, end: wrote.end, lane: wrote.lane }
+      : p
+  ))
   const primary = seqUi.picks.find((p) => p.id === seqUi.primaryId) || seqUi.picks[seqUi.picks.length - 1] || null
-  model.seqHit = primary ? { step: primary.start, pad: primary.pad, end: primary.end } : null
+  model.seqHit = primary ? { step: primary.start, pad: primary.pad, end: primary.end, lane: primary.lane ?? null } : null
   touch(true)
 }
 
+function gestureRun(seq, pick) {
+  const run = resolvePick(seq, pick)
+  if (!run) return null
+  const span = visualSpan(run)
+  return {
+    id: pick.id,
+    pad: run.pad,
+    start: run.start,
+    end: run.end,
+    lane: run.lane,
+    pitch: run.pitch,
+    nudge: run.ev.nudge || 0,
+    tail: run.tail,
+    cut: !!run.ev.cut,
+    slots: run.slots.map((slot) => ({ step: slot.step, lane: slot.lane })),
+    visualStart: span.start,
+    visualEnd: span.end,
+    vel: run.ev.vel,
+    sl: run.ev.sl,
+    len: run.ev.len,
+    move: run.ev.move,
+  }
+}
+
 function drawnSpan(pick) {
-  const seq = currentPattern()
-  const first = readHit(seq.steps[pick.start], pick.pad)
-  const last = readHit(seq.steps[pick.end], pick.pad)
-  const nudge = (first?.ev?.nudge || 0) / 100
-  const tail = eventTail(last?.ev) / 100
-  return { start: pick.start + nudge, end: pick.end + tail + nudge }
-}
-
-/** Consecutive steps of one pad with one pitch. The tracker stores each of those steps. */
-function runsFor(seq, pad) {
-  const n = stepCount(seq)
-  const runs = []
-  let cur = null
-  for (let s = 0; s < n; s++) {
-    const hit = readHit(seq.steps[s], pad)
-    if (!hit) {
-      cur = null
-      continue
-    }
-    const pitch = hit.ev.pitch | 0
-    const tail = eventTail(hit.ev)
-    if (cur && cur.pitch === pitch && cur.end === s - 1) {
-      cur.end = s
-      cur.tail = tail
-    } else {
-      cur = { start: s, end: s, pitch, ev: hit.ev, tail }
-      runs.push(cur)
-    }
-  }
-  return runs
-}
-
-function runAt(seq, pad, step) {
-  const n = stepCount(seq)
-  if (step < 0 || step >= n) return null
-  const here = readHit(seq.steps[step], pad)
-  if (!here) return null
-  const pitch = here.ev.pitch | 0
-  let start = step
-  let end = step
-  while (start > 0) {
-    const prev = readHit(seq.steps[start - 1], pad)
-    if (!prev || (prev.ev.pitch | 0) !== pitch) break
-    start -= 1
-  }
-  while (end + 1 < n) {
-    const next = readHit(seq.steps[end + 1], pad)
-    if (!next || (next.ev.pitch | 0) !== pitch) break
-    end += 1
-  }
-  return { start, end, ev: here.ev }
+  const run = resolvePick(currentPattern(), pick)
+  if (!run) return { start: pick.start, end: (pick.end ?? pick.start) + 1 }
+  return visualSpan(run)
 }
 
 function reconcile(seq, picks) {
@@ -1098,20 +1209,20 @@ function reconcile(seq, picks) {
   const out = []
   const seen = new Set()
   for (const p of picks) {
-    const run = runAt(seq, p.pad, p.start)
+    const run = resolvePick(seq, p)
     if (!run) {
       changed = true
       continue
     }
-    const key = `${p.pad}:${run.start}:${run.end}`
+    const key = `${p.pad}:${run.lane}:${run.start}`
     if (seen.has(key)) {
       changed = true
       continue
     }
     seen.add(key)
-    if (run.start !== p.start || run.end !== p.end) {
+    if (run.start !== p.start || run.end !== p.end || run.lane !== p.lane) {
       changed = true
-      out.push({ id: p.id, pad: p.pad, start: run.start, end: run.end })
+      out.push({ id: p.id, pad: p.pad, start: run.start, end: run.end, lane: run.lane })
     } else out.push(p)
   }
   if (!changed) return picks
@@ -1134,10 +1245,10 @@ function restorePattern(seq, snap) {
 function eventsOf(snap, runs) {
   const events = []
   for (const run of runs) {
-    for (let s = run.start; s <= run.end; s++) {
-      const hit = readHit(snap[s], run.pad)
-      if (!hit) continue
-      events.push({ step: s, lane: hit.lane, ev: hit.ev, runId: run.id })
+    for (const slot of run.slots || []) {
+      const ev = snap[slot.step]?.[slot.lane]
+      if (!ev || ev.pad !== run.pad) continue
+      events.push({ step: slot.step, lane: slot.lane, ev, runId: run.id })
     }
   }
   return events
@@ -1148,33 +1259,6 @@ function clearEvents(seq, events) {
     const col = seq.steps[item.step]
     if (col && col[item.lane] && col[item.lane].pad === item.ev.pad) col[item.lane] = null
   }
-}
-
-function writeAt(seq, step, lane, ev, pad) {
-  const col = seq.steps[step]
-  if (!col) return false
-  const pitch = ev.pitch | 0
-  for (let i = 0; i < col.length; i++) {
-    if (i !== lane && col[i] && col[i].pad === pad && (col[i].pitch | 0) === pitch) col[i] = null
-  }
-  if (lane < 0 || lane >= col.length || (col[lane] && col[lane].pad !== pad)) {
-    const empty = col.findIndex((e) => !e)
-    if (empty >= 0) lane = empty
-    else if (lane < 0 || lane >= col.length) return false
-  }
-  col[lane] = { ...ev, pad }
-  return true
-}
-
-function writeStep(step, pad, patch) {
-  const col = currentPattern().steps[step]
-  if (!col) return
-  const hit = readHit(col, pad)
-  if (!hit) return
-  const ev = col[hit.lane]
-  if (patch.vel != null) ev.vel = Math.max(0.05, Math.min(1, patch.vel))
-  if (patch.pitch != null) ev.pitch = Math.max(-24, Math.min(24, patch.pitch | 0))
-  if (patch.nudge != null) ev.nudge = Math.max(-50, Math.min(50, Math.round(patch.nudge)))
 }
 
 function samePlace(before, after) {
@@ -1218,14 +1302,19 @@ function slideNotes(seq, g, dx, events, runs, n) {
       const sample = events.filter((item) => item.runId === run.id)
       let first = null
       let last = null
+      let lane = run.lane
       for (const item of sample) {
         const step = item.step + shift
         if (step < 0 || step >= n) continue
-        if (!writeAt(seq, step, item.lane, { ...item.ev, nudge }, run.pad)) continue
-        if (first == null || step < first) first = step
+        const wrote = writeAt(seq, step, item.lane, { ...item.ev, nudge }, run.pad)
+        if (wrote < 0) continue
+        if (first == null || step < first) {
+          first = step
+          lane = wrote
+        }
         if (last == null || step > last) last = step
       }
-      if (first != null) next.push({ ...run, start: first, end: last, nudge })
+      if (first != null) next.push({ ...run, start: first, end: last, lane, nudge })
     }
     return next
   }
@@ -1238,16 +1327,19 @@ function slideNotes(seq, g, dx, events, runs, n) {
     let first = null
     let last = null
     let shown = 0
+    let lane = run.lane
     for (const item of sample) {
       const place = gridPlace(item.step, item.ev.nudge, delta, false, n, div)
-      if (!writeAt(seq, place.step, item.lane, { ...item.ev, nudge: place.nudge }, run.pad)) continue
+      const wrote = writeAt(seq, place.step, item.lane, { ...item.ev, nudge: place.nudge }, run.pad)
+      if (wrote < 0) continue
       if (first == null || place.step < first) {
         first = place.step
         shown = place.nudge
+        lane = wrote
       }
       if (last == null || place.step > last) last = place.step
     }
-    if (first != null) next.push({ ...run, start: first, end: last, nudge: shown })
+    if (first != null) next.push({ ...run, start: first, end: last, lane, nudge: shown })
   }
   return next
 }
@@ -1267,17 +1359,39 @@ function applyGesture(seq, g, dx, dy) {
     const snap = g.snapOn !== false
     const div = g.div || 16
     const planned = runs.map((run) => {
-      const walls = wallsFor(seq, run, runs, n)
-      const parts = planParts(run, delta, snap, div, n, walls)
-      return { ...run, parts }
+      const start = run.visualStart ?? (run.start + (run.nudge || 0) / 100)
+      let end = (run.visualEnd ?? (run.end + 1)) + delta
+      const minLen = snap ? gridUnit(div) : 0.01
+      if (end < start + minLen) end = start + minLen
+      for (const other of runs) {
+        if (other === run || other.pad !== run.pad || (other.pitch | 0) !== (run.pitch | 0)) continue
+        const o = other.visualStart ?? other.start
+        if (o > start + 0.001 && o < end) end = o
+      }
+      for (const other of runsFor(seq, run.pad)) {
+        if (other.lane === run.lane && other.start === run.start) continue
+        if ((other.pitch | 0) !== (run.pitch | 0)) continue
+        const o = visualSpan(other).start
+        if (o > start + 0.001 && o < end) end = o
+      }
+      return { run, parts: chopParts(start, end, n, snap, div) }
     })
     clearEvents(seq, events)
-    const written = new Set()
-    const ordered = [...planned].sort((a, b) => a.start - b.start || a.pad - b.pad)
+    const ordered = [...planned].sort((a, b) => a.run.start - b.run.start || a.run.pad - b.run.pad)
     const next = []
-    for (const run of ordered) {
-      const wrote = paintRun(seq, run, events, run.parts, written)
-      if (wrote) next.push({ ...run, end: wrote.end, tail: wrote.tail })
+    for (const item of ordered) {
+      const head = events.find((ev) => ev.runId === item.run.id && ev.step === item.run.start) || events.find((ev) => ev.runId === item.run.id)
+      if (!head) continue
+      const wrote = writeChop(seq, item.run.pad, item.parts, {
+        vel: head.ev.vel,
+        pitch: head.ev.pitch,
+        cut: !!head.ev.cut,
+        lane: item.run.lane,
+        sl: head.ev.sl,
+        len: head.ev.len,
+        move: head.ev.move,
+      })
+      if (wrote) next.push({ ...item.run, start: wrote.start, end: wrote.end, lane: wrote.lane, tail: wrote.tail, nudge: wrote.ev?.nudge || 0 })
     }
     return next
   }
@@ -1305,14 +1419,19 @@ function applyGesture(seq, g, dx, dy) {
     const sample = events.filter((e) => e.runId === run.id)
     let first = null
     let last = null
+    let lane = run.lane
     for (const item of sample) {
       const step = item.step + shift
       if (step < 0 || step >= n) continue
-      if (!writeAt(seq, step, item.lane, item.ev, pad)) continue
-      if (first == null || step < first) first = step
+      const wrote = writeAt(seq, step, item.lane, item.ev, pad)
+      if (wrote < 0) continue
+      if (first == null || step < first) {
+        first = step
+        lane = wrote
+      }
       if (last == null || step > last) last = step
     }
-    if (first != null) next.push({ ...run, pad, start: first, end: last })
+    if (first != null) next.push({ ...run, pad, start: first, end: last, lane })
   }
   return next
 }

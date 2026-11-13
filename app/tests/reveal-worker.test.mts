@@ -479,10 +479,11 @@ test('RPC trouble leaves the state as it was, and the next run catches up', asyn
   fake.mint(1300)
   fake.state.head = 1400
 
-  // A node that drops a log (the last, so the ids still look whole): totalSupply gives it away, nothing is stored.
+  // A node that drops a log (the last, so the ids still look whole): totalSupply gives it away, and nothing from
+  // that read is stored. Reads are 10 blocks wide, so the earlier read holding tokens 1 and 2 is kept.
   fake.state.dropLog = 3
   await cron()
-  assert.equal(db.raw.prepare('SELECT COUNT(*) AS n FROM reveal_mints').get()!.n, 0)
+  assert.equal(db.raw.prepare('SELECT COUNT(*) AS n FROM reveal_mints').get()!.n, 2)
   assert.match(
     String(((await getJson(call('GET', 'admin/status'))).collection as { lastError: string }).lastError),
     /incomplete/
@@ -667,7 +668,7 @@ test('getLogs: after narrowing on errors, the span grows back once reads succeed
     return mintLogs(address, from, to)
   }
   fake.state.head = 9000
-  fake.state.failLogsWiderThan = 300
+  fake.state.failLogsWiderThan = 4 // under the 10-block first span
   await cron()
   fake.state.failLogsWiderThan = Infinity
   spans.length = 0

@@ -219,3 +219,43 @@ export const conduitControllerAbi = [
     ],
   },
 ] as const
+
+/**
+ * Seaport's OrderFulfilled event: one per order filled, emitted by Seaport itself. A batch (batch.ts) reads a fill from
+ * these and from nothing else. A criteria item appears here with the token id the seller chose (checked on a fork).
+ */
+export const seaportEventsAbi = [
+  {
+    type: 'event',
+    name: 'OrderFulfilled',
+    inputs: [
+      { name: 'orderHash', type: 'bytes32', indexed: false },
+      { name: 'offerer', type: 'address', indexed: true },
+      { name: 'zone', type: 'address', indexed: true },
+      { name: 'recipient', type: 'address', indexed: false },
+      {
+        name: 'offer',
+        type: 'tuple[]',
+        indexed: false,
+        components: [
+          { name: 'itemType', type: 'uint8' },
+          { name: 'token', type: 'address' },
+          { name: 'identifier', type: 'uint256' },
+          { name: 'amount', type: 'uint256' },
+        ],
+      },
+      {
+        name: 'consideration',
+        type: 'tuple[]',
+        indexed: false,
+        components: [
+          { name: 'itemType', type: 'uint8' },
+          { name: 'token', type: 'address' },
+          { name: 'identifier', type: 'uint256' },
+          { name: 'amount', type: 'uint256' },
+          { name: 'recipient', type: 'address' },
+        ],
+      },
+    ],
+  },
+] as const

@@ -10,7 +10,8 @@ import { code, hits, walk } from './source-scan.mts'
 const SHELL =
   /(components\/(TaskBar|RadioTray)\/|pages\/OperatingSystem\/|desktop\/ContextMenu|music\/useOpenApp|miyamints\/useOpenManage|store\/windows\/|src\/(Router|App|GlobalHistory|main)\.tsx)/
 
-const SRC = walk('src')
+// The app's own source and the pages it frames (embed/: miyakeys).
+const SRC = [...walk('src'), ...walk('embed')]
 
 /** Each app's own route, by the folder its code lives in. A file outside every app owns none. */
 const OWN: [RegExp, string][] = [
@@ -26,11 +27,16 @@ const OWN: [RegExp, string][] = [
   [/pages\/Home\//, 'about'],
   [/desktop\/files\//, 'files'],
   [/desktop\/display\//, 'display'],
+  [/pages\/Miyakeys\/|^embed\/miyakeys\//, 'miyakeys'],
 ]
 
 const APP_PATHS = [...readFileSync('src/constants/pages.ts', 'utf8').matchAll(/^\s+path: '\/([a-z-]+)',/gm)].map(
   (m) => m[1]!
 )
+
+test('the one-app scans cover the framed pages (embed/) as well as src/', () => {
+  assert.ok(SRC.includes('embed/miyakeys/js/app.js'))
+})
 
 test('nothing inside an app can open another window', () => {
   const offenders = SRC.filter((p) => !SHELL.test(p))
@@ -69,7 +75,7 @@ test('the apps that boot each have their own scene, and the others open straight
   const pages = readFileSync('src/constants/pages.ts', 'utf8')
   const ids = [...pages.matchAll(/^\s+id: '([a-z]+)',/gm)].map((m) => m[1]!)
   // These boot inside themselves or open straight away.
-  const own = ['mint', 'uploader', 'tv', 'dropmusic', 'files', 'display', 'radio', 'manager']
+  const own = ['mint', 'uploader', 'tv', 'dropmusic', 'files', 'display', 'radio', 'manager', 'miyakeys']
   assert.deepEqual(ids.filter((id) => !own.includes(id)).sort(), Object.keys(SCENES).sort())
   for (const id of own) assert.equal(SCENES[id], undefined)
   assert.equal(new Set(Object.values(SCENES).map((s) => s.draw)).size, Object.keys(SCENES).length)

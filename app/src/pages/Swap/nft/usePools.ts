@@ -16,10 +16,14 @@ import { resolveUri } from '@/utils/resolveUri'
 
 import { erc721Abi, erc1155Abi, poolAbi, poolFactoryAbi, poolVaultAbi, vaultConfigAbi } from './abi'
 import type { CommitRow, PoolKind, PoolSummary } from './pool'
-import { asKind, heldAmount, KIND, pendingFor, poolIndexes, poolLookup } from './pool'
+import { asKind, heldAmount, KIND, pendingFor, poolIndexes, poolLookup, v2PoolFactory } from './pool'
 
-/** The MiyaPoolFactory on a chain, from env or contracts/deployments (undefined = not deployed there yet). */
-export const poolFactoryFor = (chainId: number): Address | undefined => miyamintsAddresses(chainId).miyaPoolFactory
+/**
+ * The v2 MiyaPoolFactory on a chain, from env or contracts/deployments (undefined = not deployed there yet). A v1
+ * factory still named there counts as none (pool.ts V1_POOL_FACTORIES).
+ */
+export const poolFactoryFor = (chainId: number): Address | undefined =>
+  v2PoolFactory(chainId, miyamintsAddresses(chainId).miyaPoolFactory)
 
 /** How many pools the list loads (newest first). Search by collection address finds older ones. */
 const LIST_LIMIT = 60
@@ -368,7 +372,14 @@ export function useNftMeta(chainId: SupportedChainId, collection: Address | unde
   const filled = raw?.replace(/\{id\}/g, id.toString(16).padStart(64, '0'))
   const meta = useMetadata(filled)
   const clean = meta.data ? sanitizeMetadata(meta.data, resolveUri) : undefined
-  return { name: clean?.name, image: clean?.image, loading: uri.isLoading || meta.isLoading }
+  return {
+    name: clean?.name,
+    image: clean?.image,
+    attributes: clean?.attributes,
+    loading: uri.isLoading || meta.isLoading,
+    /** The token URI or its metadata could not be read: its traits are unknown, not empty. */
+    failed: uri.isError || meta.isError,
+  }
 }
 
 /**

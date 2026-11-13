@@ -22,6 +22,16 @@ import { useModel } from '../useModel.js'
 import { cuePatternStep } from '../audio/engine.js'
 import { PatternBar } from './PatternBar.jsx'
 import { HelpButton } from '../widgets.jsx'
+import {
+  clampTrackZoom,
+  freshPad,
+  padPointerDown,
+  padPointerMove,
+  padPointerUp,
+  padTick,
+  stickRelease,
+  zoomBy,
+} from './trackerPad.js'
 
 const HEADS = ['NOTE', 'INST', 'VEL', 'MOVE', 'SL', 'LP']
 const STICK_DEAD = 16
@@ -35,7 +45,9 @@ export function Tracker() {
   const [menu, setMenu] = useState(null)
   const [slots, setSlots] = useState(15)
   const gridRef = useRef(null)
-  const stick = useRef({ on: false, id: 0, ox: 0, oy: 0, x: 0, y: 0, ax: 0, ay: 0, moved: false, ate: false, raf: 0, then: 0 })
+  const fingers = useRef(new Map())
+  const pinchRef = useRef(null)
+  const stick = useRef({ on: false, id: 0, ox: 0, oy: 0, x: 0, y: 0, ax: 0, ay: 0, moved: false, ate: false, ateTimer: 0, raf: 0, then: 0 })
   const seq = currentPattern()
   const rows = stepCount(seq)
   const t = model.tracker
@@ -47,8 +59,19 @@ export function Tracker() {
       if (path.some((node) => node.classList?.contains?.('ctx-menu'))) return
       setMenu(null)
     }
+    // Capture phase, ahead of the tracker's own keys: Escape only closes the menu and never reaches Rec.
+    const key = (event) => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      event.stopPropagation()
+      setMenu(null)
+    }
     window.addEventListener('pointerdown', down)
-    return () => window.removeEventListener('pointerdown', down)
+    window.addEventListener('keydown', key, true)
+    return () => {
+      window.removeEventListener('pointerdown', down)
+      window.removeEventListener('keydown', key, true)
+    }
   }, [menu])
   useEffect(() => {
     if (!model.playing) return
@@ -76,7 +99,7 @@ export function Tracker() {
       return
     }
     centerTracker(grid)
-  }, [slots, anchor, t.col, t.row, rows, fields, model.pattern, model.playing, followPlay])
+  }, [slots, anchor, t.col, t.row, rows, fields, model.pattern, model.playing, followPlay, t.zoom])
   useEffect(() => {
     const grid = gridRef.current
     if (!grid || typeof ResizeObserver === 'undefined') return undefined
@@ -96,7 +119,27 @@ export function Tracker() {
     if (!t.focus || activeField()) return
     gridRef.current?.focus({ preventScroll: true })
   }, [t.focus, model.screen])
-  useEffect(() => () => cancelAnimationFrame(stick.current.raf), [])
+  useEffect(() => () => {
+    cancelAnimationFrame(stick.current.raf)
+    clearTimeout(stick.current.ateTimer)
+  }, [])
+  useEffect(() => {
+    const grid = gridRef.current
+    if (!grid) return undefined
+    const onWheel = (event) => {
+      if (event.shiftKey) return
+      event.preventDefault()
+      const scale = event.deltaMode === 1 ? 0.08 : event.ctrlKey ? 0.01 : 0.0015
+      const factor = Math.min(1.25, Math.max(0.8, Math.exp(-event.deltaY * scale)))
+      const next = zoomBy(model.tracker.zoom, factor)
+      if (next === clampTrackZoom(model.tracker.zoom)) return
+      model.tracker.zoom = next
+      touch(false)
+    }
+    grid.addEventListener('wheel', onWheel, { passive: false })
+    return () => grid.removeEventListener('wheel', onWheel)
+  }, [])
+  const zoom = clampTrackZoom(t.zoom)
   const focusLane = Math.floor((t.col || 0) / fields)
   const focusEv = seq.steps[t.row]?.[focusLane]
   return (
@@ -139,6 +182,7 @@ export function Tracker() {
             : ' · empty'}
         </p>
       </div>
+      <div className="tracker-fit" style={{ '--track-zoom': zoom }}>
       <div
         className="tracker"
         data-coach="tracker"
@@ -242,6 +286,8 @@ export function Tracker() {
           </tbody>
         </table>
       </div>
+      <TrackerPad gridRef={gridRef} />
+      </div>
       {menu && (
         <div className="ctx-menu" style={{ left: menu.x, top: menu.y, minWidth: 220 }} role="menu">
           <button
@@ -270,6 +316,23 @@ export function Tracker() {
     if (event.button !== 0) return
     const el = event.currentTarget
     if (event.target === el && (event.offsetX > el.clientWidth || event.offsetY > el.clientHeight)) return
+    fingers.current.set(event.pointerId, { x: event.clientX, y: event.clientY })
+    if (fingers.current.size >= 2) {
+      const s = stick.current
+      s.on = false
+      s.moved = true
+      s.tapRow = -1
+      s.tapCol = -1
+      s.ax = 0
+      s.ay = 0
+      cancelAnimationFrame(s.raf)
+      const pts = [...fingers.current.values()]
+      pinchRef.current = {
+        dist: Math.max(1, Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y)),
+        zoom: clampTrackZoom(model.tracker.zoom),
+      }
+      return
+    }
     event.preventDefault()
     window.getSelection?.()?.removeAllRanges?.()
     const s = stick.current
@@ -306,6 +369,19 @@ export function Tracker() {
   }
 
   function moveStick(event) {
+    if (fingers.current.has(event.pointerId)) {
+      fingers.current.set(event.pointerId, { x: event.clientX, y: event.clientY })
+    }
+    if (fingers.current.size >= 2 && pinchRef.current) {
+      const pts = [...fingers.current.values()]
+      const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y)
+      const next = zoomBy(pinchRef.current.zoom, dist / pinchRef.current.dist)
+      if (next !== clampTrackZoom(model.tracker.zoom)) {
+        model.tracker.zoom = next
+        touch(false)
+      }
+      return
+    }
     const s = stick.current
     if (!s.on || event.pointerId !== s.id) return
     s.x = event.clientX
@@ -313,22 +389,29 @@ export function Tracker() {
   }
 
   function endStick(event) {
+    fingers.current.delete(event.pointerId)
+    if (fingers.current.size < 2) pinchRef.current = null
     const s = stick.current
-    if (!s.on || (event.pointerId != null && event.pointerId !== s.id)) return
+    if (s.on && event.pointerId != null && event.pointerId !== s.id) return
+    if (!s.on && !s.moved) return
     s.on = false
+    s.ax = 0
+    s.ay = 0
     cancelAnimationFrame(s.raf)
-    s.ate = true
-    setTimeout(() => {
+    const release = stickRelease(s)
+    s.ate = release.swallowClick
+    clearTimeout(s.ateTimer)
+    s.ateTimer = setTimeout(() => {
       s.ate = false
-    }, 0)
+    }, 480)
     if (s.tapStep >= 0 && !s.moved) {
       cuePatternStep(s.tapStep)
       return
     }
-    if (s.moved || trackerLocked() || s.tapRow < 0 || s.tapCol < 0) return
+    if (!release.place || trackerLocked()) return
     const tr = model.tracker
-    tr.row = s.tapRow
-    tr.col = s.tapCol
+    tr.row = release.row
+    tr.col = release.col
     tr.pair = 0
     tr.hex = ''
     tr.block = null
@@ -364,8 +447,92 @@ export function Tracker() {
         }
       }
     }
-    s.raf = requestAnimationFrame(tickStick)
+    if (s.on) s.raf = requestAnimationFrame(tickStick)
   }
+}
+
+function TrackerPad({ gridRef }) {
+  const pad = useRef(freshPad())
+  const [dir, setDir] = useState('')
+  useEffect(() => () => cancelAnimationFrame(pad.current.raf), [])
+
+  function nudge(key, count) {
+    if (!key || trackerLocked()) return
+    model.tracker.focus = true
+    gridRef.current?.focus({ preventScroll: true })
+    for (let i = 0; i < count; i++) applyTrackerArrow(key, false)
+  }
+
+  function down(event) {
+    if (event.button !== 0) return
+    event.preventDefault()
+    event.stopPropagation()
+    const rect = event.currentTarget.getBoundingClientRect()
+    const step = padPointerDown(pad.current, {
+      id: event.pointerId,
+      x: event.clientX,
+      y: event.clientY,
+      rect,
+      now: performance.now(),
+    })
+    pad.current = { ...step.pad, raf: pad.current.raf }
+    try { event.currentTarget.setPointerCapture(event.pointerId) } catch { /* already gone */ }
+    setDir(step.pad.key)
+    if (step.steps) nudge(step.pad.key, step.steps)
+    cancelAnimationFrame(pad.current.raf)
+    pad.current.raf = requestAnimationFrame(tick)
+  }
+
+  function move(event) {
+    const next = padPointerMove(pad.current, { id: event.pointerId, x: event.clientX, y: event.clientY })
+    if (next === pad.current) return
+    const prev = pad.current.key
+    next.raf = pad.current.raf
+    pad.current = next
+    if (next.key !== prev) setDir(next.key)
+  }
+
+  function up(event) {
+    event.stopPropagation()
+    const next = padPointerUp(pad.current, { id: event.pointerId })
+    cancelAnimationFrame(pad.current.raf)
+    pad.current = next
+    setDir('')
+  }
+
+  function tick(now) {
+    if (!pad.current.on) return
+    const frame = padTick(pad.current, now)
+    if (!pad.current.on) return
+    frame.pad.raf = pad.current.raf
+    pad.current = frame.pad
+    if (!pad.current.on) return
+    if (frame.steps) nudge(pad.current.key, frame.steps)
+    if (pad.current.on) pad.current.raf = requestAnimationFrame(tick)
+  }
+
+  const held = dir === 'ArrowUp' ? 'up' : dir === 'ArrowDown' ? 'down' : dir === 'ArrowLeft' ? 'left' : dir === 'ArrowRight' ? 'right' : ''
+  return (
+    <div
+      className={`track-pad${held ? ` held-${held}` : ''}`}
+      data-coach="track-pad"
+      role="group"
+      aria-label="Move the cursor. Tap a direction for one step. Drag away from the center to go faster."
+      onPointerDown={down}
+      onPointerMove={move}
+      onPointerUp={up}
+      onPointerCancel={up}
+    >
+      <svg className="track-pad-cross" viewBox="0 0 100 100" aria-hidden="true">
+        <path className="plus" d="M40 4H60Q68 4 68 12V32H88Q96 32 96 40V60Q96 68 88 68H68V88Q68 96 60 96H40Q32 96 32 88V68H12Q4 68 4 60V40Q4 32 12 32H32V12Q32 4 40 4Z" />
+        <path className="tri up" d="M50 14L58 26H42Z" />
+        <path className="tri down" d="M50 86L42 74H58Z" />
+        <path className="tri left" d="M14 50L26 42V58Z" />
+        <path className="tri right" d="M86 50L74 58V42Z" />
+        <circle className="nub" cx="50" cy="50" r="10" />
+      </svg>
+    </div>
+  )
 }
 
 function mod(n, m) {

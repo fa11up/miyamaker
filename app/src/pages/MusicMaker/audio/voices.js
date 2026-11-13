@@ -114,6 +114,37 @@ export function edgeParts(edge, start) {
   return { end, tail }
 }
 
+/**
+ * Where a drawn sequencer note is stored.
+ * `from` and `to` are the visual start and the exclusive visual end, in steps.
+ * The start sits on the nearest step and MOVE pulls the bar back into place.
+ * Length is the visual length, so a start stored on the next step does not collapse a short note.
+ * Snap quantizes both edges. Off keeps hundredths of a step.
+ */
+export function chopParts(from, to, patternLength, snap, div) {
+  const n = Math.max(1, patternLength | 0)
+  const unit = snap ? gridUnit(div) : 0.01
+  let start = Number(from)
+  if (!Number.isFinite(start)) start = 0
+  if (snap) start = Math.round(Math.round(start / unit) * unit * 1000) / 1000
+  else start = Math.round(start * 100) / 100
+  if (start < 0) start = 0
+  const latest = Math.max(0, n - unit)
+  if (start > latest) start = Math.round(latest * 1000) / 1000
+
+  let end = Number(to)
+  if (!Number.isFinite(end)) end = start + unit
+  end = gridEnd(end, !!snap, n, div, Math.min(n, start + unit))
+  let length = end - start
+  if (!(length > 0)) length = Math.min(unit, Math.max(0.01, n - start))
+
+  const placed = gridPlace(0, 0, start, !!snap, n, div)
+  let parts = edgeParts(placed.step + length, placed.step)
+  if (parts.end > n - 1) parts = { end: n - 1, tail: 100 }
+  if (parts.end < placed.step) parts = { end: placed.step, tail: Math.max(1, Math.min(100, parts.tail)) }
+  return { step: placed.step, nudge: placed.nudge, end: parts.end, tail: parts.tail }
+}
+
 /** One decoded buffer per sample entry and direction. A new entry (or rev) makes a new buffer. */
 export function createBufferCache() {
   let cache = new WeakMap()

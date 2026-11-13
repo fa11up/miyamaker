@@ -6,6 +6,8 @@
  *                             Tokens: one token
  *   /trade/nfts               Home too
  *   /trade/nfts/<pool>        NFTs: one pool
+ *   /trade/pools, /trade/activity
+ *                             The terminal's POOLS and ACTIVITY tabs
  *   /trade/nfts/collection/<chainId>/<address>[/<tokenId>]
  *                             NFTs: one collection (or one NFT) and every place it trades
  *
@@ -47,8 +49,12 @@ export function parseTradePath(pathname: string): {
   pool?: `0x${string}`
   collection?: CollectionRef
   token?: TokenRef
+  /** The terminal tab a path names beyond NFT/TOKENS: a pool, the pool list, or activity. */
+  tab?: 'pools' | 'activity'
 } {
   const parts = pathname.split(/[?#]/)[0]!.split('/').filter(Boolean)
+  if (parts[0] === TRADE_PATH.slice(1) && parts.length === 2 && (parts[1] === 'pools' || parts[1] === 'activity'))
+    return { mode: 'nfts', tab: parts[1] }
   if (parts[0] === TRADE_PATH.slice(1) && parts[1] === 'tokens') {
     const chainId = Number(parts[2])
     const address = parts[3]
@@ -68,8 +74,11 @@ export function parseTradePath(pathname: string): {
   }
 
   const pool = parts[2] && ADDRESS.test(parts[2]) ? (parts[2] as `0x${string}`) : undefined
-  return pool ? { mode: 'nfts', pool } : { mode: 'nfts' }
+  return pool ? { mode: 'nfts', pool, tab: 'pools' } : { mode: 'nfts' }
 }
+
+/** The path for the POOLS or ACTIVITY tab's list. */
+export const tabPath = (tab: 'pools' | 'activity') => `${TRADE_PATH}/${tab}`
 
 export function tradePath(mode: TradeMode, pool?: string, collection?: CollectionRef, token?: TokenRef): string {
   if (mode === 'tokens') return token ? `${TRADE_PATH}/tokens/${token.chainId}/${token.address}` : TRADE_PATH

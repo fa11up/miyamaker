@@ -148,8 +148,9 @@ export const LIVE_MINTS: LiveMintEntry[] = [
     kind: 'drop',
     chainId: 1,
     address: '0xb86b68bca287afd48f81d1f792db69368664a120',
-    // The cover every token shows until its piece is drawn (ar://DBeq…nvFu).
-    image: 'https://gateway.irys.xyz/DBeqbmiTS7mCmbvMFLuUcMy4XkgCwDQMVkDv9pY8nvFu',
+    // The cover every token shows until its piece is drawn (ar://DBeq…nvFu), served from this site at 768px: the
+    // Arweave copy loads slowly until it settles.
+    image: 'https://www.miyamaker.com/covers/miyamaker.webp',
     blurb: '10,000 miyamakers, each piece drawn at random when it is minted.',
     artist: 'koolskull.eth',
     artistLogo: '/artists/koolskull.png',
@@ -475,6 +476,15 @@ export function slugFromPath(pathname: string): string | undefined {
 }
 
 /** The card's price words: the ETH price, or the other token's when the phase doesn't sell for ETH. */
+/**
+ * Official mints are the curated list (made by miyamaker); every other card comes from the registry, deployed by anyone
+ * through Launch. Community cards always carry COMMUNITY_WORDS so they can't be taken for a miyamaker drop.
+ */
+export type MintShelf = 'official' | 'community'
+export const shelfOf = (c: Pick<LiveMintCard, 'source'>): MintShelf =>
+  c.source === 'curated' ? 'official' : 'community'
+export const COMMUNITY_WORDS = 'Community mint · not made by miyamaker'
+
 export const cardPrice = (c: Pick<LiveMintCard, 'price' | 'priceLabel'>) =>
   c.price === undefined && c.priceLabel ? c.priceLabel : formatEthShort(c.price)
 

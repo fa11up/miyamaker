@@ -760,3 +760,15 @@ test('a collection is hidden as flagged only when everything held in it is', () 
   assert.equal(groups.find((g) => g.contract === '0xaa')!.flagged, true)
   assert.equal(groups.find((g) => g.contract === '0xbb')!.flagged, false)
 })
+
+test('terminal ops: trait counts and the gallery, keyed, slug-checked, cursor passed only as a value', () => {
+  const t = openSeaGet(new URLSearchParams({ op: 'traits', slug: 'miyamaker' })) as Built
+  assert.equal(t.path, '/api/v2/traits/miyamaker')
+  assert.equal(t.keyless, false)
+  const g = openSeaGet(new URLSearchParams({ op: 'collection_nfts', slug: 'miyamaker', next: 'abc=' })) as Built
+  assert.equal(g.path, '/api/v2/collection/miyamaker/nfts')
+  assert.equal(g.query?.get('limit'), '50')
+  assert.equal(g.query?.get('next'), 'abc=')
+  assert.match(openSeaGet(new URLSearchParams({ op: 'collection_nfts', slug: 'a/../b' })).error!, /slug/)
+  assert.match(openSeaGet(new URLSearchParams({ op: 'collection_nfts', slug: 'a', next: 'x y' })).error!, /next/)
+})

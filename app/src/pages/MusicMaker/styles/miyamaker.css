@@ -358,6 +358,15 @@ h1, h2, h3, h4, p { margin: 0; }
   outline: none;
 }
 
+.file-menu .menu-note {
+  max-width: 220px;
+  margin: 0;
+  padding: 4px 24px;
+  color: var(--ink-muted);
+  font-size: 12px;
+  white-space: normal;
+}
+
 .file-menu hr {
   margin: 3px 2px;
   border: none;
@@ -2107,14 +2116,24 @@ button.mix-insert-title {
 
 .tracker-bar .pattern-pick { flex: 0 1 168px; min-width: 96px; }
 
+.tracker-fit {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  font-size: calc(12px * var(--track-zoom, 1));
+}
 .tracker {
+  position: absolute;
+  inset: 0;
   overflow: hidden;
   background: var(--well);
   box-shadow: var(--sunken);
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: inherit;
   flex: 1 1 auto;
   min-height: 0;
+  min-width: 0;
   touch-action: none;
   overscroll-behavior: none;
   user-select: none;
@@ -2132,7 +2151,7 @@ button.mix-insert-title {
   display: inline-block;
   position: relative;
   z-index: 2;
-  line-height: 16px;
+  line-height: calc(16px * var(--track-zoom, 1));
   outline: 2px solid #ffffff;
   outline-offset: -1px;
   background: transparent;
@@ -2148,7 +2167,7 @@ button.mix-insert-title {
 }
 
 .tracker table { border-collapse: separate; border-spacing: 0; width: max-content; }
-.tracker tbody tr { height: 18px; }
+.tracker tbody tr { height: calc(18px * var(--track-zoom, 1)); }
 .tracker th, .tracker td {
   border-right: 1px solid var(--light);
   border-bottom: 1px solid var(--light);
@@ -2158,8 +2177,8 @@ button.mix-insert-title {
   white-space: nowrap;
 }
 .tracker tbody td {
-  height: 18px;
-  line-height: 18px;
+  height: calc(18px * var(--track-zoom, 1));
+  line-height: calc(18px * var(--track-zoom, 1));
   overflow: hidden;
 }
 .tracker thead th {
@@ -2168,15 +2187,15 @@ button.mix-insert-title {
   color: #000000;
   z-index: 1;
 }
-.tracker thead tr:first-child th { top: 0; height: 20px; line-height: 20px; }
-.tracker thead tr:nth-child(2) th { top: 20px; height: 15px; line-height: 15px; }
+.tracker thead tr:first-child th { top: 0; height: calc(20px * var(--track-zoom, 1)); line-height: calc(20px * var(--track-zoom, 1)); }
+.tracker thead tr:nth-child(2) th { top: calc(20px * var(--track-zoom, 1)); height: calc(15px * var(--track-zoom, 1)); line-height: calc(15px * var(--track-zoom, 1)); }
 .tracker th.track {
   text-align: left;
   padding: 0 4px;
   box-shadow: inset 3px 0 0 var(--shadow);
 }
 .tracker th.sub {
-  font-size: 10px;
+  font-size: calc(10px * var(--track-zoom, 1));
   font-weight: 400;
   letter-spacing: 0.04em;
   color: var(--ink-muted);
@@ -2189,12 +2208,12 @@ button.mix-insert-title {
   min-width: 0;
 }
 .tracker .track-title b {
-  font-size: 13px;
+  font-size: calc(13px * var(--track-zoom, 1));
   letter-spacing: 0.04em;
 }
 .tracker .track-title span {
   font-family: var(--mono);
-  font-size: 13px;
+  font-size: calc(13px * var(--track-zoom, 1));
   font-weight: 700;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2291,6 +2310,54 @@ button.mix-insert-title {
   width: auto;
 }
 .tracker-tools .field.num { width: 42px; }
+
+/* The cursor cross. Bottom right of the tracker, in the same pink and purple as the buttons. */
+.track-pad {
+  position: absolute;
+  z-index: 8;
+  right: 10px;
+  bottom: 10px;
+  width: 118px;
+  height: 118px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 18px;
+  background-image: var(--glass-sheen), var(--btn-fill);
+  background-color: transparent;
+  box-shadow: var(--glass-edge);
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: pointer;
+}
+.track-pad-cross {
+  position: absolute;
+  left: 12px;
+  top: 12px;
+  width: 94px;
+  height: 94px;
+  pointer-events: none;
+}
+.track-pad .plus { fill: #5a4a96; }
+.track-pad .tri { fill: #fff6f2; }
+.track-pad .nub { fill: #3d2a6b; }
+.track-pad.held-up .tri.up,
+.track-pad.held-down .tri.down,
+.track-pad.held-left .tri.left,
+.track-pad.held-right .tri.right { fill: #ffffff; }
+.mmm.theme-k3 .track-pad {
+  background-image: none;
+  background: #000000;
+  box-shadow: inset 0 0 0 1px #ffffff;
+}
+.mmm.theme-k3 .track-pad .plus { fill: #ffffff; }
+.mmm.theme-k3 .track-pad .tri { fill: #000000; }
+.mmm.theme-k3 .track-pad .nub { fill: #000000; stroke: #ffffff; stroke-width: 1.5; }
+.mmm.theme-k3 .track-pad.held-up .tri.up,
+.mmm.theme-k3 .track-pad.held-down .tri.down,
+.mmm.theme-k3 .track-pad.held-left .tri.left,
+.mmm.theme-k3 .track-pad.held-right .tri.right { fill: #ffffff; }
 
 .track-status {
   margin: 0;
@@ -3165,7 +3232,19 @@ button.mix-insert-title {
 
 .dock-rail .seq-tools .btn,
 .dock-rail .zoom-ctl .btn {
-  min-height: max(22px, var(--touch-sm));
+  writing-mode: horizontal-tb;
+  text-orientation: mixed;
+  transform: none;
+  flex: 0 0 auto;
+  width: 100%;
+  height: auto;
+  min-height: max(28px, var(--touch-sm));
+  padding: 3px 2px;
+  font-size: 11px;
+  line-height: 1.05;
+  letter-spacing: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .dock-rail .zoom-ctl > span {
@@ -3776,6 +3855,7 @@ input[type="range"]:focus-visible {
   .mmm.screen-track .tracker-screen { overflow: visible; }
   .mmm.screen-track .mmm-rest { position: relative; z-index: 9; }
   .mmm.screen-track .tracker {
+    right: auto;
     margin-left: -52px;
     width: calc(100% + 52px);
   }
@@ -4511,6 +4591,7 @@ input[type="range"]:focus-visible {
 }
 
 @media (pointer: coarse) {
+  .strum-bar > .btn,
   .strum-roots .btn,
   .strum-banks .btn,
   .strum-bank .btn { min-height: 32px; }

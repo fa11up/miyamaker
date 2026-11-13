@@ -12,6 +12,7 @@ import {
   mintableNow,
   mintPath,
   registryEntry,
+  shelfOf,
   slugFromPath,
   slugify,
   toCard,
@@ -31,6 +32,21 @@ test('curated list: the Miyamaker drop first, then MIYAMINI, both credited to ko
     assert.ok(c.artistLogo)
   }
   assert.equal(cards.find((c) => c.slug === 'miyakakis'), undefined)
+})
+
+test('shelves: curated drops are Miyamaker, anything from the registry is Community', () => {
+  const cards = buildLiveMintList(LIVE_MINTS, {}, [{ entry: registryEntry(1, A, 'Neon Cats'), reads: { mintOpen: true } }])
+  assert.deepEqual(
+    cards.map((c) => [c.slug, shelfOf(c)]),
+    [
+      ['miyamaker', 'official'],
+      ['miyamini', 'official'],
+      ['neon-cats', 'community'],
+    ]
+  )
+  // A registry copy of a curated address stays official (curated wins the dedupe).
+  const dup = buildLiveMintList(LIVE_MINTS, {}, [{ entry: registryEntry(1, LIVE_MINTS[0]!.address!, 'Copy') }])
+  assert.equal(dup.filter((c) => shelfOf(c) === 'community').length, 0)
 })
 
 test('a registry drop credits its owner', () => {

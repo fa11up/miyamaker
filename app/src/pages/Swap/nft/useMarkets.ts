@@ -1,19 +1,31 @@
 import { useQueries, useQuery } from '@tanstack/react-query'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import type { MarketListing, MarketSale } from '../../../../api/_lib/market'
 import { MARKET_PREFIX } from '../../../../api/_lib/market'
-import type { OsCollection, OsNft, OsOrder, OsSearchHit, OsStats, OwnedGroup, Price } from './markets'
+import type {
+  GalleryItem,
+  OsCollection,
+  OsNft,
+  OsOrder,
+  OsSearchHit,
+  OsStats,
+  OwnedGroup,
+  Price,
+  TraitCounts,
+} from './markets'
 import {
   accountNftsPage,
   groupAccountNfts,
   OPENSEA_CHAIN,
   parseCollection,
+  parseCollectionNfts,
   parseNft,
   parseOfferAggregate,
   parseOrder,
   parseSearch,
   parseStats,
+  parseTraitCounts,
 } from './markets'
 import { goneHashes, sessionStore } from './sweep'
 
@@ -223,6 +235,8 @@ type MarketListings = {
 type MarketSales = {
   at: number
   stale: boolean
+  /** The service stopped at its page cap: older sales this week are missing. */
+  partial?: boolean
   day: { count: number; volume: string; other?: number }
   sales: MarketSale[]
 }
@@ -299,16 +313,20 @@ export function useMarketListings(slug: string | undefined) {
   }
 }
 
+/** One collection's sales query, shared by useMarketSales and the terminal's activity feed (same cache). */
+export const marketSalesQuery = (slug: string | undefined) => ({
+  queryKey: ['market-sales', slug],
+  enabled: !!slug,
+  ...common,
+  queryFn: ({ signal }: { signal: AbortSignal }) =>
+    market<MarketSales>(`sales?slug=${encodeURIComponent(slug!)}`, signal),
+})
+
 /** The week's sales, newest first, each with its transaction. */
 export function useMarketSales(slug: string | undefined) {
-  const q = useQuery({
-    queryKey: ['market-sales', slug],
-    enabled: !!slug,
-    ...common,
-    queryFn: ({ signal }) => market<MarketSales>(`sales?slug=${encodeURIComponent(slug!)}`, signal),
-  })
+  const q = useQuery(marketSalesQuery(slug))
   const sales = q.data ? (Array.isArray(q.data.sales) ? q.data.sales : []) : undefined
-  return { sales, day: q.data?.day, loading: !!slug && q.isLoading, error: q.error }
+  return { sales, day: q.data?.day, partial: !!q.data?.partial, loading: !!slug && q.isLoading, error: q.error }
 }
 
 /** One NFT on OpenSea: details, its best listing and best offer. */
@@ -355,6 +373,35 @@ export function useOpenSeaItem(
       nft.refetch()
     },
   }
+}
+
+/**
+ * The best OpenSea bid for each of several NFTs (item and collection offers), sharing useOpenSeaItem's cache. Per id:
+ * the order, null when there is none or OpenSea could not be asked, undefined while asking. `failed` lists the ids whose
+ * read failed, so "no bid" is not claimed for them.
+ */
+export function useOpenSeaBids(slug: string | undefined, ids: readonly string[]) {
+  const { configured, known } = useOpenSeaConfigured()
+  const qs = useQueries({
+    queries: ids.map((id) => ({
+      queryKey: ['os-nft-offer', slug, id],
+      enabled: !!slug && configured,
+      ...common,
+      queryFn: async ({ signal }: { signal: AbortSignal }): Promise<OsOrder | null> =>
+        parseOrder(await orNone(get({ op: 'nft_offer', slug: slug!, id }, signal))) || null,
+    })),
+  })
+  const bids: Record<string, OsOrder | null | undefined> = {}
+  const failed: string[] = []
+  ids.forEach((id, i) => {
+    const q = qs[i]!
+    if (known && (!configured || !slug)) bids[id] = null
+    else if (q.isError) {
+      bids[id] = null
+      failed.push(id)
+    } else bids[id] = q.data === undefined ? undefined : q.data
+  })
+  return { bids, failed }
 }
 
 /** One NFT's picture from OpenSea (its cached copy works where the metadata host blocks browsers). */
@@ -463,4 +510,75 @@ export function fetchFulfillment(
   signal?: AbortSignal
 ): Promise<unknown> {
   return call({ query: { op }, body, signal })
+}
+
+/** How many NFTs hold each trait value in a collection (OpenSea /traits), for rarity in the viewer. */
+export function useCollectionTraits(slug: string | undefined) {
+  const { configured } = useOpenSeaConfigured()
+  const q = useQuery({
+    queryKey: ['os-traits', slug],
+    enabled: !!slug && configured,
+    ...common,
+    staleTime: 10 * 60_000,
+    queryFn: async ({ signal }): Promise<TraitCounts> =>
+      parseTraitCounts(await orNone(get({ op: 'traits', slug: slug! }, signal))),
+  })
+  return q.data
+}
+
+/**
+ * The collection's NFTs, all of them, a page of 50 at a time (OpenSea /collection/<slug>/nfts). `more` loads the next
+ * page; `done` says there is none. Pages are kept in order; a failed page can be asked again.
+ */
+export function useCollectionGallery(slug: string | undefined) {
+  const { configured, known } = useOpenSeaConfigured()
+  const [pages, setPages] = useState<{ items: GalleryItem[]; next?: string }[]>([])
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<unknown>()
+  // Each collection is a new generation: a page that answers after the collection changed is dropped.
+  const generation = useRef(0)
+  const load = async (cursor?: string, reset = false) => {
+    if (!slug || !configured) return
+    const mine = generation.current
+    setLoading(true)
+    setError(undefined)
+    try {
+      const page = parseCollectionNfts(
+        await get({ op: 'collection_nfts', slug, ...(cursor ? { next: cursor } : {}) })
+      )
+      if (mine !== generation.current) return
+      setPages((all) => (reset ? [page] : [...all, page]))
+    } catch (e) {
+      setError(e)
+    } finally {
+      setLoading(false)
+    }
+  }
+  useEffect(() => {
+    generation.current += 1
+    setPages([])
+    if (slug && configured) load(undefined, true)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [slug, configured])
+  const last = pages[pages.length - 1]
+  return {
+    items: pages.flatMap((p) => p.items),
+    loading: !known || loading,
+    needsKey: (known && !configured) || needsKey(error),
+    error: error && !needsKey(error) ? (error as Error) : undefined,
+    done: pages.length > 0 && !last?.next,
+    more: () => (last?.next && !loading ? load(last.next) : undefined),
+  }
+}
+
+/** One NFT's sales in the last week (from the collection's sales feed), newest first. */
+export function useItemSales(slug: string | undefined, tokenId: string | undefined) {
+  const { sales, partial, loading, error } = useMarketSales(slug)
+  return {
+    sales: tokenId && sales ? sales.filter((s) => s.tokenId === tokenId) : undefined,
+    /** Only the latest sales were read: none found here does not mean none this week. */
+    partial,
+    loading,
+    error,
+  }
 }

@@ -22,8 +22,8 @@ import Stage from '@/pages/Mint/handheld/Stage'
 import { wrapIndex } from '@/pages/Mint/handheld/status'
 import MainMenu from '@/pages/Mint/Home'
 import LiveMintView from '@/pages/Mint/LiveMint'
-import type { LiveMintCard } from '@/pages/Mint/liveMints'
-import { mintPath, slugFromPath } from '@/pages/Mint/liveMints'
+import type { LiveMintCard, MintShelf } from '@/pages/Mint/liveMints'
+import { mintPath, shelfOf, slugFromPath } from '@/pages/Mint/liveMints'
 import MiyaminiMint from '@/pages/Mint/Miyamini'
 import MusicDrops from '@/pages/Mint/Music'
 import NFTDetail from '@/pages/Mint/NFT'
@@ -127,16 +127,26 @@ export default function MintPage() {
     if (!slug && navigationType !== 'POP') return
     setLiveSlug(slug)
     setPageSection(sectionForSlug(slug))
+    // Back to the game select closes the shelf, as the B button does.
+    if (sectionForSlug(slug) === EXPLORER_PAGE_SECTION.GAMES_SECTION) setShelf(undefined)
   }, [location.pathname, navigationType, held])
 
+  // The open shelf (Miyamaker or Community). A collection's Menu button returns to its own shelf.
+  const [shelf, setShelf] = useState<MintShelf>()
   const goHome = () => go(EXPLORER_PAGE_SECTION.HOME_SECTION)
   const openCard = (card: LiveMintCard) => {
     if (!card.clickable) return
+    setShelf(shelfOf(card))
     if (card.view === 'miyamini') go(EXPLORER_PAGE_SECTION.MIYAMINI_SECTION, 'miyamini')
     else go(EXPLORER_PAGE_SECTION.LIVE_SECTION, card.slug)
   }
 
   const liveCard = cards.find((c) => c.slug === liveSlug && c.clickable)
+  // A deep link straight into a collection opens its shelf too, so Menu and the D-pad stay on that shelf.
+  useEffect(() => {
+    if (liveCard) setShelf(shelfOf(liveCard))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveCard?.key])
   const [selectedCollection, setSelectedCollection] = useState<Collection>({
     name: '',
     metadataUri: '',
@@ -163,10 +173,14 @@ export default function MintPage() {
   }
 
   const toMenu = () => goHome()
-  const toGames = () => go(EXPLORER_PAGE_SECTION.GAMES_SECTION, GAMES_SLUG)
+  const toGames = () => {
+    setShelf(undefined)
+    go(EXPLORER_PAGE_SECTION.GAMES_SECTION, GAMES_SLUG)
+  }
 
-  // What the D-pad moves between: everything that opens, then the music.
-  const openable = cards.filter((c) => c.clickable)
+  // What the D-pad moves between: everything on the open shelf that opens (the Miyamaker shelf when none is open, as
+  // from Music), then the music. Stepping never reaches a community mint without its shelf being open.
+  const openable = cards.filter((c) => c.clickable && shelfOf(c) === (shelf ?? 'official'))
   const toMusic = () => go(EXPLORER_PAGE_SECTION.MUSIC_SECTION, MUSIC_SLUG)
   const carts: { slug: string; open: () => void }[] = [
     ...openable.map((c) => ({ slug: c.view === 'miyamini' ? 'miyamini' : c.slug, open: () => openCard(c) })),
@@ -188,6 +202,8 @@ export default function MintPage() {
 
   const menu = (
     <MainMenu
+      shelf={shelf}
+      onShelf={setShelf}
       onOpen={openCard}
       onMusic={toMusic}
       onBrowseLegacy={INDEXER_ENABLED ? () => setPageSection(EXPLORER_PAGE_SECTION.COLLECTIONS_SECTION) : undefined}

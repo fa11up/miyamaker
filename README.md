@@ -15,7 +15,7 @@ The Start menu groups the programs:
 | Group | Programs |
 | --- | --- |
 | Collect | Mint, Auction, Trade |
-| Create | Launch, Manager, Infinite Upload, Drop Music, MiyaMusicMaker |
+| Create | Launch, Manager, Infinite Upload, Drop Music, MiyaMusicMaker, miyakeys |
 | Entertainment | miyaTV, miya radio, miyanet |
 | System | My Files, Display |
 
@@ -38,6 +38,7 @@ A wallet connects through the usual browser wallets, and through a passkey or a 
 | miya radio | `/radio` | A player for stations and for music that has been released. A minted bounce can land here. |
 | Drop Music | `/drop-music` | Release a track as an edition: the audio, the cover, the price, the split, and the curve. |
 | MiyaMusicMaker | `/music` | The sampler, tracker, and song arranger. The playing guide is [its README](app/src/pages/MusicMaker/README.md). |
+| miyakeys | `/miyakeys` | A 3D mechanical keyboard configurator: layout, keycaps, switches, case, plate, lighting, and per-key legends. Exports KLE, SVG, PDF, and a spec sheet. **Share to gallery** publishes a build (without key images) to the public community gallery it shares with MODKEYS on [nuroctane.xyz/modkeys](https://www.nuroctane.xyz/modkeys), through this site's Worker; only nuroctane can remove it. `/miyakeys#<build>` opens a shared build. |
 
 ### Editions and the bonding curve
 
@@ -51,11 +52,11 @@ The chart draws the rise for the copies you set, and at most 240 of them, and it
 
 MiyaMusicMaker is a drum machine, a keyboard, a tracker, and a song arranger in one window. A starter kit is already loaded. Pattern `00` is a short demo. Click the window once, so the browser will make sound, then press Play. Make music every day. A little time at the instrument keeps you creative, and it keeps you at one with God's creation.
 
-Sixty-four pads sit in banks A through D. The Sequence page and the Tracker page edit the same pattern. On Sequence, Snap sets the grid, from a quarter note down to a 128th, and the tools move into the left rail when it has room. The arranger chains those patterns into a song. The bar under the playing cell shows how far that loop has gone. A cell that is waiting for the current loop to finish is the only one that blinks.
+Sixty-four pads sit in banks A through D. The Sequence page and the Tracker page edit the same pattern. On Sequence, Snap sets the grid, from a quarter note down to a 128th. On a wide window the tools stay above the grid. On a narrow window they stack in the left rail when that rail has room. The arranger chains those patterns into a song. The bar under the playing cell shows how far that loop has gone. A cell that is waiting for the current loop to finish is the only one that blinks.
 
 Songs save as `.m1ya`. Kits save as `.k1t`. From the site, or from a local checkout, you can publish a song, a kit, or a bounce to Arweave, and mint it as an edition. Publishing is public and permanent, and storage is paid in real ETH on Ethereum mainnet. The full map of the instrument, including MIDI controllers, the phone layout, the chord panel, and the tracker keys, is [app/src/pages/MusicMaker/README.md](app/src/pages/MusicMaker/README.md). The chord-panel section of that guide is released under the [Source Seppuku License](https://wiki.remilia.org/Source_Seppuku_License).
 
-Version 1.0.0 is also a program you can run without a browser window. The Mac download is the GitHub release `MiyaMusicMaker-v1.0.0`. The same source builds a portable exe on Windows and an AppImage on Linux. The steps are in [desktop/miyamusicmaker/README.md](desktop/miyamusicmaker/README.md).
+Version 1.0.0 is also a program you can run without a browser window. The Mac download is the GitHub release `MiyaMusicMaker-v1.0.0`. The same source builds a portable exe on Windows and an AppImage on Linux. Builds from this source keep songs and kits between launches. The 1.0.0 release did not, so save your work to a file there. Publishing, minting, loading samples from links or videos, and the allowlist need the site's server, so they work on the website and not in the program. The steps are in [desktop/miyamusicmaker/README.md](desktop/miyamusicmaker/README.md).
 
 ## Layout
 
@@ -67,6 +68,7 @@ Version 1.0.0 is also a program you can run without a browser window. The Mac do
 | `desktop/miyamusicmaker/` | Portable MiyaMusicMaker 1.0.0. A Mac zip, and the source for a Windows exe and a Linux AppImage. |
 | `app/src/pages/OperatingSystem/` | The desktop, the wallpaper, and the window layer |
 | `app/src/desktop/` | Icons, My Files, Display, the pet, and the screen saver |
+| `app/embed/miyakeys/` | miyakeys, its own page (vanilla JS, three.js), shown in a frame by its window (`app/src/pages/Miyakeys/`). Ported from MODKEYS, nuroctane.xyz's `artifacts/modkeys`. It uses its own three.js, installed as `three-miyakeys`. The window frames it sandboxed (no same-origin) and the Worker serves it with its own CSP (`app/api/_lib/miyakeys.ts`); every build from outside goes through `js/core/validBuild.js`. |
 | `app/src/miyamints/` | Launch, manage, and the edition math the windows share |
 | `contracts/` | Foundry project: the miyamints launchpad (`MiyaRegistry`, ERC721 drop / auction and ERC1155 factories, Uniswap v4 alignment vaults, NFT pools) and prediction markets. The factories and vaults started from [Zodomo/ms2fun-contracts](https://github.com/Zodomo/ms2fun-contracts) @ `ebb1190` |
 

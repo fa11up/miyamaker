@@ -28,16 +28,19 @@ import { useTx } from '@/miyamints/useTx'
 import ArtistTag from '@/pages/Mint/ArtistTag'
 import type { ListStanding, LiveMintCard } from '@/pages/Mint/liveMints'
 import {
+  COMMUNITY_WORDS,
   defaultPhase,
   formatEthShort,
   listStanding,
   mintableNow,
+  shelfOf,
   STANDING_BUTTON,
   standingWords,
   toCard,
 } from '@/pages/Mint/liveMints'
 import type { MachineStatus } from '@/pages/Mint/handheld/MintCart'
 import MintCart from '@/pages/Mint/handheld/MintCart'
+import { Choice, Field, Note, OptionGroup, OptionsRoot, Toggle } from '@/pages/Mint/handheld/Options'
 import { statusLamp } from '@/pages/Mint/handheld/status'
 import { TX_CANCELLED_WORDS, TX_UNCONFIRMED_WORDS } from '@/miyamints/txOutcome'
 import { useTxOutcome } from '@/miyamints/useTxOutcome'
@@ -53,7 +56,6 @@ import {
   useContractImage,
   useStickyReads,
 } from '@/pages/Mint/useLiveMints'
-import { space, text } from '@/theme/tokens'
 
 import { mintedWhere } from './where'
 
@@ -366,6 +368,7 @@ function useListPhases(card: LiveMintCard, reads: ReturnType<typeof readsFromRes
 }
 
 export default function LiveMintView({ card }: { card: LiveMintCard }) {
+  const community = shelfOf(card) === 'community'
   const { reads, live, isLoading, isError, refetch } = useCollection(card)
   const { address: account } = useAccount()
   const lists = useListPhases(card, reads, account)
@@ -562,9 +565,20 @@ export default function LiveMintView({ card }: { card: LiveMintCard }) {
     <MintCart
       name={live.name}
       caption={
-        // More than one phase running: say on the screen which one the button mints in (Info lists them all).
-        card.kind === 'drop' && phase && lists.phases.length > 1
-          ? `${phase.isList ? lists.byPhase[phase.phaseId]?.name ?? 'Allowlist' : 'Public sale'} · Info: all sales`
+        // A community mint says so on the art, before anything else. More than one phase running: say which one the
+        // button mints in (Info lists them all).
+        [
+          community ? COMMUNITY_WORDS : '',
+          card.kind === 'drop' && phase && lists.phases.length > 1
+            ? `${phase.isList ? lists.byPhase[phase.phaseId]?.name ?? 'Allowlist' : 'Public sale'} · Info: all sales`
+            : '',
+        ]
+          .filter(Boolean)
+          .join(' · ') || undefined
+      }
+      notice={
+        community
+          ? `${COMMUNITY_WORDS}. Anyone can launch a collection here; check who made it before you mint.`
           : undefined
       }
       artist={
@@ -600,97 +614,102 @@ export default function LiveMintView({ card }: { card: LiveMintCard }) {
       onQuantity={setQuantity}
       extras={
         card.kind === 'drop' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: space[1] }}>
+          <OptionsRoot>
             {(lists.phases.length > 1 || phase?.isList) && (
-              <fieldset style={{ border: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
-                <legend style={{ padding: 0, marginBottom: 2 }}>Sale</legend>
+              <OptionGroup legend="Sale" disabled={busy}>
                 {lists.phases.map((p) => {
                   const l = lists.byPhase[p.phaseId]
-                  const name = p.isList ? l?.name ?? 'Allowlist' : 'Public sale'
+                  const name = p.isList ? (l?.name ?? 'Allowlist') : 'Public sale'
                   const t = knownToken(card.chainId, ETH)
-                  const priceWords = p.prices.every((x) => x.price === 0n)
-                    ? 'free'
-                    : p.price !== undefined && t
-                    ? `${formatEthShort(p.price)}${p.prices.length > 1 ? ' or other tokens' : ''}`
-                    : 'priced in tokens'
+                  const free = p.prices.every((x) => x.price === 0n)
+                  const figure = free ? 'Free' : p.price !== undefined && t ? formatEthShort(p.price) : 'Tokens'
+                  const terms = [
+                    !free && p.price !== undefined && t && p.prices.length > 1 ? 'or pay with another token' : '',
+                    !free && (p.price === undefined || !t) ? 'priced in tokens' : '',
+                    p.maxPerWallet ? `${p.maxPerWallet} per wallet` : '',
+                    p.left === 0 ? 'sold out' : '',
+                  ].filter(Boolean)
                   return (
-                    <label key={p.phaseId} style={{ display: 'flex', gap: space[2], alignItems: 'flex-start', cursor: 'pointer' }}>
-                      <input
-                        type="radio"
-                        name={`phase-${card.key}`}
-                        checked={p.phaseId === phaseId}
-                        disabled={busy}
-                        onChange={() => {
-                          // Another phase: the last one's refused check, error or receipt is about something else.
-                          setChosen(p.phaseId)
-                          setPicked(undefined)
-                          setQuantity(1)
-                          if (!tx.approvalStuck) tx.resetApproval()
-                          if (!tx.unconfirmed) tx.reset()
-                        }}
-                      />
-                      <span>
-                        <b>{name}</b>, {priceWords}
-                        {p.maxPerWallet ? `, ${p.maxPerWallet} per wallet` : ''}
-                        {p.left === 0 ? ' (sold out)' : ''}
-                        {p.isList && l && (
+                    <Choice
+                      key={p.phaseId}
+                      name={`phase-${card.key}`}
+                      checked={p.phaseId === phaseId}
+                      onChange={() => {
+                        // Another phase: the last one's refused check, error or receipt is about something else.
+                        setChosen(p.phaseId)
+                        setPicked(undefined)
+                        setQuantity(1)
+                        if (!tx.approvalStuck) tx.resetApproval()
+                        if (!tx.unconfirmed) tx.reset()
+                      }}
+                      title={name}
+                      figure={figure}
+                      label={[`${name}, ${figure}`, ...terms, p.isList ? l?.words : ''].filter(Boolean).join(', ')}
+                      detail={
+                        (terms.length > 0 || (p.isList && l)) && (
                           <>
-                            <br />
-                            <small>{l.words}</small>
+                            {terms.join(' · ')}
+                            {terms.length > 0 && p.isList && l && <br />}
+                            {p.isList && l?.words}
                           </>
-                        )}
-                      </span>
-                    </label>
+                        )
+                      }
+                    />
                   )
                 })}
-              </fieldset>
+              </OptionGroup>
             )}
             {offered.length > 1 && (
-              <label style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                Pay with
-                <select
-                  value={token.toLowerCase()}
-                  disabled={busy}
-                  onChange={(e) => setPicked(e.target.value)}
-                  style={{ minHeight: 36, fontSize: 16 }}
-                >
-                  {phasePrices.map((p) => {
-                    const t = info[p.token.toLowerCase()]
-                    return (
-                      <option key={p.token} value={p.token.toLowerCase()}>
-                        {t ? (p.price === 0n ? `Free (${t.symbol})` : `${tokenLabel(p.price, t)} each`) : 'Token unavailable'}
-                      </option>
-                    )
-                  })}
-                </select>
-              </label>
+              <OptionGroup legend="Pay with" disabled={busy}>
+                {phasePrices.map((p) => {
+                  const t = info[p.token.toLowerCase()]
+                  const each = t ? (p.price === 0n ? 'Free' : `${tokenLabel(p.price, t)} each`) : undefined
+                  // The symbol is the row's name, so the figure drops it: "21 each", not "21 imdUSD each".
+                  const figure =
+                    t && each && each !== 'Free' && each.endsWith(` ${t.symbol} each`)
+                      ? `${each.slice(0, -` ${t.symbol} each`.length)} each`
+                      : each
+                  return (
+                    <Choice
+                      key={p.token}
+                      name={`pay-${card.key}`}
+                      checked={sameToken(p.token, token)}
+                      onChange={() => setPicked(p.token.toLowerCase())}
+                      title={t?.symbol ?? 'Token unavailable'}
+                      figure={figure}
+                      label={t ? (p.price === 0n ? `${t.symbol}, free` : `${t.symbol}, ${each}`) : 'Token unavailable'}
+                    />
+                  )
+                })}
+                {erc20 && unit && total !== undefined && total > 0n && (
+                  <Note>{approveWords(total, unit, 'this collection')}</Note>
+                )}
+              </OptionGroup>
             )}
-            {erc20 && unit && total !== undefined && total > 0n && (
-              <span style={{ fontSize: text.xs }}>{approveWords(total, unit, 'this collection')}</span>
+            {offered.length <= 1 && erc20 && unit && total !== undefined && total > 0n && (
+              <Note>{approveWords(total, unit, 'this collection')}</Note>
             )}
-            <label style={{ display: 'flex', gap: space[2], alignItems: 'center', cursor: 'pointer' }}>
-              <input
-                type="checkbox"
-                checked={sendElsewhere}
-                disabled={busy}
-                onChange={(e) => setSendElsewhere(e.target.checked)}
-              />
-              Send to another wallet
-            </label>
-            {sendElsewhere && (
-              <>
-                <input
-                  aria-label="Wallet to receive the mint"
-                  value={recipient}
-                  placeholder="0x…"
-                  spellCheck={false}
-                  disabled={busy}
-                  onChange={(e) => setRecipient(e.target.value)}
-                />
-                <span style={{ fontSize: text.xs }}>You pay, and the limit counts against your wallet.</span>
-              </>
-            )}
-          </div>
+            <OptionGroup legend="Send to" disabled={busy}>
+              <Toggle checked={sendElsewhere} onChange={setSendElsewhere}>
+                Send to another wallet
+              </Toggle>
+              {sendElsewhere && (
+                <>
+                  <Field
+                    aria-label="Wallet to receive the mint"
+                    aria-invalid={recipient.trim() !== '' && badRecipient ? true : undefined}
+                    value={recipient}
+                    placeholder="0x…"
+                    spellCheck={false}
+                    autoComplete="off"
+                    onChange={(e) => setRecipient(e.target.value)}
+                  />
+                  <Note>You pay, and the limit counts against your wallet.</Note>
+                </>
+              )}
+              {!sendElsewhere && <Note>It goes to the wallet you mint from.</Note>}
+            </OptionGroup>
+          </OptionsRoot>
         )
       }
       total={money(total)}
@@ -703,7 +722,11 @@ export default function LiveMintView({ card }: { card: LiveMintCard }) {
       }
       action={action}
       status={status}
-      needs={!tx.isConnected ? <MintNeeds chainName={live.chainName} /> : undefined}
+      needs={
+        !tx.isConnected ? (
+          <MintNeeds chainName={live.chainName} paySymbol={unit?.symbol ?? 'ETH'} free={unitPrice === 0n} />
+        ) : undefined
+      }
       dropped={
         tx.isConfirmed ? (
           <>

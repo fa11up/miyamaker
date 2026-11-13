@@ -40,14 +40,14 @@ ProtectSystem=strict
 ProtectHome=tmpfs
 # The app, read-only; the key file (KEEPER_KEY_FILE in .env must point at this same path), read-only; state/, read-write.
 BindReadOnlyPaths=%h/imd-vault-keeper
-BindReadOnlyPaths=%h/.config/imd-vault-keeper/keeper.key
+# "-": optional, so the unit starts in report-only mode before the key file exists.
+BindReadOnlyPaths=-%h/.config/imd-vault-keeper/keeper.key
 BindPaths=%h/imd-vault-keeper/state
 ReadWritePaths=%h/imd-vault-keeper/state
+# CapabilityBoundingSet=, ProtectKernelModules=, ProtectKernelLogs= and ProtectClock= are left out: they work by dropping
+# capabilities, which a user manager cannot do (the unit fails 218/CAPABILITIES), and an unprivileged user has none.
 ProtectKernelTunables=yes
-ProtectKernelModules=yes
-ProtectKernelLogs=yes
 ProtectControlGroups=yes
-ProtectClock=yes
 RestrictNamespaces=yes
 RestrictRealtime=yes
 RestrictSUIDSGID=yes
@@ -58,7 +58,6 @@ SystemCallArchitectures=native
 SystemCallFilter=@system-service
 # A syscall outside the filter fails with EPERM instead of killing the process (V8 probes a few optional ones).
 SystemCallErrorNumber=EPERM
-CapabilityBoundingSet=
 
 [Install]
 WantedBy=default.target

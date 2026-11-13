@@ -13,6 +13,22 @@
  *     vault as the picker's own contribution.
  */
 
+/**
+ * v1 MiyaPoolFactory deployments, which this (v2) app can't talk to: v2 changed redeem and createPool. On a chain whose
+ * deployments file still names one of these, Trade says pools aren't on the network yet. DeployMiyaPoolV2 moves it to
+ * `miyaPoolFactoryV1` and writes the v2 factory in its place, and pools come back on by themselves.
+ */
+export const V1_POOL_FACTORIES: Readonly<Record<number, readonly string[]>> = {
+  1: ['0x05130d6B13961dc313cd2729Ae4Fd1C22b13efF3'],
+}
+
+/** The factory to use, or undefined when there is none or it is a v1 one. */
+export function v2PoolFactory<A extends string>(chainId: number, factory: A | undefined): A | undefined {
+  if (!factory) return undefined
+  const v1 = V1_POOL_FACTORIES[chainId] ?? []
+  return v1.some((a) => a.toLowerCase() === factory.toLowerCase()) ? undefined : factory
+}
+
 /** 1 NFT = 1e18 pool-token base units. Mirrors MiyaPool.UNIT. */
 export const POOL_UNIT = 10n ** 18n
 

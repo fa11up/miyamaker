@@ -1,6 +1,6 @@
 import { parseMod, parseXm } from './module.js'
 import { defaultNumpadFx, normalizeFxPresets, normalizeNumpadFx } from './numpadFx.js'
-import { normalizeAuto, normalizeLaunch, withSongValues } from './arrange.js'
+import { normalizeAuto, normalizeLaunch, resetPlayValues, withSongValues } from './arrange.js'
 import { FACTORY, KIT_LAYOUT } from './presets.js'
 import { renderSynth } from './synth.js'
 import { beginUndo, endUndo, songSwitch, stashUndo } from '../history.js'
@@ -457,11 +457,12 @@ function usedPatternIds() {
 }
 
 export async function captureKit(name, what = 'Save') {
-  return packKit({
+  // The pads' own levels, not the ones playback automation is holding right now.
+  return withSongValues(model, () => packKit({
     name: name || 'Kit',
     pads: model.pads.map((pad) => ({ ...pad })),
     samples: liveSamples(what),
-  })
+  }))
 }
 
 /** Some browsers start the download after click() returns, so the URL must outlive it. */
@@ -724,6 +725,8 @@ async function loadSongNow(doc, fileId, ticket) {
     model.bpm = Math.round(num(doc.bpm, 184, 40, 240))
     model.swing = num(doc.swing, 0, 0, 0.6)
     model.browserNote = `${model.songName} ready at ${model.bpm} bpm`
+    // Tempo and levels playback kept are the last song's. Its first pattern's own tempo plays if still playing.
+    resetPlayValues(model, model.playing ? ensurePattern(model.pattern) : null)
     touch(true)
     if (mix) await pushMix()
   } finally {

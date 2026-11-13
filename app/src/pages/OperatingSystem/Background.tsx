@@ -2,9 +2,9 @@ import styled from 'styled-components/macro'
 import { useEnsName } from 'wagmi'
 
 import { useAccount } from '@/context/AccountProvider'
-import { useWaves } from '@/store/experience/hooks'
-
 import { useClusterName } from '@/hooks/useClusterName'
+import { isDesktopApp } from '@/pages/MusicMaker/media/desktop.js'
+import { useWaves } from '@/store/experience/hooks'
 
 import WaveBackground from './wave/WaveBackground'
 
@@ -64,7 +64,8 @@ export default function Background() {
               MiyaOS
             </span>
           </p>
-          <p>Version 1.3.0</p>
+          {/* Inside the desktop program, its own version (desktop/miyamusicmaker/package.json) */}
+          <p>{isDesktopApp() ? `MiyaMusicMaker ${__MMM_VERSION__}` : 'Version 1.3.0'}</p>
           {account?.isConnected && (
             <>
               {clusterName ? <p>{clusterName}</p> : !!ens.data && <p>{ens.data}</p>}

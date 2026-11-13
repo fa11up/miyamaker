@@ -5,6 +5,7 @@ import Draggable from 'react-draggable'
 
 import Pages from '@/constants/pages'
 import AppBoot from '@/components/AppBoot'
+import { ACTIVITY_EVENT, pressedFrame } from '@/desktop/screensaver/activity'
 import { useWindowSize } from 'usehooks-ts'
 
 import { useWindowDimensions, useWindowPosition } from '@/store/windows/hooks'
@@ -54,6 +55,56 @@ const DummyWindow = ({
     </div>
   )
 }
+
+/**
+ * Windows whose app changes layout at a width, so they never get narrower than it on a desktop. miyakeys's page
+ * reloads into its phone layout at 768px (1024px with a touch pointer), losing its undo and builds in progress; a
+ * window always above that never crosses it. On a phone the window is the whole screen from the start, and so it is
+ * on a desktop narrower than this minimum (windowFit): there the frame is as wide as the screen and only crosses when
+ * the screen itself does.
+ */
+const LAYOUT_MIN_WIDTH: Record<string, { fine: number; coarse: number }> = {
+  miyakeys: { fine: 800, coarse: 1060 },
+}
+
+/** Whether a window is held full-screen because the desktop is narrower than its app's layout (not by the person). */
+export function heldFullScreen(identifier: string, viewWidth: number): boolean {
+  const min = layoutMinWidth(identifier)
+  return min > 0 && viewWidth > 0 && viewWidth < min
+}
+
+function layoutMinWidth(identifier: string): number {
+  const min = LAYOUT_MIN_WIDTH[identifier]
+  if (!min) return 0
+  try {
+    return window.matchMedia('(pointer: coarse)').matches ? min.coarse : min.fine
+  } catch {
+    return min.fine
+  }
+}
+
+/**
+ * How a window fits the desktop: full-screen on a phone (or when asked), or when the desktop is narrower than the
+ * width its app's layout needs (layoutMin, LAYOUT_MIN_WIDTH), so it is never squeezed under that width; otherwise its
+ * narrowest is the usual minimum (480 or less, its app's layout width if more), never wider than the desktop.
+ * Self-contained: tests/miyakeys-bridge.test.mts runs it from this file's text.
+ */
+function windowFit(o: { mobile?: boolean; viewWidth: number; baseWidth: number; layoutMin: number }) {
+  const fullScreen = !!o.mobile || (o.layoutMin > 0 && o.viewWidth > 0 && o.viewWidth < o.layoutMin)
+  const wanted = Math.max(Math.min(o.baseWidth, 480), o.layoutMin)
+  return { fullScreen, minWidth: o.viewWidth > 0 ? Math.min(o.viewWidth, wanted) : wanted }
+}
+
+/**
+ * Where a window's left edge (or top) goes when its far edge stays put and it takes width `w`: never off the desktop's
+ * left (top). A window held at its minimum against the edge grows the other way instead. Self-contained, as windowFit.
+ */
+function pinnedStart(start: number, size: number, w: number): number {
+  return Math.max(0, start + size - w)
+}
+
+/** While a frame has focus, how often its window checks whether focus moved to another window's frame. */
+const FRAME_FOCUS_POLL_MS = 250
 
 type Edge = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw'
 const EDGES: Edge[] = ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw']
@@ -185,11 +236,74 @@ function pictureOf(window: HTMLElement): HTMLElement[] {
   return Array.from(copy.children) as HTMLElement[]
 }
 
+/**
+ * Raises a window when focus moves into one of its frames. A click from this page into a frame blurs the page; a move
+ * from one frame straight into another's sends the page nothing, so while a frame has focus (and the tab is showing)
+ * the focused element is checked every `ms` until focus comes back to the page, it leaves the frames without a focus
+ * event (the frame was removed), the tab is hidden, or the window goes. A press the frame reports also raises it.
+ * Every window watches for its own frames. Self-contained: tests/miyakeys-bridge.test.mts runs it with fakes.
+ */
+function watchFrameFocus(o: {
+  win: Pick<Window, 'addEventListener' | 'removeEventListener'>
+  doc: Pick<Document, 'activeElement' | 'hidden' | 'addEventListener' | 'removeEventListener'>
+  isFrame: (el: Element | null) => boolean
+  mine: (el: Element) => boolean
+  raise: () => void
+  pressedFrame: (e: Event) => Element | null | undefined
+  activityEvent: string
+  ms: number
+}) {
+  let poll: ReturnType<typeof setInterval> | undefined
+  let last: Element | null = null
+  const stop = () => {
+    clearInterval(poll)
+    poll = undefined
+  }
+  const check = () => {
+    const active = o.doc.activeElement
+    if (!o.isFrame(active)) {
+      stop()
+      return
+    }
+    if (active === last) return
+    last = active
+    if (active && o.mine(active)) o.raise()
+  }
+  const onBlur = () => {
+    last = null
+    check()
+    if (!poll && !o.doc.hidden && o.isFrame(o.doc.activeElement)) poll = setInterval(check, o.ms)
+  }
+  const onFocus = () => {
+    stop()
+    last = null
+  }
+  const onVisibility = () => {
+    if (o.doc.hidden) stop()
+    else if (o.isFrame(o.doc.activeElement)) onBlur()
+  }
+  const onPress = (e: Event) => {
+    const frame = o.pressedFrame(e)
+    if (frame && o.mine(frame)) o.raise()
+  }
+  o.win.addEventListener('blur', onBlur)
+  o.win.addEventListener('focus', onFocus)
+  o.doc.addEventListener('visibilitychange', onVisibility)
+  o.win.addEventListener(o.activityEvent, onPress)
+  return () => {
+    stop()
+    o.win.removeEventListener('blur', onBlur)
+    o.win.removeEventListener('focus', onFocus)
+    o.doc.removeEventListener('visibilitychange', onVisibility)
+    o.win.removeEventListener(o.activityEvent, onPress)
+  }
+}
+
 export default function Windows({
   children,
   baseSize,
   onClick,
-  mobile,
+  mobile: phoneOrFull,
   minimized,
   focused,
   identifier = 'program',
@@ -218,7 +332,15 @@ export default function Windows({
   const [dragPosition, setDragPosition] = useState<{ x: number; y: number } | undefined>()
   const latestDrag = useRef(dragPosition)
   latestDrag.current = dragPosition
-  const { height: viewHeight } = useWindowSize()
+  const { height: viewHeight, width: viewWidth } = useWindowSize()
+  const fit = windowFit({
+    mobile: phoneOrFull,
+    viewWidth,
+    baseWidth: baseSize.width,
+    layoutMin: layoutMinWidth(identifier),
+  })
+  // From here on "mobile" is "the whole screen": a phone, a window put full-screen, or a desktop too narrow for it.
+  const mobile = fit.fullScreen
 
   useEffect(() => {
     if (dragPosition && (dragPosition.x < 0 || dragPosition.y < 0)) {
@@ -268,6 +390,27 @@ export default function Windows({
     }, 100)
     return () => clearInterval(waiting)
   }, [focused, initialized])
+  // A click into a frame (miyakeys's sandboxed page) sends this page no pointer event and no focus event, only a
+  // window blur, with the frame as the active element, and the press the frame reports (activity.ts). Either is a
+  // click in this window: it comes to the front. Focus going straight from one window's frame to another's fires no
+  // blur here (this page is already blurred), so while a frame has focus the active element is looked at every
+  // FRAME_FOCUS_POLL_MS, until focus comes back to this page (window focus) or the window goes.
+  const raise = useRef(onClick)
+  raise.current = onClick
+  useEffect(
+    () =>
+      watchFrameFocus({
+        win: window,
+        doc: document,
+        isFrame: (el) => el instanceof HTMLIFrameElement,
+        mine: (el) => !!ref.current?.contains(el),
+        raise: () => raise.current(),
+        pressedFrame,
+        activityEvent: ACTIVITY_EVENT,
+        ms: FRAME_FOCUS_POLL_MS,
+      }),
+    []
+  )
   useEffect(
     () => () => {
       const active = document.activeElement
@@ -282,9 +425,10 @@ export default function Windows({
   const [savedSize, saveSize] = useWindowDimensions(identifier)
   const [liveSize, setLiveSize] = useState<{ width: number; height: number }>()
   const resizable = !mobile && !shaped && !fixedSize
-  const size = (resizable && (liveSize ?? savedSize)) || baseSize
-  const minSize = { width: Math.min(baseSize.width, 480), height: Math.min(baseSize.height, 360) }
-  const { width: viewWidth } = useWindowSize()
+  const minSize = { width: fit.minWidth, height: Math.min(baseSize.height, 360) }
+  const picked = (resizable && (liveSize ?? savedSize)) || baseSize
+  // A size saved before the window had its layout's minimum comes back at the minimum.
+  const size = { width: Math.max(minSize.width, picked.width), height: picked.height }
 
   // A window taller than the desktop shrinks to fit above the taskbar and scrolls inside.
   const available = Math.max(0, viewHeight - 34)
@@ -308,20 +452,18 @@ export default function Windows({
       let { left, top } = start
       if (edge.includes('e')) w = Math.min(start.w + dx, viewWidth - start.left)
       if (edge.includes('s')) h = Math.min(start.h + dy, available - start.top)
+      w = Math.max(minSize.width, Math.round(w))
+      h = Math.max(minSize.height, Math.round(h))
       if (edge.includes('w')) {
-        w = Math.min(start.w - dx, start.left + start.w)
-        w = Math.max(minSize.width, w)
-        left = start.left + start.w - w
+        w = Math.max(minSize.width, Math.round(Math.min(start.w - dx, Math.max(0, start.left) + start.w)))
+        left = pinnedStart(start.left, start.w, w)
       }
 
       if (edge.includes('n')) {
-        h = Math.min(start.h - dy, start.top + start.h)
-        h = Math.max(minSize.height, h)
-        top = start.top + start.h - h
+        h = Math.max(minSize.height, Math.round(Math.min(start.h - dy, Math.max(0, start.top) + start.h)))
+        top = pinnedStart(start.top, start.h, h)
       }
 
-      w = Math.max(minSize.width, Math.round(w))
-      h = Math.max(minSize.height, Math.round(h))
       last = { size: { width: w, height: h }, pos: { x: Math.round(left), y: Math.round(top) } }
       setLiveSize(last.size)
       if (edge.includes('w') || edge.includes('n')) setDragPosition(last.pos)
@@ -391,11 +533,13 @@ export default function Windows({
   useEffect(() => {
     if (!initialized && position) {
       setInitialized(true)
-      // Keep the bottom edge above the taskbar when the window first appears.
-      const maxY = available ? Math.max(0, available - height) : position.y
+      // Keep the bottom edge above the taskbar when the window first appears. useWindowSize reads 0 on the first
+      // render, so the screen is read here directly (as for x), or a window saved low would open off-screen.
+      const maxY = Math.max(0, (available || Math.max(0, window.innerHeight - 34)) - height)
       // And its title bar on screen, wherever the window was left on a wider desktop.
       const maxX = Math.max(0, window.innerWidth - width)
-      setDragPosition({ x: Math.min(position.x, maxX), y: Math.min(position.y, maxY) })
+      // Never off its left or top either (a position saved by an older build may be negative).
+      setDragPosition({ x: Math.max(0, Math.min(position.x, maxX)), y: Math.max(0, Math.min(position.y, maxY)) })
     }
   }, [position])
 

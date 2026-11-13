@@ -20,6 +20,7 @@ import { useStorageQuote } from '@/utils/useStorageQuote'
 
 import { BOUNCE_NOTE } from './audio/engine.js'
 import { checkLaunch, type EditionLaunch, type EditionResult, launchEdition } from './launchEdition'
+import { DESKTOP_PUBLISH_NOTE, isDesktopApp } from './media/desktop.js'
 import {
   contentKey,
   defaultArtist,
@@ -320,7 +321,43 @@ type Files = Awaited<ReturnType<typeof requestFiles>>
 
 // ---------------------------------------------------------------------------------------------------------------
 
-export default function PublishDialog({ job, onClose }: { job: PublishJob; onClose: () => void }) {
+function DesktopOnly({ job, onClose }: { job: PublishJob; onClose: () => void }) {
+  const mint = job.intent.startsWith('mint-')
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      e.preventDefault()
+      e.stopPropagation()
+      onClose()
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [onClose])
+
+  return (
+    <Back role="presentation" onMouseDown={onClose}>
+      <Card
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="mmm-publish-title"
+        onMouseDown={(e) => e.stopPropagation()}
+        onSubmit={(e) => {
+          e.preventDefault()
+          onClose()
+        }}
+      >
+        <strong id="mmm-publish-title">{mint ? 'Mint' : 'Publish to Arweave'}</strong>
+        <Note>{DESKTOP_PUBLISH_NOTE}</Note>
+        <Actions>
+          <Btn type="submit">Close</Btn>
+        </Actions>
+      </Card>
+    </Back>
+  )
+}
+
+function PublishFlow({ job, onClose }: { job: PublishJob; onClose: () => void }) {
   const mint = job.intent.startsWith('mint-')
   const { address, chain } = useAccount()
   const ens = useEnsName({ address, chainId: 1, query: { enabled: mint && !!address, staleTime: 3_600_000 } })
@@ -1023,4 +1060,14 @@ export default function PublishDialog({ job, onClose }: { job: PublishJob; onClo
       </Card>
     </Back>
   )
+}
+
+/**
+ * The release window. The desktop program has no wallet and no upload server, so there it only says where publishing
+ * works instead of opening a flow that cannot finish.
+ */
+export default function PublishDialog({ job, onClose }: { job: PublishJob; onClose: () => void }) {
+  if (isDesktopApp()) return <DesktopOnly job={job} onClose={onClose} />
+
+  return <PublishFlow job={job} onClose={onClose} />
 }

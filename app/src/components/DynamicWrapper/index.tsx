@@ -44,7 +44,11 @@ function CrashedWindow({ identifier, error, reset }: { identifier: string; error
         </details>
         <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
           {/* A failed chunk import stays rejected inside React.lazy, so that case needs a full page reload. */}
-          <HighlightButton onClick={() => (isChunkLoadError(error.message) ? window.location.reload() : reset())}>
+          <HighlightButton
+            onClick={() =>
+              isChunkLoadError(error.message) || /\bis not defined\b/.test(error.message) ? window.location.reload() : reset()
+            }
+          >
             Reload
           </HighlightButton>
           <HighlightButton onClick={() => close()}>Close</HighlightButton>
@@ -58,6 +62,7 @@ const TV = lazy(APP_LOADERS.tv!)
 const Radio = lazy(APP_LOADERS.radio!)
 const DropMusic = lazy(APP_LOADERS.dropmusic!)
 const MusicMaker = lazy(APP_LOADERS.music!)
+const Miyakeys = lazy(APP_LOADERS.miyakeys!)
 
 export default function DynamicWrapper({ identifier }: { identifier: string }) {
   const component = useMemo(() => {
@@ -88,6 +93,8 @@ export default function DynamicWrapper({ identifier }: { identifier: string }) {
         return <DropMusic />
       case 'music':
         return <MusicMaker />
+      case 'miyakeys':
+        return <Miyakeys />
       default:
         return <></>
     }
