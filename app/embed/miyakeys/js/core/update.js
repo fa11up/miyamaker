@@ -13,7 +13,7 @@ import {
 } from './scene.js';
 import { rebuildBoard, buildKeys, refreshLegends, preloadEmoji, rebuildKnob, syncKnobColorway } from './keyboard.js';
 import { setView } from './controls.js';
-import { pushState, undo as undoHistory, redo as redoHistory } from './history.js';
+import { pushState, resetHistory, isEmpty as historyEmpty, undo as undoHistory, redo as redoHistory } from './history.js';
 import { clearPerKeyCapColors } from './perKey.js';
 
 /* Panel re-render hook. panels.js statically imports this module, so a static
@@ -340,18 +340,33 @@ export function loadSnap(snap, opts = {}) {
   setState(patch, { animate: false, skipPanel: !!opts.skipPanel });
 }
 
+/** Start history at the build on screen if nothing has been recorded yet (no shared link at boot). */
+function ensureHistory() {
+  if (historyEmpty()) resetHistory(state);
+}
+
+/** Record the build as it is now as one undo step (no-op when nothing changed). Per-key edits, which change
+ *  state.perKeyOverrides in place, call this once per gesture (a click, or the 'change' after typing / dragging). */
+export function commitHistory() {
+  ensureHistory();
+  pushState(state);
+}
+
+/* opts.history === false: a live preview step (slider drag); the gesture commits on 'change'. */
 export function setState(patch, opts) {
   opts = opts || {};
+  ensureHistory();
   if (patch.light) patch.light = Object.assign({}, state.light, patch.light);
   if (patch.extras) patch.extras = Object.assign({}, state.extras, patch.extras);
-  pushState(stateSlice());
   Object.assign(state, patch);
   apply3D(patch, opts.animate !== false);
+  /* History holds the state AFTER each change; the entry before it is what undo returns to. */
+  if (opts.history !== false) pushState(state);
   if (_syncUI) _syncUI(opts.skipPanel);
 }
 
-/* A history entry is a whole earlier stateSlice(), so it goes back through the same allowlist as any other build:
-   undo restores the build, not the viewer's theme, tool or view. */
+/* A history entry is a build (history.js keeps only build fields), so it goes back through the same allowlist as
+   any other build: undo restores the build, not the viewer's theme, tool or view. */
 function restore(entry) {
   const snap = validBuild(entry);
   if (!snap) return false;
@@ -364,13 +379,17 @@ function restore(entry) {
   return true;
 }
 
+/* Both first record any live edit not yet committed (a tint being dragged, a legend still focused), so undo
+   steps back from what is on screen and never drops it. */
 export function undo() {
+  commitHistory();
   const snap = undoHistory();
   if (!snap) return false;
   return restore(snap);
 }
 
 export function redo() {
+  commitHistory();
   const snap = redoHistory();
   if (!snap) return false;
   return restore(snap);

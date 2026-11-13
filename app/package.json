@@ -106,6 +106,7 @@
   },
   "resolutions": {
     "qr": "0.5.5",
-    "es5-ext": "^0.10.63"
+    "es5-ext": "^0.10.63",
+    "jspdf/@babel/runtime": "7.29.13"
   }
 }

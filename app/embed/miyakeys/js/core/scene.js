@@ -18,7 +18,14 @@ renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.NoToneMapping;
 renderer.toneMappingExposure = 1.0;
 renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+/* PCFSoftShadowMap is deprecated in three r184 and falls back to this anyway (with a console warning). */
+renderer.shadowMap.type = THREE.PCFShadowMap;
+
+/* The page draws on demand (app.js): anything that changes the scene outside a state change or an input event (an
+   image or emoji that finishes loading) asks for a frame here. */
+let renderHook = null;
+export function onRenderRequest(fn) { renderHook = fn; }
+export function requestRender() { if (renderHook) renderHook(); }
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(31, 1.6, 0.1, 200);

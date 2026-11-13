@@ -2,10 +2,11 @@ import { state } from '../core/state.js';
 import { LAYOUTS, layoutOf } from '../data/layouts.js';
 import { COLORWAYS, PANEL_SWATCHES } from '../data/colorways.js';
 import { CASES, FINISHES, PLATES, SWITCHES, MATERIALS, EXTRAS, PROFILES, LIGHT_COLORS } from '../data/components.js';
-import { setState, effectiveColorway, applyLight } from '../core/update.js';
+import { setState, commitHistory, effectiveColorway, applyLight } from '../core/update.js';
+import { MAX_LEGEND } from '../core/validBuild.js';
 import {
   getOverride, setOverride, setOverrides, clearOverride, clearAllOverrides,
-  getSelectedIds, selectKey, clearSelection, KNOB_ID, isKnobId,
+  getSelectedIds, selectKey, clearSelection, KNOB_ID, isKnobId, keyInLayout,
 } from '../core/perKey.js';
 import { loadImage, validateImageFile, MAX_PHOTO_SIZE } from '../core/imageLoader.js';
 import { EMOJI, EMOJI_CREDIT, emojiUrl } from '../data/art.js';
@@ -72,6 +73,21 @@ function applyKeyEditorPatch(patch, { fullRebuild = false } = {}) {
     || patch.glow !== undefined;
   /* Knob always full rebuild (tick / body / art are not legendTex-on-cap) */
   rebuildIds(ids, { fullRebuild: needRebuild });
+}
+
+/* An image upload awaits the file read; by then the selection may have moved, the editor closed or the layout
+   changed. Capture the target before the await, and after it land the image only on keys still on that board. */
+function imageTarget(ids) {
+  return { ids: (ids || []).slice(), layout: state.layout };
+}
+
+function landImage(target) {
+  const ids = target.layout === state.layout ? target.ids.filter((id) => keyInLayout(id)) : [];
+  if (!ids.length) {
+    toast('That key is gone — image not applied');
+    return null;
+  }
+  return ids;
 }
 
 export function lightDotStyle() {
@@ -357,7 +373,7 @@ function buildCustomizePanel() {
   </div>
   ${knobPrim ? '' : `
   <div class="glabel" style="margin-top:12px">LEGEND TEXT</div>
-  <input type="text" id="cuText" class="keInput" value="${escAttr(labelVal)}" style="width:100%;margin-top:4px">`}
+  <input type="text" id="cuText" class="keInput" maxlength="${MAX_LEGEND}" value="${escAttr(labelVal)}" style="width:100%;margin-top:4px">`}
   <div class="keRow" style="margin-top:8px">
     <label>${knobPrim ? 'Dial tick shown' : 'Label shown'}</label>
     <label class="keToggle ${ov.labelHidden ? '' : 'on'}" id="cuLabelShown"><span></span></label>
@@ -414,12 +430,8 @@ export function renderPanel(section) {
   );
   $('panelTitle').textContent = section.toUpperCase();
   $('panelBody').innerHTML = PANELS[section] ? PANELS[section]() : '';
-  const sl = document.querySelector('#brightSlider');
-  if (sl) {
-    sl.oninput = () => {
-      setState({ light: { bright: parseFloat(sl.value) } });
-    };
-  }
+  /* #brightSlider: live steps go through the panelBody 'input' listener (no history, no re-render, so focus stays
+     on the slider); one history step is committed on 'change'. */
   if (section === 'customize') mountPhotoHandles();
 }
 
@@ -514,6 +526,7 @@ function afterPhotoCopy(msg) {
     if (state.perKeyOverrides[id]?.bgColor) rebuildKey(...id.split('-').map(Number));
   });
   refreshChromeDots();
+  commitHistory();
   toast(msg || 'Colours copied from photo');
   renderPanel('customize');
 }
@@ -600,6 +613,7 @@ export function setupPanelEvents() {
       delete ov.imageData;
       setOverride(_currentEditId, { imageData: null });
       rebuildKey(..._currentEditId.split('-').map(Number));
+      commitHistory();
       updateSidebarKeyImage();
       return;
     }
@@ -625,6 +639,7 @@ export function setupPanelEvents() {
         if (k.buildKeys) k.buildKeys();
         if (k.rebuildKnob) k.rebuildKnob();
       });
+      commitHistory();
       toast('All custom keys reset');
       renderPanel('customize');
       return;
@@ -635,6 +650,7 @@ export function setupPanelEvents() {
         if (o) { delete o.bgColor; if (!Object.keys(o).length) clearOverride(id); else state.perKeyOverrides[id] = o; }
       });
       rebuildIds(selectedOrPrimary(), { fullRebuild: true });
+      commitHistory();
       renderPanel('customize');
       return;
     }
@@ -642,6 +658,7 @@ export function setupPanelEvents() {
       const ids = selectedOrPrimary();
       const cur = ids[0] ? getOverride(ids[0]) : null;
       applyKeyEditorPatch({ labelHidden: !(cur && cur.labelHidden) });
+      commitHistory();
       renderPanel('customize');
       return;
     }
@@ -649,6 +666,7 @@ export function setupPanelEvents() {
       const ids = selectedOrPrimary();
       const cur = ids[0] ? getOverride(ids[0]) : null;
       applyKeyEditorPatch({ glow: !(cur && cur.glow) });
+      commitHistory();
       renderPanel('customize');
       return;
     }
@@ -663,6 +681,7 @@ export function setupPanelEvents() {
         setOverride(id, { fgColor: lum > 0.55 ? '#1a1a1a' : '#f4f4f4' });
         updateKeyLegend(id);
       });
+      commitHistory();
       renderPanel('customize');
       return;
     }
@@ -670,6 +689,7 @@ export function setupPanelEvents() {
       selectedOrPrimary().forEach((id) => clearOverride(id));
       rebuildIds(selectedOrPrimary(), { fullRebuild: true });
       toast('Reset');
+      commitHistory();
       renderPanel('customize');
       return;
     }
@@ -684,6 +704,7 @@ export function setupPanelEvents() {
         }
       });
       rebuildIds(selectedOrPrimary(), { fullRebuild: true });
+      commitHistory();
       renderPanel('customize');
       return;
     }
@@ -698,6 +719,7 @@ export function setupPanelEvents() {
       });
       rebuildIds(ids, { fullRebuild: true });
       toast(ids.some(isKnobId) ? 'Emoji cleared — dial tick restored' : 'Emoji cleared — legend text restored');
+      commitHistory();
       renderPanel('customize');
     };
     const emojiClear = ev.target.closest('[data-emoji-clear]');
@@ -718,6 +740,7 @@ export function setupPanelEvents() {
       }
       applyKeyEditorPatch({ markId: eid, labelHidden: true });
       toast('Emoji applied');
+      commitHistory();
       renderPanel('customize');
       return;
     }
@@ -727,6 +750,7 @@ export function setupPanelEvents() {
         imageFit: fitBtn.dataset.fit,
         imageBehindText: fitBtn.dataset.fit === 'fill',
       });
+      commitHistory();
       renderPanel('customize');
       return;
     }
@@ -745,6 +769,7 @@ export function setupPanelEvents() {
             Object.keys(state.perKeyOverrides || {}).forEach((id) => {
               if (state.perKeyOverrides[id]?.bgColor) rebuildKey(...id.split('-').map(Number));
             });
+            commitHistory();
             toast('Key colours from photo');
           }
         } else {
@@ -889,14 +914,24 @@ export function setupPanelEvents() {
       if (!file) return;
       const err = validateImageFile(file);
       if (err) { toast(err); return; }
+      /* The image goes to the keys it was picked for, not whatever is selected once it has loaded. */
+      const target = imageTarget(selectedOrPrimary());
       const dataUrl = await loadImage(file);
-      applyKeyEditorPatch({ imageData: dataUrl, imageFit: 'wrap' });
-      selectedOrPrimary().forEach((id) => rebuildKey(...id.split('-').map(Number)));
+      const ids = landImage(target);
+      if (!ids) return;
+      setOverrides(ids, { imageData: dataUrl, imageFit: 'wrap' });
+      rebuildIds(ids, { fullRebuild: true });
+      commitHistory();
       renderPanel('customize');
       return;
     }
     if (ev.target.id === 'cuBg') {
       setState({ perKeyOverrides: state.perKeyOverrides }, { skipPanel: true, animate: false });
+      return;
+    }
+    /* Legend colour, text and size apply live on 'input'; the finished edit is one undo step. */
+    if (ev.target.id === 'cuFg' || ev.target.id === 'cuText' || ev.target.id === 'cuFs') {
+      commitHistory();
       return;
     }
     if (ev.target.id === 'plateColor') {
@@ -926,9 +961,13 @@ export function setupPanelEvents() {
       if (!file) return;
       const err = validateImageFile(file);
       if (err) { toast(err); ev.target.value = ''; return; }
+      const target = imageTarget([_currentEditId]);
       const dataUrl = await loadImage(file);
-      setOverride(_currentEditId, { imageData: dataUrl });
-      rebuildKey(..._currentEditId.split('-').map(Number));
+      const ids = landImage(target);
+      if (!ids) return;
+      setOverrides(ids, { imageData: dataUrl });
+      rebuildIds(ids, { fullRebuild: true });
+      commitHistory();
       updateSidebarKeyImage();
     }
   });
@@ -940,12 +979,14 @@ export function setupPanelEvents() {
     if (ev.target.closest('#keReset') && _currentEditId) {
       clearOverride(_currentEditId);
       rebuildKey(..._currentEditId.split('-').map(Number));
+      commitHistory();
       hideKeyEditor();
       return;
     }
     if (ev.target.closest('#keRemoveImg') && _currentEditId) {
       setOverride(_currentEditId, { imageData: null });
       rebuildKey(..._currentEditId.split('-').map(Number));
+      commitHistory();
       showKeyEditor({ perKeyId: _currentEditId });
       return;
     }
@@ -953,6 +994,7 @@ export function setupPanelEvents() {
       const ov = getOverride(_currentEditId) || {};
       setOverride(_currentEditId, { glow: !ov.glow });
       rebuildKey(..._currentEditId.split('-').map(Number));
+      commitHistory();
       const el = $('keGlow');
       if (el) el.classList.toggle('on');
       return;
@@ -961,6 +1003,7 @@ export function setupPanelEvents() {
       const ov = getOverride(_currentEditId) || {};
       setOverride(_currentEditId, { imageBehindText: !ov.imageBehindText });
       rebuildKey(..._currentEditId.split('-').map(Number));
+      commitHistory();
       const el = $('keImgBehind');
       if (el) el.classList.toggle('on');
       return;
@@ -985,15 +1028,24 @@ export function setupPanelEvents() {
   });
   ke.addEventListener('change', async (ev) => {
     if (!_currentEditId) return;
-    if (ev.target.id === 'keImage') {
+    const id = ev.target.id;
+    if (id === 'keText' || id === 'keFs' || id === 'keFg' || id === 'keBg') {
+      commitHistory();
+      return;
+    }
+    if (id === 'keImage') {
       const file = ev.target.files[0];
       if (!file) return;
       const err = validateImageFile(file);
       if (err) { toast(err); ev.target.value = ''; return; }
+      const target = imageTarget([_currentEditId]);
       const dataUrl = await loadImage(file);
-      setOverride(_currentEditId, { imageData: dataUrl });
-      rebuildKey(..._currentEditId.split('-').map(Number));
-      showKeyEditor({ perKeyId: _currentEditId });
+      const ids = landImage(target);
+      if (!ids) return;
+      setOverrides(ids, { imageData: dataUrl });
+      rebuildIds(ids, { fullRebuild: true });
+      commitHistory();
+      if (_currentEditId === ids[0]) showKeyEditor({ perKeyId: ids[0] });
     }
   });
 }

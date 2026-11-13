@@ -1,5 +1,5 @@
 import { state } from '../core/state.js';
-import { hemi, key, renderer, shadowPlane } from '../core/scene.js';
+import { hemi, key, renderer, shadowPlane, requestRender } from '../core/scene.js';
 
 export function initTheme() {
   const btn = document.getElementById('themeBtn');
@@ -13,5 +13,6 @@ export function initTheme() {
     key.intensity = dark ? 0.32 : 0.4;
     shadowPlane.material.opacity = dark ? 0.3 : 0.16;
     renderer.toneMappingExposure = dark ? 0.92 : 1.0;
+    requestRender();
   });
 }

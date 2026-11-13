@@ -1,5 +1,6 @@
 import { state } from './state.js';
 import { isKeyId } from './validBuild.js';
+import { layoutOf } from '../data/layouts.js';
 
 /** Stable perKeyOverrides id for the rotary knob (not a layout row-col). */
 export const KNOB_ID = 'knob';
@@ -60,6 +61,16 @@ export function clearPerKeyCapColors() {
     if (!Object.keys(o).length) delete map[id];
   });
   return changed;
+}
+
+/** True when `id` is a key (row-col) or the knob on the board of `layoutId` (default: the current layout). */
+export function keyInLayout(id, layoutId = state.layout) {
+  if (!isKeyId(id)) return false;
+  const L = layoutOf(layoutId);
+  if (isKnobId(id)) return !!L.knob;
+  const [r, c] = id.split('-').map(Number);
+  const rows = L.rows();
+  return r < rows.length && c < rows[r].length;
 }
 
 export function getOverride(id) {

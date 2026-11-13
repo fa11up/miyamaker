@@ -514,6 +514,10 @@
   background: rgba(12, 12, 16, 0.46);
   animation: fade 0.25s ease;
 }
+/* The dialog takes focus when it opens (modals.js) only as a starting point for Tab: no ring around the whole card. */
+.modalCard:focus {
+  outline: none;
+}
 .modalCard {
   position: relative;
   background: var(--panel);
@@ -626,6 +630,12 @@
   object-fit: cover;
   display: block;
   background: var(--card2);
+}
+/* The colour swatch a card shows until its picture is drawn: the picture's size, so cards do not jump. */
+.galCard .img {
+  display: block;
+  width: 100%;
+  height: 126px;
 }
 .galCard .cap {
   padding: 11px 14px 13px;
@@ -832,8 +842,9 @@
   accent-color: var(--chipA);
 }
 .keColor {
+  /* at least 32px both ways (rubric: never under 32px) */
   width: 36px;
-  height: 30px;
+  height: 32px;
   padding: 0;
   border: 1px solid var(--line);
   border-radius: 4px;

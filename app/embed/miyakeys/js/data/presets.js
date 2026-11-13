@@ -1,7 +1,8 @@
+/* ids (and the brand / colorway keys) are saved in builds and share links: kept as they are. */
 export const PRESETS = [
   {
     id: "claude",
-    name: "Claude",
+    name: "Clay",
     s: {
       brand: "claude",
       colorway: "claude",
@@ -13,7 +14,7 @@ export const PRESETS = [
   },
   {
     id: "gemini",
-    name: "Gemini",
+    name: "Twin",
     s: {
       brand: "gemini",
       colorway: "gemini",

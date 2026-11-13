@@ -1,55 +1,33 @@
-function drawClaudeMark(g, W, H, color) {
+/* Plain glyphs of our own, no one's logo. The MARKS keys "claude" and "gemini" stay: builds and links name them. */
+function drawClayMark(g, W, H, color) {
   const cx = W / 2,
     cy = H / 2,
-    R = Math.min(W, H) * 0.34;
+    R = Math.min(W, H) * 0.32;
   g.save();
   g.strokeStyle = color;
   g.fillStyle = color;
-  g.lineCap = "round";
-  const spokes = 11;
-  for (let i = 0; i < spokes; i++) {
-    const a = (i / spokes) * Math.PI * 2 - Math.PI / 2;
-    g.lineWidth = R * 0.13;
-    g.beginPath();
-    g.moveTo(cx + Math.cos(a) * R * 0.3, cy + Math.sin(a) * R * 0.3);
-    g.lineTo(cx + Math.cos(a) * R, cy + Math.sin(a) * R);
-    g.stroke();
-  }
+  g.lineWidth = R * 0.2;
   g.beginPath();
-  g.arc(cx, cy, R * 0.17, 0, Math.PI * 2);
+  g.arc(cx, cy, R, 0, Math.PI * 2);
+  g.stroke();
+  g.beginPath();
+  g.arc(cx, cy, R * 0.3, 0, Math.PI * 2);
   g.fill();
   g.restore();
 }
 
-function drawGeminiMark(g, W, H, color) {
+function drawTwinMark(g, W, H, color) {
   const cx = W / 2,
     cy = H / 2,
-    R = Math.min(W, H) * 0.42,
-    ctrl = R * 0.16;
-  const pts = [
-    [0, -R],
-    [R, 0],
-    [0, R],
-    [-R, 0],
-  ];
+    R = Math.min(W, H) * 0.22;
   g.save();
-  g.fillStyle = color;
-  g.beginPath();
-  g.moveTo(cx + pts[0][0], cy + pts[0][1]);
-  for (let i = 0; i < 4; i++) {
-    const nxt = pts[(i + 1) % 4],
-      mx = (pts[i][0] + nxt[0]) / 2,
-      my = (pts[i][1] + nxt[1]) / 2,
-      len = Math.hypot(mx, my) || 1;
-    g.quadraticCurveTo(
-      cx + (mx / len) * ctrl,
-      cy + (my / len) * ctrl,
-      cx + nxt[0],
-      cy + nxt[1],
-    );
+  g.strokeStyle = color;
+  g.lineWidth = R * 0.26;
+  for (const dx of [-0.55, 0.55]) {
+    g.beginPath();
+    g.arc(cx + dx * R, cy, R, 0, Math.PI * 2);
+    g.stroke();
   }
-  g.closePath();
-  g.fill();
   g.restore();
 }
 
@@ -200,8 +178,8 @@ function drawCrescent(g, W, H, color) {
 }
 
 export const MARKS = {
-  claude: drawClaudeMark,
-  gemini: drawGeminiMark,
+  claude: drawClayMark,
+  gemini: drawTwinMark,
   cat: drawCat,
   blossom: drawSakura,
   sparkles: drawStar,

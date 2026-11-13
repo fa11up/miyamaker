@@ -56,3 +56,29 @@ venue cards still show with working links and a quiet "prices need an API key" n
 `app/.env.production.local` (they are read at build time), set the keys with `npx wrangler secret put ZEROX_API_KEY`
 and `npx wrangler secret put OPENSEA_API_KEY`, then run `yarn deploy`. `app/api/worker.ts` serves both proxies and
 redirects `miyamaker.com` to `www.miyamaker.com`.
+
+## miyakeys's community gallery (nuroctane.xyz)
+
+miyakeys reads and shares builds through this site's Worker (`/api/miyakeys/gallery`, `app/api/_lib/miyakeys.ts`),
+which forwards to `https://www.nuroctane.xyz/api/modkeys/gallery`. Every request to nuroctane.xyz is a fresh one from
+Cloudflare: no visitor cookie, address or user agent. Builds are checked both ways (`embed/miyakeys/js/core/validBuild.js`).
+
+- **Reads** are kept for 45 seconds per Cloudflare data centre, so nuroctane.xyz sees at most about one read per data
+  centre per 45 seconds; at most 500 builds (the newest) are passed on.
+- **Shares** are limited per visitor (per Worker isolate) and for the whole site: 100 an hour, counted in D1 (the
+  `shared_state` table from `migrations/0003_hardening.sql`, already applied). If D1 cannot count, sharing is refused,
+  never let through. An upstream 429 is shown as "busy, try again in a minute", for reads and shares alike.
+- **For nuroctane.xyz: telling visitors apart.** Set a secret (32+ random characters) and every share carries
+  `x-miyakeys-client: <32 hex>`, HMAC-SHA256 of the visitor's address (IPv6 by /64) under that secret. The same
+  visitor always sends the same value; it cannot be turned back into an address. Throttle or block on it. Unset, the
+  header is not sent.
+
+  ```bash
+  npx wrangler secret put MIYAKEYS_CLIENT_SECRET
+  ```
+
+The share route accepts `Origin: null` because miyakeys runs in a sandboxed frame; any site's sandboxed frame sends the
+same, so the limits above, not the Origin check, are what hold sharing back.
+
+`package.json` pins `jspdf`'s `@babel/runtime` to 7.29.13 (`resolutions`): 7.29.14 was locked hours after it was
+published. Drop the pin once a later release has been out a while.

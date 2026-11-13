@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import styled from 'styled-components/macro'
 
+import { ACTIVITY_EVENT, pressedFrame } from '@/desktop/screensaver/activity'
+
 /**
  * A menu that wears its app's skin instead of the browser's dropdown. The app sets the look with CSS variables on any
  * parent: --menu-face and --menu-ink for the button, --menu-sheet for the open list (any background), --menu-edge for the
@@ -96,8 +98,21 @@ export default function SkinMenu({
       if (!root.current?.contains(e.target as Node)) setOpen(false)
     }
 
+    // A click into a framed app (miyakeys) reaches this page only as a window blur and the press the frame reports
+    // (activity.ts), so those close it too.
+    const blur = () => setOpen(false)
+    const framePress = (e: Event) => {
+      if (pressedFrame(e)) setOpen(false)
+    }
+
     document.addEventListener('pointerdown', away)
-    return () => document.removeEventListener('pointerdown', away)
+    window.addEventListener('blur', blur)
+    window.addEventListener(ACTIVITY_EVENT, framePress)
+    return () => {
+      document.removeEventListener('pointerdown', away)
+      window.removeEventListener('blur', blur)
+      window.removeEventListener(ACTIVITY_EVENT, framePress)
+    }
   }, [open])
 
   const show = () => {

@@ -1,6 +1,6 @@
 export const CASES = {
   porcelain: { name: "Porcelain", c: "#e7dfce" },
-  clay: { name: "Claude Clay", c: "#cf7358" },
+  clay: { name: "Clay", c: "#cf7358" },
   spacegray: { name: "Space Gray", c: "#55565a" },
   midnight: { name: "Midnight", c: "#1c1c1f" },
   silver: { name: "Silver", c: "#c6c7ca" },

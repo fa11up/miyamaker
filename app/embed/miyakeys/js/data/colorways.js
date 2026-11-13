@@ -1,6 +1,7 @@
+/* Keys are ids saved in builds and share links (claude, gemini are kept for those); names are what people see. */
 export const COLORWAYS = {
   claude: {
-    name: "Claude",
+    name: "Clay",
     a: { bg: "#ece5d6", fg: "#39312a" },
     m: { bg: "#2a2622", fg: "#ece5d6" },
     x: { bg: "#c2643f", fg: "#fbf3ee" },
@@ -8,7 +9,7 @@ export const COLORWAYS = {
     tag: "Clay · Cream · Espresso",
   },
   gemini: {
-    name: "Gemini",
+    name: "Twin",
     a: { bg: "#eceef4", fg: "#2a2c3a" },
     m: { bg: "#1a1c2b", fg: "#cfd5ea" },
     x: { bg: "#4184f3", fg: "#f2f7ff" },

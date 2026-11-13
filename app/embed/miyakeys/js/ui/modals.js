@@ -14,11 +14,20 @@ const $ = (id) => document.getElementById(id);
 
 /* Stops the gallery's thumbnail drawing when the modal closes or shows something else. */
 let stopThumbs = null;
+/* Counts what the modal has shown: an answer that arrives after the modal moved on (another Gallery, another dialog)
+   is dropped instead of filling, or drawing thumbnails into, the newer one. */
+let shown = 0;
+/* Where focus was before the dialog opened; it goes back there on close. */
+let opener = null;
 
 export function closeModal() {
   if (stopThumbs) { stopThumbs(); stopThumbs = null; }
+  shown++;
+  const wasOpen = isModalOpen();
   $('modal').classList.remove('open');
   syncNav('builder');
+  if (wasOpen && opener && opener.isConnected && typeof opener.focus === 'function') opener.focus();
+  opener = null;
 }
 
 export function isModalOpen() {
@@ -27,9 +36,14 @@ export function isModalOpen() {
 
 export function openModal(title, html) {
   if (stopThumbs) { stopThumbs(); stopThumbs = null; }
+  shown++;
+  const card = $('modal').querySelector('.modalCard');
+  if (!isModalOpen()) opener = document.activeElement !== document.body ? document.activeElement : null;
   $('modalTitle').textContent = title;
   $('modalBody').innerHTML = html;
   $('modal').classList.add('open');
+  /* Focus moves into the dialog (a dialog that wants a field focused does that after this). */
+  if (card && !card.contains(document.activeElement)) card.focus({ preventScroll: true });
 }
 
 const cwName = (snap) => snap.customColors ? 'Custom' : (COLORWAYS[snap.colorway]?.name ?? 'Custom');
@@ -69,7 +83,7 @@ export function openLibrary() {
   );
 }
 
-const HEX_COLOR = /^#[0-9a-f]{3,8}$/i;
+const HEX_COLOR = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i;
 
 function thumbnailOrGradient(src, snap) {
   if (src) return `<img src="${esc(src)}" alt="" loading="lazy" decoding="async">`;
@@ -82,8 +96,14 @@ function thumbnailOrGradient(src, snap) {
   return `<div class="img" style="background:linear-gradient(135deg,${cwGuess[0]} 50%,${cwGuess[1]} 50%)"></div>`;
 }
 
+/* A card's small line: the layout, and "preview approximate" when its picture could not show the build exactly
+   (app.js renderSnapThumb). */
+const communityTag = (t, thumb) =>
+  [t.layout ? t.layout + '%' : '', thumb && thumb.approx ? 'preview approximate' : ''].filter(Boolean).join(' · ');
+
 function communityCardHtml(t, thumbs) {
-  return `<button type="button" class="galCard" data-community="${esc(t.id)}"><span class="thumb">${thumbnailOrGradient(thumbs[t.id], t.snap)}</span><div class="cap"><div class="nm">${esc(t.name)}</div><div class="tg">${esc(t.layout ? t.layout + '%' : '')}</div></div></button>`;
+  const thumb = thumbs.get(t.id);
+  return `<button type="button" class="galCard" data-community="${esc(t.id)}"><span class="thumb">${thumbnailOrGradient(thumb?.url, t.snap)}</span><div class="cap"><div class="nm">${esc(t.name)}</div><div class="tg">${esc(communityTag(t, thumb))}</div></div></button>`;
 }
 
 /** At most this many community cards: each one is a WebGL thumbnail. The rest are counted, not hidden silently. */
@@ -96,10 +116,10 @@ function showCommunityOffline(grid) {
 
 export function openGallery() {
   syncNav('gallery');
-  const { savedBuilds, thumbs } = window.__MODKEYS__ || { savedBuilds: [], thumbs: {} };
+  const { savedBuilds, presetThumbs } = window.__MODKEYS__ || { savedBuilds: [], presetThumbs: new Map() };
   let html = '<div class="secTitle">FEATURED</div><div class="galGrid">' +
     PRESETS.map((p) =>
-      `<button class="galCard" data-gal="${p.id}">${thumbnailOrGradient(thumbs[p.id], p.s)}
+      `<button class="galCard" data-gal="${p.id}">${thumbnailOrGradient(presetThumbs.get(p.id)?.url, p.s)}
         <div class="cap"><div class="nm">${esc(p.name)}</div><div class="tg">${esc(cwName(p.s))}</div></div></button>`,
     ).join('') + '</div>';
   html += `<div class="secTitle">COMMUNITY <a class="linkish" href="https://www.nuroctane.xyz/modkeys" target="_blank" rel="noopener">shared with nuroctane.xyz</a></div><div class="galGrid" id="communityGrid">` +
@@ -114,12 +134,13 @@ export function openGallery() {
     html += '<div class="secTitle">YOUR BUILDS</div><div class="hint" style="margin-bottom:16px">Builds you share with <strong>Share to gallery</strong> are kept here until you close miyakeys.</div>';
   }
   openModal('Gallery', html);
+  const mine = shown;
 
   /* lazy-load the community section (the gallery on nuroctane.xyz, see GALLERY_API in app.js) */
   const lg = window.__MODKEYS__?.loadGallery;
   if (!lg) return;
   lg().then((community) => {
-    if (!$('modal').classList.contains('open')) return;
+    if (mine !== shown || !$('modal').classList.contains('open')) return;
     const grid = document.getElementById('communityGrid');
     if (!grid) return;
     if (community === null) { showCommunityOffline(grid); return; }
@@ -127,21 +148,27 @@ export function openGallery() {
       grid.innerHTML = '<div class="hint" style="grid-column:1/-1">No community builds yet. Be the first: press <strong>Share to gallery</strong>.</div>';
       return;
     }
-    const { thumbs: th, renderThumbs } = window.__MODKEYS__ || { thumbs: {} };
-    const shown = community.slice(0, GALLERY_SHOWN);
-    grid.innerHTML = shown.map((t) => communityCardHtml(t, th)).join('') +
-      (community.length > shown.length
-        ? `<div class="hint" style="grid-column:1/-1">Showing ${shown.length} of ${community.length} builds. The rest are on <a class="linkish" href="https://www.nuroctane.xyz/modkeys" target="_blank" rel="noopener">nuroctane.xyz/modkeys</a>.</div>`
+    const { communityThumbs: th, renderThumbs } = window.__MODKEYS__ || { communityThumbs: new Map() };
+    const list = community.slice(0, GALLERY_SHOWN);
+    grid.innerHTML = list.map((t) => communityCardHtml(t, th)).join('') +
+      (community.length > list.length
+        ? `<div class="hint" style="grid-column:1/-1">Showing ${list.length} of ${community.length} builds. The rest are on <a class="linkish" href="https://www.nuroctane.xyz/modkeys" target="_blank" rel="noopener">nuroctane.xyz/modkeys</a>.</div>`
         : '');
-    /* Thumbnails are drawn a few at a time after the cards show (each card has its colours until then). */
+    /* Thumbnails are drawn a few at a time after the cards show (each card has its colours until then). Only one
+       drawing at a time: any earlier one is stopped first. */
     if (renderThumbs) {
-      stopThumbs = renderThumbs(shown, (id, url) => {
+      if (stopThumbs) stopThumbs();
+      stopThumbs = renderThumbs(list, (id, thumb) => {
         const card = [...grid.querySelectorAll('[data-community]')].find((c) => c.dataset.community === id);
         const slot = card?.querySelector('.thumb');
-        if (slot) slot.innerHTML = thumbnailOrGradient(url, null);
+        if (slot) slot.innerHTML = thumbnailOrGradient(thumb.url, null);
+        const tag = card?.querySelector('.tg');
+        const t = list.find((e) => e.id === id);
+        if (tag && t) tag.textContent = communityTag(t, thumb);
       });
     }
   }).catch(() => {
+    if (mine !== shown) return;
     const grid = document.getElementById('communityGrid');
     if (grid) showCommunityOffline(grid);
   });
@@ -187,7 +214,7 @@ export function openShareDialog(defaultName) {
       <input class="keInput" id="shareName" type="text" maxlength="40" autocomplete="off" value="${esc(defaultName)}" style="width:100%;margin:6px 0 14px">
       <div class="shareRow">
         <button type="button" class="libBtn" id="shareCancel">Cancel</button>
-        <button type="submit" class="libBtn shareGo" id="shareGo">Share publicly</button>
+        <button type="button" class="libBtn shareGo" id="shareGo">Share publicly</button>
       </div>
       <p class="hint" id="shareStatus" role="status" aria-live="polite" style="margin-top:12px"></p>
     </form>`,
@@ -197,8 +224,9 @@ export function openShareDialog(defaultName) {
   input?.focus();
   input?.select();
   $('shareCancel')?.addEventListener('click', closeModal);
-  form?.addEventListener('submit', async (ev) => {
-    ev.preventDefault();
+  /* A button, not a form submit: the frame's sandbox (no allow-forms) blocks submission before any submit event, so
+     a submit handler would never run. Enter in the name field presses it too (submitDialog, from app.js's keys). */
+  $('shareGo')?.addEventListener('click', async () => {
     const go = $('shareGo');
     const share = window.__MODKEYS__?.shareBuild;
     if (!share || !go || go.disabled) return;
@@ -216,11 +244,18 @@ export function openShareDialog(defaultName) {
   });
 }
 
+/** Enter in a dialog's text field: presses that dialog's main button. True when it did. */
+export function submitDialog(target) {
+  if (!target || target.id !== 'shareName' || !isModalOpen()) return false;
+  $('shareGo')?.click();
+  return true;
+}
+
 /** The share link, to copy by hand when the clipboard is not available here. */
-export function showLinkDialog(url) {
+export function showLinkDialog(url, { imagesLeftOut = false } = {}) {
   syncNav('builder');
   openModal('Share link',
-    `<p class="hint" style="margin-bottom:10px">Copy this link to share the build. Anyone with it can open the build.</p>
+    `<p class="hint" style="margin-bottom:10px">Copy this link to share the build. Anyone with it can open the build.${imagesLeftOut ? ' Key images aren\'t included in links.' : ''}</p>
      <input class="keInput" id="shareLink" type="text" readonly value="${esc(url)}" style="width:100%">`,
   );
   const input = $('shareLink');

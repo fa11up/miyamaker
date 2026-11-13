@@ -16,6 +16,8 @@ import { ALLOWLIST_BODY_LIMIT, ALLOWLIST_PATH, handleAllowlistRequest, memoryAll
 import { BODY_LIMIT } from './api/_lib/body'
 import { handleMarketRequest, MARKET_PREFIX, memoryCache, openSeaReader } from './api/_lib/market'
 import {
+  EMBED_CSP,
+  EMBED_PREFIX,
   GALLERY_BODY_LIMIT,
   GALLERY_READ_RATE,
   GALLERY_WRITE_RATE,
@@ -368,6 +370,47 @@ function embedWithoutPwa(): Plugin {
   }
 }
 
+/**
+ * Dev serves miyakeys's page the way the Worker does (api/_lib/miyakeys.ts): its CSP and headers, in the same sandbox
+ * as the site (src/pages/Miyakeys). The sandboxed frame's origin is opaque, so its module requests say `Origin: null`,
+ * which Vite's own CORS check refuses. They are answered here, for the page's own files and the packages it imports
+ * only (node_modules, also through /@fs when node_modules is a link); the desktop's sources stay closed to other
+ * origins, as Vite keeps them. The React refresh preamble Vite adds to every page is an inline script the CSP
+ * refuses, and the page has no React: it comes out of this page.
+ */
+function miyakeysEmbedDev(): Plugin {
+  const open = new RegExp(`^(${EMBED_PREFIX}/|/node_modules/|/@fs/[^?]*/node_modules/|/@vite/(client|env)(\\?|$))`)
+  const isEmbedPage = (filename: string) => /(^|\/)embed\/miyakeys\/index\.html$/.test(filename.replace(/\\/g, '/'))
+  return {
+    name: 'miya-miyakeys-embed-dev',
+    apply: 'serve',
+    transformIndexHtml: {
+      order: 'post',
+      handler(html, ctx) {
+        if (!isEmbedPage(ctx.filename)) return html
+        return html.replace(/<script type="module">\s*import \{ injectIntoGlobalHook \}[\s\S]*?<\/script>\s*/, '')
+      },
+    },
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        const url = req.url || ''
+        const pathname = url.split('?')[0] || ''
+        if (req.headers.origin === 'null' && open.test(url) && !pathname.includes('..')) {
+          res.setHeader('access-control-allow-origin', '*')
+        }
+
+        if (pathname === `${EMBED_PREFIX}/` || pathname === `${EMBED_PREFIX}/index.html`) {
+          res.setHeader('content-security-policy', EMBED_CSP)
+          res.setHeader('referrer-policy', 'no-referrer')
+          res.setHeader('x-content-type-options', 'nosniff')
+        }
+
+        next()
+      })
+    },
+  }
+}
+
 /** Dev-only stand-in for the Worker's miyakeys gallery route (api/_lib/miyakeys.ts): the same checks, the real gallery. */
 function miyakeysGalleryDevProxy(): Plugin {
   const guards = {
@@ -474,6 +517,7 @@ export default defineConfig(({ mode }) => ({
     publicAccessDevProxy(),
     sampleMediaDevProxy(),
     miyakeysGalleryDevProxy(),
+    miyakeysEmbedDev(),
     videoAudioDevProxy(),
     tvLiveDevProxy(loadEnv(mode, __dirname, ['YOUTUBE_'])),
     marketDevProxy(loadEnv(mode, __dirname, ['OPENSEA_'])),

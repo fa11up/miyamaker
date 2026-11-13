@@ -6,10 +6,12 @@
  *
  * - enums (layout, profile, colorway, case, finish, plate, switch, material,
  *   brand, light mode, image fit, emoji) must be own keys of their tables;
- * - colours are #rgb … #rrggbbaa, nothing else (no url(), no names);
+ * - colours are #rgb or #rrggbb, nothing else (no alpha forms three.js draws
+ *   as white, no url(), no names);
  * - numbers are finite and clamped to what the sliders allow;
  * - per-key ids are row-col or "knob"; images are PNG/JPEG data URLs, capped;
- * - text is length-capped (legends reach canvas textures and escaped markup).
+ * - text is length-capped, with control, bidi-override and zero-width
+ *   characters taken out (legends reach canvas textures and escaped markup).
  *
  * The Worker's gallery proxy (api/_lib/miyakeys.ts) runs the same function over
  * every build it passes on, so keep this file free of DOM and three.js. */
@@ -17,6 +19,7 @@ import { LAYOUTS } from '../data/layouts.js';
 import { COLORWAYS } from '../data/colorways.js';
 import { CASES, FINISHES, PLATES, SWITCHES, MATERIALS, PROFILES, EXTRAS } from '../data/components.js';
 import { BRAND_MARKS, EMOJI, MARKS } from '../data/art.js';
+import { PRESETS } from '../data/presets.js';
 
 export const MAX_LEGEND = 64;
 export const MAX_NAME = 40;
@@ -31,7 +34,7 @@ export const BRIGHT_MAX = 1.5;
 export const FONT_MIN = 12;
 export const FONT_MAX = 48;
 
-const HEX = /^#[0-9a-f]{3,8}$/i;
+const HEX = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i;
 const KEY_ID = /^(\d{1,2}-\d{1,2}|knob)$/;
 const IMAGE = /^data:image\/(png|jpeg);base64,[A-Za-z0-9+/]+={0,2}$/;
 
@@ -51,10 +54,15 @@ function num(v, min, max) {
   return Math.min(max, Math.max(min, n));
 }
 
-/** Text a person typed, cut to `max` characters, with control characters other than a newline taken out. */
+/* C0 and C1 controls (a newline stays), zero-width characters and marks, bidi embeddings, overrides and isolates,
+   and the byte-order mark: none of them is something a legend or a name needs, and the bidi ones can make text read
+   in a different order than it is stored. */
+const HIDDEN_CHARS = /[\u0000-\u0009\u000b-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]/g;
+
+/** Text a person typed, cut to `max` characters, with control, bidi and zero-width characters taken out. */
 export function cleanText(v, max) {
   if (typeof v !== 'string') return undefined;
-  return v.replace(/[\u0000-\u0009\u000b-\u001f\u007f]/g, '').slice(0, max);
+  return v.replace(HIDDEN_CHARS, '').slice(0, max);
 }
 
 /** A colour, or null where the build may say "use the default" (case, plate, switch tints). */
@@ -179,6 +187,12 @@ export function validBuild(raw, { images = true } = {}) {
 }
 
 const GALLERY_ID = /^[A-Za-z0-9_-]{1,64}$/;
+/* Ids a card must never take: they would reach Object.prototype in a plain map, or stand in for a featured build's
+   picture and name. */
+const RESERVED_IDS = new Set(['__proto__', 'constructor', 'prototype', ...PRESETS.map((p) => p.id)]);
+
+/** A community gallery id: letters, digits, _ and -, and not one of the reserved ones. */
+export const isGalleryId = (v) => typeof v === 'string' && GALLERY_ID.test(v) && !RESERVED_IDS.has(v);
 
 /**
  * One community gallery entry ({ id, name, layout, createdAt, snap }), or null when it has no usable id or build.
@@ -187,7 +201,7 @@ const GALLERY_ID = /^[A-Za-z0-9_-]{1,64}$/;
 export function validGalleryEntry(t) {
   if (!isObj(t)) return null;
   const id = field(t, 'id');
-  if (typeof id !== 'string' || !GALLERY_ID.test(id)) return null;
+  if (!isGalleryId(id)) return null;
   const snap = validBuild(field(t, 'snap'), { images: false });
   if (!snap || !Object.keys(snap).length) return null;
   const name = (cleanText(field(t, 'name'), MAX_NAME) || '').replace(/\n/g, ' ').trim() || 'Untitled build';

@@ -1,18 +1,26 @@
 // api/_lib/miyakeys.ts: miyakeys's gallery through the Worker (time and size caps, every build checked, CORS for the
 // sandboxed frame, nothing of the visitor's request forwarded) and the headers its page is served with. Run: yarn test
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 
+import { memoryCache } from '../api/_lib/market.ts'
 import {
+  CLIENT_TAG_HEADER,
+  clientTag,
+  d1ShareCap,
   EMBED_CSP,
   embedResponse,
+  GALLERY_CACHE_SECONDS,
+  GALLERY_MAX_TEMPLATES,
   GALLERY_RESPONSE_LIMIT,
   handleMiyakeysGallery,
   isEmbedPath,
   MIYAKEYS_GALLERY_PATH,
   MIYAKEYS_UPSTREAM,
 } from '../api/_lib/miyakeys.ts'
-import { createRateLimiter } from '../api/_lib/zeroex.ts'
+import type { D1Like } from '../api/_lib/station.ts'
+import { clientKey, createRateLimiter } from '../api/_lib/zeroex.ts'
 
 const SITE = 'https://www.miyamaker.com'
 const URL_ = `${SITE}${MIYAKEYS_GALLERY_PATH}`
@@ -214,4 +222,176 @@ test("the embed's pages get the CSP; all its files get CORS and nosniff", async 
   assert.equal(png.headers.get('content-security-policy'), null)
   assert.equal(png.headers.get('access-control-allow-origin'), '*')
   assert.equal(png.headers.get('x-content-type-options'), 'nosniff')
+})
+
+test('POST: Origin "null" (any site\'s sandboxed frame) still meets the per-visitor limit and the site-wide cap', async () => {
+  const body = JSON.stringify({ name: 'x', snap })
+  let called = 0
+  const fetchImpl = upstream(() => {
+    called++
+    return Response.json({})
+  })
+  const limited = await handleMiyakeysGallery(post(body), { ...open, writeLimiter: () => false, fetchImpl })
+  assert.equal(limited.status, 429)
+  let taken = 0
+  const capped = await handleMiyakeysGallery(post(body), {
+    ...open,
+    shareCap: async () => (++taken, false),
+    fetchImpl,
+  })
+  assert.equal(capped.status, 429)
+  assert.ok(Number(capped.headers.get('retry-after')) > 0)
+  assert.equal(taken, 1)
+  // A cap that cannot be read refuses the share (fail closed), it never lets it through.
+  const broken = await handleMiyakeysGallery(post(body), {
+    ...open,
+    shareCap: async () => {
+      throw new Error('D1_ERROR: no such table: shared_state')
+    },
+    fetchImpl,
+  })
+  assert.equal(broken.status, 503)
+  assert.equal(called, 0)
+  // A share the cap allows goes through; a refused build never spends the cap.
+  let spent = 0
+  const env = { ...open, shareCap: async () => (++spent, true), fetchImpl }
+  assert.equal((await handleMiyakeysGallery(post(body), env)).status, 200)
+  assert.equal((await handleMiyakeysGallery(post('not json'), env)).status, 400)
+  assert.equal(spent, 1)
+})
+
+// node:sqlite stands in for D1 (as in reveal-worker.test.mts), with shared_state as migrations/0003 makes it.
+const sqliteModule = 'node:sqlite'
+type SqliteStmt = { run: (...a: unknown[]) => { changes: number | bigint }; get: (...a: unknown[]) => Record<string, unknown> | undefined }
+const { DatabaseSync } = (await import(sqliteModule)) as {
+  DatabaseSync: new (path: string) => { exec: (sql: string) => void; prepare: (sql: string) => SqliteStmt }
+}
+function sqliteD1() {
+  const raw = new DatabaseSync(':memory:')
+  const migration = readFileSync(new URL('../migrations/0003_hardening.sql', import.meta.url), 'utf8')
+  raw.exec(migration.match(/CREATE TABLE IF NOT EXISTS shared_state[^;]*;/)![0])
+  const stmt = (sql: string, args: unknown[] = []): ReturnType<D1Like['prepare']> => ({
+    bind: (...a: unknown[]) => stmt(sql, a),
+    all: async () => ({ results: [] }),
+    first: async () => raw.prepare(sql).get(...args) ?? null,
+    run: async () => ({ meta: { changes: Number(raw.prepare(sql).run(...args).changes) } }),
+  })
+  return { raw, db: { prepare: (sql: string) => stmt(sql) } as D1Like }
+}
+
+test('the site-wide share cap counts in D1, across isolates, and starts again each hour', async () => {
+  const { raw, db } = sqliteD1()
+  // Two "isolates" with their own cap functions over one database.
+  const a = d1ShareCap(db, 3)
+  const b = d1ShareCap(db, 3)
+  const hour = Date.UTC(2026, 10, 12, 10)
+  const taken = [await a(hour + 1), await b(hour + 2), await a(hour + 3), await b(hour + 4), await a(hour + 5)]
+  assert.deepEqual(taken, [true, true, true, false, false])
+  assert.equal(raw.prepare("SELECT body FROM shared_state WHERE key = 'miyakeys:shares'").get()!.body, '3')
+  // The next hour starts at 1; an isolate whose clock is behind counts in the new hour, it never resets it.
+  assert.equal(await b(hour + 3_600_000), true)
+  assert.equal(await a(hour + 10), true)
+  assert.equal(raw.prepare("SELECT body, at FROM shared_state WHERE key = 'miyakeys:shares'").get()!.body, '2')
+  assert.equal(raw.prepare("SELECT at FROM shared_state WHERE key = 'miyakeys:shares'").get()!.at, hour + 3_600_000)
+  // Without the table it throws, and the handler turns that into a refusal (above).
+  const bare = new DatabaseSync(':memory:')
+  const none = d1ShareCap({ prepare: (sql: string) => ({ bind: () => ({ run: async () => ({ meta: { changes: Number(bare.prepare(sql).run().changes) } }) }) }) } as unknown as D1Like)
+  await assert.rejects(none(hour))
+})
+
+test('POST: the per-visitor tag goes to nuroctane.xyz only with a secret, and is never the address', async () => {
+  const body = JSON.stringify({ name: 'x', snap })
+  const ip = '203.0.113.7'
+  const send = async (clientSecret?: string, from = ip) => {
+    const seen: Seen[] = []
+    const res = await handleMiyakeysGallery(post(body, { origin: 'null', 'cf-connecting-ip': from, 'x-forwarded-for': from }), {
+      ...open,
+      clientKey,
+      clientSecret,
+      fetchImpl: upstream(() => Response.json({}), seen),
+    })
+    assert.equal(res.status, 200)
+    return new Headers(seen[0]!.init.headers)
+  }
+  const without = await send()
+  assert.equal(without.get(CLIENT_TAG_HEADER), null)
+  const sent = await send('s3cret-s3cret-s3cret-s3cret-s3cret')
+  const tag = sent.get(CLIENT_TAG_HEADER)!
+  assert.match(tag, /^[0-9a-f]{32}$/)
+  assert.equal(tag, await clientTag('s3cret-s3cret-s3cret-s3cret-s3cret', clientKey(new Headers({ 'cf-connecting-ip': ip }))))
+  // Stable per visitor, different between visitors and secrets, and nothing of the address in any header.
+  assert.equal((await send('s3cret-s3cret-s3cret-s3cret-s3cret')).get(CLIENT_TAG_HEADER), tag)
+  assert.notEqual((await send('s3cret-s3cret-s3cret-s3cret-s3cret', '198.51.100.9')).get(CLIENT_TAG_HEADER), tag)
+  assert.notEqual((await send('another-secret-another-secret')).get(CLIENT_TAG_HEADER), tag)
+  for (const [k, v] of sent) assert.ok(!v.includes(ip) && !v.includes('203.0.113'), k)
+  for (const h of ['cf-connecting-ip', 'x-forwarded-for', 'x-real-ip', 'cookie']) assert.equal(sent.get(h), null, h)
+})
+
+test('GET: an upstream 429 is "busy, try again in a minute", as for a share', async () => {
+  const res = await handleMiyakeysGallery(get(), { ...open, fetchImpl: upstream(() => new Response('', { status: 429 })) })
+  assert.equal(res.status, 429)
+  assert.equal(res.headers.get('retry-after'), '60')
+  assert.match(((await res.json()) as { error: string }).error, /busy.*minute/i)
+  const share = await handleMiyakeysGallery(post(JSON.stringify({ name: 'x', snap })), { ...open, fetchImpl: upstream(() => new Response('', { status: 429 })) })
+  assert.equal(share.status, 429)
+})
+
+test(`GET: at most ${GALLERY_MAX_TEMPLATES} builds, the newest, and the reply says there are more`, async () => {
+  const many = Array.from({ length: GALLERY_MAX_TEMPLATES + 20 }, (_, i) => ({
+    ...entry(`b${i}`),
+    createdAt: new Date(Date.UTC(2026, 0, 1) + i * 60_000).toISOString(),
+  }))
+  const res = await handleMiyakeysGallery(get(), { ...open, fetchImpl: upstream(() => Response.json({ templates: many })) })
+  const data = (await res.json()) as { templates: Array<{ id: string }>; more?: boolean }
+  assert.equal(data.templates.length, GALLERY_MAX_TEMPLATES)
+  assert.equal(data.more, true)
+  assert.equal(data.templates[0]!.id, 'b20', 'the oldest 20 are the ones left out, order kept')
+  assert.equal(data.templates.at(-1)!.id, String(`b${GALLERY_MAX_TEMPLATES + 19}`))
+  const few = await handleMiyakeysGallery(get(), { ...open, fetchImpl: upstream(() => Response.json({ templates: many.slice(0, 3) })) })
+  assert.equal(((await few.json()) as { more?: boolean }).more, undefined)
+})
+
+test('GET: the cleaned gallery is kept for a short while; a share here clears it', async () => {
+  let now = 1_000_000
+  const clock = () => now
+  let reads = 0
+  const env = {
+    ...open,
+    now: clock,
+    cache: memoryCache(clock),
+    fetchImpl: upstream(() => {
+      reads++
+      return Response.json({ templates: [entry(`v${reads}`)] })
+    }),
+  }
+  const ids = async () => ((await (await handleMiyakeysGallery(get(), env)).json()) as { templates: Array<{ id: string }> }).templates.map((t) => t.id)
+  assert.deepEqual(await ids(), ['v1'])
+  now += 1000
+  assert.deepEqual(await ids(), ['v1'], 'served from the cache')
+  assert.equal(reads, 1)
+  now += GALLERY_CACHE_SECONDS * 1000
+  assert.deepEqual(await ids(), ['v2'], 'read again once it is old')
+  assert.equal((await handleMiyakeysGallery(post(JSON.stringify({ name: 'x', snap })), env)).status, 200)
+  assert.deepEqual(await ids(), ['v4'], 'read again after a share (the POST was read 3)')
+  // Failures are never cached.
+  const bad = { ...open, now: clock, cache: memoryCache(clock), fetchImpl: upstream(() => new Response('', { status: 500 })) }
+  assert.equal((await handleMiyakeysGallery(get(), bad)).status, 502)
+  assert.equal(await bad.cache.get('miyakeys-gallery'), undefined)
+})
+
+test("a wrong path under the embed is a 404, not the desktop's page under the embed's CSP", async () => {
+  const spa = () => new Response('<!doctype html><title>desktop</title>', { headers: { 'content-type': 'text/html' } })
+  for (const p of ['/embed/miyakeys/nope', '/embed/miyakeys/js/missing.js', '/embed/miyakeys/emoji/0000.png', '/embed/miyakeys/x/']) {
+    const res = embedResponse(spa(), p)
+    assert.equal(res.status, 404, p)
+    assert.doesNotMatch(await res.text(), /desktop/)
+  }
+  for (const p of ['/embed/miyakeys/', '/embed/miyakeys', '/embed/miyakeys/index.html']) {
+    const res = embedResponse(spa(), p)
+    assert.equal(res.status, 200, p)
+    assert.equal(res.headers.get('content-security-policy'), EMBED_CSP)
+  }
+  const png = embedResponse(new Response('x', { headers: { 'content-type': 'image/png' } }), '/embed/miyakeys/emoji/1f431.png')
+  assert.equal(png.status, 200)
+  assert.equal(png.headers.get('access-control-allow-origin'), '*')
 })

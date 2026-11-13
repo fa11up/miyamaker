@@ -9,7 +9,7 @@ import {
   capMats, matCase, matPlate, matSwBody, matStem, matKnob,
   skirtMat, keyGlowMat, keyGlowGeo, createLegendGlowMat,
   CAP_Y, setPlateMesh, setBoardDims, sRGB, uni,
-  aoPlane, glowPlane,
+  aoPlane, glowPlane, requestRender,
 } from './scene.js';
 import { BRAND_MARKS, MARKS, EMOJI, emojiUrl, emojiChar } from '../data/art.js';
 import {
@@ -219,6 +219,7 @@ export function preloadEmoji() {
       rec.ready = true;
       legendCache.clear();
       refreshLegends();
+      requestRender();
     };
     img.onerror = () => {
       /* keep ready false — legendTex falls back to native emojiChar */
@@ -488,6 +489,8 @@ export function rebuildKey(ri, ci) {
   glow.renderOrder = 1;
   glow.userData.keepGeo = true;
   keyGlowGroup.add(glow);
+  /* Also reached after an image upload finishes, with no event left to wake the drawing (app.js). */
+  requestRender();
 }
 
 /**

@@ -12,6 +12,7 @@ import { color, font, text } from '@/theme/tokens'
 
 import { PETS } from '../pet/registry'
 import { useReducedMotion } from '../prefs'
+import { ACTIVITY_EVENT } from './activity'
 import { movedEnough } from './idle'
 
 const Overlay = styled.div`
@@ -23,6 +24,7 @@ const Overlay = styled.div`
   opacity: 0;
   transition: opacity 900ms ease;
   touch-action: none;
+  outline: none;
   &.shown {
     opacity: 1;
   }
@@ -93,6 +95,7 @@ function load(src: string) {
  */
 export default function Screensaver({ onDismiss }: { onDismiss: () => void }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const overlayRef = useRef<HTMLDivElement>(null)
   const reducedMotion = useReducedMotion()
   const [shown, setShown] = useState(false)
 
@@ -145,6 +148,22 @@ export default function Screensaver({ onDismiss }: { onDismiss: () => void }) {
       if (movedEnough(origin, p, 24)) finish()
     }
 
+    // Keys go to whatever has focus. Focus inside a framed app (miyakeys) would keep them from this window, and the
+    // waking key would land in the app: it comes out here while the screensaver shows, and goes back after.
+    const framed = document.activeElement instanceof HTMLIFrameElement ? document.activeElement : null
+    const overlay = overlayRef.current
+    if (framed) {
+      framed.blur()
+      overlay?.focus({ preventScroll: true })
+    }
+
+    // A framed app's own report of activity (activity.ts) wakes it too, in case focus went back in.
+    const onActivity = () => {
+      if (performance.now() - startedAt < 600) return
+      finish()
+    }
+
+    window.addEventListener(ACTIVITY_EVENT, onActivity)
     window.addEventListener('keydown', onKey, { capture: true })
     window.addEventListener('pointerdown', onDown, { capture: true })
     window.addEventListener('mousedown', onDown, { capture: true })
@@ -152,6 +171,12 @@ export default function Screensaver({ onDismiss }: { onDismiss: () => void }) {
     window.addEventListener('wheel', onDown, { capture: true, passive: false })
     window.addEventListener('pointermove', onMove, { capture: true })
     return () => {
+      window.removeEventListener(ACTIVITY_EVENT, onActivity)
+      const active = document.activeElement
+      if (framed?.isConnected && (!active || active === document.body || active === overlay)) {
+        framed.focus({ preventScroll: true })
+      }
+
       window.removeEventListener('keydown', onKey, { capture: true })
       window.removeEventListener('pointerdown', onDown, { capture: true })
       window.removeEventListener('mousedown', onDown, { capture: true })
@@ -360,7 +385,7 @@ export default function Screensaver({ onDismiss }: { onDismiss: () => void }) {
   }, [reducedMotion])
 
   return (
-    <Overlay className={shown ? 'shown' : ''} role="presentation" data-screensaver="">
+    <Overlay ref={overlayRef} tabIndex={-1} className={shown ? 'shown' : ''} role="presentation" data-screensaver="">
       <canvas ref={canvasRef} aria-hidden />
       <Hint>miyaOS · move the mouse, tap or press a key</Hint>
     </Overlay>

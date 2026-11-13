@@ -36,11 +36,29 @@ test('one keydown listener in the embed, so one Escape closes one thing', () => 
   assert.deepEqual(listeners, [join('embed/miyakeys/js', 'app.js')])
 })
 
-test('undo and redo compare the key in lower case, and Cmd+Shift+Z redoes', () => {
+test("the bridge's activity listener (keydown among others) only reports activity, never handles keys", () => {
+  const host = readFileSync('embed/miyakeys/js/core/host.js', 'utf8')
+  assert.match(host, /const ACTIVITY_EVENTS = \[[^\]]*'keydown'/)
+  const onActivity = host.slice(host.indexOf('onActivity'), host.indexOf('ACTIVITY_EVENTS.forEach'))
+  assert.doesNotMatch(onActivity, /preventDefault|stopPropagation|stopImmediatePropagation/)
+})
+
+test('undo and redo compare the key in lower case, fall back to the physical key, and Cmd+Shift+Z redoes', () => {
   const app = readFileSync('embed/miyakeys/js/app.js', 'utf8')
   const handler = app.slice(app.indexOf('const keyHandler'), app.indexOf("addEventListener('keydown', keyHandler)"))
   assert.match(handler, /\(ev\.key \|\| ''\)\.toLowerCase\(\)/)
   assert.doesNotMatch(handler, /ev\.key === 'z'|ev\.key === 'y'/)
-  assert.match(handler, /k === 'z' && ev\.shiftKey/)
-  assert.match(handler, /isModalOpen\(\)[\s\S]*closeModal\(\)[\s\S]*else if \(!isTextEntry\(ev\.target\)\)[\s\S]*hideKeyEditor\(\)/)
+  // A non-Latin layout (Russian, Greek…): ev.key is that script's letter, so the physical key decides.
+  assert.match(handler, /latin \? k === 'z' : ev\.code === 'KeyZ'/)
+  assert.match(handler, /latin \? k === 'y' : ev\.code === 'KeyY'/)
+  assert.match(handler, /isZ && ev\.shiftKey/)
+})
+
+test('one Escape closes one thing: the dialog, else the Export menu, else it leaves the field, else the key editor', () => {
+  const app = readFileSync('embed/miyakeys/js/app.js', 'utf8')
+  const handler = app.slice(app.indexOf('const keyHandler'), app.indexOf("addEventListener('keydown', keyHandler)"))
+  assert.match(
+    handler,
+    /isModalOpen\(\)[\s\S]*closeModal\(\)[\s\S]*menu\.classList\.contains\('open'\)[\s\S]*closeExportMenu\([\s\S]*else if \(isTextEntry\(ev\.target\)\)[\s\S]*\.blur\(\)[\s\S]*else \{\s*hideKeyEditor\(\)/
+  )
 })

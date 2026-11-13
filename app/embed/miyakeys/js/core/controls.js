@@ -6,6 +6,7 @@ import { state } from './state.js';
 import { SWITCHES } from '../data/components.js';
 import { playKeyClick } from '../ui/sound.js';
 import { selectKey } from './perKey.js';
+import { commitHistory } from './update.js';
 
 let onKeyEdit = null;
 export function onKeyEditClick(fn) { onKeyEdit = fn; }
@@ -288,6 +289,8 @@ function endPointer(ev) {
   pointers.delete(ev.pointerId);
   setDragCursor(false);
   const moved = Math.hypot(ev.clientX - downX, ev.clientY - downY);
+  /* A knob drag changed the brightness on every move without recording it: the whole drag is one undo step. */
+  if (dragMode === 'knob' && dragEngaged) commitHistory();
   /* Knob tap / double-click (not a brightness drag) */
   if (dragMode === 'knob' && !dragEngaged && moved < 5) {
     const now = Date.now();

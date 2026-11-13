@@ -85,7 +85,9 @@ test('colours are hex only: no url(), names, expressions or markup', () => {
     })!
     assert.deepEqual({ ...b, perKeyOverrides: { ...b.perKeyOverrides } }, { perKeyOverrides: {} }, String(bad))
   }
-  for (const ok of ['#fff', '#FFFFFF', '#11223344']) assert.equal(build({ plateColor: ok })!.plateColor, ok)
+  for (const ok of ['#fff', '#FFFFFF']) assert.equal(build({ plateColor: ok })!.plateColor, ok)
+  // Alpha and odd lengths: three.js draws them white.
+  for (const bad of ['#1234', '#12345', '#1234567', '#11223344']) assert.equal(build({ plateColor: bad })!.plateColor, undefined)
 })
 
 test('customColors needs all three roles with both colours, or is left out', () => {

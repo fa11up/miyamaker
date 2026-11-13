@@ -9,6 +9,7 @@ import { jsonReply, noSniff, readCappedText } from './_lib/body'
 import { handleLayersRequest, LAYERS_PROXY_PATH } from './_lib/layers'
 import { edgeCache, handleMarketRequest, MARKET_PREFIX, openSeaReader } from './_lib/market'
 import {
+  d1ShareCap,
   embedResponse,
   GALLERY_BODY_LIMIT,
   GALLERY_READ_RATE,
@@ -80,6 +81,11 @@ type Env = {
   REVEAL_ORIGIN?: string
   /** Wallets that can remove any station track, comma-separated. */
   STATION_ADMINS?: string
+  /**
+   * miyakeys's shares carry HMAC(this, visitor) as x-miyakeys-client, so nuroctane.xyz can throttle one visitor without
+   * their address (api/_lib/miyakeys.ts clientTag). Unset = no header.
+   */
+  MIYAKEYS_CLIENT_SECRET?: string
 }
 
 const APEX = 'miyamaker.com'
@@ -129,7 +135,8 @@ const tvState = (env: Env) => (tvCache ??= sharedCache(env.DB ? d1SharedState(en
 // A kit reads one sample per pad at once. A video link costs more: it makes three or more upstream fetches.
 const sampleMediaLimiter = createRateLimiter(SAMPLE_MEDIA_RATE)
 const videoAudioLimiter = createRateLimiter(VIDEO_AUDIO_RATE)
-// miyakeys's community gallery, forwarded to nuroctane.xyz (api/_lib/miyakeys.ts).
+// miyakeys's community gallery, forwarded to nuroctane.xyz (api/_lib/miyakeys.ts). These two are per isolate; the
+// site-wide share cap is in D1 (d1ShareCap).
 const miyakeysReadLimiter = createRateLimiter(GALLERY_READ_RATE)
 const miyakeysWriteLimiter = createRateLimiter(GALLERY_WRITE_RATE)
 // assignments.json is every draw (a few MB at sell-out): a verifier reads it once.
@@ -174,8 +181,9 @@ export default {
     }
 
     // miyakeys's page and files: its CSP, and CORS for its sandboxed (opaque-origin) frame. Its hashed scripts and
-    // styles under /assets/* skip the Worker: public/_headers gives those CORS.
-    if (isEmbedPath(url.pathname)) return embedResponse(await env.ASSETS.fetch(request))
+    // styles under /assets/* skip the Worker: public/_headers gives those CORS. A path that is not one of its files is a
+    // 404, not the desktop's index.html (the asset store's single-page fallback).
+    if (isEmbedPath(url.pathname)) return embedResponse(await env.ASSETS.fetch(request), url.pathname)
     if (url.pathname === LAYERS_PROXY_PATH || url.pathname.startsWith(`${LAYERS_PROXY_PATH}/`)) {
       return handleLayersRequest(request)
     }
@@ -350,7 +358,14 @@ async function api(request: Request, env: Env, url: URL): Promise<Response> {
     const body = request.method === 'POST' ? await readCappedText(request, GALLERY_BODY_LIMIT) : undefined
     return handleMiyakeysGallery(
       { method: request.method, url: request.url, headers: request.headers, body },
-      { clientKey, readLimiter: miyakeysReadLimiter, writeLimiter: miyakeysWriteLimiter }
+      {
+        clientKey,
+        readLimiter: miyakeysReadLimiter,
+        writeLimiter: miyakeysWriteLimiter,
+        shareCap: env.DB ? d1ShareCap(env.DB) : undefined,
+        clientSecret: env.MIYAKEYS_CLIENT_SECRET?.trim() || undefined,
+        cache: edge(),
+      }
     )
   }
 

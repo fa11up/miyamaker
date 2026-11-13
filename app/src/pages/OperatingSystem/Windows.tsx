@@ -5,6 +5,7 @@ import Draggable from 'react-draggable'
 
 import Pages from '@/constants/pages'
 import AppBoot from '@/components/AppBoot'
+import { ACTIVITY_EVENT, pressedFrame } from '@/desktop/screensaver/activity'
 import { useWindowSize } from 'usehooks-ts'
 
 import { useWindowDimensions, useWindowPosition } from '@/store/windows/hooks'
@@ -53,6 +54,25 @@ const DummyWindow = ({
       {children}
     </div>
   )
+}
+
+/**
+ * Windows whose app changes layout at a width, so they never get narrower than it on a desktop. miyakeys's page
+ * reloads into its phone layout at 768px (1024px with a touch pointer), losing its undo and builds in progress; a
+ * window always above that never crosses it. On a phone the window is the whole screen from the start.
+ */
+const LAYOUT_MIN_WIDTH: Record<string, { fine: number; coarse: number }> = {
+  miyakeys: { fine: 800, coarse: 1060 },
+}
+
+function layoutMinWidth(identifier: string): number {
+  const min = LAYOUT_MIN_WIDTH[identifier]
+  if (!min) return 0
+  try {
+    return window.matchMedia('(pointer: coarse)').matches ? min.coarse : min.fine
+  } catch {
+    return min.fine
+  }
 }
 
 type Edge = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw'
@@ -268,6 +288,29 @@ export default function Windows({
     }, 100)
     return () => clearInterval(waiting)
   }, [focused, initialized])
+  // A click into a frame (miyakeys's sandboxed page) sends this page no pointer event and no focus event, only a
+  // window blur, with the frame as the active element, and the press the frame reports (activity.ts). Either is a
+  // click in this window: it comes to the front.
+  const raise = useRef(onClick)
+  raise.current = onClick
+  useEffect(() => {
+    const onBlur = () => {
+      const active = document.activeElement
+      if (active instanceof HTMLIFrameElement && ref.current?.contains(active)) raise.current()
+    }
+
+    const onPress = (e: Event) => {
+      const frame = pressedFrame(e)
+      if (frame && ref.current?.contains(frame)) raise.current()
+    }
+
+    window.addEventListener('blur', onBlur)
+    window.addEventListener(ACTIVITY_EVENT, onPress)
+    return () => {
+      window.removeEventListener('blur', onBlur)
+      window.removeEventListener(ACTIVITY_EVENT, onPress)
+    }
+  }, [])
   useEffect(
     () => () => {
       const active = document.activeElement
@@ -282,8 +325,13 @@ export default function Windows({
   const [savedSize, saveSize] = useWindowDimensions(identifier)
   const [liveSize, setLiveSize] = useState<{ width: number; height: number }>()
   const resizable = !mobile && !shaped && !fixedSize
-  const size = (resizable && (liveSize ?? savedSize)) || baseSize
-  const minSize = { width: Math.min(baseSize.width, 480), height: Math.min(baseSize.height, 360) }
+  const minSize = {
+    width: Math.max(Math.min(baseSize.width, 480), layoutMinWidth(identifier)),
+    height: Math.min(baseSize.height, 360),
+  }
+  const picked = (resizable && (liveSize ?? savedSize)) || baseSize
+  // A size saved before the window had its layout's minimum comes back at the minimum.
+  const size = { width: Math.max(minSize.width, picked.width), height: picked.height }
   const { width: viewWidth } = useWindowSize()
 
   // A window taller than the desktop shrinks to fit above the taskbar and scrolls inside.
