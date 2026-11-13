@@ -16,7 +16,16 @@ import { resolveUri } from '@/utils/resolveUri'
 
 import { erc721Abi, erc1155Abi, poolAbi, poolFactoryAbi, poolVaultAbi, vaultConfigAbi } from './abi'
 import type { CommitRow, PoolKind, PoolSummary } from './pool'
-import { asKind, heldAmount, KIND, pendingFor, poolIndexes, poolLookup, v2PoolFactory } from './pool'
+import {
+  asKind,
+  factoryMadePool,
+  heldAmount,
+  KIND,
+  pendingFor,
+  poolIndexes,
+  poolLookup,
+  v2PoolFactory,
+} from './pool'
 
 /**
  * The v2 MiyaPoolFactory on a chain, from env or contracts/deployments (undefined = not deployed there yet). A v1
@@ -264,6 +273,18 @@ export function usePoolsForCollection(chainId: SupportedChainId, factory: Addres
 export function usePool(chainId: SupportedChainId, pool: Address | undefined, owner: Address | undefined) {
   const addresses = useMemo(() => (pool ? [pool] : []), [pool])
   const summary = usePoolSummaries(chainId, addresses)
+  // A pool opened from a link is shown only when this chain's factory made it (poolOf(collection) == address).
+  const factory = poolFactoryFor(chainId)
+  const claimed = summary.pools[0]
+  const made = useReadContract({
+    address: factory,
+    abi: poolFactoryAbi,
+    functionName: 'poolOf',
+    args: [(claimed?.collection as Address) || zeroAddress],
+    chainId,
+    query: { enabled: !!factory && !!claimed },
+  })
+  const fromFactory = claimed ? factoryMadePool(made.data as string | undefined, claimed.address) : undefined
   const extra = useReadContracts({
     allowFailure: true,
     contracts: [
@@ -279,7 +300,12 @@ export function usePool(chainId: SupportedChainId, pool: Address | undefined, ow
   })
   const [count, pending, nextCommit, nextReveal, balance, imd, infer] = extra.data || []
   return {
-    pool: summary.pools[0],
+    /** Only a pool this chain's factory made; anything else that answers like one is never shown. */
+    pool: fromFactory ? claimed : undefined,
+    /** The contract answers like a pool, but the factory did not make it. */
+    notFromFactory: fromFactory === false,
+    /** The factory could not be asked, so whether it made this pool is unknown. */
+    factoryCheckFailed: !!claimed && (!factory || made.isError),
     /** Undefined when the read failed: the held list can't be paged without it. */
     heldIdsCount: ok<bigint>(count) === undefined ? undefined : Number(ok<bigint>(count)),
     /** Undefined when the read failed: free NFTs for a random draw are then unknown. */
@@ -290,11 +316,12 @@ export function usePool(chainId: SupportedChainId, pool: Address | undefined, ow
     /** The pick-fee tokens (address(0) on a pool without a vault); undefined when the read failed. */
     imd: ok<Address>(imd),
     infer: ok<Address>(infer),
-    loading: summary.loading || extra.isLoading,
+    loading: summary.loading || extra.isLoading || (!!claimed && !!factory && made.isLoading),
     missing: !summary.loading && !extra.isLoading && !summary.pools[0],
     refetch: () => {
       summary.refetch()
       extra.refetch()
+      made.refetch()
     },
   }
 }
