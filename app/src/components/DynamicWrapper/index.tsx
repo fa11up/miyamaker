@@ -7,6 +7,7 @@ import TitleBar from '@/components/TitleBar'
 import WindowWrapper from '@/components/WindowWrapper'
 import { APP_LOADERS } from '@/constants/appLoaders'
 import Pages from '@/constants/pages'
+import PfpEngine from '@/pages/PfpEngine'
 import { useAppDispatch } from '@/store/hooks'
 import { closeWindow } from '@/store/windows/actions'
 
@@ -95,6 +96,8 @@ export default function DynamicWrapper({ identifier }: { identifier: string }) {
         return <MusicMaker />
       case 'miyakeys':
         return <Miyakeys />
+      case 'pfpEngine':
+        return <PfpEngine />
       default:
         return <></>
     }
