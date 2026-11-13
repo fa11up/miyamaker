@@ -23,7 +23,7 @@ import { downloadKLE, copyKLE } from './export/kle.js';
 import { downloadSVG } from './export/svg.js';
 import { downloadSpec } from './export/spec.js';
 import { exportPDF } from './export/pdf.js';
-import { decodeState, encodeState, loadHash, shareURL, hasKeyImages, acceptCarry, carryName, MAX_SAVED_BUILDS } from './core/shrinker.js';
+import { decodeState, encodeState, loadHash, shareURL, hasKeyImages, acceptCarry, carryName, MAX_SAVED_BUILDS, MAX_CARRY } from './core/shrinker.js';
 import { validBuild, validGalleryEntry } from './core/validBuild.js';
 import { listenToHost, MAX_HASH, TOO_BIG } from './core/host.js';
 import { showBootError } from './ui/bootError.js';
@@ -69,8 +69,16 @@ function carryAcrossReload(savedBuilds) {
   const bytes = crypto.getRandomValues(new Uint8Array(16));
   const nonce = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
   try { sessionStorage.setItem(NONCE_KEY, nonce); } catch { /* no storage in the sandboxed frame: the reload check stands alone */ }
+  /* Over the cap the build and Your builds go without their images (said after the reload), rather than not at all. */
+  let name = carryName(nonce, { build, savedBuilds });
+  if (name.length > MAX_CARRY)
+    name = carryName(nonce, {
+      build: validBuild(build, { images: false }) || {},
+      savedBuilds: savedBuilds.map(({ img: _img, ...b }) => b),
+      imagesLeftOut: true,
+    });
   try {
-    window.name = carryName(nonce, { build, savedBuilds });
+    window.name = name.length > MAX_CARRY ? '' : name;
   } catch {
     /* too big to keep: the hash has the build without its images */
   }
@@ -101,7 +109,11 @@ export function mountModkeys() {
   const onBoundary = () => {
     /* A new frame's media query can settle after the page has started; only a real crossing reloads. */
     if (wantsMobile() === inMobileShell) return;
-    carryAcrossReload(savedBuilds);
+    /* Before boot has applied the carry, the live state is still the default: carry what came in, not that. */
+    if (!booted && carry) {
+      if (carry.build) Object.assign(state, carry.build);
+      carryAcrossReload(carry.savedBuilds || []);
+    } else carryAcrossReload(savedBuilds);
     location.reload();
   };
   /* The page can change size between the shell choice and this listener: if it is now on the other side of the
@@ -189,7 +201,8 @@ export function mountModkeys() {
           said = typeof body?.error === 'string' ? body.error.replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ').trim().slice(0, 200) : '';
         } catch { /* no words: the copy below */ }
       }
-      if (said) return { ok: false, message: 'Not shared. ' + said };
+      /* A 502 may mean the gallery took it (the Worker says so): only a 429 or 503 is surely "not shared". */
+      if (said) return { ok: false, message: res.status === 502 ? said : 'Not shared. ' + said };
       if (res.status === 429) return { ok: false, message: 'Too many shares just now: not shared. Try again in a minute.' };
       if (res.status === 503) return { ok: false, message: 'Sharing is paused just now: not shared. Try again later.' };
       return { ok: false, message: 'The gallery turned it down: not shared.' };
@@ -725,7 +738,9 @@ export function mountModkeys() {
     const carried = carry && carry.build;
     if (carried) {
       loadSnap(carried, { selectedPreset: null });
-      toast('Your build was kept. Undo history starts over after the window changes size.');
+      toast(carry.imagesLeftOut
+        ? 'Your build was kept, without its key images (too big to carry). Undo history starts over after the window changes size.'
+        : 'Your build was kept. Undo history starts over after the window changes size.');
     } else if (window.location.hash.length - 1 > MAX_HASH) {
       /* The same cap as a hash handed over by the window (host.js): refused before it is decoded. */
       toast(TOO_BIG);
@@ -735,7 +750,10 @@ export function mountModkeys() {
         const hashData = loadHash();
         if (hashData) {
           loadSnap(hashData, { selectedPreset: null });
-          if (carry) toast('Your build was kept, without its key images. Undo history starts over after the window changes size.');
+          /* After a size-change reload the hash is the build without its key images: say so, carry or not. */
+          let reloaded = false;
+          try { reloaded = performance.getEntriesByType('navigation')[0]?.type === 'reload'; } catch { /* unknown */ }
+          if (carry || reloaded) toast('Your build was kept, without its key images. Undo history starts over after the window changes size.');
         } else toast('That shared build could not be opened');
       } catch (e) {
         console.error(e);

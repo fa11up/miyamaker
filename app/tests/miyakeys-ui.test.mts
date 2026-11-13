@@ -100,11 +100,14 @@ test('the page reads the carry through acceptCarry, with the navigation type, an
 })
 
 test('hidden characters are taken out of text: Arabic letter mark, word joiner and invisible operators, separators, tags', () => {
-  const hidden = ['؜', '⁠', '⁡', '⁢', '⁣', '⁤', ' ', ' ', '\u{e0000}', '\u{e0001}', '\u{e0041}', '\u{e007f}',
+  const hidden = ['؜', '⁠', '⁡', '⁢', '⁣', '⁤', ' ', ' ', '\u{e0000}', '\u{e0001}',
     '​', '‮', '⁦', '﻿', '\u0000', '\u009f']
   for (const c of hidden) assert.equal(cleanText('a' + c + 'b', 64), 'ab', 'U+' + c.codePointAt(0)!.toString(16))
   assert.equal(cleanText('Esc\nline', 64), 'Esc\nline', 'a newline stays')
   assert.equal(cleanText('ünï 字 😀 مرحبا', 64), 'ünï 字 😀 مرحبا', 'ordinary text and emoji stay')
+  // Tag letters U+E0020–E007F build the England, Scotland and Wales flags: they stay.
+  for (const flag of ['\u{1f3f4}\u{e0067}\u{e0062}\u{e0065}\u{e006e}\u{e0067}\u{e007f}', '\u{1f3f4}\u{e0067}\u{e0062}\u{e0073}\u{e0063}\u{e0074}\u{e007f}'])
+    assert.equal(cleanText(flag, 64), flag)
 })
 
 test('the gallery says when it shows only the newest builds the server sent', () => {

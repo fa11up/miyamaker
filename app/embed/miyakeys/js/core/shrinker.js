@@ -109,5 +109,5 @@ export function acceptCarry(name, navType, nonce) {
     savedBuilds.push({ name: nm, snap, layout: snap.layout, img });
   }
   const build = raw.build ? validBuild(raw.build) : null;
-  return { build: build && Object.keys(build).length ? build : null, savedBuilds };
+  return { build: build && Object.keys(build).length ? build : null, savedBuilds, imagesLeftOut: raw.imagesLeftOut === true };
 }

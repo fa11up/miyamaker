@@ -384,6 +384,9 @@ function miyakeysDevOpen(url: string, prefix: string): boolean {
     return false
   }
   if (pathname.includes('\\') || pathname.includes('\0') || pathname.split('/').some((seg) => seg === '.' || seg === '..')) return false
+  // Vite writes its WebSocket token into its own client files (vite/dist/client/*) whatever URL serves them, so the
+  // vite package is never opened, by /node_modules or by /@fs.
+  if (/\/node_modules\/(vite|@vite|@vitejs)\//i.test(pathname)) return false
   if (pathname.startsWith(`${prefix}/`) || pathname.startsWith('/node_modules/')) return true
   return /^\/@fs\/[^?]*\/node_modules\//.test(pathname)
 }

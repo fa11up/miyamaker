@@ -517,3 +517,37 @@ test("a wrong path under the embed is a 404, not the desktop's page under the em
   assert.equal(png.status, 200)
   assert.equal(png.headers.get('access-control-allow-origin'), '*')
 })
+
+test('POST: a 5xx or a redirect from the gallery says the build may have been shared; a 4xx says it was turned down', async () => {
+  const body = JSON.stringify({ name: 'x', snap })
+  for (const status of [500, 503, 302]) {
+    const res = await handleMiyakeysGallery(post(body), { ...open, fetchImpl: upstream(() => new Response('', { status })) })
+    assert.equal(res.status, 502, String(status))
+    assert.match(((await res.json()) as { error: string }).error, /may have been shared/, String(status))
+  }
+  const refused = await handleMiyakeysGallery(post(body), { ...open, fetchImpl: upstream(() => new Response('', { status: 422 })) })
+  assert.match(((await refused.json()) as { error: string }).error, /turned the build down/)
+})
+
+test('GET: a cached copy saved before the latest share is not served', async () => {
+  let now = 9_000_000
+  const clock = () => now
+  const cache = memoryCache(clock)
+  let reads = 0
+  const env = {
+    ...open,
+    now: clock,
+    cache,
+    fetchImpl: (async () => {
+      reads++
+      return Response.json({ templates: [entry('old'), entry('new')] })
+    }) as typeof fetch,
+  }
+  // A read that checked the marker before the share, then kept its pre-share copy just after it.
+  await cache.put('miyakeys-gallery', { at: now, body: { templates: [entry('old')] } }, GALLERY_CACHE_SECONDS)
+  await cache.put('miyakeys-gallery-shared', { at: now, body: null }, GALLERY_CACHE_SECONDS)
+  now += 1000
+  const got = (await (await handleMiyakeysGallery(get(), env)).json()) as { templates: Array<{ id: string }> }
+  assert.deepEqual(got.templates.map((t) => t.id), ['old', 'new'])
+  assert.equal(reads, 1, 'went upstream instead of serving the older copy')
+})

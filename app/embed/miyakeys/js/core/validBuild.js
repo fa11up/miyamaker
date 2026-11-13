@@ -59,7 +59,7 @@ function num(v, min, max) {
    byte-order mark and the tag characters (U+E0000-E007F, invisible text): none of them is something a legend or a name
    needs, and the bidi ones can make text read in a different order than it is stored. */
 const HIDDEN_CHARS =
-  /[\u0000-\u0009\u000b-\u001f\u007f-\u009f\u061c\u200b-\u200f\u2028\u2029\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff\u{e0000}-\u{e007f}]/gu;
+  /[\u0000-\u0009\u000b-\u001f\u007f-\u009f\u061c\u200b-\u200f\u2028\u2029\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff\u{e0000}\u{e0001}]/gu;
 
 /** Text a person typed, cut to `max` characters, with control, bidi and zero-width characters taken out. */
 export function cleanText(v, max) {

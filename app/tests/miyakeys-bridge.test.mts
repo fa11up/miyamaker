@@ -166,12 +166,32 @@ test('the Start and skin menus close on a window blur or a press in a frame', ()
   }
 })
 
-test('a click into a frame brings its window to the front', () => {
-  const src = readFileSync('src/pages/OperatingSystem/Windows.tsx', 'utf8')
-  assert.match(src, /window\.addEventListener\('blur', onBlur\)/)
-  assert.match(src, /active instanceof HTMLIFrameElement && ref\.current\?\.contains\(active\)\) raise\.current\(\)/)
-  assert.match(src, /window\.addEventListener\(ACTIVITY_EVENT, onPress\)/)
-  assert.match(src, /frame && ref\.current\?\.contains\(frame\)\) raise\.current\(\)/)
+test('a click into a frame brings its window to the front, and so does a press the frame reports', () => {
+  const watch = fromSource<(o: Record<string, unknown>) => () => void>('src/pages/OperatingSystem/Windows.tsx', 'watchFrameFocus')
+  const winL = new Map<string, (e?: unknown) => void>()
+  const doc = { activeElement: null as unknown, hidden: false, addEventListener: () => {}, removeEventListener: () => {} }
+  const frame = { name: 'mine' }
+  const other = { name: 'other' }
+  const raised: string[] = []
+  const stop = watch({
+    win: { addEventListener: (t: string, f: (e?: unknown) => void) => winL.set(t, f), removeEventListener: () => {} },
+    doc,
+    isFrame: (el: unknown) => el === frame || el === other,
+    mine: (el: unknown) => el === frame,
+    raise: () => raised.push('raised'),
+    pressedFrame: (e: { frame?: unknown }) => e?.frame,
+    activityEvent: 'miyaos:activity',
+    ms: 250,
+  })
+  // A click from the page into this window's frame: the page blurs with the frame focused.
+  doc.activeElement = frame
+  winL.get('blur')!()
+  assert.deepEqual(raised, ['raised'])
+  // A press the frame reports raises it; one from another window's frame does not.
+  winL.get('miyaos:activity')!({ frame })
+  winL.get('miyaos:activity')!({ frame: other })
+  assert.deepEqual(raised, ['raised', 'raised'])
+  stop()
 })
 
 test('the miyakeys window stays wider than the frame\'s phone breakpoint on a desktop', () => {
@@ -226,6 +246,14 @@ test("dev opens only the embed's files and packages to Origin null: never /@vite
     '/@fs/Users/me/app/node_modules/%2e%2e/%2e%2e/src/main.tsx',
     '/@fs/Users/me/app/src/main.tsx',
     `${P}x/`,
+    // Vite's client carries the token by file, whatever URL serves it.
+    '/node_modules/vite/dist/client/client.mjs',
+    '/node_modules/vite/dist/client/client.mjs?import',
+    '/node_modules/vite/dist/client/env.mjs',
+    '/node_modules/%76ite/dist/client/client.mjs',
+    '/node_modules/Vite/dist/client/client.mjs',
+    '/@fs/Users/me/app/node_modules/vite/dist/client/client.mjs',
+    '/node_modules/@vitejs/plugin-react/dist/refresh-runtime.js',
   ])
     assert.equal(devOpen(url, P), false, url)
 
@@ -271,15 +299,92 @@ test('on a desktop narrower than its layout needs, miyakeys opens full-screen; a
   assert.match(src, /x: Math\.max\(0, Math\.min\(position\.x, maxX\)\)/, 'a saved negative x comes back at 0')
 })
 
-test('focus moving straight from one window\'s frame to another\'s still raises it: a poll while a frame has focus, stopped on focus and unmount', () => {
+test("focus moving straight from one window's frame to another's raises it; the poll stops when focus leaves the frames, the tab hides or the window goes", () => {
+  type Watch = (o: Record<string, unknown>) => () => void
+  const watch = fromSource<Watch>('src/pages/OperatingSystem/Windows.tsx', 'watchFrameFocus')
+  // A stand-in page: listeners by type, a hand-cranked interval.
+  const winL = new Map<string, () => void>()
+  const docL = new Map<string, () => void>()
+  const doc = {
+    activeElement: null as unknown,
+    hidden: false,
+    addEventListener: (t: string, f: () => void) => docL.set(t, f),
+    removeEventListener: (t: string) => docL.delete(t),
+  }
+  const win = { addEventListener: (t: string, f: () => void) => winL.set(t, f), removeEventListener: (t: string) => winL.delete(t) }
+  const timers = new Map<number, () => void>()
+  let next = 1
+  const realSet = globalThis.setInterval
+  const realClear = globalThis.clearInterval
+  globalThis.setInterval = ((f: () => void) => (timers.set(next, f), next++)) as unknown as typeof setInterval
+  globalThis.clearInterval = ((id: number) => timers.delete(id)) as unknown as typeof clearInterval
+  try {
+    const frameA = { name: 'A' }
+    const frameB = { name: 'B' }
+    const raised: string[] = []
+    const stopB = watch({
+      win,
+      doc,
+      isFrame: (el: unknown) => el === frameA || el === frameB,
+      mine: (el: unknown) => el === frameB,
+      raise: () => raised.push('B'),
+      pressedFrame: () => null,
+      activityEvent: 'miyaos:activity',
+      ms: 250,
+    })
+    const tick = () => [...timers.values()].forEach((f) => f())
+
+    // Focus goes from the page into window A's frame: the page blurs, B is not raised, a poll starts.
+    doc.activeElement = frameA
+    winL.get('blur')!()
+    assert.deepEqual(raised, [])
+    assert.equal(timers.size, 1, 'one poll while a frame has focus')
+    // Then straight into B's frame: no event reaches the page, the poll sees it and raises B once.
+    doc.activeElement = frameB
+    tick()
+    tick()
+    assert.deepEqual(raised, ['B'], 'raised once per move, not every tick')
+
+    // The focused frame is removed (focus falls to the page body, no focus event): the poll stops.
+    doc.activeElement = { name: 'body' }
+    tick()
+    assert.equal(timers.size, 0, 'stopped when focus leaves the frames')
+
+    // A hidden tab stops it; showing the tab again with a frame focused starts it again.
+    doc.activeElement = frameA
+    winL.get('blur')!()
+    assert.equal(timers.size, 1)
+    doc.hidden = true
+    docL.get('visibilitychange')!()
+    assert.equal(timers.size, 0, 'stopped while the tab is hidden')
+    doc.hidden = false
+    docL.get('visibilitychange')!()
+    assert.equal(timers.size, 1, 'resumed when the tab shows again')
+
+    // Focus back on the page stops it; the window going stops it and removes every listener.
+    winL.get('focus')!()
+    assert.equal(timers.size, 0)
+    doc.activeElement = frameA
+    winL.get('blur')!()
+    stopB()
+    assert.equal(timers.size, 0, 'stopped on unmount')
+    assert.equal(winL.size, 0)
+    assert.equal(docL.size, 0)
+  } finally {
+    globalThis.setInterval = realSet
+    globalThis.clearInterval = realClear
+  }
+})
+
+test('a window saved below the screen opens on it; Maximize is hidden while a narrow desktop holds miyakeys full-screen', () => {
   const src = readFileSync('src/pages/OperatingSystem/Windows.tsx', 'utf8')
-  const start = src.indexOf('const raise = useRef(onClick)')
-  const effect = src.slice(start, src.indexOf('}, [])', start))
-  assert.ok(start > 0 && effect.length > 200, 'the effect is found')
-  assert.match(effect, /poll = setInterval\(check, FRAME_FOCUS_POLL_MS\)/)
-  assert.match(effect, /if \(!poll && document\.activeElement instanceof HTMLIFrameElement\)/, 'only while a frame has focus')
-  assert.match(effect, /window\.addEventListener\('focus', onFocus\)/)
-  assert.match(effect, /return \(\) => \{\s*stop\(\)/, 'stopped on unmount')
-  assert.match(effect, /window\.removeEventListener\('focus', onFocus\)/)
-  assert.match(effect, /if \(active === last\) return/, 'raises once per move, not every tick')
+  const open = src.slice(src.indexOf('if (!initialized && position)'), src.indexOf('}, [position])'))
+  assert.ok(open.length > 100, 'the open effect is found')
+  // useWindowSize reads 0 on the first render, so the height comes from the window itself when it does.
+  assert.match(open, /available \|\| Math\.max\(0, window\.innerHeight - 34\)/)
+  assert.doesNotMatch(open, /: position\.y/, 'y is never taken unclamped')
+  const held = fromSource<(id: string, w: number) => boolean>('src/pages/OperatingSystem/Windows.tsx', 'heldFullScreen')
+  assert.ok(held)
+  const page = readFileSync('src/pages/Miyakeys/index.tsx', 'utf8')
+  assert.match(page, /fullscreenBtn=\{!held\}/)
 })

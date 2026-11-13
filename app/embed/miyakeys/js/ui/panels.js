@@ -8,7 +8,7 @@ import {
 import { MAX_LEGEND } from '../core/validBuild.js';
 import {
   getOverride, setOverride, setOverrides, clearOverride, clearAllOverrides,
-  getSelectedIds, selectKey, clearSelection, KNOB_ID, isKnobId, keyInLayout,
+  getSelectedIds, setSelectedIds, selectKey, clearSelection, KNOB_ID, isKnobId, keyInLayout,
 } from '../core/perKey.js';
 import { loadImage, validateImageFile, MAX_PHOTO_SIZE } from '../core/imageLoader.js';
 import { EMOJI, EMOJI_CREDIT, emojiUrl } from '../data/art.js';
@@ -559,6 +559,12 @@ export function setupPanelEvents() {
      override for a key that is not on the board. */
   onBuildRestored(() => {
     if (_currentEditId && !keyInLayout(_currentEditId)) hideKeyEditor();
+    /* A multi-selection may hold keys the restored layout lacks: keep only those on the board. */
+    else {
+      const ids = getSelectedIds();
+      const kept = ids.filter((id) => isKnobId(id) || keyInLayout(id));
+      if (kept.length !== ids.length) setSelectedIds(kept);
+    }
   });
   const panelBody = $('panelBody');
   if (!panelBody) return;

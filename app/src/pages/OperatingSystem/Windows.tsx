@@ -67,6 +67,12 @@ const LAYOUT_MIN_WIDTH: Record<string, { fine: number; coarse: number }> = {
   miyakeys: { fine: 800, coarse: 1060 },
 }
 
+/** Whether a window is held full-screen because the desktop is narrower than its app's layout (not by the person). */
+export function heldFullScreen(identifier: string, viewWidth: number): boolean {
+  const min = layoutMinWidth(identifier)
+  return min > 0 && viewWidth > 0 && viewWidth < min
+}
+
 function layoutMinWidth(identifier: string): number {
   const min = LAYOUT_MIN_WIDTH[identifier]
   if (!min) return 0
@@ -230,6 +236,69 @@ function pictureOf(window: HTMLElement): HTMLElement[] {
   return Array.from(copy.children) as HTMLElement[]
 }
 
+/**
+ * Raises a window when focus moves into one of its frames. A click from this page into a frame blurs the page; a move
+ * from one frame straight into another's sends the page nothing, so while a frame has focus (and the tab is showing)
+ * the focused element is checked every `ms` until focus comes back to the page, it leaves the frames without a focus
+ * event (the frame was removed), the tab is hidden, or the window goes. A press the frame reports also raises it.
+ * Every window watches for its own frames. Self-contained: tests/miyakeys-bridge.test.mts runs it with fakes.
+ */
+function watchFrameFocus(o: {
+  win: Pick<Window, 'addEventListener' | 'removeEventListener'>
+  doc: Pick<Document, 'activeElement' | 'hidden' | 'addEventListener' | 'removeEventListener'>
+  isFrame: (el: Element | null) => boolean
+  mine: (el: Element) => boolean
+  raise: () => void
+  pressedFrame: (e: Event) => Element | null | undefined
+  activityEvent: string
+  ms: number
+}) {
+  let poll: ReturnType<typeof setInterval> | undefined
+  let last: Element | null = null
+  const stop = () => {
+    clearInterval(poll)
+    poll = undefined
+  }
+  const check = () => {
+    const active = o.doc.activeElement
+    if (!o.isFrame(active)) {
+      stop()
+      return
+    }
+    if (active === last) return
+    last = active
+    if (active && o.mine(active)) o.raise()
+  }
+  const onBlur = () => {
+    last = null
+    check()
+    if (!poll && !o.doc.hidden && o.isFrame(o.doc.activeElement)) poll = setInterval(check, o.ms)
+  }
+  const onFocus = () => {
+    stop()
+    last = null
+  }
+  const onVisibility = () => {
+    if (o.doc.hidden) stop()
+    else if (o.isFrame(o.doc.activeElement)) onBlur()
+  }
+  const onPress = (e: Event) => {
+    const frame = o.pressedFrame(e)
+    if (frame && o.mine(frame)) o.raise()
+  }
+  o.win.addEventListener('blur', onBlur)
+  o.win.addEventListener('focus', onFocus)
+  o.doc.addEventListener('visibilitychange', onVisibility)
+  o.win.addEventListener(o.activityEvent, onPress)
+  return () => {
+    stop()
+    o.win.removeEventListener('blur', onBlur)
+    o.win.removeEventListener('focus', onFocus)
+    o.doc.removeEventListener('visibilitychange', onVisibility)
+    o.win.removeEventListener(o.activityEvent, onPress)
+  }
+}
+
 export default function Windows({
   children,
   baseSize,
@@ -328,47 +397,20 @@ export default function Windows({
   // FRAME_FOCUS_POLL_MS, until focus comes back to this page (window focus) or the window goes.
   const raise = useRef(onClick)
   raise.current = onClick
-  useEffect(() => {
-    let poll: ReturnType<typeof setInterval> | undefined
-    let last: Element | null = null
-    const check = () => {
-      const active = document.activeElement
-      if (active === last) return
-      last = active
-      if (active instanceof HTMLIFrameElement && ref.current?.contains(active)) raise.current()
-    }
-
-    const stop = () => {
-      clearInterval(poll)
-      poll = undefined
-    }
-
-    const onBlur = () => {
-      last = null
-      check()
-      if (!poll && document.activeElement instanceof HTMLIFrameElement) poll = setInterval(check, FRAME_FOCUS_POLL_MS)
-    }
-
-    const onFocus = () => {
-      stop()
-      last = null
-    }
-
-    const onPress = (e: Event) => {
-      const frame = pressedFrame(e)
-      if (frame && ref.current?.contains(frame)) raise.current()
-    }
-
-    window.addEventListener('blur', onBlur)
-    window.addEventListener('focus', onFocus)
-    window.addEventListener(ACTIVITY_EVENT, onPress)
-    return () => {
-      stop()
-      window.removeEventListener('blur', onBlur)
-      window.removeEventListener('focus', onFocus)
-      window.removeEventListener(ACTIVITY_EVENT, onPress)
-    }
-  }, [])
+  useEffect(
+    () =>
+      watchFrameFocus({
+        win: window,
+        doc: document,
+        isFrame: (el) => el instanceof HTMLIFrameElement,
+        mine: (el) => !!ref.current?.contains(el),
+        raise: () => raise.current(),
+        pressedFrame,
+        activityEvent: ACTIVITY_EVENT,
+        ms: FRAME_FOCUS_POLL_MS,
+      }),
+    []
+  )
   useEffect(
     () => () => {
       const active = document.activeElement
@@ -491,8 +533,9 @@ export default function Windows({
   useEffect(() => {
     if (!initialized && position) {
       setInitialized(true)
-      // Keep the bottom edge above the taskbar when the window first appears.
-      const maxY = available ? Math.max(0, available - height) : position.y
+      // Keep the bottom edge above the taskbar when the window first appears. useWindowSize reads 0 on the first
+      // render, so the screen is read here directly (as for x), or a window saved low would open off-screen.
+      const maxY = Math.max(0, (available || Math.max(0, window.innerHeight - 34)) - height)
       // And its title bar on screen, wherever the window was left on a wider desktop.
       const maxX = Math.max(0, window.innerWidth - width)
       // Never off its left or top either (a position saved by an older build may be negative).

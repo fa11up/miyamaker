@@ -328,7 +328,11 @@ export async function handleMiyakeysGallery(
     if (!env.readLimiter(key)) return reply(429, { error: 'Too many gallery reads.' }, { 'retry-after': '5' })
     // A copy at most GALLERY_CACHE_SECONDS old; `body: null` is a share's "read it again".
     const saved = await env.cache?.get(GALLERY_CACHE_KEY).catch(() => undefined)
-    if (saved?.body && now - saved.at >= 0 && now - saved.at < GALLERY_CACHE_SECONDS * 1000) return reply(200, saved.body)
+    if (saved?.body && now - saved.at >= 0 && now - saved.at < GALLERY_CACHE_SECONDS * 1000) {
+      // A copy read before the latest share (a read that was out while the share went in) is not served.
+      const shared = await env.cache?.get(GALLERY_SHARED_KEY).catch(() => undefined)
+      if (!(shared && typeof shared.at === 'number' && shared.at >= saved.at)) return reply(200, saved.body)
+    }
     let upstream: Response
     try {
       upstream = await fetchImpl(MIYAKEYS_UPSTREAM, {
@@ -409,8 +413,12 @@ export async function handleMiyakeysGallery(
     // Turned down (4xx): nothing was added, so the site's hour gets that share back. The visitor's stays spent, so
     // one visitor sending builds upstream refuses still meets their own cap. A 429 (upstream is pressed) and 5xx /
     // redirects (it may have been taken) keep it spent.
-    if (upstream.status >= 400 && upstream.status < 500) await env.shareCap?.giveBack(now).catch(() => undefined)
-    return reply(502, { error: 'The gallery turned the build down.' })
+    if (upstream.status >= 400 && upstream.status < 500) {
+      await env.shareCap?.giveBack(now).catch(() => undefined)
+      return reply(502, { error: 'The gallery turned the build down.' })
+    }
+    // A 5xx or a redirect: it may have been taken. Say so, so nobody shares it twice.
+    return reply(502, { error: 'The gallery had a problem: your build may have been shared. Check the Gallery before sharing it again.' })
   }
   // The sharer's next Gallery (in this data centre) reads afresh and shows their build; a read already out when the
   // build went in does not keep what it read (GALLERY_SHARED_KEY).

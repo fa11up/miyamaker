@@ -8,6 +8,8 @@ import { frameActivity, reportActivity } from '@/desktop/screensaver/activity'
 import { useAppDispatch, useAppSelector } from '@/store/hooks'
 import { closeWindow, minimizeWindow } from '@/store/windows/actions'
 import { useFullscreen } from '@/store/windows/hooks'
+import { heldFullScreen } from '@/pages/OperatingSystem/Windows'
+import { useWindowSize } from 'usehooks-ts'
 
 /** The configurator is its own page (embed/miyakeys), built beside the desktop. */
 export const MIYAKEYS_SRC = '/embed/miyakeys/'
@@ -48,6 +50,8 @@ const Frame = styled.iframe`
 export default function MiyakeysPage() {
   const dispatch = useAppDispatch()
   const [fullscreen, toggleFullscreen] = useFullscreen('miyakeys')
+  const { width: viewWidth } = useWindowSize()
+  const held = heldFullScreen('miyakeys', viewWidth)
   const minimized = useAppSelector((state) => state.windows.minimized).includes('miyakeys')
   const frame = useRef<HTMLIFrameElement>(null)
   // The frame learns which site it is in from its address; the rest comes by message.
@@ -96,8 +100,9 @@ export default function MiyakeysPage() {
           if (e.cancelable) e.stopPropagation()
           dispatch(closeWindow({ value: 'miyakeys' }))
         }}
-        fullscreen={fullscreen}
-        fullscreenBtn
+        fullscreen={fullscreen || held}
+        // On a desktop too narrow for miyakeys the window is already the whole screen: no button that does nothing.
+        fullscreenBtn={!held}
         onFullscreen={() => toggleFullscreen()}
         minimizeBtn
         onMinimize={(e) => {
