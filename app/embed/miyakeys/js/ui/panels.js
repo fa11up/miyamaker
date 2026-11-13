@@ -2,7 +2,9 @@ import { state } from '../core/state.js';
 import { LAYOUTS, layoutOf } from '../data/layouts.js';
 import { COLORWAYS, PANEL_SWATCHES } from '../data/colorways.js';
 import { CASES, FINISHES, PLATES, SWITCHES, MATERIALS, EXTRAS, PROFILES, LIGHT_COLORS } from '../data/components.js';
-import { setState, commitHistory, effectiveColorway, applyLight } from '../core/update.js';
+import {
+  setState, commitHistory, effectiveColorway, applyLight, buildGeneration, onBuildRestored,
+} from '../core/update.js';
 import { MAX_LEGEND } from '../core/validBuild.js';
 import {
   getOverride, setOverride, setOverrides, clearOverride, clearAllOverrides,
@@ -78,11 +80,13 @@ function applyKeyEditorPatch(patch, { fullRebuild = false } = {}) {
 /* An image upload awaits the file read; by then the selection may have moved, the editor closed or the layout
    changed. Capture the target before the await, and after it land the image only on keys still on that board. */
 function imageTarget(ids) {
-  return { ids: (ids || []).slice(), layout: state.layout };
+  return { ids: (ids || []).slice(), layout: state.layout, gen: buildGeneration() };
 }
 
 function landImage(target) {
-  const ids = target.layout === state.layout ? target.ids.filter((id) => keyInLayout(id)) : [];
+  /* A build loaded (gallery, preset, link) or restored (undo/redo) meanwhile: the image was for the build before it. */
+  const sameBuild = target.gen === buildGeneration() && target.layout === state.layout;
+  const ids = sameBuild ? target.ids.filter((id) => keyInLayout(id)) : [];
   if (!ids.length) {
     toast('That key is gone — image not applied');
     return null;
@@ -551,6 +555,11 @@ function refreshChromeDots() {
   if (dl) dl.style.cssText = lightDotStyle();
 }
 export function setupPanelEvents() {
+  /* Undo/redo may restore a layout without the key being edited: close the editor so later edits never write an
+     override for a key that is not on the board. */
+  onBuildRestored(() => {
+    if (_currentEditId && !keyInLayout(_currentEditId)) hideKeyEditor();
+  });
   const panelBody = $('panelBody');
   if (!panelBody) return;
 

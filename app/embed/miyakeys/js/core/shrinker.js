@@ -1,4 +1,4 @@
-import { validBuild } from './validBuild.js';
+import { validBuild, cleanText, isImageData, MAX_NAME } from './validBuild.js';
 import { shareBaseURL, MAX_HASH } from './host.js';
 
 /**
@@ -62,4 +62,52 @@ export function shareURL(stateObj) {
 export function loadHash() {
   if (!window.location.hash || window.location.hash.length - 1 > MAX_HASH) return null;
   return decodeState(window.location.hash.slice(1));
+}
+
+/* A shell reload's carry (app.js carryAcrossReload): the build, key images included, and "Your builds", kept in the
+   frame's window.name, which a reload keeps. Any page can open this one with a window.name of its choosing, so a carry
+   counts only on a reload (which only this page can start: no other site can reload it), only when it is not huge, and,
+   where the page has session storage, only with the nonce this page kept for it. */
+export const CARRY = 'miyakeysCarry:';
+/** A carry longer than this (characters) is not read at all: a few builds with key images are far smaller. */
+export const MAX_CARRY = 40 * 1024 * 1024;
+/** "Your builds" keeps at most this many builds (the newest). */
+export const MAX_SAVED_BUILDS = 50;
+const NONCE = /^[0-9a-f]{32}$/;
+
+/** window.name for a carry. */
+export function carryName(nonce, payload) {
+  return CARRY + nonce + ':' + JSON.stringify(payload);
+}
+
+/**
+ * What a carry left, checked: { build, savedBuilds } (build may be null; savedBuilds newest MAX_SAVED_BUILDS, each
+ * { name, snap, layout, img? }), or null when `name` is not a carry this page wrote.
+ *  name     window.name as the page found it
+ *  navType  performance.getEntriesByType('navigation')[0]?.type; only 'reload' is accepted
+ *  nonce    the nonce this page kept in session storage, null when it kept none, undefined when it has no storage
+ *           (a sandboxed frame): then the reload alone decides.
+ */
+export function acceptCarry(name, navType, nonce) {
+  if (typeof name !== 'string' || !name.startsWith(CARRY)) return null;
+  if (navType !== 'reload') return null;
+  if (name.length > MAX_CARRY) return null;
+  const rest = name.slice(CARRY.length);
+  const colon = rest.indexOf(':');
+  if (colon !== 32 || !NONCE.test(rest.slice(0, 32))) return null;
+  if (nonce !== undefined && rest.slice(0, 32) !== nonce) return null;
+  let raw;
+  try { raw = JSON.parse(rest.slice(33)); } catch { return null; }
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const savedBuilds = [];
+  const list = Array.isArray(raw.savedBuilds) ? raw.savedBuilds.slice(-MAX_SAVED_BUILDS) : [];
+  for (const b of list) {
+    const snap = b && typeof b === 'object' ? validBuild(b.snap) : null;
+    if (!snap) continue;
+    const nm = (cleanText(b.name, MAX_NAME) || '').trim() || 'Build';
+    const img = isImageData(b.img) ? b.img : undefined;
+    savedBuilds.push({ name: nm, snap, layout: snap.layout, img });
+  }
+  const build = raw.build ? validBuild(raw.build) : null;
+  return { build: build && Object.keys(build).length ? build : null, savedBuilds };
 }

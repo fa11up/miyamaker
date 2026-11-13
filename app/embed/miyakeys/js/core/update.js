@@ -13,7 +13,9 @@ import {
 } from './scene.js';
 import { rebuildBoard, buildKeys, refreshLegends, preloadEmoji, rebuildKnob, syncKnobColorway } from './keyboard.js';
 import { setView } from './controls.js';
-import { pushState, resetHistory, isEmpty as historyEmpty, undo as undoHistory, redo as redoHistory } from './history.js';
+import {
+  pushState, resetHistory, syncCurrent, isEmpty as historyEmpty, undo as undoHistory, redo as redoHistory,
+} from './history.js';
 import { clearPerKeyCapColors } from './perKey.js';
 
 /* Panel re-render hook. panels.js statically imports this module, so a static
@@ -23,6 +25,16 @@ import { clearPerKeyCapColors } from './perKey.js';
 let panelRenderHook = null;
 export function onPanelRender(fn) { panelRenderHook = fn; }
 
+
+/* Called after undo/redo puts a build on screen (panels.js closes a key editor whose key the restored layout lacks).
+   Registered by panels.js rather than imported, since panels.js imports this module. */
+let restoredHook = null;
+export function onBuildRestored(fn) { restoredHook = fn; }
+
+/* Bumped whenever a whole build replaces the one on screen (a load or an undo/redo). Work that awaits something (an
+   image upload) captures it first and drops its result if a different build is up by the time it lands. */
+let buildGen = 0;
+export function buildGeneration() { return buildGen; }
 
 let _syncUI = null;
 const RM = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -330,6 +342,7 @@ export function loadSnap(snap, opts = {}) {
   /* Only a build's own fields, each checked (validBuild.js): never view, tool, theme, section or selection. */
   const patch = validBuild(snap);
   if (!patch) return;
+  buildGen++;
   patch.selectedPreset = opts.selectedPreset !== undefined ? opts.selectedPreset : null;
   /* Full snap: missing overrides must clear leftover photo colours from prior build */
   if (patch.perKeyOverrides === undefined) patch.perKeyOverrides = Object.create(null);
@@ -370,11 +383,15 @@ export function setState(patch, opts) {
 function restore(entry) {
   const snap = validBuild(entry);
   if (!snap) return false;
+  buildGen++;
   Object.assign(state, snap);
   applyInstant(snap);
   if (snap.layout) rebuildBoard();
   else if (snap.profile) buildKeys();
   /* applyInstant already buildKeys when snap has perKeyOverrides */
+  /* The entry becomes exactly what is now on screen, so the next undo/redo's commit sees no change. */
+  syncCurrent(state);
+  if (restoredHook) restoredHook();
   if (_syncUI) _syncUI();
   return true;
 }

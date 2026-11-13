@@ -54,10 +54,12 @@ function num(v, min, max) {
   return Math.min(max, Math.max(min, n));
 }
 
-/* C0 and C1 controls (a newline stays), zero-width characters and marks, bidi embeddings, overrides and isolates,
-   and the byte-order mark: none of them is something a legend or a name needs, and the bidi ones can make text read
-   in a different order than it is stored. */
-const HIDDEN_CHARS = /[\u0000-\u0009\u000b-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]/g;
+/* C0 and C1 controls (a newline stays), the Arabic letter mark, zero-width characters and marks, the line and
+   paragraph separators, bidi embeddings, overrides and isolates, the word joiner and invisible operators, the
+   byte-order mark and the tag characters (U+E0000-E007F, invisible text): none of them is something a legend or a name
+   needs, and the bidi ones can make text read in a different order than it is stored. */
+const HIDDEN_CHARS =
+  /[\u0000-\u0009\u000b-\u001f\u007f-\u009f\u061c\u200b-\u200f\u2028\u2029\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff\u{e0000}-\u{e007f}]/gu;
 
 /** Text a person typed, cut to `max` characters, with control, bidi and zero-width characters taken out. */
 export function cleanText(v, max) {

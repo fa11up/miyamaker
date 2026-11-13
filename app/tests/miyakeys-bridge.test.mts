@@ -4,6 +4,7 @@
 // the miyakeys window never crosses the frame's phone breakpoint, and dev uses the site's sandbox. Run: yarn test
 import assert from 'node:assert/strict'
 import { readFileSync, readdirSync } from 'node:fs'
+import * as nodeModule from 'node:module'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
@@ -29,6 +30,25 @@ function fakeFrame(search = '?host=http%3A%2F%2Flocalhost%3A5173') {
 }
 
 const HOST = 'http://localhost:5173'
+// Node 22.13+; this repo's @types/node predates it.
+const { stripTypeScriptTypes } = nodeModule as unknown as { stripTypeScriptTypes: (code: string) => string }
+
+/**
+ * A self-contained function from a source file (one that uses nothing outside itself), run from the file's text: the
+ * file itself (vite.config.ts, a .tsx component) cannot be imported here. Fails, rather than passing on nothing, when
+ * the function is not found.
+ */
+function fromSource<T>(file: string, name: string): T {
+  const src = readFileSync(file, 'utf8')
+  const start = src.indexOf(`function ${name}(`)
+  assert.ok(start >= 0, `${name} in ${file}`)
+  // The body ends at the first line that is just "}" after it starts.
+  const end = src.indexOf('\n}\n', start)
+  assert.ok(end > start, `the end of ${name}`)
+  const text = src.slice(start, end + 2)
+  assert.ok(text.length > 40 && text.includes('return'), `${name} is a real function`)
+  return new Function(`${stripTypeScriptTypes(text)}; return ${name}`)() as T
+}
 
 test('init is heard only from the parent window, from the origin in ?host=', () => {
   const { parent, fire } = fakeFrame()
@@ -161,7 +181,9 @@ test('the miyakeys window stays wider than the frame\'s phone breakpoint on a de
   // embed/miyakeys/js/shell.js: phone at <= 768px, or <= 1024px with a touch pointer; room left for the window's border.
   assert.ok(Number(m[1]) >= 768 + 24)
   assert.ok(Number(m[2]) >= 1024 + 24)
-  assert.match(src, /width: Math\.max\(Math\.min\(baseSize\.width, 480\), layoutMinWidth\(identifier\)\)/)
+  assert.match(src, /layoutMin: layoutMinWidth\(identifier\)/)
+  assert.match(src, /const minSize = \{ width: fit\.minWidth/)
+  assert.match(src, /const mobile = fit\.fullScreen/)
   assert.match(src, /const size = \{ width: Math\.max\(minSize\.width, picked\.width\)/, 'saved sizes come back at the minimum')
   const shell = readFileSync('embed/miyakeys/js/shell.js', 'utf8')
   assert.match(shell, /w <= 768 \|\| \(w <= 1024 && /, 'the breakpoints this test assumes')
@@ -179,7 +201,85 @@ test('dev frames miyakeys in the same sandbox as the site, never with its own or
   assert.match(page, /sandbox=\{MIYAKEYS_SANDBOX\}/)
   const vite = readFileSync('vite.config.ts', 'utf8')
   assert.match(vite, /res\.setHeader\('content-security-policy', EMBED_CSP\)/, 'dev serves the page with the CSP')
-  const open = vite.match(/const open = new RegExp\(`([^`]*)`\)/)?.[1] ?? ''
-  assert.ok(open.includes('node_modules'), 'the frame may load its packages')
-  assert.doesNotMatch(open, /\/src|\/@fs\/\[\^\?\]\*\/(?!node_modules)/, 'the desktop sources stay closed to the frame')
+  assert.match(vite, /req\.headers\.origin === 'null' && miyakeysDevOpen\(url, EMBED_PREFIX\)/, 'Origin null is judged by miyakeysDevOpen')
+})
+
+test("dev opens only the embed's files and packages to Origin null: never /@vite/client (its WebSocket token) or a .. path", () => {
+  const devOpen = fromSource<(url: string, prefix: string) => boolean>('vite.config.ts', 'miyakeysDevOpen')
+  const P = '/embed/miyakeys'
+  for (const url of [`${P}/`, `${P}/index.html`, `${P}/js/boot.js?v=1`, '/node_modules/.vite/deps/three.js?v=abc', '/@fs/Users/me/app/node_modules/three/build/three.module.js'])
+    assert.equal(devOpen(url, P), true, url)
+  for (const url of [
+    '/@vite/client',
+    '/@vite/client?t=1',
+    '/@vite/env',
+    '/src/main.tsx',
+    '/vite.config.ts?raw',
+    '/node_modules/%2e%2e/src/main.tsx',
+    '/node_modules/.%2e/src/main.tsx',
+    '/node_modules/%2E%2E/vite.config.ts?raw',
+    '/node_modules/../src/main.tsx',
+    '/node_modules/./../src/main.tsx',
+    `${P}/%2e%2e/%2e%2e/src/main.tsx`,
+    '/node_modules/%5c..%5csrc/main.tsx',
+    '/node_modules/%E0%A4%A',
+    '/@fs/Users/me/app/node_modules/%2e%2e/%2e%2e/src/main.tsx',
+    '/@fs/Users/me/app/src/main.tsx',
+    `${P}x/`,
+  ])
+    assert.equal(devOpen(url, P), false, url)
+
+  // The page in dev loads no /@vite/client: the script Vite adds is taken out (with the React refresh preamble).
+  const vite = readFileSync('vite.config.ts', 'utf8')
+  const plugin = vite.slice(vite.indexOf('function miyakeysEmbedDev('), vite.indexOf('function miyakeysGalleryDevProxy('))
+  assert.ok(plugin.length > 200, 'the plugin is found')
+  assert.match(plugin, /\.replace\(\/<script type="module" src="\[\^"\]\*\\\/@vite\\\/client"><\\\/script>\\s\*\/g, ''\)/)
+  assert.doesNotMatch(plugin, /@vite\/\(client/, 'no /@vite/(client|env) allowance is left')
+  const strip = new RegExp(plugin.match(/\.replace\(\/(<script type="module" src=[^/]*\\\/@vite\\\/client"><\\\/script>\\s\*)\/g/)![1]!, 'g')
+  assert.equal('<head><script type="module" src="/@vite/client"></script>\n<link>'.replace(strip, ''), '<head><link>')
+})
+
+test('on a desktop narrower than its layout needs, miyakeys opens full-screen; a window never goes off the left', () => {
+  type Fit = (o: { mobile?: boolean; viewWidth: number; baseWidth: number; layoutMin: number }) => { fullScreen: boolean; minWidth: number }
+  const fit = fromSource<Fit>('src/pages/OperatingSystem/Windows.tsx', 'windowFit')
+  const src = readFileSync('src/pages/OperatingSystem/Windows.tsx', 'utf8')
+  const m = src.match(/miyakeys: \{ fine: (\d+), coarse: (\d+) \}/)!
+  const [fine, coarse] = [Number(m[1]), Number(m[2])]
+  // Mouse: 769..fine-1 px is full-screen (the frame is the whole width, so it does not drop to <= 768 while open).
+  for (const viewWidth of [769, 790, fine - 1]) assert.deepEqual(fit({ viewWidth, baseWidth: 1200, layoutMin: fine }), { fullScreen: true, minWidth: viewWidth }, String(viewWidth))
+  assert.deepEqual(fit({ viewWidth: fine, baseWidth: 1200, layoutMin: fine }), { fullScreen: false, minWidth: fine })
+  assert.deepEqual(fit({ viewWidth: 1440, baseWidth: 1200, layoutMin: fine }), { fullScreen: false, minWidth: fine })
+  // Touch: 769..coarse-1 px is full-screen too.
+  for (const viewWidth of [769, 1024, coarse - 1]) assert.equal(fit({ viewWidth, baseWidth: 1200, layoutMin: coarse }).fullScreen, true, String(viewWidth))
+  assert.equal(fit({ viewWidth: coarse, baseWidth: 1200, layoutMin: coarse }).fullScreen, false)
+  // Other windows: never full-screen for width, and never a minimum wider than the desktop.
+  assert.deepEqual(fit({ viewWidth: 400, baseWidth: 600, layoutMin: 0 }), { fullScreen: false, minWidth: 400 })
+  assert.deepEqual(fit({ viewWidth: 1200, baseWidth: 600, layoutMin: 0 }), { fullScreen: false, minWidth: 480 })
+  assert.deepEqual(fit({ viewWidth: 1200, baseWidth: 300, layoutMin: 0 }), { fullScreen: false, minWidth: 300 })
+  assert.equal(fit({ mobile: true, viewWidth: 1440, baseWidth: 600, layoutMin: 0 }).fullScreen, true)
+  // Before the size is known (0), nothing is forced.
+  assert.deepEqual(fit({ viewWidth: 0, baseWidth: 1200, layoutMin: fine }), { fullScreen: false, minWidth: fine })
+
+  // Dragging the W (or N) edge never puts the window past the left (top): held at its minimum, it grows the other way.
+  const pinned = fromSource<(start: number, size: number, w: number) => number>('src/pages/OperatingSystem/Windows.tsx', 'pinnedStart')
+  assert.equal(pinned(100, 900, 950), 50)
+  assert.equal(pinned(10, 820, 900), 0)
+  assert.equal(pinned(0, 800, 800), 0)
+  assert.equal(pinned(-40, 800, 800), 0, 'a negative start comes back on screen')
+  assert.match(src, /left = pinnedStart\(start\.left, start\.w, w\)/)
+  assert.match(src, /top = pinnedStart\(start\.top, start\.h, h\)/)
+  assert.match(src, /x: Math\.max\(0, Math\.min\(position\.x, maxX\)\)/, 'a saved negative x comes back at 0')
+})
+
+test('focus moving straight from one window\'s frame to another\'s still raises it: a poll while a frame has focus, stopped on focus and unmount', () => {
+  const src = readFileSync('src/pages/OperatingSystem/Windows.tsx', 'utf8')
+  const start = src.indexOf('const raise = useRef(onClick)')
+  const effect = src.slice(start, src.indexOf('}, [])', start))
+  assert.ok(start > 0 && effect.length > 200, 'the effect is found')
+  assert.match(effect, /poll = setInterval\(check, FRAME_FOCUS_POLL_MS\)/)
+  assert.match(effect, /if \(!poll && document\.activeElement instanceof HTMLIFrameElement\)/, 'only while a frame has focus')
+  assert.match(effect, /window\.addEventListener\('focus', onFocus\)/)
+  assert.match(effect, /return \(\) => \{\s*stop\(\)/, 'stopped on unmount')
+  assert.match(effect, /window\.removeEventListener\('focus', onFocus\)/)
+  assert.match(effect, /if \(active === last\) return/, 'raises once per move, not every tick')
 })

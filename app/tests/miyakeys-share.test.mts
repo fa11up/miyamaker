@@ -4,6 +4,8 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 
+import { closeOf, code } from './source-scan.mts'
+
 // shareURL reads the page's own address (host.js) when no window told it one.
 ;(globalThis as any).window ??= { location: { href: 'https://www.miyamaker.com/embed/miyakeys/index.html' } }
 
@@ -112,56 +114,92 @@ test('gallery ids: no prototype names and no featured build ids', () => {
   assert.equal(validGalleryEntry({ id: 'abc_123', name: 'x', snap: { layout: '75' } })?.id, 'abc_123')
 })
 
-const app = readFileSync('embed/miyakeys/js/app.js', 'utf8')
-const modals = readFileSync('embed/miyakeys/js/ui/modals.js', 'utf8')
+// app.js imports three.js and modals.js needs a document and update.js (which reaches three.js too), so neither runs
+// under node: what follows reads their code (comments blanked), each check on the slice it is about.
+const app = code('embed/miyakeys/js/app.js')
+const modals = code('embed/miyakeys/js/ui/modals.js')
+
+/** The text of the brace block that starts at the first match of `head` (which must end at its `{`), in `text`. */
+function block(text: string, head: RegExp): string {
+  const m = head.exec(text)
+  assert.ok(m, `found ${head}`)
+  const open = m.index + m[0].length - 1
+  assert.equal(text[open], '{', `${head} ends at a {`)
+  const close = closeOf(text, open)
+  assert.ok(close < text.length, `${head}'s block closes`)
+  return text.slice(m.index, close + 1)
+}
 
 test('the gallery: a list fetched before a share is not kept, and only shares the gallery took join Your builds', () => {
-  assert.match(app, /if \(res\.ok\) \{\s*savedBuilds\.push\(mine\);\s*[\s\S]{0,200}galleryGen\+\+/)
+  const share = block(app, /async function shareBuild\([^)]*\) \{/)
+  const ok = block(share, /if \(res\.ok\) \{/)
+  assert.match(ok, /savedBuilds\.push\(mine\)/)
+  assert.match(ok, /galleryGen\+\+/)
+  // The only push in shareBuild is the one inside `if (res.ok)`.
+  assert.equal((share.match(/savedBuilds\.push\(/g) ?? []).length, 1)
   assert.equal((app.match(/savedBuilds\.push\(/g) ?? []).length, 2, 'on success, and when a reload carries them back')
-  assert.match(app, /if \(gen === galleryGen\) window\.__MODKEYS__\.galleryCache = gc/)
+  assert.match(app, /if \(gen === galleryGen\) window\.__MODKEYS__\.galleryCache = gc\b/)
   assert.match(app, /return gen === galleryGen \? list : loadGallery\(\)/)
-  // Thumbnails: Maps, featured and community apart.
-  assert.match(app, /const presetThumbs = new Map\(\)/)
-  assert.match(app, /const communityThumbs = new Map\(\)/)
-  assert.doesNotMatch(app + modals, /thumbs\[/)
+  // Thumbnails: Maps, featured and community apart, and never a plain object indexed by id.
+  // (stopThumbs is the running loop's stop function, not a table.)
+  const thumbs = [...(app + modals).matchAll(/\b(?:const|let|var)\s+(\w*[Tt]humbs)\s*=\s*([^;\n]*)/g)].filter((m) => m[1] !== 'stopThumbs')
+  assert.deepEqual(thumbs.map((m) => m[1]).sort(), ['communityThumbs', 'presetThumbs'])
+  for (const m of thumbs) assert.equal(m[2]!.trim(), 'new Map()', m[1])
+  // Destructured fallbacks (modals.js's `presetThumbs: new Map()`) are Maps too, and nothing indexes a thumbs table.
+  for (const m of (app + modals).matchAll(/\b\w*[Tt]humbs\s*:\s*([^,}\n]+)/g))
+    assert.match(m[1]!.trim(), /^(new Map\(\)|\w*[Tt]humbs|th)$/, m[0])
+  assert.doesNotMatch(app + modals, /\b(\w*[Tt]humbs|th)\s*\??\.?\[/)
 })
 
 test('the gallery dialog: a late answer is dropped, and only one thumbnail loop runs', () => {
-  assert.match(modals, /if \(mine !== shown \|\| !\$\('modal'\)/)
+  assert.match(modals, /if \(mine !== shown \|\| !\$\(['"]modal['"]\)/)
   assert.match(modals, /if \(stopThumbs\) stopThumbs\(\);\s*stopThumbs = renderThumbs\(/)
 })
 
-test('thumbnails follow loadSnap: a build\'s own colours before its colourway', () => {
-  const fn = app.slice(app.indexOf('function renderSnapThumb'), app.indexOf('function genThumbs'))
+test("thumbnails follow loadSnap: a build's own colours before its colourway", () => {
+  const fn = block(app, /function renderSnapThumb\([^)]*\) \{/)
   assert.match(fn, /const cw = keys\.customColors \|\| COLORWAYS\[keys\.colorway\]/)
-  assert.match(fn, /rebuildBoard\(\)/)
-  assert.match(fn, /approx = true/)
+  assert.match(fn, /\brebuildBoard\(\)/)
+  assert.match(fn, /\bapprox = true\b/)
 })
 
 test('drawing is on demand: a frame only when something changed, and nothing while hidden or minimised', () => {
-  const tick = app.slice(app.indexOf('function tick('), app.indexOf('function startLoop')).trimEnd()
+  const tick = block(app, /function tick\([^)]*\) \{/)
   assert.match(tick, /if \(!running\(\)\) return;/)
-  assert.match(tick, /if \(dirty \|\| moved \|\| gliding \|\| animating\) \{[\s\S]*renderer\.render\(scene, camera\)[\s\S]*requestAnimationFrame\(tick\)[\s\S]*\}\s*\}$/)
+  // Drawing and the next frame both sit inside the one "something changed" block, and nowhere else in tick.
+  const changed = block(tick, /if \(dirty \|\| moved \|\| gliding \|\| animating\) \{/)
+  assert.match(changed, /renderer\.render\(scene, camera\)/)
+  assert.match(changed, /requestAnimationFrame\(tick\)/)
+  const rest = tick.replace(changed, '')
+  assert.doesNotMatch(rest, /\.render\(|requestAnimationFrame\(/)
   // The undo/redo buttons are touched only when what they show changes.
   assert.match(app, /if \(shown === undoShown\) return;/)
-  assert.match(app, /!reducedMotion\.matches && \(state\.light\.mode === 'wave' \|\| state\.light\.mode === 'breathe'\)/)
-  assert.doesNotMatch(app, /THREE\.Clock/)
+  assert.match(app, /!reducedMotion\.matches && \(state\.light\.mode === ['"]wave['"] \|\| state\.light\.mode === ['"]breathe['"]\)/)
+  // No THREE.Clock (it ran every frame whether or not anything moved), however it is imported or named.
+  for (const p of ['embed/miyakeys/js/app.js', 'embed/miyakeys/js/core/scene.js']) assert.doesNotMatch(code(p), /\bClock\b/, p)
 })
 
 test('links say when key images are left out', () => {
-  assert.match(app, /Key images aren\\'t included in links/)
-  assert.match(modals, /Key images aren\\'t included in links/)
+  const words = /Key images aren(\\'|'|’)t included in links/
+  assert.match(app, words)
+  assert.match(modals, words)
 })
 
 test('the dialog is a dialog: role, aria-modal, a label, and focus in and back out', () => {
   const html = readFileSync('embed/miyakeys/index.html', 'utf8')
-  assert.match(html, /class="modalCard" role="dialog" aria-modal="true" aria-labelledby="modalTitle"/)
-  assert.match(modals, /card\.focus\(/)
-  assert.match(modals, /opener\.focus\(\)/)
+  const card = /<div\b[^>]*\bclass="modalCard"[^>]*>/.exec(html)?.[0]
+  assert.ok(card, 'the modal card')
+  for (const attr of ['role="dialog"', 'aria-modal="true"', 'aria-labelledby="modalTitle"']) assert.ok(card.includes(attr), attr)
+  assert.match(html, /<h3\b[^>]*\bid="modalTitle"/)
+  assert.match(modals, /\bcard\.focus\(/)
+  assert.match(modals, /\bopener\.focus\(\)/)
 })
 
 test('Share to gallery is a button, not a form submit (the sandbox blocks submission before any submit event)', () => {
-  assert.match(modals, /<button type="button" class="libBtn shareGo" id="shareGo">/)
-  assert.doesNotMatch(modals, /addEventListener\('submit'/)
-  assert.match(app, /ev\.key === 'Enter' && submitDialog\(ev\.target\)/)
+  const go = /<button\b[^>]*\bid="shareGo"[^>]*>/.exec(modals)?.[0]
+  assert.ok(go, 'the share button')
+  assert.match(go, /\btype="button"/)
+  assert.match(modals, /\$\(['"]shareGo['"]\)\?*\.addEventListener\(\s*['"]click['"]/)
+  assert.doesNotMatch(app + modals, /addEventListener\(\s*['"]submit['"]|\.onsubmit\b|type="submit"/)
+  assert.match(app, /ev\.key === ['"]Enter['"] && submitDialog\(ev\.target\)/)
 })

@@ -371,15 +371,34 @@ function embedWithoutPwa(): Plugin {
 }
 
 /**
+ * Whether dev answers a request from `Origin: null` (miyakeys's sandboxed frame, or any site's) with CORS: the embed's
+ * own files and packages under node_modules only. The path is judged as Vite will read it, decoded: a path that does
+ * not decode, or has a `.` or `..` segment (`/node_modules/%2e%2e/src/...`) or a backslash, is refused. Self-contained
+ * (tests/miyakeys-bridge.test.mts runs it from this file's text).
+ */
+function miyakeysDevOpen(url: string, prefix: string): boolean {
+  let pathname: string
+  try {
+    pathname = decodeURIComponent(url.split('?')[0] || '')
+  } catch {
+    return false
+  }
+  if (pathname.includes('\\') || pathname.includes('\0') || pathname.split('/').some((seg) => seg === '.' || seg === '..')) return false
+  if (pathname.startsWith(`${prefix}/`) || pathname.startsWith('/node_modules/')) return true
+  return /^\/@fs\/[^?]*\/node_modules\//.test(pathname)
+}
+
+/**
  * Dev serves miyakeys's page the way the Worker does (api/_lib/miyakeys.ts): its CSP and headers, in the same sandbox
  * as the site (src/pages/Miyakeys). The sandboxed frame's origin is opaque, so its module requests say `Origin: null`,
  * which Vite's own CORS check refuses. They are answered here, for the page's own files and the packages it imports
- * only (node_modules, also through /@fs when node_modules is a link); the desktop's sources stay closed to other
- * origins, as Vite keeps them. The React refresh preamble Vite adds to every page is an inline script the CSP
- * refuses, and the page has no React: it comes out of this page.
+ * only (node_modules, also through /@fs when node_modules is a link; see miyakeysDevOpen); the desktop's sources stay
+ * closed to other origins, as Vite keeps them. The React refresh preamble Vite adds to every page is an inline script
+ * the CSP refuses, and the page has no React: it comes out of this page. So does /@vite/client (no hot reload in the
+ * frame; reload it by hand): that file holds Vite's WebSocket token, and any site's sandboxed frame also says
+ * `Origin: null`, so it is never opened to "null" (nor /@vite/env, which only the client imports).
  */
 function miyakeysEmbedDev(): Plugin {
-  const open = new RegExp(`^(${EMBED_PREFIX}/|/node_modules/|/@fs/[^?]*/node_modules/|/@vite/(client|env)(\\?|$))`)
   const isEmbedPage = (filename: string) => /(^|\/)embed\/miyakeys\/index\.html$/.test(filename.replace(/\\/g, '/'))
   return {
     name: 'miya-miyakeys-embed-dev',
@@ -388,14 +407,16 @@ function miyakeysEmbedDev(): Plugin {
       order: 'post',
       handler(html, ctx) {
         if (!isEmbedPage(ctx.filename)) return html
-        return html.replace(/<script type="module">\s*import \{ injectIntoGlobalHook \}[\s\S]*?<\/script>\s*/, '')
+        return html
+          .replace(/<script type="module">\s*import \{ injectIntoGlobalHook \}[\s\S]*?<\/script>\s*/, '')
+          .replace(/<script type="module" src="[^"]*\/@vite\/client"><\/script>\s*/g, '')
       },
     },
     configureServer(server) {
       server.middlewares.use((req, res, next) => {
         const url = req.url || ''
         const pathname = url.split('?')[0] || ''
-        if (req.headers.origin === 'null' && open.test(url) && !pathname.includes('..')) {
+        if (req.headers.origin === 'null' && miyakeysDevOpen(url, EMBED_PREFIX)) {
           res.setHeader('access-control-allow-origin', '*')
         }
 

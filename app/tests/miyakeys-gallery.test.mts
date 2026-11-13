@@ -15,9 +15,15 @@ import {
   GALLERY_MAX_TEMPLATES,
   GALLERY_RESPONSE_LIMIT,
   handleMiyakeysGallery,
+  GALLERY_CLIENT_SHARES_PER_HOUR,
+  GALLERY_CLIENT_SLOTS,
   isEmbedPath,
+  MIN_CLIENT_SECRET,
   MIYAKEYS_GALLERY_PATH,
   MIYAKEYS_UPSTREAM,
+  miyakeysSecret,
+  shareBucket,
+  type ShareCap,
 } from '../api/_lib/miyakeys.ts'
 import type { D1Like } from '../api/_lib/station.ts'
 import { clientKey, createRateLimiter } from '../api/_lib/zeroex.ts'
@@ -234,19 +240,21 @@ test('POST: Origin "null" (any site\'s sandboxed frame) still meets the per-visi
   const limited = await handleMiyakeysGallery(post(body), { ...open, writeLimiter: () => false, fetchImpl })
   assert.equal(limited.status, 429)
   let taken = 0
-  const capped = await handleMiyakeysGallery(post(body), {
-    ...open,
-    shareCap: async () => (++taken, false),
-    fetchImpl,
-  })
-  assert.equal(capped.status, 429)
-  assert.ok(Number(capped.headers.get('retry-after')) > 0)
-  assert.equal(taken, 1)
+  const cap = (answer: 'ok' | 'client' | 'site'): ShareCap => ({ take: async () => (++taken, answer), giveBack: async () => undefined })
+  for (const answer of ['client', 'site'] as const) {
+    const capped = await handleMiyakeysGallery(post(body), { ...open, shareCap: cap(answer), fetchImpl })
+    assert.equal(capped.status, 429)
+    assert.ok(Number(capped.headers.get('retry-after')) > 0)
+  }
+  assert.equal(taken, 2)
   // A cap that cannot be read refuses the share (fail closed), it never lets it through.
   const broken = await handleMiyakeysGallery(post(body), {
     ...open,
-    shareCap: async () => {
-      throw new Error('D1_ERROR: no such table: shared_state')
+    shareCap: {
+      take: async () => {
+        throw new Error('D1_ERROR: no such table: shared_state')
+      },
+      giveBack: async () => undefined,
     },
     fetchImpl,
   })
@@ -254,7 +262,7 @@ test('POST: Origin "null" (any site\'s sandboxed frame) still meets the per-visi
   assert.equal(called, 0)
   // A share the cap allows goes through; a refused build never spends the cap.
   let spent = 0
-  const env = { ...open, shareCap: async () => (++spent, true), fetchImpl }
+  const env = { ...open, shareCap: { take: async () => (++spent, 'ok' as const), giveBack: async () => undefined }, fetchImpl }
   assert.equal((await handleMiyakeysGallery(post(body), env)).status, 200)
   assert.equal((await handleMiyakeysGallery(post('not json'), env)).status, 400)
   assert.equal(spent, 1)
@@ -281,22 +289,136 @@ function sqliteD1() {
 
 test('the site-wide share cap counts in D1, across isolates, and starts again each hour', async () => {
   const { raw, db } = sqliteD1()
-  // Two "isolates" with their own cap functions over one database.
+  // Two "isolates" with their own caps over one database; every share from a different visitor.
   const a = d1ShareCap(db, 3)
   const b = d1ShareCap(db, 3)
   const hour = Date.UTC(2026, 10, 12, 10)
-  const taken = [await a(hour + 1), await b(hour + 2), await a(hour + 3), await b(hour + 4), await a(hour + 5)]
+  const ok = async (cap: ShareCap, now: number, who: string) => (await cap.take(now, who)) === 'ok'
+  const taken = [await ok(a, hour + 1, '10.0.0.1'), await ok(b, hour + 2, '10.0.0.2'), await ok(a, hour + 3, '10.0.0.3'), await ok(b, hour + 4, '10.0.0.4'), await ok(a, hour + 5, '10.0.0.5')]
   assert.deepEqual(taken, [true, true, true, false, false])
   assert.equal(raw.prepare("SELECT body FROM shared_state WHERE key = 'miyakeys:shares'").get()!.body, '3')
   // The next hour starts at 1; an isolate whose clock is behind counts in the new hour, it never resets it.
-  assert.equal(await b(hour + 3_600_000), true)
-  assert.equal(await a(hour + 10), true)
+  assert.equal(await ok(b, hour + 3_600_000, '10.0.0.6'), true)
+  assert.equal(await ok(a, hour + 10, '10.0.0.7'), true)
   assert.equal(raw.prepare("SELECT body, at FROM shared_state WHERE key = 'miyakeys:shares'").get()!.body, '2')
   assert.equal(raw.prepare("SELECT at FROM shared_state WHERE key = 'miyakeys:shares'").get()!.at, hour + 3_600_000)
   // Without the table it throws, and the handler turns that into a refusal (above).
   const bare = new DatabaseSync(':memory:')
   const none = d1ShareCap({ prepare: (sql: string) => ({ bind: () => ({ run: async () => ({ meta: { changes: Number(bare.prepare(sql).run().changes) } }) }) }) } as unknown as D1Like)
-  await assert.rejects(none(hour))
+  await assert.rejects(none.take(hour, '10.0.0.1'))
+})
+
+test('one visitor (an IPv4 address, or a whole IPv6 /48) cannot use up the site\'s hour', async () => {
+  assert.equal(shareBucket('203.0.113.7'), '203.0.113.7')
+  assert.equal(shareBucket('2001:db8:aa:1::/64'), '2001:db8:aa::/48')
+  assert.equal(shareBucket(clientKey(new Headers({ 'cf-connecting-ip': '2001:db8:aa:ffff:1:2:3:4' }))), '2001:db8:aa::/48')
+  assert.equal(shareBucket('unknown'), 'unknown')
+
+  const { raw, db } = sqliteD1()
+  const hour = Date.UTC(2026, 10, 12, 10)
+  // Two isolates, one visitor rotating through /64s of one /48: refused after GALLERY_CLIENT_SHARES_PER_HOUR in total.
+  const caps = [d1ShareCap(db), d1ShareCap(db)]
+  const answers: string[] = []
+  for (let i = 0; i < GALLERY_CLIENT_SHARES_PER_HOUR + 5; i++) {
+    const key = clientKey(new Headers({ 'cf-connecting-ip': `2001:db8:aa:${i.toString(16)}::1` }))
+    answers.push(await caps[i % 2]!.take(hour + i, shareBucket(key)))
+  }
+  assert.equal(answers.filter((x) => x === 'ok').length, GALLERY_CLIENT_SHARES_PER_HOUR)
+  assert.deepEqual(answers.slice(GALLERY_CLIENT_SHARES_PER_HOUR), Array(5).fill('client'))
+  // The site's count only went up by the shares that went through; another visitor still shares.
+  assert.equal(raw.prepare("SELECT body FROM shared_state WHERE key = 'miyakeys:shares'").get()!.body, String(GALLERY_CLIENT_SHARES_PER_HOUR))
+  assert.equal(await caps[0]!.take(hour + 100, '2001:db8:bb::/48'), 'ok')
+  // Next hour the visitor's row starts again, overwritten in place.
+  assert.equal(await caps[1]!.take(hour + 3_600_000, '2001:db8:aa::/48'), 'ok')
+
+  // When the site is used up the visitor's share is handed back, so the visitor is not charged for nothing.
+  const small = sqliteD1()
+  const cap = d1ShareCap(small.db, 1, 2)
+  assert.equal(await cap.take(hour, '198.51.100.1'), 'ok')
+  assert.equal(await cap.take(hour, '198.51.100.2'), 'site')
+  assert.equal(await cap.take(hour, '198.51.100.2'), 'site')
+  await cap.giveBack(hour)
+  assert.equal(await cap.take(hour, '198.51.100.2'), 'ok', 'still within its 2: the refusals were handed back')
+  // giveBack never goes below 0, and never touches another hour's count.
+  await cap.giveBack(hour - 3_600_000)
+  assert.equal(small.raw.prepare("SELECT body FROM shared_state WHERE key = 'miyakeys:shares'").get()!.body, '1')
+})
+
+test('the per-visitor rows are bounded, however many visitors come', async () => {
+  const { raw, db } = sqliteD1()
+  const slots = 16
+  const cap = d1ShareCap(db, 1_000_000, 1_000_000, slots)
+  const hour = Date.UTC(2026, 10, 12, 10)
+  for (let i = 0; i < 400; i++) await cap.take(hour + i * 60_000, `10.${i >> 8}.${i & 255}.1`)
+  const rows = Number(raw.prepare("SELECT COUNT(*) AS n FROM shared_state WHERE key LIKE 'miyakeys:shares:%'").get()!.n)
+  assert.ok(rows > 0 && rows <= slots, String(rows))
+  // The default: at most GALLERY_CLIENT_SLOTS rows (keys are 3 hex digits), no address in any key.
+  assert.ok(GALLERY_CLIENT_SLOTS <= 0x1000)
+  const keys = raw.prepare("SELECT group_concat(key) AS k FROM shared_state").get()!.k as string
+  assert.doesNotMatch(keys, /10\./)
+})
+
+test('POST: a build nuroctane.xyz turns down gives the site its share back; a 429 or 5xx does not', async () => {
+  const body = JSON.stringify({ name: 'x', snap })
+  for (const [status, back] of [[400, 1], [422, 1], [429, 0], [500, 0]] as const) {
+    let given = 0
+    const shareCap: ShareCap = { take: async () => 'ok', giveBack: async () => void given++ }
+    await handleMiyakeysGallery(post(body), { ...open, shareCap, fetchImpl: upstream(() => new Response('', { status })) })
+    assert.equal(given, back, String(status))
+  }
+})
+
+test('MIYAKEYS_CLIENT_SECRET under 32 characters is ignored, with one warning', () => {
+  const warned: string[] = []
+  const warn = (m: string) => void warned.push(m)
+  assert.equal(miyakeysSecret(undefined, warn), undefined)
+  assert.equal(miyakeysSecret('   ', warn), undefined)
+  assert.equal(warned.length, 0)
+  assert.equal(miyakeysSecret('short', warn), undefined)
+  assert.equal(miyakeysSecret('x'.repeat(MIN_CLIENT_SECRET - 1), warn), undefined)
+  assert.equal(warned.length, 1, 'warned once')
+  assert.match(warned[0]!, /MIYAKEYS_CLIENT_SECRET/)
+  const long = 'x'.repeat(MIN_CLIENT_SECRET)
+  assert.equal(miyakeysSecret(`  ${long} `, warn), long)
+})
+
+test('GET: a read that was out when a share went through is answered but not cached', async () => {
+  let now = 5_000_000
+  const clock = () => now
+  const cache = memoryCache(clock)
+  let release!: () => void
+  let reads = 0
+  const env = {
+    ...open,
+    now: clock,
+    cache,
+    fetchImpl: (async (_: unknown, init?: RequestInit) => {
+      if (init?.method === 'POST') return Response.json({})
+      reads++
+      if (reads === 1) {
+        // The slow read: upstream answers with the list as it was before the share.
+        await new Promise<void>((r) => (release = r))
+        return Response.json({ templates: [entry('old')] })
+      }
+      return Response.json({ templates: [entry('old'), entry('new')] })
+    }) as typeof fetch,
+  }
+  const slow = handleMiyakeysGallery(get(), env)
+  await new Promise((r) => setTimeout(r, 10))
+  now += 500
+  assert.equal((await handleMiyakeysGallery(post(JSON.stringify({ name: 'x', snap })), env)).status, 200)
+  now += 500
+  release()
+  const stale = (await (await slow).json()) as { templates: Array<{ id: string }> }
+  assert.deepEqual(stale.templates.map((t) => t.id), ['old'], 'the slow read still gets its answer')
+  // ...but did not keep it: the next read goes upstream and sees the share.
+  const next = (await (await handleMiyakeysGallery(get(), env)).json()) as { templates: Array<{ id: string }> }
+  assert.deepEqual(next.templates.map((t) => t.id), ['old', 'new'])
+  assert.equal(reads, 2)
+  // A read that began after the share caches as usual.
+  now += 1000
+  await handleMiyakeysGallery(get(), env)
+  assert.equal(reads, 2, 'served from the cache')
 })
 
 test('POST: the per-visitor tag goes to nuroctane.xyz only with a secret, and is never the address', async () => {

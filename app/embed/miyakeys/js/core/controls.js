@@ -1,6 +1,6 @@
 import * as THREE from 'three-miyakeys';
 import gsap from 'gsap';
-import { renderer, scene, camera, root, caseGroup, capsGroup, knobGroup, uni } from './scene.js';
+import { renderer, scene, camera, root, caseGroup, capsGroup, knobGroup, uni, requestRender } from './scene.js';
 import { plateMesh, updateSelectionChrome } from './keyboard.js';
 import { state } from './state.js';
 import { SWITCHES } from '../data/components.js';
@@ -50,6 +50,7 @@ export function flyTo(v, dur) {
   if (RM()) {
     Object.assign(ctrl, { theta: v.theta, phi: v.phi, radius: v.radius });
     ctrl.target.y = v.ty;
+    requestRender();
     return;
   }
   const twoPi = Math.PI * 2;
@@ -78,6 +79,7 @@ function setExplode(on) {
     capsGroup.children.forEach((c) => { c.position.y = c.userData.baseY + (on ? 1.0 + c.userData.row * 0.16 : 0); });
     if (plateMesh) plateMesh.position.y = 0.6 + (on ? 0.4 : 0);
     knobGroup.position.y = 1.04 + (on ? 0.85 : 0);
+    requestRender();
     return;
   }
   capsGroup.children.forEach((c) => {
@@ -202,6 +204,7 @@ getCanvas().addEventListener('pointermove', (ev) => {
     }
     setDragCursor(true);
     knobGroup.rotation.y -= dx * 0.02;
+    requestRender();
     const b = THREE.MathUtils.clamp(uni.uBright.value + dx * 0.004, 0.1, 1.5);
     uni.uBright.value = b;
     state.light.bright = b;
@@ -245,11 +248,15 @@ getCanvas().addEventListener('pointermove', (ev) => {
       gsap.killTweensOf(hoverCap.position);
       hoverCap.position.y = hoverCap.userData.baseY;
       hoverCap = null;
+      /* A pointer moving with no button held only wakes the loop (app.js): a cap set straight here asks for its frame. */
+      requestRender();
     }
     return;
   }
 
   if (hit !== hoverCap) {
+    /* Under reduced motion the cap is set straight, with no tween to wake the loop: ask for the frame. */
+    if (RM()) requestRender();
     if (hoverCap && !state.exploded) {
       if (RM()) hoverCap.position.y = hoverCap.userData.baseY;
       else gsap.to(hoverCap.position, { y: hoverCap.userData.baseY, duration: 0.35, ease: 'power2.out', overwrite: 'auto' });
@@ -267,6 +274,7 @@ function settleCap(cap) {
   if (!cap) return;
   gsap.killTweensOf(cap.position);
   if (cap.userData && cap.userData.baseY != null) cap.position.y = cap.userData.baseY;
+  requestRender();
 }
 
 let lastClickKey = null, lastClickTime = 0;
@@ -354,6 +362,7 @@ function endPointer(ev) {
       playKeyClick(SWITCHES[state.sw].sound, state.material);
       if (RM()) {
         hit.position.y = hit.userData.baseY + 0.055;
+        requestRender();
       } else {
         gsap.timeline()
           .to(hit.position, { y: hit.userData.baseY - 0.07, duration: 0.07, ease: 'power2.in' })
@@ -370,4 +379,5 @@ getCanvas().addEventListener('contextmenu', (ev) => ev.preventDefault());
 getCanvas().addEventListener('wheel', (ev) => {
   ev.preventDefault();
   ctrl.radius *= 1 + ev.deltaY * 0.0011;
+  requestRender();
 }, { passive: false });

@@ -9,8 +9,9 @@
  * Answers carry `Access-Control-Allow-Origin: *`: the frame's origin is "null", and the gallery is public anyway.
  *
  * Every share reaches nuroctane.xyz from Cloudflare's addresses, so it cannot tell one visitor from another. Two
- * things keep one abuser from getting everyone turned away: a cap on shares for the whole site (`shareCap`, held in D1
- * so it counts across isolates, see d1ShareCap), and, when MIYAKEYS_CLIENT_SECRET is set, an opaque per-visitor tag
+ * things keep one abuser from getting everyone turned away: caps on shares per visitor and for the whole site
+ * (`shareCap`, held in D1 so they count across isolates, see d1ShareCap; one visitor alone can never use up the site's
+ * hour), and, when MIYAKEYS_CLIENT_SECRET is set, an opaque per-visitor tag
  * (`x-miyakeys-client`, see clientTag) nuroctane.xyz can throttle on without ever seeing an address.
  *
  * Guards are passed in (see zeroex.ts) so `node --test` loads this with only the import-free validator.
@@ -31,11 +32,25 @@ export const GALLERY_READ_RATE = { capacity: 30, perSecond: 0.5 }
 export const GALLERY_WRITE_RATE = { capacity: 5, perSecond: 0.05 }
 /** Shares from the whole site per clock hour, in every isolate together (d1ShareCap). */
 export const GALLERY_SITE_SHARES_PER_HOUR = 100
+/**
+ * Shares from one visitor per clock hour, in every isolate together (d1ShareCap). A visitor is an IPv4 address or an
+ * IPv6 /48 (shareBucket): a /64 or more is often one person's, so a /64 would let one person take ten.
+ */
+export const GALLERY_CLIENT_SHARES_PER_HOUR = 10
+/**
+ * The per-visitor counts live in this many fixed rows (a hash of the visitor picks one), so the table never grows with
+ * visitors; two visitors that land on one row share its count, which at this site's traffic is rare and harmless.
+ */
+export const GALLERY_CLIENT_SLOTS = 1024
+/** A secret shorter than this is ignored (miyakeysSecret): a short one could be guessed, and tags then unmasked. */
+export const MIN_CLIENT_SECRET = 32
 /** At most this many builds are passed on (the newest, when there are more); the reply then says `more: true`. */
 export const GALLERY_MAX_TEMPLATES = 500
 /** One gallery read upstream per data centre per this long; a share here clears it, so the sharer sees their build. */
 export const GALLERY_CACHE_SECONDS = 45
 const GALLERY_CACHE_KEY = 'miyakeys-gallery'
+/** When a share here last went through: a gallery read that began before it never caches what it read (see GET). */
+const GALLERY_SHARED_KEY = 'miyakeys-gallery-shared'
 /** The header nuroctane.xyz can throttle one visitor on (clientTag). */
 export const CLIENT_TAG_HEADER = 'x-miyakeys-client'
 /** Upstream 429, on reads and shares alike. */
@@ -116,10 +131,10 @@ type Guard = {
   readLimiter?: (key: string, now?: number) => boolean
   writeLimiter?: (key: string, now?: number) => boolean
   /**
-   * The whole site's share cap (d1ShareCap): true takes one share, false means the hour's shares are used up. A throw
-   * (D1 down, table missing) refuses the share: once a cap is configured, sharing never runs without it.
+   * The per-visitor and site-wide share caps (d1ShareCap). A throw (D1 down, table missing) refuses the share: once a
+   * cap is configured, sharing never runs without it.
    */
-  shareCap?: (now: number) => Promise<boolean>
+  shareCap?: ShareCap
   /** MIYAKEYS_CLIENT_SECRET: when set, shares carry clientTag's opaque per-visitor header. Unset, no header. */
   clientSecret?: string
   /** Where the cleaned gallery is kept for GALLERY_CACHE_SECONDS (the Worker's edge cache). Unset, no caching. */
@@ -140,28 +155,86 @@ export async function clientTag(secret: string, key: string): Promise<string> {
   return [...new Uint8Array(sig)].map((b) => b.toString(16).padStart(2, '0')).join('').slice(0, 32)
 }
 
+let warnedSecret = false
 /**
- * The site-wide share cap, counted in D1 so every isolate and data centre shares one count. It keeps one row in
- * shared_state (migrations/0003_hardening.sql, already applied for miyatv): `at` is the clock hour, `body` its count.
- * One statement takes a share or refuses it, so two isolates can never both take the last one.
+ * MIYAKEYS_CLIENT_SECRET as configured: trimmed, and ignored (no tag is sent, logged once) when shorter than
+ * MIN_CLIENT_SECRET characters.
  */
-export const d1ShareCap =
-  (db: D1Like, perHour = GALLERY_SITE_SHARES_PER_HOUR) =>
-  async (now: number): Promise<boolean> => {
-    const hour = Math.floor(now / 3_600_000) * 3_600_000
-    const r = await db
-      .prepare(
-        `INSERT INTO shared_state (key, body, at, expires_at, lock_until) VALUES ('miyakeys:shares', '1', ?, ?, 0)
-         ON CONFLICT (key) DO UPDATE SET
-           body = CASE WHEN shared_state.at < excluded.at THEN '1' ELSE CAST(CAST(shared_state.body AS INTEGER) + 1 AS TEXT) END,
-           at = MAX(shared_state.at, excluded.at),
-           expires_at = MAX(shared_state.expires_at, excluded.expires_at)
-         WHERE shared_state.at < excluded.at OR CAST(shared_state.body AS INTEGER) < ?`
-      )
-      .bind(hour, hour + 3_600_000, perHour)
-      .run()
-    return r.meta.changes > 0
+export function miyakeysSecret(raw: string | undefined, warn: (msg: string) => void = console.warn): string | undefined {
+  const secret = raw?.trim()
+  if (!secret) return undefined
+  if (secret.length >= MIN_CLIENT_SECRET) return secret
+  if (!warnedSecret) {
+    warnedSecret = true
+    warn(`miyakeys: MIYAKEYS_CLIENT_SECRET is shorter than ${MIN_CLIENT_SECRET} characters and is ignored; shares carry no ${CLIENT_TAG_HEADER} tag`)
   }
+  return undefined
+}
+
+/**
+ * The visitor a share is counted against: an IPv4 address as it is, IPv6 by its /48. Takes clientKey's answer (IPv6
+ * already cut to "a:b:c:d::/64", see ipBucket) and cuts it further.
+ */
+export function shareBucket(key: string): string {
+  const v6 = /^([0-9a-f]{1,4}):([0-9a-f]{1,4}):([0-9a-f]{1,4}):[0-9a-f]{1,4}::\/64$/.exec(key)
+  return v6 ? `${v6[1]}:${v6[2]}:${v6[3]}::/48` : key
+}
+
+/** Which of GALLERY_CLIENT_SLOTS rows counts this visitor: SHA-256 of the bucket, so no address is stored. */
+export async function shareSlot(bucket: string, slots = GALLERY_CLIENT_SLOTS): Promise<string> {
+  const sig = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`miyakeys-share:${bucket}`))
+  const n = new DataView(sig).getUint32(0) % slots
+  return `miyakeys:shares:${n.toString(16).padStart(3, '0')}`
+}
+
+export type ShareCap = {
+  /** Takes one share for this visitor (shareBucket) and the site, or says which count is used up for the hour. */
+  take: (now: number, client: string) => Promise<'ok' | 'client' | 'site'>
+  /** Gives the site's share back: nuroctane.xyz turned the build down, so nothing was added. */
+  giveBack: (now: number) => Promise<void>
+}
+
+/** One clock hour's count in one shared_state row: takes one, or (changes 0) refuses at `limit`. */
+const TAKE = `INSERT INTO shared_state (key, body, at, expires_at, lock_until) VALUES (?, '1', ?, ?, 0)
+  ON CONFLICT (key) DO UPDATE SET
+    body = CASE WHEN shared_state.at < excluded.at THEN '1' ELSE CAST(CAST(shared_state.body AS INTEGER) + 1 AS TEXT) END,
+    at = MAX(shared_state.at, excluded.at),
+    expires_at = MAX(shared_state.expires_at, excluded.expires_at)
+  WHERE shared_state.at < excluded.at OR CAST(shared_state.body AS INTEGER) < ?`
+/** Hands one back, only within the same hour and never below 0. */
+const GIVE_BACK = `UPDATE shared_state SET body = CAST(MAX(CAST(body AS INTEGER) - 1, 0) AS TEXT) WHERE key = ? AND at = ?`
+
+/**
+ * The share caps, counted in D1 so every isolate and data centre shares one count, in shared_state
+ * (migrations/0003_hardening.sql, already applied for miyatv): `at` is the clock hour, `body` its count, the row
+ * overwritten in place when the hour turns. The site has one row ('miyakeys:shares'); visitors have
+ * GALLERY_CLIENT_SLOTS rows between them (shareSlot), so there are never more than that many, whoever comes.
+ * Each count is one statement, so two isolates can never both take the last share. The visitor's is taken first; when
+ * the site's is used up, the visitor's is handed back.
+ */
+export function d1ShareCap(
+  db: D1Like,
+  perHour = GALLERY_SITE_SHARES_PER_HOUR,
+  perClient = GALLERY_CLIENT_SHARES_PER_HOUR,
+  slots = GALLERY_CLIENT_SLOTS
+): ShareCap {
+  const hourOf = (now: number) => Math.floor(now / 3_600_000) * 3_600_000
+  const take = async (key: string, hour: number, limit: number) =>
+    (await db.prepare(TAKE).bind(key, hour, hour + 3_600_000, limit).run()).meta.changes > 0
+  return {
+    async take(now, client) {
+      const hour = hourOf(now)
+      const slot = await shareSlot(client, slots)
+      if (!(await take(slot, hour, perClient))) return 'client'
+      if (await take('miyakeys:shares', hour, perHour)) return 'ok'
+      await db.prepare(GIVE_BACK).bind(slot, hour).run()
+      return 'site'
+    },
+    async giveBack(now) {
+      await db.prepare(GIVE_BACK).bind('miyakeys:shares', hourOf(now)).run()
+    },
+  }
+}
 
 /** The body as text, or undefined when it runs past `limit` bytes (stated or actual). Never a cut-short body. */
 export async function readCapped(response: Response, limit: number): Promise<string | undefined> {
@@ -282,14 +355,21 @@ export async function handleMiyakeysGallery(
     }
     const gallery = cleanGallery(data)
     if (!gallery) return reply(502, { error: 'The gallery answered with something that is not a gallery.' })
-    await env.cache?.put(GALLERY_CACHE_KEY, { at: now, body: gallery }, GALLERY_CACHE_SECONDS).catch(() => undefined)
+    // A share that went through while this read was out may be missing from it: then it is answered but not kept, so
+    // the sharer's next read is fresh. (Checked just before keeping it; the share marks its time after upstream took it.)
+    if (env.cache) {
+      const shared = await env.cache.get(GALLERY_SHARED_KEY).catch(() => undefined)
+      if (!(shared && typeof shared.at === 'number' && shared.at >= now))
+        await env.cache.put(GALLERY_CACHE_KEY, { at: now, body: gallery }, GALLERY_CACHE_SECONDS).catch(() => undefined)
+    }
     return reply(200, gallery)
   }
 
   // POST. The Origin check stops ordinary pages on other sites (they send their own origin), and nothing more: the
   // frame's Origin is "null", and so is that of ANY site's sandboxed frame, or a data: page; scripts send what they
   // like. So "null" is let through, and what holds a share back is the same for everyone: the per-visitor limit
-  // (per isolate), the site-wide cap (shareCap, across isolates), and the tag nuroctane.xyz can throttle one visitor on.
+  // (per isolate), the per-visitor and site-wide caps (shareCap, across isolates), and the tag nuroctane.xyz can
+  // throttle one visitor on.
   const origin = request.headers?.get('origin')
   if (origin !== 'null' && origin !== url.origin) return reply(403, { error: 'Only miyakeys can share builds here.' })
   if (!env.writeLimiter(key)) return reply(429, { error: 'Too many shares just now.' }, { 'retry-after': '30' })
@@ -297,14 +377,15 @@ export async function handleMiyakeysGallery(
   const share = cleanShare(request.body)
   if ('error' in share) return reply(400, { error: share.error })
   if (env.shareCap) {
-    let taken: boolean
+    let taken: 'ok' | 'client' | 'site'
     try {
-      taken = await env.shareCap(now)
+      taken = await env.shareCap.take(now, shareBucket(key))
     } catch {
       return reply(503, { error: 'Sharing is paused just now. Try again later.' }, { 'retry-after': '300' })
     }
-    const nextHour = Math.ceil((Math.floor(now / 3_600_000) * 3_600_000 + 3_600_000 - now) / 1000)
-    if (!taken) return reply(429, { error: 'The gallery has taken all the shares it can this hour. Try again later.' }, { 'retry-after': String(nextHour) })
+    const nextHour = String(Math.ceil((Math.floor(now / 3_600_000) * 3_600_000 + 3_600_000 - now) / 1000))
+    if (taken === 'client') return reply(429, { error: 'You have shared all the builds you can this hour. Try again later.' }, { 'retry-after': nextHour })
+    if (taken !== 'ok') return reply(429, { error: 'The gallery has taken all the shares it can this hour. Try again later.' }, { 'retry-after': nextHour })
   }
   const tag: Record<string, string> = env.clientSecret ? { [CLIENT_TAG_HEADER]: await clientTag(env.clientSecret, key) } : {}
 
@@ -324,8 +405,17 @@ export async function handleMiyakeysGallery(
   }
   await upstream.body?.cancel().catch(() => undefined)
   if (upstream.status === 429) return reply(429, { error: BUSY }, { 'retry-after': '60' })
-  if (!upstream.ok) return reply(502, { error: 'The gallery turned the build down.' })
-  // The sharer's next Gallery (in this data centre) reads afresh and shows their build.
-  await env.cache?.put(GALLERY_CACHE_KEY, { at: now, body: null }, GALLERY_CACHE_SECONDS).catch(() => undefined)
+  if (!upstream.ok) {
+    // Turned down (4xx): nothing was added, so the site's hour gets that share back. The visitor's stays spent, so
+    // one visitor sending builds upstream refuses still meets their own cap. A 429 (upstream is pressed) and 5xx /
+    // redirects (it may have been taken) keep it spent.
+    if (upstream.status >= 400 && upstream.status < 500) await env.shareCap?.giveBack(now).catch(() => undefined)
+    return reply(502, { error: 'The gallery turned the build down.' })
+  }
+  // The sharer's next Gallery (in this data centre) reads afresh and shows their build; a read already out when the
+  // build went in does not keep what it read (GALLERY_SHARED_KEY).
+  const sharedAt = (env.now ?? Date.now)()
+  await env.cache?.put(GALLERY_SHARED_KEY, { at: sharedAt, body: null }, GALLERY_CACHE_SECONDS).catch(() => undefined)
+  await env.cache?.put(GALLERY_CACHE_KEY, { at: sharedAt, body: null }, GALLERY_CACHE_SECONDS).catch(() => undefined)
   return reply(200, { ok: true })
 }

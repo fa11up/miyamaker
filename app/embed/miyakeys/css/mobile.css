@@ -166,7 +166,7 @@
 .mShell .libBtn, .mShell .saveRow { min-height: 44px; }
 .mShell input[type="text"], .mShell input[type="number"] { font-size: 16px; min-height: 40px; } /* iOS focus-zoom guard */
 .mShell input[type="color"] { min-width: 42px; min-height: 36px; }
-.mShell .slider { height: 28px; }
+.mShell .slider { height: 32px; }
 .mShell .slider::-webkit-slider-thumb { width: 22px; height: 22px; }
 
 /* ---- bottom action bar + export sheet ---- */

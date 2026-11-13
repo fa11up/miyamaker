@@ -34,7 +34,10 @@ export function setOverride(id, patch) {
   if (patch.bgColor === null) delete cur.bgColor;
   if (patch.fgColor === null) delete cur.fgColor;
   if (patch.markId === null) delete cur.markId;
-  store()[id] = cur;
+  Object.keys(cur).forEach((f) => { if (cur[f] === undefined) delete cur[f]; });
+  /* An override with nothing left in it (an image removed, say) is no override: never leave a {} behind. */
+  if (Object.keys(cur).length) store()[id] = cur;
+  else clearOverride(id);
 }
 
 export function clearOverride(id) {

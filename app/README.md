@@ -65,13 +65,17 @@ Cloudflare: no visitor cookie, address or user agent. Builds are checked both wa
 
 - **Reads** are kept for 45 seconds per Cloudflare data centre, so nuroctane.xyz sees at most about one read per data
   centre per 45 seconds; at most 500 builds (the newest) are passed on.
-- **Shares** are limited per visitor (per Worker isolate) and for the whole site: 100 an hour, counted in D1 (the
-  `shared_state` table from `migrations/0003_hardening.sql`, already applied). If D1 cannot count, sharing is refused,
-  never let through. An upstream 429 is shown as "busy, try again in a minute", for reads and shares alike.
+- **Shares** are limited three ways: a burst limit per visitor per Worker isolate; 10 an hour per visitor (an IPv4
+  address or an IPv6 /48); and 100 an hour for the whole site. The hourly counts are in D1 (the `shared_state` table
+  from `migrations/0003_hardening.sql`, already applied): one row for the site and at most 1024 rows for visitors (a
+  hash of the visitor picks the row, no address is stored), overwritten each hour, so the table does not grow. A build
+  nuroctane.xyz turns down (4xx other than 429) gives the site's share back. If D1 cannot count, sharing is refused,
+  never let through; with no `DB` binding at all the hourly caps are off and the Worker logs a warning. An upstream
+  429 is shown as "busy, try again in a minute", for reads and shares alike.
 - **For nuroctane.xyz: telling visitors apart.** Set a secret (32+ random characters) and every share carries
   `x-miyakeys-client: <32 hex>`, HMAC-SHA256 of the visitor's address (IPv6 by /64) under that secret. The same
   visitor always sends the same value; it cannot be turned back into an address. Throttle or block on it. Unset, the
-  header is not sent.
+  header is not sent; a secret under 32 characters is ignored (logged as a warning) and the header is not sent either.
 
   ```bash
   npx wrangler secret put MIYAKEYS_CLIENT_SECRET

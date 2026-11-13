@@ -1,4 +1,4 @@
-import { BUILD_FIELDS } from './validBuild.js';
+import { BUILD_FIELDS, isImageData, validBuild } from './validBuild.js';
 
 /* Undo history. The stack holds builds and `pos` points at the one on screen: a change pushes the state AFTER it,
    undo steps back to the one before. Entries hold only a build's own fields (never view, tool, theme or selection)
@@ -12,9 +12,11 @@ const imageById = new Map();
 const idByImage = new Map();
 let nextImageId = 1;
 
+/** The id for an image, or null when restore would drop it anyway (not a PNG/JPEG data URL, or too big). */
 function internImage(dataUrl) {
   let id = idByImage.get(dataUrl);
   if (!id) {
+    if (!isImageData(dataUrl)) return null;
     id = 'img' + nextImageId++;
     idByImage.set(dataUrl, id);
     imageById.set(id, dataUrl);
@@ -36,28 +38,48 @@ function pruneImages() {
   });
 }
 
-/** A history entry for a build (the live state or a stateSlice()): copied, with key images swapped for ids. */
+/* An image travels through validBuild as a tiny stand-in data URL that names its id (ids are base64-safe), so the
+   allowlist sees an image there without scanning megabytes of base64 on every commit. */
+const REF_PREFIX = 'data:image/png;base64,';
+
+/**
+ * A history entry for a build (the live state or a stateSlice()): the build exactly as a restore would put it on
+ * screen. It goes through validBuild, the same allowlist restore applies, so an entry and the state restored from it
+ * always compare equal (no dropped empty override, no stripped zero-width character, no reordered field reads as a
+ * change). Key images are swapped for ids.
+ */
 export function snapshot(src) {
-  const out = {};
+  const raw = {};
   BUILD_FIELDS.forEach((k) => {
-    if (k === 'perKeyOverrides' || src[k] === undefined) return;
-    out[k] = JSON.parse(JSON.stringify(src[k]));
+    if (k !== 'perKeyOverrides' && src[k] !== undefined) raw[k] = src[k];
   });
   const pk = src.perKeyOverrides;
-  out.perKeyOverrides = {};
   if (pk && typeof pk === 'object') {
+    raw.perKeyOverrides = {};
     Object.keys(pk).forEach((id) => {
       const o = pk[id];
-      if (!o || typeof o !== 'object') return;
-      const copy = {};
-      Object.keys(o).forEach((f) => {
-        if (f === 'imageData') {
-          if (typeof o.imageData === 'string') copy.imageRef = internImage(o.imageData);
-        } else if (o[f] !== undefined) copy[f] = JSON.parse(JSON.stringify(o[f]));
-      });
-      out.perKeyOverrides[id] = copy;
+      if (!o || typeof o !== 'object' || Array.isArray(o)) return;
+      const copy = Object.assign({}, o);
+      delete copy.imageData;
+      if (typeof o.imageData === 'string') {
+        const ref = internImage(o.imageData);
+        if (ref) copy.imageData = REF_PREFIX + ref;
+      }
+      raw.perKeyOverrides[id] = copy;
     });
   }
+  const out = validBuild(raw) || {};
+  const outPk = {};
+  const vpk = out.perKeyOverrides || {};
+  Object.keys(vpk).forEach((id) => {
+    const o = Object.assign({}, vpk[id]);
+    if (typeof o.imageData === 'string') {
+      o.imageRef = o.imageData.slice(REF_PREFIX.length);
+      delete o.imageData;
+    }
+    outPk[id] = o;
+  });
+  out.perKeyOverrides = outPk;
   return out;
 }
 
@@ -81,18 +103,42 @@ export function expand(entry) {
   return out;
 }
 
-const same = (a, b) => !!a && !!b && JSON.stringify(a) === JSON.stringify(b);
+/* Key order is not meaning: compare entries by a stringify with object keys sorted. */
+function canonical(v) {
+  if (Array.isArray(v)) return '[' + v.map(canonical).join(',') + ']';
+  if (v && typeof v === 'object') {
+    return '{' + Object.keys(v).sort().filter((k) => v[k] !== undefined)
+      .map((k) => JSON.stringify(k) + ':' + canonical(v[k])).join(',') + '}';
+  }
+  return JSON.stringify(v === undefined ? null : v);
+}
+
+const same = (a, b) => !!a && !!b && canonical(a) === canonical(b);
 
 /** Record the build as it is now. No-op when nothing changed since the current entry. */
 export function pushState(src) {
   const snap = snapshot(src);
-  if (pos >= 0 && same(stack[pos], snap)) return false;
+  if (pos >= 0 && same(stack[pos], snap)) {
+    pruneImages(); // snapshot may have taken in an image no entry keeps
+    return false;
+  }
   stack.length = pos + 1;
   stack.push(snap);
   if (stack.length > MAX) stack.shift();
   pos = stack.length - 1;
   pruneImages();
   return true;
+}
+
+/**
+ * After a restore, make the current entry the build as it now is on screen. Restore can only add to an entry (a field
+ * the entry lacks keeps its live value), so without this the next commit would see a "change", cut off redo and push
+ * a duplicate, and undo would land on the same state forever.
+ */
+export function syncCurrent(src) {
+  if (pos < 0) return;
+  stack[pos] = snapshot(src);
+  pruneImages();
 }
 
 export function undo() {

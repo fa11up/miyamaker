@@ -104,54 +104,89 @@ test("the reduced-motion rule catches a loop the file's other reduced-motion rul
   assert.deepEqual(unstoppedLoops('x.tsx', still), [])
 })
 
+// Entries are `path rule | declaration`: the rule's selector (or the styled component's name), then the one way of
+// scrolling it may use there, so an entry holds while lines move and a second way added to the same rule (an
+// `overflow-x: auto` beside its `overflow: auto`) is still caught. `overflow: auto` scrolls both ways: an entry says
+// its content cannot be wider than the box (it wraps, or is a column of full-width rows), or is a TODO for the owner.
+const SIDEWAYS_ALLOW = [
+  // The taskbar is the desktop's own strip, not a window: its buttons scroll when there are many.
+  'src/components/TaskBar/index.tsx TaskBarStyled | overflow-x: auto',
+  'src/components/TaskBar/index.tsx TaskRow | overflow-x: auto',
+  // Columns of rows or wrapping text, sized to their box: only ever taller than it.
+  'src/desktop/files/MyFiles.tsx Pane | overflow: auto',
+  'src/desktop/files/Properties.tsx .content | overflow: auto',
+  'src/pages/MiyaMakerStudio/Inspector.tsx Column | overflow: auto',
+  'src/pages/MiyaMakerStudio/Assets.tsx List | overflow: auto',
+  'src/pages/MusicMaker/PublishDialog.tsx Card | overflow: auto',
+  'src/pages/MusicMaker/styles/miyamaker.css .browser-tree | overflow: auto',
+  'src/pages/MusicMaker/styles/miyamaker.css .pad-pick .file-menu | overflow: auto',
+  'src/pages/MusicMaker/styles/miyamaker.css .side-controls | overflow: auto',
+  'src/pages/MusicMaker/styles/miyamaker.css .dialog | overflow: auto',
+  'src/pages/MusicMaker/styles/miyamaker.css .lib-list | overflow: auto',
+  'src/pages/MusicMaker/styles/miyamaker.css .rail-slot | overflow: auto',
+  'src/pages/MusicMaker/styles/miyamaker.css .arranger-list | overflow: auto',
+  'src/pages/MusicMaker/styles/miyamaker.css .arrange-menu | overflow: auto',
+  'src/pages/MusicMaker/styles/miyamaker.css .pad-layout > .side-controls | overflow: auto',
+  'src/pages/MusicMaker/styles/miyamaker.css .coach-card | overflow: auto',
+  'src/pages/MusicMaker/styles/miyamaker.css .manual-side | overflow: auto',
+  'src/pages/MusicMaker/styles/miyamaker.css .manual-read | overflow: auto',
+  'src/pages/MusicMaker/styles/miyamaker.css .manual-pop | overflow: auto',
+  'src/pages/MusicMaker/styles/miyamaker.css .strum-picker | overflow: auto',
+  // TODO (owner): these can be wider than their box, so they scroll sideways. Make them `overflow: hidden auto`
+  // with wrapping (overflow-wrap: anywhere; white-space: pre-wrap for a <pre>), or fit them; then delete the entry.
+  // A description with a long link or word (pre-wrap breaks only at spaces).
+  'src/desktop/files/Properties.tsx .desc | overflow: auto',
+  // A notice or error with a long unbroken word.
+  'src/components/Notification/Message/index.tsx > div | overflow: auto',
+  'src/components/Errors/ErrorMessage/index.tsx > div | overflow: auto',
+  // A <pre> of JSON: long lines scroll sideways.
+  'src/pages/DropMusic/index.tsx Json | overflow: auto',
+  // A row of panes and a resize gutter: narrower than the panes, it scrolls sideways.
+  'src/pages/MiyaMakerStudio/index.tsx Panes | overflow: auto',
+  // The old manager's tables.
+  'src/pages/Manage/Legacy.tsx SunkenPanel | overflow: auto',
+  // The sequencer's grid, wider than the window when zoomed in: decide whether a zoomable grid may pan sideways.
+  'src/pages/MusicMaker/styles/miyamaker.css .part | overflow: auto',
+]
+/** A hit without its line number: `path rule | declaration`, what an entry names. */
+const sidewaysNamed = (h: string) => h.replace(/:\d+( |$)/, '$1')
+const sidewaysOutside = (found: string[]) => found.filter((h) => !SIDEWAYS_ALLOW.includes(sidewaysNamed(h)))
+
 test('no sideways scrolling inside a window', () => {
-  // Entries are `path rule` (the rule's selector, or the styled component's name), so an entry holds while lines move;
-  // a bare path allows the whole file. `overflow: auto` scrolls both ways: an entry says its content cannot be wider
-  // than the box (it wraps, or is a column of full-width rows), or is a TODO for the code's owner.
-  const ALLOW = [
-    // The taskbar is the desktop's own strip, not a window: its buttons scroll when there are many.
-    'src/components/TaskBar/index.tsx',
-    // Columns of rows or wrapping text, sized to their box: only ever taller than it.
-    'src/desktop/files/MyFiles.tsx Pane',
-    'src/desktop/files/Properties.tsx .content',
-    'src/pages/MiyaMakerStudio/Inspector.tsx Column',
-    'src/pages/MiyaMakerStudio/Assets.tsx List',
-    'src/pages/MusicMaker/PublishDialog.tsx Card',
-    'src/pages/MusicMaker/styles/miyamaker.css .browser-tree',
-    'src/pages/MusicMaker/styles/miyamaker.css .pad-pick .file-menu',
-    'src/pages/MusicMaker/styles/miyamaker.css .side-controls',
-    'src/pages/MusicMaker/styles/miyamaker.css .dialog',
-    'src/pages/MusicMaker/styles/miyamaker.css .lib-list',
-    'src/pages/MusicMaker/styles/miyamaker.css .rail-slot',
-    'src/pages/MusicMaker/styles/miyamaker.css .arranger-list',
-    'src/pages/MusicMaker/styles/miyamaker.css .arrange-menu',
-    'src/pages/MusicMaker/styles/miyamaker.css .pad-layout > .side-controls',
-    'src/pages/MusicMaker/styles/miyamaker.css .coach-card',
-    'src/pages/MusicMaker/styles/miyamaker.css .manual-side',
-    'src/pages/MusicMaker/styles/miyamaker.css .manual-read',
-    'src/pages/MusicMaker/styles/miyamaker.css .manual-pop',
-    'src/pages/MusicMaker/styles/miyamaker.css .strum-picker',
-    // TODO (owner): these can be wider than their box, so they scroll sideways. Make them `overflow: hidden auto`
-    // with wrapping (overflow-wrap: anywhere; white-space: pre-wrap for a <pre>), or fit them; then delete the entry.
-    // A description with a long link or word (pre-wrap breaks only at spaces).
-    'src/desktop/files/Properties.tsx .desc',
-    // A notice or error with a long unbroken word.
-    'src/components/Notification/Message/index.tsx > div',
-    'src/components/Errors/ErrorMessage/index.tsx > div',
-    // A <pre> of JSON: long lines scroll sideways.
-    'src/pages/DropMusic/index.tsx Json',
-    // A row of panes and a resize gutter: narrower than the panes, it scrolls sideways.
-    'src/pages/MiyaMakerStudio/index.tsx Panes',
-    // The old manager's tables.
-    'src/pages/Manage/Legacy.tsx SunkenPanel',
-    // The sequencer's grid, wider than the window when zoomed in: decide whether a zoomable grid may pan sideways.
-    'src/pages/MusicMaker/styles/miyamaker.css .part',
-  ]
-  const named = (h: string) => h.replace(/:\d+ /, ' ')
-  const found = SRC_CSS.flatMap((p) => sidewaysScrollers(p)).filter(
-    (h) => !ALLOW.some((a) => named(h) === a || h.split(':')[0] === a)
+  const all = SRC_CSS.flatMap((p) => sidewaysScrollers(p))
+  assert.deepEqual(sidewaysOutside(all), [])
+  // No dead entries: each one still names a scroller (fixed code takes its entry with it).
+  const named = new Set(all.map(sidewaysNamed))
+  assert.deepEqual(SIDEWAYS_ALLOW.filter((a) => !named.has(a)), [])
+  assert.equal(new Set(SIDEWAYS_ALLOW).size, SIDEWAYS_ALLOW.length, 'no entry twice')
+})
+
+test('an allowlisted rule allows only the way of scrolling its entry names', () => {
+  // Planted into the real files: a second, sideways-only declaration in a rule whose `overflow: auto` is allowed.
+  const plant = (path: string, after: RegExp, add: string) => {
+    const text = code(path)
+    assert.match(text, after, `${path} still has the rule this plants into`)
+    return sidewaysOutside(sidewaysScrollers(path, text.replace(after, (m) => `${m} ${add}`)))
+  }
+  assert.deepEqual(
+    plant('src/desktop/files/MyFiles.tsx', /const Pane = styled[\s\S]*?overflow: auto;/, 'overflow-x: auto;').map(sidewaysNamed),
+    ['src/desktop/files/MyFiles.tsx Pane | overflow-x: auto']
   )
-  assert.deepEqual(found, [])
+  const css = 'src/pages/MusicMaker/styles/miyamaker.css'
+  const dialog = /\n\.dialog\s*\{[^}]*?overflow: auto;/
+  assert.deepEqual(plant(css, dialog, 'overflow-x: scroll;').map(sidewaysNamed), [`${css} .dialog | overflow-x: scroll`])
+  // Or the allowed shorthand changed to one that scrolls sideways whatever the content.
+  assert.deepEqual(
+    sidewaysOutside(sidewaysScrollers(css, code(css).replace(dialog, (m) => m.replace('overflow: auto', 'overflow: scroll')))).map(sidewaysNamed),
+    [`${css} .dialog | overflow: scroll`]
+  )
+  for (const p of ['src/components/Notification/Message/index.tsx', 'src/components/Errors/ErrorMessage/index.tsx'])
+    assert.deepEqual(plant(p, /> div\s*\{[^}]*?overflow: auto;/, "overflow-x: auto;").map(sidewaysNamed), [`${p} > div | overflow-x: auto`])
+  // A style object in the same component as an allowed rule is its own hit too.
+  assert.deepEqual(
+    sidewaysOutside(sidewaysScrollers('src/desktop/files/MyFiles.tsx', code('src/desktop/files/MyFiles.tsx') + "\nconst Pane2 = { overflowX: 'auto' }\n")).map(sidewaysNamed),
+    ['src/desktop/files/MyFiles.tsx const Pane2 = | overflow-x: auto']
+  )
 })
 
 test('the sideways rule catches every way of writing it, and lets a vertical-only scroller be', () => {
@@ -160,8 +195,14 @@ test('the sideways rule catches every way of writing it, and lets a vertical-onl
 .c { overflow: scroll hidden; }
 .d { overflow: hidden auto; }
 .e { overflow-y: auto; }
-.f { overflow: hidden; }`
-  assert.deepEqual(sidewaysScrollers('x.css', css), ['x.css:1 .a', 'x.css:2 .b', 'x.css:3 .c'])
+.f { overflow: hidden; }
+.g { overflow: auto !important }`
+  assert.deepEqual(sidewaysScrollers('x.css', css), [
+    'x.css:1 .a | overflow-x: auto',
+    'x.css:2 .b | overflow: auto',
+    'x.css:3 .c | overflow: scroll hidden',
+    'x.css:7 .g | overflow: auto !important',
+  ])
   const js = [
     'const Box = styled.div`',
     '  overflow: auto;',
@@ -174,9 +215,14 @@ test('the sideways rule catches every way of writing it, and lets a vertical-onl
     "const u = { overflow: 'hidden' }",
     '',
   ].join('\n')
-  const found = sidewaysScrollers('x.tsx', js)
-  assert.deepEqual(found.map((h) => h.split(' ')[0]), ['x.tsx:2', 'x.tsx:4', 'x.tsx:5', 'x.tsx:7', 'x.tsx:8'])
-  assert.equal(found[0], 'x.tsx:2 Box')
+  assert.deepEqual(sidewaysScrollers('x.tsx', js), [
+    'x.tsx:2 Box | overflow: auto',
+    'x.tsx:4 | overflow-x: scroll',
+    'x.tsx:5 | overflow: auto',
+    // A style object is named by the braces it sits in.
+    'x.tsx:7 const s = | overflow-x: auto',
+    'x.tsx:8 const t = | overflow: scroll',
+  ])
 })
 
 test('only a pressed link opens another site: no window.open, no picture-only new-tab links', () => {

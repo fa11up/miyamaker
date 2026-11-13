@@ -38,7 +38,7 @@ function chunkAround(path: string, text: string, index: number): { start: number
 }
 
 /** The index of the brace that closes the one at `open`, or the end of the text. */
-function closeOf(text: string, open: number): number {
+export function closeOf(text: string, open: number): number {
   let depth = 0
   for (let i = open; i < text.length; i++) {
     if (text[i] === '{') depth++
@@ -78,14 +78,19 @@ export function ruleName(path: string, text: string, index: number): string {
 /**
  * Every place the content can scroll sideways: overflow-x / overflowX auto or scroll, and the overflow shorthand whose
  * first (x) value is auto or scroll (`overflow: auto` scrolls both ways), in CSS, style objects and `el.style`. Each
- * as `path:line name` (ruleName), so an allowlist can name the rule rather than a line that moves.
+ * as `path:line name | declaration` (ruleName, then the declaration in CSS spelling: `overflow: auto`,
+ * `overflow-x: scroll`, `overflow: scroll hidden`), so an allowlist can name the rule rather than a line that moves,
+ * and the one way of scrolling it allows there rather than every way.
  */
 export function sidewaysScrollers(path: string, text = code(path)): string[] {
   const re =
-    /overflow-x:\s*(auto|scroll)\b|overflowX\s*[:=]\s*['"](auto|scroll)['"]|\boverflow:\s*['"]?(auto|scroll)\b|\.overflow\s*=\s*['"](auto|scroll)\b/g
-  return [...text.matchAll(re)].map(
-    (m) => `${path}:${text.slice(0, m.index!).split('\n').length} ${ruleName(path, text, m.index!)}`.trimEnd()
-  )
+    /overflow-x:\s*(auto|scroll)\b|overflowX\s*[:=]\s*['"](auto|scroll)['"]|\boverflow:\s*['"]?((?:auto|scroll)\b[^;}'"`\n]*)|\.overflow\s*=\s*['"]((?:auto|scroll)\b[^'"]*)/g
+  return [...text.matchAll(re)].map((m) => {
+    const x = m[1] ?? m[2]
+    const decl = x ? `overflow-x: ${x}` : `overflow: ${(m[3] ?? m[4])!.replace(/\s+/g, ' ').trim()}`
+    const name = ruleName(path, text, m.index!)
+    return `${path}:${text.slice(0, m.index!).split('\n').length}${name ? ` ${name}` : ''} | ${decl}`
+  })
 }
 
 /** JS that stops a block's motion for reduced motion (a hook, a flag or `$still` prop the window passes, a `.still` class). */

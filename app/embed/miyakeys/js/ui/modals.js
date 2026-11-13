@@ -20,11 +20,30 @@ let shown = 0;
 /* Where focus was before the dialog opened; it goes back there on close. */
 let opener = null;
 
+/* While a dialog is open everything else on the page is inert (aria-modal alone does not keep Tab inside it): the
+   shell, the key editor. The toast stays live so what a dialog's action says is still heard. Only what this set is
+   put back. */
+let madeInert = [];
+function setPageInert(on) {
+  if (!on) {
+    madeInert.forEach((el) => { el.inert = false; });
+    madeInert = [];
+    return;
+  }
+  if (madeInert.length) return;
+  for (const el of document.body.children) {
+    if (el.id === 'modal' || el.id === 'toast' || el.tagName === 'SCRIPT' || el.tagName === 'TEMPLATE' || el.inert) continue;
+    el.inert = true;
+    madeInert.push(el);
+  }
+}
+
 export function closeModal() {
   if (stopThumbs) { stopThumbs(); stopThumbs = null; }
   shown++;
   const wasOpen = isModalOpen();
   $('modal').classList.remove('open');
+  setPageInert(false);
   syncNav('builder');
   if (wasOpen && opener && opener.isConnected && typeof opener.focus === 'function') opener.focus();
   opener = null;
@@ -42,6 +61,7 @@ export function openModal(title, html) {
   $('modalTitle').textContent = title;
   $('modalBody').innerHTML = html;
   $('modal').classList.add('open');
+  setPageInert(true);
   /* Focus moves into the dialog (a dialog that wants a field focused does that after this). */
   if (card && !card.contains(document.activeElement)) card.focus({ preventScroll: true });
 }
@@ -114,6 +134,17 @@ function showCommunityOffline(grid) {
   document.getElementById('galleryRetry')?.addEventListener('click', () => openGallery());
 }
 
+/** The line under the community cards when not every build is shown: the page shows GALLERY_SHOWN at most, and the
+ *  gallery itself sends only its newest 500 (`more`, app.js fetchGallery). Empty when everything is shown. */
+export function galleryNote(shownCount, total, more) {
+  const rest = ' The rest are on <a class="linkish" href="https://www.nuroctane.xyz/modkeys" target="_blank" rel="noopener">nuroctane.xyz/modkeys</a>.';
+  let text;
+  if (more) text = shownCount < total ? `Showing ${shownCount} of the newest ${total} builds.` : `Showing the newest ${total} builds.`;
+  else if (shownCount < total) text = `Showing ${shownCount} of ${total} builds.`;
+  else return '';
+  return `<div class="hint" style="grid-column:1/-1">${text}${rest}</div>`;
+}
+
 export function openGallery() {
   syncNav('gallery');
   const { savedBuilds, presetThumbs } = window.__MODKEYS__ || { savedBuilds: [], presetThumbs: new Map() };
@@ -151,9 +182,7 @@ export function openGallery() {
     const { communityThumbs: th, renderThumbs } = window.__MODKEYS__ || { communityThumbs: new Map() };
     const list = community.slice(0, GALLERY_SHOWN);
     grid.innerHTML = list.map((t) => communityCardHtml(t, th)).join('') +
-      (community.length > list.length
-        ? `<div class="hint" style="grid-column:1/-1">Showing ${list.length} of ${community.length} builds. The rest are on <a class="linkish" href="https://www.nuroctane.xyz/modkeys" target="_blank" rel="noopener">nuroctane.xyz/modkeys</a>.</div>`
-        : '');
+      galleryNote(list.length, community.length, community.more === true);
     /* Thumbnails are drawn a few at a time after the cards show (each card has its colours until then). Only one
        drawing at a time: any earlier one is stopped first. */
     if (renderThumbs) {

@@ -17,6 +17,7 @@ import {
   handleMiyakeysGallery,
   isEmbedPath,
   MIYAKEYS_GALLERY_PATH,
+  miyakeysSecret,
 } from './_lib/miyakeys'
 import { handleOpenSeaRequest, OPENSEA_PROXY_PATH, quoteBigInts } from './_lib/opensea'
 import { d1TapeStore, handlePublicAccessRequest, PUBLIC_ACCESS_PATH, youtubeLookup } from './_lib/publicaccess'
@@ -83,7 +84,7 @@ type Env = {
   STATION_ADMINS?: string
   /**
    * miyakeys's shares carry HMAC(this, visitor) as x-miyakeys-client, so nuroctane.xyz can throttle one visitor without
-   * their address (api/_lib/miyakeys.ts clientTag). Unset = no header.
+   * their address (api/_lib/miyakeys.ts clientTag). Unset, or under 32 characters (ignored, with a warning) = no header.
    */
   MIYAKEYS_CLIENT_SECRET?: string
 }
@@ -139,6 +140,16 @@ const videoAudioLimiter = createRateLimiter(VIDEO_AUDIO_RATE)
 // site-wide share cap is in D1 (d1ShareCap).
 const miyakeysReadLimiter = createRateLimiter(GALLERY_READ_RATE)
 const miyakeysWriteLimiter = createRateLimiter(GALLERY_WRITE_RATE)
+// Without a DB binding the D1 share caps are off (only the per-isolate limit holds): said once per isolate, not hidden.
+let miyakeysNoDbWarned = false
+const miyakeysShareCap = (env: Env) => {
+  if (env.DB) return d1ShareCap(env.DB)
+  if (!miyakeysNoDbWarned) {
+    miyakeysNoDbWarned = true
+    console.warn('miyakeys: no DB binding, so the per-visitor and site-wide share caps are off (bind D1 as DB)')
+  }
+  return undefined
+}
 // assignments.json is every draw (a few MB at sell-out): a verifier reads it once.
 const revealListLimiter = createRateLimiter({ capacity: 10, perSecond: 0.2 })
 
@@ -362,8 +373,8 @@ async function api(request: Request, env: Env, url: URL): Promise<Response> {
         clientKey,
         readLimiter: miyakeysReadLimiter,
         writeLimiter: miyakeysWriteLimiter,
-        shareCap: env.DB ? d1ShareCap(env.DB) : undefined,
-        clientSecret: env.MIYAKEYS_CLIENT_SECRET?.trim() || undefined,
+        shareCap: miyakeysShareCap(env),
+        clientSecret: miyakeysSecret(env.MIYAKEYS_CLIENT_SECRET),
         cache: edge(),
       }
     )

@@ -23,8 +23,8 @@ import { downloadKLE, copyKLE } from './export/kle.js';
 import { downloadSVG } from './export/svg.js';
 import { downloadSpec } from './export/spec.js';
 import { exportPDF } from './export/pdf.js';
-import { decodeState, encodeState, loadHash, shareURL, hasKeyImages } from './core/shrinker.js';
-import { validBuild, validGalleryEntry, cleanText, isImageData, MAX_NAME } from './core/validBuild.js';
+import { decodeState, encodeState, loadHash, shareURL, hasKeyImages, acceptCarry, carryName, MAX_SAVED_BUILDS } from './core/shrinker.js';
+import { validBuild, validGalleryEntry } from './core/validBuild.js';
 import { listenToHost, MAX_HASH, TOO_BIG } from './core/host.js';
 import { showBootError } from './ui/bootError.js';
 import { resetHistory, canUndo, canRedo } from './core/history.js';
@@ -43,10 +43,22 @@ const MOBILE_MQ = '(max-width: 768px), ((pointer: coarse) and (max-width: 1024px
 
 /* Crossing the phone breakpoint reloads the frame into the other shell. The build (key images included) and "Your
    builds" ride across in the frame's window.name, which a reload keeps (history.state does not, in this sandboxed
-   frame) and which nothing outside the frame can read; it is emptied as soon as the new page has read it. The #hash
-   gets the build without key images as a fallback, short enough for any browser. Undo history does not survive the
-   reload, and the page says so. */
-const CARRY = 'miyakeysCarry:';
+   frame); it is emptied as soon as the new page starts. Any site can open this page with a window.name of its own, so
+   a carry is read only after a reload, only when it is not huge, and with a nonce where the page has session storage
+   (shrinker.js acceptCarry). The #hash gets the build without key images as a fallback, short enough for any browser.
+   Undo history does not survive the reload, and the page says so. */
+const NONCE_KEY = 'miyakeysCarryNonce';
+
+/** The nonce kept for a carry: a string, null when none was kept, undefined when this page has no session storage. */
+function keptNonce(keep) {
+  try {
+    const v = sessionStorage.getItem(NONCE_KEY);
+    if (!keep) sessionStorage.removeItem(NONCE_KEY);
+    return v;
+  } catch {
+    return undefined;
+  }
+}
 
 function carryAcrossReload(savedBuilds) {
   const build = stateSlice();
@@ -54,24 +66,28 @@ function carryAcrossReload(savedBuilds) {
   try {
     history.replaceState(null, '', location.href.split('#')[0] + (enc ? '#' + enc : ''));
   } catch { /* the carry below still has the build */ }
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  const nonce = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+  try { sessionStorage.setItem(NONCE_KEY, nonce); } catch { /* no storage in the sandboxed frame: the reload check stands alone */ }
   try {
-    window.name = CARRY + JSON.stringify({ build, savedBuilds });
+    window.name = carryName(nonce, { build, savedBuilds });
   } catch {
     /* too big to keep: the hash has the build without its images */
   }
 }
 
-/** What carryAcrossReload left, once: emptied so a later reload starts clean. */
-function takeCarry() {
-  let carry = null;
-  try {
-    if (typeof window.name === 'string' && window.name.startsWith(CARRY)) {
-      const raw = window.name.slice(CARRY.length);
-      window.name = '';
-      carry = JSON.parse(raw);
-    }
-  } catch { /* not a carry */ }
-  return carry && typeof carry === 'object' ? carry : null;
+/** What carryAcrossReload left, checked, once. window.name is always emptied, whatever was in it; with `keep` (the
+ *  page is about to reload again) a carry this page wrote stays for the next load and anything else is still emptied. */
+function takeCarry(keep = false) {
+  let name = '';
+  try { name = typeof window.name === 'string' ? window.name : ''; } catch { /* unreadable */ }
+  let navType;
+  try { navType = performance.getEntriesByType('navigation')[0]?.type; } catch { /* no timing: not a reload */ }
+  const carry = acceptCarry(name, navType, keptNonce(keep));
+  if (!keep || !carry) {
+    try { window.name = ''; } catch { /* nothing to clear */ }
+  }
+  return carry;
 }
 
 export function mountModkeys() {
@@ -91,9 +107,12 @@ export function mountModkeys() {
   /* The page can change size between the shell choice and this listener: if it is now on the other side of the
      breakpoint, reload into the right shell before anything is built. */
   if (wantsMobile() !== inMobileShell) {
+    takeCarry(true);
     location.reload();
     return;
   }
+  /* Read (and window.name emptied) before anything else runs; applied in finishBoot once the board is up. */
+  const carry = takeCarry();
   if (boundaryQ.addEventListener) {
     boundaryQ.addEventListener('change', onBoundary);
     cleanupFns.push(() => boundaryQ.removeEventListener('change', onBoundary));
@@ -147,14 +166,32 @@ export function mountModkeys() {
       }
       if (res.ok) {
         savedBuilds.push(mine);
+        /* Kept in memory, images and all: only the newest few stay. */
+        const dropped = savedBuilds.length > MAX_SAVED_BUILDS;
+        if (dropped) savedBuilds.splice(0, savedBuilds.length - MAX_SAVED_BUILDS);
         /* The next Gallery asks again, and a list already on its way (from before this share) is not kept. */
         galleryGen++;
         window.__MODKEYS__.galleryCache = undefined;
-        return { ok: true, message: 'Shared to the community gallery. It is also in Your builds until you close miyakeys.' };
+        return {
+          ok: true,
+          message: 'Shared to the community gallery. It is also in Your builds until you close miyakeys.' +
+            (dropped ? ' Your builds keeps the newest ' + MAX_SAVED_BUILDS + ', so the oldest one there was let go.' : ''),
+        };
       }
       if (res.status === 504)
         return { ok: false, message: 'The gallery did not answer in time, so it may or may not have been shared. Open Gallery in a minute to check before trying again.' };
+      /* For a limit, an upstream failure or sharing being paused, the Worker's own `error` is plain words and says how
+         long to wait (the site-wide limit can be up to an hour); the copy below is only for when it has none. */
+      let said = '';
+      if (res.status === 429 || res.status === 502 || res.status === 503) {
+        try {
+          const body = await res.json();
+          said = typeof body?.error === 'string' ? body.error.replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ').trim().slice(0, 200) : '';
+        } catch { /* no words: the copy below */ }
+      }
+      if (said) return { ok: false, message: 'Not shared. ' + said };
       if (res.status === 429) return { ok: false, message: 'Too many shares just now: not shared. Try again in a minute.' };
+      if (res.status === 503) return { ok: false, message: 'Sharing is paused just now: not shared. Try again later.' };
       return { ok: false, message: 'The gallery turned it down: not shared.' };
     } finally {
       sharing = false;
@@ -262,6 +299,7 @@ export function mountModkeys() {
 
   /* lazy gallery fetch
      Array (including []) = successful fetch, memoized.
+     The array's `more` is true when the gallery has more builds than it sent (the newest 500 come).
      null = the gallery could not be read (offline, slow, or an answer that is not a gallery); not memoized, the
      next call retries. Only a real, empty list is "no community builds yet".
      galleryGen goes up when a share lands: a list fetched before that may not have the new build, so it is neither
@@ -275,6 +313,8 @@ export function mountModkeys() {
       if (!data || !Array.isArray(data.templates)) throw new Error('not a gallery');
       /* The Worker checked these already; checked again here so a page served elsewhere is no weaker. */
       const gc = data.templates.map(validGalleryEntry).filter(Boolean);
+      /* The Worker passes on the newest 500 at most and then says `more: true`: the gallery says it shows only those. */
+      gc.more = data.more === true;
       if (gen === galleryGen) window.__MODKEYS__.galleryCache = gc;
       return gc;
     } catch {
@@ -425,11 +465,12 @@ export function mountModkeys() {
     ctrl.radius = 11.4;
     ctrl.target.y = -0.08;
     ctrl.apply();
+    const uTime = uni.uTime.value;
     uni.uTime.value = 2.2;
     const snap = stateSlice();
     const liveKeys = keysOf(validBuild(snap, { images: false }) || {}, hasKeyImages(snap));
     return {
-      r, sc, snap,
+      r, sc, snap, uTime,
       pk: state.perKeyOverrides,
       liveKeys,
       built: liveKeys,
@@ -469,6 +510,11 @@ export function mountModkeys() {
     matStem.color.copy(sRGB(state.switchColor || SWITCHES[state.sw].dot));
     setExtrasVisible(state.layout, state.extras);
     applyLight();
+    /* setSize above cleared the canvas: the live board is drawn again now, in this same task, so it is never left
+       blank between thumbnail batches (a queued frame would land only after the next batch has cleared it again). */
+    ctrl.apply();
+    uni.uTime.value = save.uTime;
+    renderer.render(scene, camera);
     requestRender();
   }
   function setFinish(id) {
@@ -675,18 +721,9 @@ export function mountModkeys() {
 
   function finishBoot() {
     /* A breakpoint reload's carry (carryAcrossReload): the build with its key images, and Your builds. */
-    const carry = takeCarry();
-    if (carry && Array.isArray(carry.savedBuilds)) {
-      carry.savedBuilds.forEach((b) => {
-        const snap = b && validBuild(b.snap);
-        if (!snap) return;
-        const name = (cleanText(b.name, MAX_NAME) || '').trim() || 'Build';
-        const img = isImageData(b.img) ? b.img : undefined;
-        savedBuilds.push({ name, snap, layout: snap.layout, img });
-      });
-    }
-    const carried = carry && carry.build ? validBuild(carry.build) : null;
-    if (carried && Object.keys(carried).length) {
+    if (carry) savedBuilds.push(...carry.savedBuilds);
+    const carried = carry && carry.build;
+    if (carried) {
       loadSnap(carried, { selectedPreset: null });
       toast('Your build was kept. Undo history starts over after the window changes size.');
     } else if (window.location.hash.length - 1 > MAX_HASH) {
