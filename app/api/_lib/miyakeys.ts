@@ -393,6 +393,14 @@ export async function handleMiyakeysGallery(
   }
   const tag: Record<string, string> = env.clientSecret ? { [CLIENT_TAG_HEADER]: await clientTag(env.clientSecret, key) } : {}
 
+  // The sharer's next Gallery (in this data centre) reads afresh, and a read already out when the build may have gone
+  // in does not keep what it read (GALLERY_SHARED_KEY). Also when the outcome is unknown, since the page then says
+  // "check the Gallery".
+  const markShared = async () => {
+    const sharedAt = (env.now ?? Date.now)()
+    await env.cache?.put(GALLERY_SHARED_KEY, { at: sharedAt, body: null }, GALLERY_CACHE_SECONDS).catch(() => undefined)
+    await env.cache?.put(GALLERY_CACHE_KEY, { at: sharedAt, body: null }, GALLERY_CACHE_SECONDS).catch(() => undefined)
+  }
   let upstream: Response
   try {
     upstream = await fetchImpl(MIYAKEYS_UPSTREAM, {
@@ -404,7 +412,8 @@ export async function handleMiyakeysGallery(
     })
   } catch (e) {
     const slow = (e as Error)?.name === 'TimeoutError' || (e as Error)?.name === 'AbortError'
-    // A timeout is not "not shared": the gallery may have taken it. The page says so.
+    // A timeout is not "not shared": the gallery may have taken it. The page says so, and the next Gallery reads afresh.
+    await markShared()
     return reply(slow ? 504 : 502, { error: slow ? 'The gallery did not answer in time.' : 'The gallery did not answer.' })
   }
   await upstream.body?.cancel().catch(() => undefined)
@@ -417,13 +426,10 @@ export async function handleMiyakeysGallery(
       await env.shareCap?.giveBack(now).catch(() => undefined)
       return reply(502, { error: 'The gallery turned the build down.' })
     }
-    // A 5xx or a redirect: it may have been taken. Say so, so nobody shares it twice.
+    // A 5xx or a redirect: it may have been taken. Say so, so nobody shares it twice, and read the Gallery afresh.
+    await markShared()
     return reply(502, { error: 'The gallery had a problem: your build may have been shared. Check the Gallery before sharing it again.' })
   }
-  // The sharer's next Gallery (in this data centre) reads afresh and shows their build; a read already out when the
-  // build went in does not keep what it read (GALLERY_SHARED_KEY).
-  const sharedAt = (env.now ?? Date.now)()
-  await env.cache?.put(GALLERY_SHARED_KEY, { at: sharedAt, body: null }, GALLERY_CACHE_SECONDS).catch(() => undefined)
-  await env.cache?.put(GALLERY_CACHE_KEY, { at: sharedAt, body: null }, GALLERY_CACHE_SECONDS).catch(() => undefined)
+  await markShared()
   return reply(200, { ok: true })
 }

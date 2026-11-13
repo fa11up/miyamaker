@@ -56,15 +56,20 @@ function num(v, min, max) {
 
 /* C0 and C1 controls (a newline stays), the Arabic letter mark, zero-width characters and marks, the line and
    paragraph separators, bidi embeddings, overrides and isolates, the word joiner and invisible operators, the
-   byte-order mark and the tag characters (U+E0000-E007F, invisible text): none of them is something a legend or a name
-   needs, and the bidi ones can make text read in a different order than it is stored. */
+   byte-order mark and the language tags (U+E0000/E0001); tag letters (U+E0020-E007F) only where they spell a flag
+   (🏴 + letters + cancel, as England's), since alone they are invisible text. None of the rest is something a legend
+   or a name needs, and the bidi ones can make text read in a different order than it is stored. */
 const HIDDEN_CHARS =
   /[\u0000-\u0009\u000b-\u001f\u007f-\u009f\u061c\u200b-\u200f\u2028\u2029\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff\u{e0000}\u{e0001}]/gu;
 
 /** Text a person typed, cut to `max` characters, with control, bidi and zero-width characters taken out. */
 export function cleanText(v, max) {
   if (typeof v !== 'string') return undefined;
-  return v.replace(HIDDEN_CHARS, '').slice(0, max);
+  return v
+    .replace(HIDDEN_CHARS, '')
+    // Tag letters stay only inside a flag sequence; elsewhere they are invisible text and go.
+    .replace(/(\u{1f3f4}[\u{e0020}-\u{e007e}]+\u{e007f})|[\u{e0020}-\u{e007f}]/gu, (m, flag) => flag || '')
+    .slice(0, max);
 }
 
 /** A colour, or null where the build may say "use the default" (case, plate, switch tints). */

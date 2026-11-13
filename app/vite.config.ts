@@ -383,6 +383,8 @@ function miyakeysDevOpen(url: string, prefix: string): boolean {
   } catch {
     return false
   }
+  // Vite reads //vite/ and /%2Fvite/ as /vite/: repeated slashes are folded before anything is judged.
+  pathname = pathname.replace(/\/{2,}/g, '/')
   if (pathname.includes('\\') || pathname.includes('\0') || pathname.split('/').some((seg) => seg === '.' || seg === '..')) return false
   // Vite writes its WebSocket token into its own client files (vite/dist/client/*) whatever URL serves them, so the
   // vite package is never opened, by /node_modules or by /@fs.

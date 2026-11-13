@@ -551,3 +551,26 @@ test('GET: a cached copy saved before the latest share is not served', async () 
   assert.deepEqual(got.templates.map((t) => t.id), ['old', 'new'])
   assert.equal(reads, 1, 'went upstream instead of serving the older copy')
 })
+
+test('POST: when a share may have gone through (5xx, timeout), the next Gallery reads afresh', async () => {
+  let now = 12_000_000
+  const clock = () => now
+  for (const fail of ['500', 'timeout'] as const) {
+    const cache = memoryCache(clock)
+    await cache.put('miyakeys-gallery', { at: now, body: { templates: [entry('old')] } }, GALLERY_CACHE_SECONDS)
+    const hang: typeof fetch = ((_: unknown, init?: RequestInit) =>
+      new Promise((_r, reject) => init?.signal?.addEventListener('abort', () => reject(init.signal!.reason)))) as typeof fetch
+    const fetchImpl = fail === '500' ? upstream(() => new Response('', { status: 500 })) : hang
+    await handleMiyakeysGallery(post(JSON.stringify({ name: 'x', snap })), { ...open, now: clock, cache, fetchImpl, timeoutMs: 30 })
+    now += 1000
+    let reads = 0
+    const got = await handleMiyakeysGallery(get(), {
+      ...open,
+      now: clock,
+      cache,
+      fetchImpl: (async () => (reads++, Response.json({ templates: [entry('old'), entry('new')] }))) as typeof fetch,
+    })
+    assert.equal(got.status, 200)
+    assert.equal(reads, 1, `${fail}: the cached copy from before the share is not served`)
+  }
+})

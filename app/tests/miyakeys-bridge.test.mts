@@ -254,6 +254,12 @@ test("dev opens only the embed's files and packages to Origin null: never /@vite
     '/node_modules/Vite/dist/client/client.mjs',
     '/@fs/Users/me/app/node_modules/vite/dist/client/client.mjs',
     '/node_modules/@vitejs/plugin-react/dist/refresh-runtime.js',
+    // Repeated slashes: Vite folds them, so must the check.
+    '/node_modules//vite/dist/client/client.mjs',
+    '/node_modules///vite/dist/client/client.mjs',
+    '/node_modules/%2Fvite/dist/client/client.mjs',
+    '/@fs/Users/me/app/node_modules//vite/dist/client/client.mjs',
+    '/node_modules//%2e%2e//src/main.tsx',
   ])
     assert.equal(devOpen(url, P), false, url)
 

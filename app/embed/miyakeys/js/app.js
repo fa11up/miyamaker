@@ -48,6 +48,8 @@ const MOBILE_MQ = '(max-width: 768px), ((pointer: coarse) and (max-width: 1024px
    (shrinker.js acceptCarry). The #hash gets the build without key images as a fallback, short enough for any browser.
    Undo history does not survive the reload, and the page says so. */
 const NONCE_KEY = 'miyakeysCarryNonce';
+const CARRIED_KEY = 'miyakeys:carried';
+const LOST_BUILDS_KEY = 'miyakeys:lostBuilds';
 
 /** The nonce kept for a carry: a string, null when none was kept, undefined when this page has no session storage. */
 function keptNonce(keep) {
@@ -74,13 +76,19 @@ function carryAcrossReload(savedBuilds) {
   if (name.length > MAX_CARRY)
     name = carryName(nonce, {
       build: validBuild(build, { images: false }) || {},
-      savedBuilds: savedBuilds.map(({ img: _img, ...b }) => b),
+      /* Each saved build's own snap holds its key images too, not only its thumbnail. */
+      savedBuilds: savedBuilds.map((b) => ({ name: b.name, layout: b.layout, snap: validBuild(b.snap, { images: false }) || {} })),
       imagesLeftOut: true,
     });
+  /* Read after the reload: the hash then stands for a build carried without its key images (an F5 on a link is not). */
+  try { sessionStorage.setItem(CARRIED_KEY, '1'); } catch { /* no storage in the sandboxed frame */ }
   try {
     window.name = name.length > MAX_CARRY ? '' : name;
   } catch {
     /* too big to keep: the hash has the build without its images */
+  }
+  if (name.length > MAX_CARRY) {
+    try { sessionStorage.setItem(LOST_BUILDS_KEY, savedBuilds.length ? '1' : ''); } catch { /* no storage */ }
   }
 }
 
@@ -202,9 +210,12 @@ export function mountModkeys() {
         } catch { /* no words: the copy below */ }
       }
       /* A 502 may mean the gallery took it (the Worker says so): only a 429 or 503 is surely "not shared". */
+      if (said && res.status === 502 && !/shared/i.test(said))
+        return { ok: false, message: said + ' Your build may or may not have been shared. Check the Gallery before sharing it again.' };
       if (said) return { ok: false, message: res.status === 502 ? said : 'Not shared. ' + said };
       if (res.status === 429) return { ok: false, message: 'Too many shares just now: not shared. Try again in a minute.' };
       if (res.status === 503) return { ok: false, message: 'Sharing is paused just now: not shared. Try again later.' };
+      if (res.status >= 500) return { ok: false, message: 'The gallery had a problem: your build may or may not have been shared. Check the Gallery before sharing it again.' };
       return { ok: false, message: 'The gallery turned it down: not shared.' };
     } finally {
       sharing = false;
@@ -750,10 +761,20 @@ export function mountModkeys() {
         const hashData = loadHash();
         if (hashData) {
           loadSnap(hashData, { selectedPreset: null });
-          /* After a size-change reload the hash is the build without its key images: say so, carry or not. */
-          let reloaded = false;
-          try { reloaded = performance.getEntriesByType('navigation')[0]?.type === 'reload'; } catch { /* unknown */ }
-          if (carry || reloaded) toast('Your build was kept, without its key images. Undo history starts over after the window changes size.');
+          /* After a size-change reload the hash is the build without its key images: say so, carry or not (where this
+             page has storage, only when it wrote that hash itself; an F5 on a shared link is not a carry). */
+          let carriedHere = false;
+          let lostBuilds = false;
+          try {
+            carriedHere = sessionStorage.getItem(CARRIED_KEY) === '1';
+            lostBuilds = sessionStorage.getItem(LOST_BUILDS_KEY) === '1';
+          } catch {
+            try { carriedHere = performance.getEntriesByType('navigation')[0]?.type === 'reload'; } catch { /* unknown */ }
+          }
+          if (carry || carriedHere)
+            toast(lostBuilds
+              ? 'Your build was kept, without its key images. Your builds were too big to keep across the size change.'
+              : 'Your build was kept, without its key images. Undo history starts over after the window changes size.');
         } else toast('That shared build could not be opened');
       } catch (e) {
         console.error(e);
@@ -762,6 +783,7 @@ export function mountModkeys() {
     }
     resetHistory(stateSlice());
     booted = true;
+    try { sessionStorage.removeItem(CARRIED_KEY); sessionStorage.removeItem(LOST_BUILDS_KEY); } catch { /* no storage */ }
     openHostBuild();
     /* populate featured builds carousel (desktop shell only); pictures arrive from genThumbs */
     const buildsEl = document.getElementById('builds');

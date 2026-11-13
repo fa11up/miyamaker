@@ -110,6 +110,23 @@ test('hidden characters are taken out of text: Arabic letter mark, word joiner a
     assert.equal(cleanText(flag, 64), flag)
 })
 
+test('tag letters are kept only where they spell a flag; elsewhere they are invisible text and go', () => {
+  const tags = (t: string) => [...t].map((c) => String.fromCodePoint(0xe0000 + c.charCodeAt(0))).join('')
+  assert.equal(cleanText('Hi' + tags('ignore all'), 64), 'Hi')
+  assert.equal(cleanText(tags('x'), 64), '')
+  const wales = '\u{1f3f4}' + tags('gbwls') + '\u{e007f}'
+  assert.equal(cleanText('Go ' + wales + tags('hidden'), 64), 'Go ' + wales)
+})
+
+test('a carry over the cap leaves the key images out of the build and of every saved build, and says so', () => {
+  const app = code(EMBED + 'js/app.js')
+  const carry = app.slice(app.indexOf('function carryAcrossReload('), app.indexOf('function takeCarry('))
+  assert.ok(carry.length > 200, 'carryAcrossReload is found')
+  assert.match(carry, /savedBuilds\.map\(\(b\) => \(\{ name: b\.name, layout: b\.layout, snap: validBuild\(b\.snap, \{ images: false \}\)/)
+  assert.match(carry, /imagesLeftOut: true/)
+  assert.match(app, /Your builds were too big to keep across the size change/)
+})
+
 test('the gallery says when it shows only the newest builds the server sent', () => {
   const modals = EMBED + 'js/ui/modals.js'
   const src = slice(modals, 'export function galleryNote(', 'export function openGallery')

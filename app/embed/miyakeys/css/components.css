@@ -887,6 +887,7 @@
 }
 .keToggle.on span {
   transform: translateX(18px);
+  background: var(--chipAtx);
 }
 .keFile {
   flex: 1;
