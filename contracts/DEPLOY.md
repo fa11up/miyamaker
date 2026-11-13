@@ -22,13 +22,10 @@ range. Other chains have no INFER/IMD config (mainnet only).
   `origin/main`. The Solidity script refuses `--broadcast` unless `deploy.sh` set `DEPLOY_GIT_COMMIT`, and writes that
   commit (`gitCommit`, `gitRef`) and the `chainId` into `deployments/<chainId>.json`. That file is the record of which
   source is on chain: verify against that commit.
-- **Ship the app that matches these ABIs in the same release.** `deploy/live` still carries an older app whose
-  hand-written ABIs don't match these contracts: `createDrop` with 9 params (no `ownerReserve`), `Phase` without
-  `supplyCap` (`setPhases`, `phases()`), and `MiyaPool.commits` read as `snapshot` where the contract returns `queueEnd`
-  (and no escrow / `nextRevealId`). Calls from that app would revert or misread. Merge the app from `main` to
-  `deploy/live` together with the deployment.
-- **Don't set `VITE_*` addresses on `deploy/live`** (and don't commit `deployments/<chainId>.json` to it) before its
-  app matches. `app/tests/abi-drift.test.mts` (`yarn test`) must pass on the branch being released.
+- **Ship the app that matches these ABIs in the same release.** The site is deployed from `main` (`yarn deploy` in
+  `app/`), and its hand-written ABIs must match what is on chain: deploy the app from the same `main` right after the
+  contracts, not before. `app/tests/abi-drift.test.mts` (`yarn test`) must pass on that commit. (The old `deploy/live`
+  branch, with an app whose ABIs predate these contracts, was deleted on 2026-11-13.)
 - **The compiler is pinned to solc 0.8.28** (`foundry.toml`, default and deploy profiles). The real `PoolManager` is
   exercised on a mainnet fork (`test/fork/`, `test/deploy/`), not against a locally compiled v4-core.
 
