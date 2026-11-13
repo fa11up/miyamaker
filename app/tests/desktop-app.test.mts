@@ -51,12 +51,15 @@ test('the packaged app ships serve.js and reads the generated icon', () => {
   assert.equal(pkg.build.icon, 'build/generated/icon.png')
 })
 
-test('entitlements keep only JIT and the microphone', () => {
+// Ad-hoc signing has no Team ID, so without disable-library-validation the packaged app cannot load its own
+// Electron Framework and will not launch (1.0.1 was caught by this before release).
+test('entitlements keep only JIT, the microphone, and loading its own framework', () => {
   for (const name of ['entitlements.mac.plist', 'entitlements.mac.inherit.plist']) {
     const plist = readFileSync(new URL('build/' + name, DESKTOP), 'utf8')
     assert.match(plist, /com\.apple\.security\.cs\.allow-jit/)
     assert.match(plist, /com\.apple\.security\.device\.audio-input/)
-    assert.doesNotMatch(plist, /allow-unsigned-executable-memory|disable-library-validation|security\.network\./)
+    assert.match(plist, /com\.apple\.security\.cs\.disable-library-validation/)
+    assert.doesNotMatch(plist, /allow-unsigned-executable-memory|security\.network\./)
   }
 })
 

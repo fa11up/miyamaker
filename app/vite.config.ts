@@ -531,8 +531,14 @@ function publicAccessDevProxy(): Plugin {
   }
 }
 
+/** The desktop program's version, from its own package.json. The MiyaOS corner shows it inside the program. */
+const MMM_VERSION: string = JSON.parse(
+  fs.readFileSync(path.resolve(__dirname, '../desktop/miyamusicmaker/package.json'), 'utf8')
+).version
+
 export default defineConfig(({ mode }) => ({
   base: '/',
+  define: { __MMM_VERSION__: JSON.stringify(MMM_VERSION) },
   plugins: [
     rpcDevProxy(loadEnv(mode, __dirname, ['RPC_URL_', 'ALCHEMY_API_KEY'])),
     layersDevProxy(),

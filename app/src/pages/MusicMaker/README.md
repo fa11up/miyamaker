@@ -8,7 +8,7 @@ It is a drum machine, a little keyboard, and a pattern writer that live in the b
 
 You do not need to read music. You do not need a controller. The computer keyboard is enough to finish a song. A Launchpad, an MPC, an MPD, an MPK, or almost any other USB MIDI controller can play it too.
 
-Version 1.0.0 also runs as its own program. On a Mac, download the GitHub release `MiyaMusicMaker-v1.0.0`, unzip it, and the first time right-click the app and choose Open. Windows and Linux build from the same source. The steps are in [the desktop guide](../../../../desktop/miyamusicmaker/README.md).
+MiyaMusicMaker also runs as its own program. On a Mac, download the newest MiyaMusicMaker release from GitHub and unzip it. macOS asks you to allow it the first time. Windows and Linux build from the same source. The steps are in [the desktop guide](../../../../desktop/miyamusicmaker/README.md).
 
 ## What the pages are
 
