@@ -5,10 +5,12 @@
  * `node --test` loads it directly (tests/pool-batch.test.mts); the small ABI below is checked against abi.ts there,
  * and abi.ts is checked against the contracts by tests/abi-drift.test.mts.
  *
- * How a pool trade works (contracts/src/pools/MiyaPool.sol): every NFT (or ERC-1155 unit) in a pool backs exactly
- * 1e18 pool tokens. There are no fees. A batch is "one transaction per pool":
+ * How a pool trade works (contracts/src/pools/MiyaPool.sol, v2: one pool per collection): every NFT (or ERC-1155
+ * unit) in a pool backs exactly 1e18 pool tokens. Selling in and random draws cost nothing more. Picking chosen ids
+ * also pays the pool's pick fee per NFT in IMD or INFER (none when both are 0), which goes to the alignment vault.
+ * A batch is "one transaction per pool":
  *
- *   SELL (any mode)
+ *   SELL
  *     ERC-1155, any number:   collection.safeBatchTransferFrom(you → pool)       1 tx, no approval
  *     ERC-721, one:           collection.safeTransferFrom(you → pool)            1 tx, no approval
  *     ERC-721, several:       collection.setApprovalForAll(pool, true)           its own press, only if not yet allowed
@@ -18,12 +20,15 @@
  *     You receive 1 pool token per unit, minted to you. Turning those into ETH is a separate 0x swap on the Tokens
  *     tab, a second transaction, priced then. This module does not plan it.
  *
- *   BUY, TARGETED pool (pick ids)
+ *   BUY, PICK (chosen ids)
  *     [get tokens]            you need units × 1 pool token; any shortfall is bought with a 0x swap on the Tokens
  *                             tab first: a separate transaction (plus an ERC-20 approval if paying with a token)
- *     pool.redeem(ids, amounts, you)                                              1 tx; burns from you, no allowance
+ *     [fee approval]          IMD or INFER approve(pool, fee × units), exactly that, only if not yet allowed
+ *     pool.redeem(ids, amounts, you, feeToken)                                    1 tx; burns 1 pool token per NFT
+ *                             and takes the fee (feeToken = address(0) when picks are free). An ERC-721 id an open
+ *                             random draw could pick is locked (isLocked) and can't be picked until it is revealed.
  *
- *   BUY, RANDOM pool (ERC-721 only; a batch is "N random NFTs", ids cannot be chosen)
+ *   BUY, RANDOM (ERC-721 pools with randomEnabled; a batch is "N random NFTs", ids cannot be chosen, no fee)
  *     [get tokens]            as above
  *     pool.commitRedeem(N, you)                                                   1 tx; pays now, N ≤ 50
  *     pool.revealRedeem(id) for every older unsettled draw, then for yours        1 tx each, at least one block
@@ -49,14 +54,13 @@ export const MAX_BATCH = 50
 const ZERO = '0x0000000000000000000000000000000000000000'
 const KIND_721 = 0
 const KIND_1155 = 1
-const MODE_TARGETED = 0
 /** Robinhood Chain: our collections there refuse an approved operator, so several ERC-721s go one transfer each. */
 const directSendOnly = (chainId: number) => chainId === 4663
 
 /** The pool calls and events used here. Each line is also in abi.ts poolAbi (tests/pool-batch.test.mts checks). */
 export const poolBatchAbi = parseAbi([
   'function deposit(uint256[] ids, uint256[] amounts, address to)',
-  'function redeem(uint256[] ids, uint256[] amounts, address to)',
+  'function redeem(uint256[] ids, uint256[] amounts, address to, address feeToken)',
   'function commitRedeem(uint256 amount, address to) returns (uint256 commitId)',
   'function revealRedeem(uint256 commitId)',
   'event Deposited(address indexed from, address indexed to, uint256[] ids, uint256[] amounts)',
@@ -65,7 +69,13 @@ export const poolBatchAbi = parseAbi([
   'event RedeemRearmed(uint256 indexed commitId, uint256 targetBlock)',
   'event RedeemRevealed(uint256 indexed commitId, uint256[] ids)',
   'event RedeemEscrowed(uint256 indexed commitId, address indexed recipient, uint256 id)',
-  'error WrongMode()',
+  'event PickFeePaid(address indexed by, address indexed token, uint256 amount)',
+  'error RandomUnavailable()',
+  'error LockedForRandomRedeem(uint256 id)',
+  'error NoVault()',
+  'error FeeTokenNotOffered(address token)',
+  'error FeeNotReceived()',
+  'error FeeNotForwarded()',
   'error EmptyRequest()',
   'error LengthMismatch()',
   'error NotHeld(uint256 id)',
@@ -89,6 +99,9 @@ export const collectionBatchAbi = parseAbi([
   'function safeBatchTransferFrom(address from, address to, uint256[] ids, uint256[] amounts, bytes data)',
 ])
 
+/** The pick-fee approval: IMD or INFER, spender the pool, exactly the fee. */
+export const feeTokenAbi = parseAbi(['function approve(address spender, uint256 amount) returns (bool)'])
+
 /** Transfer logs, read from receipts only. ERC-20 and ERC-721 Transfer share a topic; the log's address tells them apart. */
 const transferAbi = parseAbi(['event Transfer(address indexed from, address indexed to, uint256 value)'])
 const transfer721Abi = parseAbi(['event Transfer(address indexed from, address indexed to, uint256 indexed id)'])
@@ -100,16 +113,26 @@ const transfer1155Abi = parseAbi([
 /* ---------- types ---------- */
 
 export type PoolKindN = 0 | 1
-export type PoolModeN = 0 | 1
+export type FeeSymbol = 'IMD' | 'INFER'
 
-/** What the planner needs to know about the pool (usePool's Pool fits). */
+/** What the planner needs to know about the pool (usePool's Pool fits, plus the factory's IMD and INFER). */
 export type PoolRef = {
   address: Address
   collection: Address
   kind: PoolKindN
-  mode: PoolModeN
   symbol: string
+  /** Random draws allowed (ERC-721, not on Robinhood Chain). undefined = unknown. */
+  randomEnabled?: boolean
+  /** Pick fee per NFT in each token (token wei); 0 = not offered. undefined = unknown. */
+  imdFee?: bigint
+  inferFee?: bigint
+  /** The factory's IMD and INFER (MiyaPoolFactory.imd() / infer()). undefined = unknown. */
+  imd?: Address
+  infer?: Address
 }
+
+/** The account's balance of a fee token and what it lets the pool take. undefined = unknown. */
+export type FeeWallet = { balance?: bigint; allowance?: bigint }
 
 export type BatchItem = { id: bigint; amount?: bigint }
 
@@ -132,13 +155,17 @@ export type BuyInput = {
   pool: PoolRef
   /** Pool-token balance of the account. undefined = unknown. */
   balance: bigint | undefined
-  /** TARGETED pools: the ids wanted. */
+  /** Picks: the ids wanted. A buy with ids is a pick; one with only a count is a random draw. */
   items?: readonly BatchItem[]
-  /** TARGETED pools: units of each id the pool holds (isHeld → 1n/0n, or unitsOf), keyed by id string. */
+  /** Picks: units of each id the pool holds (isHeld → 1n/0n, or unitsOf), keyed by id string. */
   poolHeld?: Readonly<Record<string, bigint | undefined>>
-  /** RANDOM pools: how many NFTs to draw. */
+  /** Picks from a random-enabled ERC-721 pool: isLocked per id, keyed by id string. undefined = unknown. */
+  locked?: Readonly<Record<string, boolean | undefined>>
+  /** Picks with a fee: the account's balance and allowance of each fee token. */
+  feeWallet?: Partial<Record<FeeSymbol, FeeWallet>>
+  /** Random draws: how many NFTs to draw. */
   count?: number
-  /** RANDOM pools: NFTs not promised to an open draw (heldUnits − pendingUnits); undefined = unknown. */
+  /** Random draws: NFTs not promised to an open draw (heldUnits − pendingUnits); undefined = unknown. */
   free?: bigint
 }
 
@@ -152,6 +179,7 @@ export type ExcludeReason =
   | 'too-many'
   | 'random-pool'
   | 'not-enough-free'
+  | 'locked'
 
 export type Excluded = { id?: bigint; amount?: bigint; reason: ExcludeReason; words: string }
 
@@ -159,6 +187,7 @@ export type Line = { id: bigint; amount: bigint; tokens: bigint; words: string }
 
 export type Call = { to: Address; data: Hex; value: bigint }
 
+/** 'approve' is setApprovalForAll on a sell, or the pick-fee approval on a buy: either way its own press first. */
 export type StepKey = 'approve' | 'send' | 'deposit' | 'get-tokens' | 'redeem' | 'commit' | 'reveal'
 
 export type PoolStep = {
@@ -183,8 +212,10 @@ export type PoolBatchPlan = {
   totals: {
     /** NFTs (ERC-1155 units) in the batch. */
     units: bigint
-    /** Pool tokens (base units) received on a sell, or burned on a buy. Exactly units × 1e18: the pool has no fees. */
+    /** Pool tokens (base units) received on a sell, or burned on a buy. Exactly units × 1e18. */
     tokens: bigint
+    /** Picks: the pick fee this batch pays, in which token. Absent when picks are free or nothing is picked. */
+    fee?: { symbol: FeeSymbol; token: Address; amount: bigint }
     /** Buy: pool-token balance now; undefined when unknown. */
     have?: bigint
     /** Buy: pool tokens still to get before the redeem / commit; undefined when the balance is unknown. */
@@ -408,6 +439,23 @@ function getTokensStep(pool: PoolRef, shortfall: bigint): PoolStep {
   }
 }
 
+/** The fee tokens a pool offers, IMD first, with the fee per NFT. Undefined while either fee or token is unknown. */
+function offered(pool: PoolRef): { symbol: FeeSymbol; token: Address; fee: bigint }[] | undefined {
+  if (pool.imdFee === undefined || pool.inferFee === undefined) return undefined
+  const out: { symbol: FeeSymbol; token: Address; fee: bigint }[] = []
+  if (pool.imdFee > 0n) {
+    if (!pool.imd) return undefined
+    out.push({ symbol: 'IMD', token: pool.imd, fee: pool.imdFee })
+  }
+
+  if (pool.inferFee > 0n) {
+    if (!pool.infer) return undefined
+    out.push({ symbol: 'INFER', token: pool.infer, fee: pool.inferFee })
+  }
+
+  return out
+}
+
 function planBuy(input: BuyInput): PoolBatchPlan {
   const { pool, account } = input
   const excluded: Excluded[] = []
@@ -416,15 +464,18 @@ function planBuy(input: BuyInput): PoolBatchPlan {
   const lines: Line[] = []
   const steps: PoolStep[] = []
   let units = 0n
+  const pick = !!input.items?.length || input.count === undefined
+  let fee: PoolBatchPlan['totals']['fee']
+  let feeApprove: PoolStep | undefined
 
-  if (pool.mode === MODE_TARGETED) {
+  if (pick) {
     const unknown: bigint[] = []
+    const lockUnknown: bigint[] = []
+    const checkLocks = pool.kind === KIND_721 && pool.randomEnabled !== false
     for (const it of cleanItems(input.items ?? [], pool.kind, excluded)) {
       const there = input.poolHeld?.[key(it.id)]
-      if (there === undefined) {
-        unknown.push(it.id)
-        lines.push(lineFor(it, pool, 'buy'))
-      } else if (there < it.amount) {
+      const locked = checkLocks ? input.locked?.[key(it.id)] : false
+      if (there !== undefined && there < it.amount) {
         excluded.push({
           id: it.id,
           amount: it.amount,
@@ -432,17 +483,76 @@ function planBuy(input: BuyInput): PoolBatchPlan {
           words:
             there === 0n ? `#${it.id} is not in the pool.` : `The pool holds ${there} of #${it.id}, not ${it.amount}.`,
         })
-      } else lines.push(lineFor(it, pool, 'buy'))
+      } else if (locked === true) {
+        excluded.push({
+          id: it.id,
+          amount: it.amount,
+          reason: 'locked',
+          words: `#${it.id} could be drawn by an open random draw, so it can't be picked until that draw is revealed.`,
+        })
+      } else {
+        if (there === undefined) unknown.push(it.id)
+        if (locked === undefined) lockUnknown.push(it.id)
+        lines.push(lineFor(it, pool, 'buy'))
+      }
     }
 
     if (unknown.length) blocked = `We couldn't check that the pool holds ${unknown.map((i) => `#${i}`).join(', ')}.`
+    if (lockUnknown.length)
+      blocked ??= `We couldn't check whether an open random draw holds ${lockUnknown.map((i) => `#${i}`).join(', ')}.`
     units = lines.reduce((s, l) => s + l.amount, 0n)
+
+    const offers = offered(pool)
+    if (units > 0n) {
+      if (!offers) blocked ??= "We couldn't read this pool's pick fee."
+      else if (offers.length) {
+        const options = offers.map((o) => ({ ...o, total: o.fee * units, wallet: input.feeWallet?.[o.symbol] }))
+        const words = options.map((o) => `${tokensText(o.total)} ${o.symbol}`).join(' or ')
+        const covers = (o: (typeof options)[number]) => o.wallet?.balance !== undefined && o.wallet.balance >= o.total
+        // A token already allowed for the whole fee saves an approval; otherwise IMD first.
+        const enough =
+          options.find((o) => covers(o) && o.wallet?.allowance !== undefined && o.wallet.allowance >= o.total) ??
+          options.find(covers)
+        const unread = options.some((o) => o.wallet?.balance === undefined)
+        if (!enough) {
+          blocked ??= unread
+            ? `We couldn't read your ${options.map((o) => o.symbol).join(' or ')} balance for the pick fee.`
+            : `Picking ${plural(units, 'NFT')} costs a pick fee of ${words}, and your wallet doesn't hold enough.`
+        } else {
+          fee = { symbol: enough.symbol, token: enough.token, amount: enough.total }
+          if (enough.wallet?.allowance === undefined)
+            blocked ??= `We couldn't check what the pool may take of your ${enough.symbol}.`
+          else if (enough.wallet.allowance < enough.total)
+            feeApprove = {
+              key: 'approve',
+              title: `Allow ${tokensText(enough.total)} ${enough.symbol} for the pick fee`,
+              words: `Lets this pool take exactly ${tokensText(enough.total)} ${
+                enough.symbol
+              }, the pick fee for ${plural(
+                units,
+                'NFT'
+              )}. It goes to the alignment vault when you buy. Nothing is bought yet.`,
+              call: {
+                to: enough.token,
+                data: encodeFunctionData({
+                  abi: feeTokenAbi,
+                  functionName: 'approve',
+                  args: [pool.address, enough.total],
+                }),
+                value: 0n,
+              },
+              afterPrevious: false,
+            }
+          if (options.length > 1) notes.push(`The pick fee is ${words}; this batch pays it in ${enough.symbol}.`)
+        }
+      }
+    }
   } else {
     for (const it of input.items ?? [])
       excluded.push({
         id: it.id,
         reason: 'random-pool',
-        words: `#${it.id}: this pool picks NFTs at random, so ids can't be chosen. Ask for a number instead.`,
+        words: `#${it.id}: a random draw picks NFTs at random, so ids can't be chosen. Pick them instead.`,
       })
     let n = BigInt(Math.max(0, Math.floor(input.count ?? 0)))
     if (n > BigInt(MAX_DRAW)) {
@@ -454,7 +564,9 @@ function planBuy(input: BuyInput): PoolBatchPlan {
       n = BigInt(MAX_DRAW)
     }
 
-    if (input.free === undefined) blocked = "We couldn't read how many NFTs are free to draw."
+    if (pool.randomEnabled === undefined) blocked = "We couldn't check whether this pool does random draws."
+    else if (!pool.randomEnabled) blocked = "This pool doesn't do random draws. Pick the NFTs instead."
+    else if (input.free === undefined) blocked = "We couldn't read how many NFTs are free to draw."
     else if (n > input.free) {
       excluded.push({
         amount: n - input.free,
@@ -477,20 +589,21 @@ function planBuy(input: BuyInput): PoolBatchPlan {
 
   if (units > 0n) {
     if (shortfall && shortfall > 0n) steps.push(getTokensStep(pool, shortfall))
-    if (pool.mode === MODE_TARGETED) {
+    if (pick) {
+      if (feeApprove) steps.push(feeApprove)
       const ids = lines.map((l) => l.id)
       steps.push({
         key: 'redeem',
         title: `Buy ${plural(units, 'NFT')}`,
-        words: `Burns ${tokensText(tokens)} ${pool.symbol} from your wallet and sends ${ids
-          .map((i) => `#${i}`)
-          .join(', ')} to you, all or nothing. No fee, no approval.`,
+        words: `Burns ${tokensText(tokens)} ${pool.symbol} from your wallet${
+          fee ? ` and takes the ${tokensText(fee.amount)} ${fee.symbol} pick fee` : ''
+        }, and sends ${ids.map((i) => `#${i}`).join(', ')} to you, all or nothing.${fee ? '' : ' No pick fee.'}`,
         call: {
           to: pool.address,
           data: encodeFunctionData({
             abi: poolBatchAbi,
             functionName: 'redeem',
-            args: [ids, lines.map((l) => l.amount), account],
+            args: [ids, lines.map((l) => l.amount), account, fee ? fee.token : ZERO],
           }),
           value: 0n,
         },
@@ -502,7 +615,7 @@ function planBuy(input: BuyInput): PoolBatchPlan {
         title: `Pay for ${plural(units, 'random NFT')}`,
         words: `Step 1: burns ${tokensText(tokens)} ${
           pool.symbol
-        } now. A block mined after this one picks which ${plural(units, 'NFT')} you get.`,
+        } now, no pick fee. A block mined after this one picks which ${plural(units, 'NFT')} you get.`,
         call: {
           to: pool.address,
           data: encodeFunctionData({ abi: poolBatchAbi, functionName: 'commitRedeem', args: [units, account] }),
@@ -529,13 +642,13 @@ function planBuy(input: BuyInput): PoolBatchPlan {
     account,
     lines,
     excluded,
-    totals: { units, tokens, have, shortfall },
+    totals: { units, tokens, have, shortfall, fee },
     steps,
     transactions: countTxs(steps),
     receive:
       units === 0n
         ? 'Nothing.'
-        : pool.mode === MODE_TARGETED
+        : pick
         ? `${lines
             .map((l) => (pool.kind === KIND_1155 ? `${l.amount} × #${l.id}` : `#${l.id}`))
             .join(', ')}, sent to your wallet.`
@@ -580,16 +693,18 @@ export type CheckResult = { ok: boolean; problems: string[]; notes: string[] }
 
 /**
  * Decode every call in the plan and confirm it can only send NFTs or pool tokens to `account`, carries no ETH, and
- * talks only to this pool or its collection. A revealRedeem has no recipient argument (it was fixed at commit), so it
+ * talks only to this pool, its collection, or IMD / INFER (only to let this pool take the pick fee). A revealRedeem has no recipient argument (it was fixed at commit), so it
  * passes with a note.
  */
 export function checkPoolCalls(
   calls: readonly (Call | undefined)[],
-  ctx: { account: Address; pool: PoolRef }
+  ctx: { account: Address; pool: PoolRef; totals?: { fee?: { token: Address; amount: bigint } } }
 ): CheckResult {
   const { account, pool } = ctx
+  const fee = ctx.totals?.fee
   const problems: string[] = []
   const notes: string[] = []
+  const isFeeToken = (a: string) => (!!pool.imd && same(a, pool.imd)) || (!!pool.infer && same(a, pool.infer))
   const mintsTo = (data: Hex, from: string, where: string) => {
     // MiyaPool._recipient: 32 bytes of data name the recipient; anything else means `from`.
     if (data === '0x') {
@@ -624,6 +739,8 @@ export function checkPoolCalls(
       else {
         const to = d.functionName === 'commitRedeem' ? d.args[1] : d.args[2]
         if (!same(to, account)) problems.push(`${where}: ${d.functionName} sends to ${to}, not you.`)
+        if (d.functionName === 'redeem' && !same(d.args[3], ZERO) && !isFeeToken(d.args[3]))
+          problems.push(`${where}: pays its pick fee in ${d.args[3]}, which is neither IMD nor INFER.`)
       }
     } else if (same(call.to, pool.collection)) {
       let d: ReturnType<typeof decodeFunctionData<typeof collectionBatchAbi>>
@@ -642,9 +759,45 @@ export function checkPoolCalls(
         if (!same(to, pool.address)) problems.push(`${where}: sends NFTs to ${to}, not the pool.`)
         mintsTo(d.functionName === 'safeTransferFrom' ? d.args[3] : d.args[4], from, where)
       }
-    } else problems.push(`${where} calls ${call.to}, which is neither the pool nor its collection.`)
+    } else if (isFeeToken(call.to)) {
+      let d: ReturnType<typeof decodeFunctionData<typeof feeTokenAbi>>
+      try {
+        d = decodeFunctionData({ abi: feeTokenAbi, data: call.data })
+      } catch {
+        problems.push(`${where}: not a fee approval we know.`)
+        return
+      }
+
+      if (!same(d.args[0], pool.address))
+        problems.push(`${where}: lets ${d.args[0]} spend your fee token, not the pool.`)
+      // With a plan in hand, the approval is exactly this batch's pick fee in its token, never more.
+      else if (fee && (!same(call.to, fee.token) || d.args[1] !== fee.amount))
+        problems.push(`${where}: approves ${d.args[1]} of ${call.to}, not this batch's pick fee.`)
+    } else problems.push(`${where} calls ${call.to}, which is not the pool, its collection or a fee token.`)
   })
   return { ok: problems.length === 0, problems, notes }
+}
+
+/**
+ * A planned call as a contract write ({ address, abi, functionName, args }), the shape useTx.run simulates and sends.
+ * Decoded with the one ABI its target takes (the pool, its collection, or a fee token); undefined when it is none of them.
+ */
+export function contractCall(call: Call, pool: PoolRef) {
+  const isFee = (!!pool.imd && same(call.to, pool.imd)) || (!!pool.infer && same(call.to, pool.infer))
+  const abi = same(call.to, pool.address)
+    ? poolBatchAbi
+    : same(call.to, pool.collection)
+    ? collectionBatchAbi
+    : isFee
+    ? feeTokenAbi
+    : undefined
+  if (!abi) return undefined
+  try {
+    const d = decodeFunctionData({ abi: abi as typeof poolBatchAbi, data: call.data })
+    return { address: call.to, abi, functionName: d.functionName, args: d.args, value: call.value }
+  } catch {
+    return undefined
+  }
 }
 
 /* ---------- simulation ---------- */
@@ -685,8 +838,16 @@ export function explainPoolError(error: unknown, symbol = 'pool tokens'): string
         return 'Too early to reveal: wait for the next block.'
       case 'NotNextCommit':
         return 'An older draw must be revealed first.'
-      case 'WrongMode':
-        return "This pool doesn't allow that kind of buy."
+      case 'RandomUnavailable':
+        return "This pool doesn't do random draws."
+      case 'LockedForRandomRedeem':
+        return `#${d.args[0]} could be drawn by an open random draw. Take it out and try again once that draw is revealed.`
+      case 'FeeTokenNotOffered':
+        return "The pool doesn't take its pick fee in that token now. Review again."
+      case 'NoVault':
+      case 'FeeNotReceived':
+      case 'FeeNotForwarded':
+        return `The pool couldn't take the pick fee (${d.errorName}). Nothing was bought.`
       case 'TransferNotReceived':
         return `The collection did not hand over #${d.args[0]}.`
       default:
@@ -748,6 +909,8 @@ export type ReceiptReading = {
   commit?: { commitId: bigint; amount: bigint; targetBlock: bigint }
   /** Reveals: ids the draw picked, and which of those the pool escrowed instead of sending. */
   revealed?: { commitId: bigint; ids: bigint[]; escrowed: bigint[]; rearmed: boolean }
+  /** Picks: the pick fee the pool's PickFeePaid event says you paid. */
+  feePaid?: { token: Address; amount: bigint }
   words: string
 }
 
@@ -810,8 +973,11 @@ export function readPoolReceipt(
   const add = (m: Map<string, bigint>, id: bigint, n: bigint) => m.set(key(id), (m.get(key(id)) ?? 0n) + n)
   let commit: ReceiptReading['commit']
   let revealed: ReceiptReading['revealed']
+  let feePaid: ReceiptReading['feePaid']
   for (const e of events) {
-    if (e.eventName === 'Deposited' && same(e.args.to, account))
+    if (e.eventName === 'PickFeePaid' && same(e.args.by, account))
+      feePaid = { token: e.args.token, amount: (feePaid?.amount ?? 0n) + e.args.amount }
+    else if (e.eventName === 'Deposited' && same(e.args.to, account))
       e.args.ids.forEach((id, i) => add(sold, id, e.args.amounts[i] ?? 0n))
     else if (e.eventName === 'Redeemed' && same(e.args.to, account))
       e.args.ids.forEach((id, i) => add(bought, id, e.args.amounts[i] ?? 0n))
@@ -850,6 +1016,16 @@ export function readPoolReceipt(
   const parts: string[] = []
   if (tokensMinted) parts.push(`You received ${tokensText(tokensMinted)} ${pool.symbol}.`)
   if (tokensBurned) parts.push(`${tokensText(tokensBurned)} ${pool.symbol} was spent.`)
+  if (feePaid) {
+    const sym =
+      pool.imd && same(feePaid.token, pool.imd)
+        ? 'IMD'
+        : pool.infer && same(feePaid.token, pool.infer)
+        ? 'INFER'
+        : 'fee token'
+    parts.push(`Pick fee paid: ${tokensText(feePaid.amount)} ${sym}, to the alignment vault.`)
+  }
+
   if (commit)
     parts.push(
       `Your draw #${commit.commitId} for ${plural(commit.amount, 'NFT')} is open; reveal it after block ${
@@ -871,5 +1047,14 @@ export function readPoolReceipt(
 
   const missing = items.filter((i) => i.status === 'missing')
   if (missing.length) parts.push(`Not shown in this transaction: ${missing.map((i) => `#${i.id}`).join(', ')}.`)
-  return { ok: true, items, tokensMinted, tokensBurned, commit, revealed, words: parts.join(' ') || 'Confirmed.' }
+  return {
+    ok: true,
+    items,
+    tokensMinted,
+    tokensBurned,
+    commit,
+    revealed,
+    feePaid,
+    words: parts.join(' ') || 'Confirmed.',
+  }
 }

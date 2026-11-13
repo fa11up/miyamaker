@@ -43,11 +43,18 @@ const FRIENDLY: Record<string, string> = {
   AlreadyHeld: 'The pool already holds that NFT.',
   RevealGasTooLow: 'The wallet set the network fee limit too low for this reveal. Raise it and try again.',
   SettlementGasTooLow: 'The wallet set the network fee limit too low to settle this auction. Raise it and try again.',
-  WrongMode: 'This pool does not work that way. Reload the pool.',
   TransferNotReceived: 'The NFT did not arrive in the pool.',
-  PoolExists: 'A pool for this collection and mode already exists.',
+  PoolExists: 'This collection already has a pool. Reload to open it.',
   UnsupportedCollection: 'That address is not an ERC-721 or ERC-1155 collection.',
-  RandomRequiresERC721: 'Random pools work only for ERC-721 collections.',
+  RandomUnavailable: 'This pool has no random buys (ERC-1155, or Robinhood Chain). Pick the NFT you want instead.',
+  LockedForRandomRedeem:
+    'A random draw is waiting to be revealed, and that NFT could be in it. Reveal the draw first, or pick another NFT.',
+  NoVault: 'This network has no alignment vault yet, so pick fees must be 0.',
+  FeeBelowVaultMinimum: 'A pick fee is below the least amount the vault takes in that token. Raise it, or set it to 0.',
+  FeeTokenNotAccepted: 'The vault does not take that token right now, so it cannot be a pick fee. Set it to 0.',
+  FeeTokenNotOffered: 'This pool does not take its pick fee in that token. Choose the other one.',
+  FeeNotReceived: 'The pick fee did not arrive in full, so the pick did not go through.',
+  FeeNotForwarded: 'The vault did not take the pick fee, so the pick did not go through. Try again later.',
 }
 
 /** The contract's own error name in a viem error (`ExceedsMaxCost`), or undefined. */

@@ -37,10 +37,6 @@ const Row = styled.li`
     font-size: ${text.xs};
     color: ${color.inkMuted};
   }
-  .fees.free {
-    color: ${color.success};
-    font-weight: 700;
-  }
   .facts {
     display: flex;
     flex-wrap: wrap;
@@ -105,7 +101,7 @@ export function VenueRow({
   children,
 }: {
   venue: Venue
-  /** e.g. "MiyaPool · Pick" */
+  /** Shown in place of the venue name. */
   label?: string
   facts?: { label: string; value: string }[]
   note?: ReactNode
@@ -115,7 +111,7 @@ export function VenueRow({
     <Row data-venue={venue.id}>
       <div className="top">
         <span className="name">{label || venue.name}</span>
-        <span className={venue.id === 'miyapool' ? 'fees free' : 'fees'}>{venue.fees}</span>
+        <span className="fees">{venue.fees}</span>
       </div>
       {facts && facts.length > 0 && (
         <dl className="facts">

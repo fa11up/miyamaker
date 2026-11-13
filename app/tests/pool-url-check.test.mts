@@ -1,5 +1,5 @@
 // A pool page opened from a link shows only a pool this chain's factory made (src/pages/Swap/nft/pool.ts
-// factoryMadePool, used by usePools.usePool). Any other contract that answers collection() and mode() could otherwise
+// factoryMadePool, used by usePools.usePool). Any other contract that answers collection() and kind() could otherwise
 // ask for setApprovalForAll over a whole collection. Run: yarn test
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'

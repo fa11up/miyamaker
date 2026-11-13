@@ -1,5 +1,5 @@
-// Batched MiyaPool orders: src/pages/Swap/nft/poolBatch.ts (plans, call encoding, the recipient checker, simulation
-// words, receipt reading). Offline. The same calls run on the real contract in contracts/test/pools/MiyaPoolBatch.t.sol.
+// Batched MiyaPool orders (v2 pools: pick fee in IMD/INFER, random draws where enabled): src/pages/Swap/nft/poolBatch.ts
+// (plans, call encoding, the recipient checker, simulation words, receipt reading). Offline. The same calls run on the real contract in contracts/test/pools/MiyaPoolBatch.t.sol.
 // Run: yarn test
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
@@ -22,7 +22,9 @@ import { erc721Abi, erc1155Abi, poolAbi } from '../src/pages/Swap/nft/abi.ts'
 import {
   checkPoolCalls,
   collectionBatchAbi,
+  contractCall,
   explainPoolError,
+  feeTokenAbi,
   MAX_DRAW,
   planPoolBatch,
   POOL_UNIT,
@@ -38,9 +40,23 @@ const EVE = getAddress('0x000000000000000000000000000000000000e5e5')
 const POOL = '0x1111111111111111111111111111111111111111' as Address
 const NFT = '0x2222222222222222222222222222222222222222' as Address
 const ZERO = '0x0000000000000000000000000000000000000000' as Address
+const IMD = getAddress('0x0000000000000000000000000000000000001md0'.replace('md', 'a1'))
+const INFER = getAddress('0x0000000000000000000000000000000000000f00')
 
-const p721 = (mode: 0 | 1 = 0): PoolRef => ({ address: POOL, collection: NFT, kind: 0, mode, symbol: 'mMINI' })
-const p1155: PoolRef = { address: POOL, collection: NFT, kind: 1, mode: 0, symbol: 'mED' }
+/** A v2 pool. Picks are free unless fees are given; random draws only when `random`. */
+const p721 = (random = false, fees: { imdFee?: bigint; inferFee?: bigint } = {}): PoolRef => ({
+  address: POOL,
+  collection: NFT,
+  kind: 0,
+  symbol: 'mMINI',
+  randomEnabled: random,
+  imdFee: fees.imdFee ?? 0n,
+  inferFee: fees.inferFee ?? 0n,
+  imd: IMD,
+  infer: INFER,
+})
+const p1155: PoolRef = { address: POOL, collection: NFT, kind: 1, symbol: 'mED', randomEnabled: false, imdFee: 0n, inferFee: 0n, imd: IMD, infer: INFER }
+const E18 = 10n ** 18n
 const held = (...ids: number[]) => Object.fromEntries(ids.map((i) => [String(i), 1n]))
 
 /* ---------- ABI ---------- */
@@ -180,8 +196,10 @@ test('buy several ids from a pick pool: one redeem to you, exact token cost, no 
   assert.equal(plan.totals.shortfall, 0n)
   const d = decodeFunctionData({ abi: poolBatchAbi, data: plan.steps[0]!.call!.data })
   assert.equal(d.functionName, 'redeem')
-  assert.deepEqual(d.args, [[2n, 8n], [1n, 1n], ME])
+  assert.deepEqual(d.args, [[2n, 8n], [1n, 1n], ME, ZERO])
   assert.match(plan.receive, /#2, #8/)
+  assert.match(plan.steps[0]!.words, /No pick fee/)
+  assert.equal(plan.totals.fee, undefined)
 })
 
 test('buy with too few pool tokens: a separate get-tokens step for exactly the shortfall, then the redeem', () => {
@@ -216,7 +234,7 @@ test('ERC-1155 buy: amounts per id, cost is the unit sum', () => {
   assert.deepEqual(plan.excluded.map((e) => e.reason), ['not-in-pool'])
   assert.match(plan.excluded[0]!.words, /holds 3 of #2, not 4/)
   const d = decodeFunctionData({ abi: poolBatchAbi, data: plan.steps[0]!.call!.data })
-  assert.deepEqual(d.args, [[1n], [2n], ME])
+  assert.deepEqual(d.args, [[1n], [2n], ME, ZERO])
   assert.equal(plan.totals.tokens, 2n * POOL_UNIT)
 })
 
@@ -224,9 +242,9 @@ test('ERC-1155 buy: amounts per id, cost is the unit sum', () => {
 
 test('random pool: N random is one commit and then reveals; chosen ids are refused', () => {
   const plan = planPoolBatch({
-    side: 'buy', chainId: 1, account: ME, pool: p721(1), balance: 5n * POOL_UNIT, count: 3, free: 10n, items: [{ id: 4n }],
+    side: 'buy', chainId: 1, account: ME, pool: p721(true), balance: 5n * POOL_UNIT, count: 3, free: 10n,
   })
-  assert.deepEqual(plan.excluded.map((e) => e.reason), ['random-pool'])
+  assert.deepEqual(plan.excluded, [])
   assert.deepEqual(plan.steps.map((s) => s.key), ['commit', 'reveal'])
   assert.equal(plan.steps[1]!.call, undefined, 'the draw id comes from the commit receipt')
   const d = decodeFunctionData({ abi: poolBatchAbi, data: plan.steps[0]!.call!.data })
@@ -237,14 +255,14 @@ test('random pool: N random is one commit and then reveals; chosen ids are refus
 })
 
 test('random pool caps: at most 50 per draw and no more than the free NFTs; shortfall adds a token step', () => {
-  const big = planPoolBatch({ side: 'buy', chainId: 1, account: ME, pool: p721(1), balance: 0n, count: 60, free: 100n })
+  const big = planPoolBatch({ side: 'buy', chainId: 1, account: ME, pool: p721(true), balance: 0n, count: 60, free: 100n })
   assert.equal(big.totals.units, BigInt(MAX_DRAW))
   assert.deepEqual(big.steps.map((s) => s.key), ['get-tokens', 'commit', 'reveal'])
   assert.equal(big.totals.shortfall, 50n * POOL_UNIT)
-  const few = planPoolBatch({ side: 'buy', chainId: 1, account: ME, pool: p721(1), balance: 9n * POOL_UNIT, count: 5, free: 2n })
+  const few = planPoolBatch({ side: 'buy', chainId: 1, account: ME, pool: p721(true), balance: 9n * POOL_UNIT, count: 5, free: 2n })
   assert.equal(few.totals.units, 2n)
   assert.deepEqual(few.excluded.map((e) => e.reason), ['not-enough-free'])
-  const unk = planPoolBatch({ side: 'buy', chainId: 1, account: ME, pool: p721(1), balance: 9n * POOL_UNIT, count: 2 })
+  const unk = planPoolBatch({ side: 'buy', chainId: 1, account: ME, pool: p721(true), balance: 9n * POOL_UNIT, count: 2 })
   assert.match(unk.blocked!, /free to draw/)
 })
 
@@ -253,9 +271,103 @@ test('reveals run oldest first: one call per open draw up to and including yours
   assert.deepEqual(calls.map((c) => [c.commitId, c.yours]), [[5n, false], [6n, false], [7n, true]])
   assert.deepEqual(decodeFunctionData({ abi: poolBatchAbi, data: calls[2]!.data }).args, [7n])
   assert.deepEqual(revealCalls(POOL, 3n, 4n), [])
-  const check = checkPoolCalls(calls, { account: ME, pool: p721(1) })
+  const check = checkPoolCalls(calls, { account: ME, pool: p721(true) })
   assert.ok(check.ok)
   assert.equal(check.notes.length, 3)
+})
+
+/* ---------- buy, v2: pick fee, locks, random only where enabled ---------- */
+
+test('a pick with a fee: an exact fee approval as its own step, then one redeem paying it in IMD', () => {
+  const plan = planPoolBatch({
+    side: 'buy', chainId: 1, account: ME, pool: p721(false, { imdFee: 2n * E18, inferFee: 3500n * E18 }),
+    balance: 2n * POOL_UNIT, items: [{ id: 2n }, { id: 8n }], poolHeld: held(2, 8),
+    feeWallet: { IMD: { balance: 10n * E18, allowance: 0n }, INFER: { balance: 0n, allowance: 0n } },
+  })
+  assert.equal(plan.blocked, undefined)
+  assert.deepEqual(plan.steps.map((s) => s.key), ['approve', 'redeem'])
+  assert.deepEqual(plan.totals.fee, { symbol: 'IMD', token: IMD, amount: 4n * E18 })
+  const approve = plan.steps[0]!
+  assert.equal(approve.call!.to, IMD)
+  assert.deepEqual(decodeFunctionData({ abi: feeTokenAbi, data: approve.call!.data }).args, [POOL, 4n * E18])
+  assert.match(approve.title, /Allow 4 IMD for the pick fee/)
+  assert.equal(plan.steps[1]!.afterPrevious, true)
+  assert.deepEqual(decodeFunctionData({ abi: poolBatchAbi, data: plan.steps[1]!.call!.data }).args, [[2n, 8n], [1n, 1n], ME, IMD])
+  assert.match(plan.steps[1]!.words, /4 IMD pick fee/)
+  assert.ok(plan.notes.some((n) => /4 IMD or 7000 INFER; this batch pays it in IMD/.test(n)))
+  assert.ok(checkPoolCalls(plan.steps.map((s) => s.call), plan).ok)
+})
+
+test('pick fee: INFER when IMD is short, no approval when already allowed, blocked when neither covers it', () => {
+  const pool = p721(false, { imdFee: 2n * E18, inferFee: 3500n * E18 })
+  const base = { side: 'buy' as const, chainId: 1, account: ME, pool, balance: POOL_UNIT, items: [{ id: 2n }], poolHeld: held(2) }
+  const infer = planPoolBatch({ ...base, feeWallet: { IMD: { balance: E18, allowance: 0n }, INFER: { balance: 3500n * E18, allowance: 3500n * E18 } } })
+  assert.deepEqual(infer.steps.map((s) => s.key), ['redeem'])
+  assert.equal(infer.totals.fee?.symbol, 'INFER')
+  assert.equal(decodeFunctionData({ abi: poolBatchAbi, data: infer.steps[0]!.call!.data }).args[3], INFER)
+
+  const short = planPoolBatch({ ...base, feeWallet: { IMD: { balance: 0n, allowance: 0n }, INFER: { balance: 0n, allowance: 0n } } })
+  assert.match(short.blocked!, /pick fee of 2 IMD or 3500 INFER, and your wallet doesn't hold enough/)
+  const unread = planPoolBatch({ ...base, feeWallet: {} })
+  assert.match(unread.blocked!, /couldn't read your IMD or INFER balance/)
+  const noAllowance = planPoolBatch({ ...base, feeWallet: { IMD: { balance: 5n * E18 } } })
+  assert.match(noAllowance.blocked!, /couldn't check what the pool may take of your IMD/)
+  const feeUnknown = planPoolBatch({ ...base, pool: { ...pool, imdFee: undefined } })
+  assert.match(feeUnknown.blocked!, /couldn't read this pool's pick fee/)
+})
+
+test('the fee token already approved for the whole fee is chosen first, saving an approval', () => {
+  const plan = planPoolBatch({
+    side: 'buy', chainId: 1, account: ME, pool: p721(false, { imdFee: 2n * E18, inferFee: 3500n * E18 }),
+    balance: POOL_UNIT, items: [{ id: 2n }], poolHeld: held(2),
+    feeWallet: { IMD: { balance: 10n * E18, allowance: 0n }, INFER: { balance: 9000n * E18, allowance: 3500n * E18 } },
+  })
+  assert.equal(plan.totals.fee?.symbol, 'INFER')
+  assert.deepEqual(plan.steps.map((s) => s.key), ['redeem'])
+})
+
+test('a fee approval becomes a contract write useTx can simulate, and the checker holds it to the exact fee', () => {
+  const pool = p721(false, { imdFee: 2n * E18 })
+  const plan = planPoolBatch({
+    side: 'buy', chainId: 1, account: ME, pool, balance: POOL_UNIT, items: [{ id: 2n }], poolHeld: held(2),
+    feeWallet: { IMD: { balance: 10n * E18, allowance: 0n } },
+  })
+  const approve = plan.steps[0]!
+  assert.equal(approve.key, 'approve')
+  const write = contractCall(approve.call!, pool)!
+  assert.equal(write.address, IMD)
+  assert.equal(write.functionName, 'approve')
+  assert.deepEqual(write.args, [POOL, 2n * E18])
+  // Re-encoding the write gives the planned call back byte for byte.
+  assert.equal(encodeFunctionData({ abi: write.abi as typeof feeTokenAbi, functionName: 'approve', args: write.args as unknown as [Address, bigint] }), approve.call!.data)
+  // Sells' setApprovalForAll and the redeem decode too; anything else is refused.
+  assert.equal(contractCall(plan.steps[1]!.call!, pool)!.functionName, 'redeem')
+  assert.equal(contractCall({ to: EVE, data: approve.call!.data, value: 0n }, pool), undefined)
+
+  assert.ok(checkPoolCalls([approve.call], plan).ok)
+  const more = { to: IMD, data: encodeFunctionData({ abi: feeTokenAbi, functionName: 'approve', args: [POOL, 2n ** 255n] }), value: 0n }
+  assert.equal(checkPoolCalls([more], plan).ok, false, 'an approval above the fee is refused')
+  const otherToken = { to: INFER, data: approve.call!.data, value: 0n }
+  assert.equal(checkPoolCalls([otherToken], plan).ok, false, 'an approval on the other fee token is refused')
+})
+
+test('picks from a random pool skip NFTs an open draw has locked, and an unread lock blocks', () => {
+  const plan = planPoolBatch({
+    side: 'buy', chainId: 1, account: ME, pool: p721(true), balance: 2n * POOL_UNIT,
+    items: [{ id: 2n }, { id: 8n }], poolHeld: held(2, 8), locked: { '2': true, '8': false },
+  })
+  assert.deepEqual(plan.excluded.map((e) => [e.id, e.reason]), [[2n, 'locked']])
+  assert.match(plan.excluded[0]!.words, /open random draw/)
+  assert.deepEqual(plan.lines.map((l) => l.id), [8n])
+  const unknown = planPoolBatch({
+    side: 'buy', chainId: 1, account: ME, pool: p721(true), balance: POOL_UNIT, items: [{ id: 2n }], poolHeld: held(2), locked: {},
+  })
+  assert.match(unknown.blocked!, /open random draw holds #2/)
+})
+
+test('a random draw from a pool without random redeems is blocked, not sent', () => {
+  const plan = planPoolBatch({ side: 'buy', chainId: 1, account: ME, pool: p721(false), balance: 5n * POOL_UNIT, count: 2, free: 5n })
+  assert.match(plan.blocked!, /doesn't do random draws/)
 })
 
 /* ---------- checker ---------- */
@@ -266,7 +378,12 @@ test('the checker refuses calls that pay someone else, carry ETH, or hit another
     (encodeFunctionData as (p: { abi: readonly unknown[]; functionName: string; args: unknown[] }) => Hex)({ abi, functionName, args })
   const bad = [
     { to: POOL, data: enc(poolBatchAbi, 'deposit', [[1n], [], EVE]), value: 0n },
-    { to: POOL, data: enc(poolBatchAbi, 'redeem', [[1n], [1n], EVE]), value: 0n },
+    { to: POOL, data: enc(poolBatchAbi, 'redeem', [[1n], [1n], EVE, ZERO]), value: 0n },
+    // The pick fee paid in a token that is neither IMD nor INFER.
+    { to: POOL, data: enc(poolBatchAbi, 'redeem', [[1n], [1n], ME, EVE]), value: 0n },
+    // A fee approval for someone other than the pool, or on a token that isn't a fee token.
+    { to: IMD, data: enc(feeTokenAbi, 'approve', [EVE, 5n]), value: 0n },
+    { to: NFT, data: enc(feeTokenAbi, 'approve', [POOL, 5n]), value: 0n },
     { to: POOL, data: enc(poolBatchAbi, 'commitRedeem', [2n, EVE]), value: 0n },
     { to: NFT, data: enc(collectionBatchAbi, 'setApprovalForAll', [EVE, true]), value: 0n },
     { to: NFT, data: enc(collectionBatchAbi, 'safeTransferFrom', [ME, EVE, 1n, '0x']), value: 0n },
@@ -303,9 +420,11 @@ test('simulation: a pass, a decoded pool revert in plain words, and the checker 
   const short = encodeErrorResult({ abi: parseAbi(['error InsufficientBalance()']), errorName: 'InsufficientBalance' })
   assert.equal(explainPoolError({ cause: { cause: { data: short } } }, 'mMINI'), 'Not enough mMINI in your wallet.')
   assert.equal(explainPoolError(new Error('network down')), undefined)
+  const locked = encodeErrorResult({ abi: poolBatchAbi, errorName: 'LockedForRandomRedeem', args: [2n] })
+  assert.match(explainPoolError({ data: locked })!, /#2 could be drawn by an open random draw/)
 
   let called = false
-  const evil = { to: POOL, data: encodeFunctionData({ abi: poolBatchAbi, functionName: 'redeem', args: [[2n], [1n], EVE] }), value: 0n }
+  const evil = { to: POOL, data: encodeFunctionData({ abi: poolBatchAbi, functionName: 'redeem', args: [[2n], [1n], EVE, ZERO] }), value: 0n }
   const refused = await simulatePoolStep({ call: async () => { called = true } }, plan, evil)
   assert.equal(refused.ok, false)
   assert.equal(called, false)
@@ -361,6 +480,11 @@ test('a buy receipt reads Redeemed; a reverted receipt claims nothing moved', ()
   assert.deepEqual(r.items.map((i) => i.status), ['bought', 'bought'])
   assert.equal(r.tokensBurned, 2n * POOL_UNIT)
 
+  const fee = poolEvent('PickFeePaid', { by: ME, token: IMD }, { types: [{ type: 'uint256' }], values: [4n * E18] })
+  const paid = readPoolReceipt({ status: 'success', logs: [...logs, fee] }, { account: ME, pool: p721(), requested: [{ id: 2n }] })
+  assert.deepEqual(paid.feePaid, { token: IMD, amount: 4n * E18 })
+  assert.match(paid.words, /Pick fee paid: 4 IMD, to the alignment vault\./)
+
   const failed = readPoolReceipt({ status: 'reverted', logs: [] }, { account: ME, pool: p721(), requested: [{ id: 2n }] })
   assert.equal(failed.ok, false)
   assert.deepEqual(failed.items.map((i) => i.status), ['missing'])
@@ -372,7 +496,7 @@ test('a commit receipt gives the draw id; a reveal receipt gives the ids, escrow
     tokenMove(ME, ZERO, 3n * POOL_UNIT),
     poolEvent('RedeemCommitted', { commitId: 7n, by: ME, to: ME }, { types: [{ type: 'uint256' }, { type: 'uint256' }], values: [3n, 101n] }),
   ]
-  const c = readPoolReceipt({ status: 'success', logs: commitLogs }, { account: ME, pool: p721(1) })
+  const c = readPoolReceipt({ status: 'success', logs: commitLogs }, { account: ME, pool: p721(true) })
   assert.deepEqual(c.commit, { commitId: 7n, amount: 3n, targetBlock: 101n })
   assert.match(c.words, /draw #7 for 3 NFTs is open; reveal it after block 101/)
 
@@ -382,14 +506,14 @@ test('a commit receipt gives the draw id; a reveal receipt gives the ids, escrow
     nftMove(POOL, ME, 9n),
     poolEvent('RedeemRevealed', { commitId: 7n }, { types: [{ type: 'uint256[]' }], values: [[4n, 6n, 9n]] }),
   ]
-  const r = readPoolReceipt({ status: 'success', logs: revealLogs }, { account: ME, pool: p721(1), requested: [{ id: 4n }, { id: 6n }, { id: 9n }] })
+  const r = readPoolReceipt({ status: 'success', logs: revealLogs }, { account: ME, pool: p721(true), requested: [{ id: 4n }, { id: 6n }, { id: 9n }] })
   assert.deepEqual(r.revealed, { commitId: 7n, ids: [4n, 6n, 9n], escrowed: [6n], rearmed: false })
   assert.deepEqual(r.items.map((i) => i.status), ['bought', 'missing', 'bought'])
   assert.match(r.words, /You got #4, #9\. The pool is holding #6/)
 
   const rearm = readPoolReceipt(
     { status: 'success', logs: [poolEvent('RedeemRearmed', { commitId: 7n }, { types: [{ type: 'uint256' }], values: [300n] })] },
-    { account: ME, pool: p721(1) },
+    { account: ME, pool: p721(true) },
   )
   assert.equal(rearm.revealed?.rearmed, true)
   assert.match(rearm.words, /Reveal again/)

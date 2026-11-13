@@ -17,7 +17,7 @@ import {
 import { isRevert, readOutcome } from '../src/hooks/readFailure.ts'
 import { MusicScanError, combineScan, mintLabel, scanNote } from '../src/music/scan.ts'
 import { anyPayout, cappedNote, editionTotals, tokenPayout } from '../src/pages/Manage/payout.ts'
-import { freeModesFrom, freeUnits, heldAmount, MODE } from '../src/pages/Swap/nft/pool.ts'
+import { freeUnits, heldAmount, pickLocks, poolLookup } from '../src/pages/Swap/nft/pool.ts'
 
 const abi = [{ type: 'function', name: 'f', inputs: [], outputs: [], stateMutability: 'view' }] as const
 
@@ -88,10 +88,15 @@ test('Manage payouts per token: unknown unless every read landed, unsplit procee
 test('pools: a failed poolOf read is neither free nor taken', () => {
   const zero = '0x0000000000000000000000000000000000000000'
   const pool = '0x00000000000000000000000000000000000000aa'
-  const modes = [MODE.TARGETED, MODE.RANDOM]
-  assert.deepEqual(freeModesFrom([zero, pool], modes), { free: [MODE.TARGETED], unknown: [] })
-  assert.deepEqual(freeModesFrom([undefined, zero], modes), { free: [MODE.RANDOM], unknown: [MODE.TARGETED] })
-  assert.deepEqual(freeModesFrom([], modes), { free: [], unknown: modes })
+  assert.deepEqual(poolLookup(zero), { state: 'none' })
+  assert.deepEqual(poolLookup(pool), { state: 'found', address: pool })
+  assert.deepEqual(poolLookup(undefined), { state: 'unknown' })
+})
+
+test('pools: a picked NFT whose lock read failed is not treated as free to pick', () => {
+  const lock: Record<string, boolean | undefined> = { '1': false, '2': true, '3': undefined }
+  assert.deepEqual(pickLocks(['1', '2', '3', '4'], (id) => lock[id]), { locked: ['2'], unknown: ['3', '4'] })
+  assert.deepEqual(pickLocks(['1'], (id) => lock[id]), { locked: [], unknown: [] })
 })
 
 test('pools: free units and held amounts stay unknown when their reads failed', () => {

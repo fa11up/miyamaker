@@ -1,13 +1,33 @@
 /* eslint-disable no-restricted-syntax -- parseTokenIds reads clearer as a loop with early returns */
 /**
- * Pure logic for trading NFTs through MiyaPool (contracts/src/pools). No runtime imports, so `node --test` can load
+ * Pure logic for trading NFTs through MiyaPool v2 (contracts/src/pools). No runtime imports, so `node --test` can load
  * it (tests/trade.test.mts).
  *
- * A pool holds NFTs of one collection. Each NFT (or ERC1155 unit) in it backs exactly 1 pool token (1e18 base units).
- * Deposit an NFT: get 1 token. Burn 1 token: take one back. No fees. The redeem mode is fixed per pool:
- *   TARGETED: pick the NFT you want.
- *   RANDOM (ERC721 only): pay now, a future block picks the NFT, then anyone reveals it.
+ * One pool per collection. Each NFT (or ERC1155 unit) in it backs exactly 1 pool token (1e18 base units).
+ * Deposit an NFT: get 1 token. Two ways to take one out:
+ *   Random (ERC721 only, not on Robinhood Chain): burn exactly 1 token per piece now; a future block picks the NFT,
+ *     then anyone reveals it.
+ *   Pick: choose the NFT, burn 1 token per piece and pay the pool's pick fee per piece in IMD or INFER (the picker
+ *     chooses among the tokens the pool offers). The fees are set by whoever creates the pool and fixed forever: 0
+ *     means that token is not offered, both 0 means picks are free. The fee goes straight to the INFER/IMD alignment
+ *     vault as the picker's own contribution.
  */
+
+/**
+ * v1 MiyaPoolFactory deployments, which this (v2) app can't talk to: v2 changed redeem and createPool. On a chain whose
+ * deployments file still names one of these, Trade says pools aren't on the network yet. DeployMiyaPoolV2 moves it to
+ * `miyaPoolFactoryV1` and writes the v2 factory in its place, and pools come back on by themselves.
+ */
+export const V1_POOL_FACTORIES: Readonly<Record<number, readonly string[]>> = {
+  1: ['0x05130d6B13961dc313cd2729Ae4Fd1C22b13efF3'],
+}
+
+/** The factory to use, or undefined when there is none or it is a v1 one. */
+export function v2PoolFactory<A extends string>(chainId: number, factory: A | undefined): A | undefined {
+  if (!factory) return undefined
+  const v1 = V1_POOL_FACTORIES[chainId] ?? []
+  return v1.some((a) => a.toLowerCase() === factory.toLowerCase()) ? undefined : factory
+}
 
 /** 1 NFT = 1e18 pool-token base units. Mirrors MiyaPool.UNIT. */
 export const POOL_UNIT = 10n ** 18n
@@ -16,25 +36,168 @@ export const POOL_UNIT = 10n ** 18n
 export const KIND = { ERC721: 0, ERC1155: 1 } as const
 export type PoolKind = (typeof KIND)[keyof typeof KIND]
 
-/** MiyaPool.RedeemMode */
-export const MODE = { TARGETED: 0, RANDOM: 1 } as const
-export type PoolMode = (typeof MODE)[keyof typeof MODE]
-
-export const MODE_LABEL: Record<PoolMode, string> = { 0: 'Pick', 1: 'Random' }
-export const MODE_HINT: Record<PoolMode, string> = {
-  0: 'You choose which NFT you get.',
-  1: 'You get a random NFT from the pool.',
-}
 export const KIND_LABEL: Record<PoolKind, string> = { 0: 'ERC-721', 1: 'ERC-1155' }
 
 export const asKind = (v: unknown): PoolKind | undefined => (v === 0 || v === 1 ? v : undefined)
-/** Robinhood Chain's block hashes come from its sequencer, so the factory refuses Random pools there. */
-export const modesOn = (chainId: number): PoolMode[] =>
-  chainId === 4663 ? [MODE.TARGETED] : [MODE.TARGETED, MODE.RANDOM]
 
-export const asMode = (v: unknown): PoolMode | undefined => (v === 0 || v === 1 ? v : undefined)
+/** Robinhood Chain's block hashes come from its sequencer, so its pools have no random redeems (MiyaPool.randomEnabled). */
+export const ROBINHOOD_CHAIN_ID = 4663
+/** Whether a new ERC-721 pool on this chain will have random redeems. ERC-1155 pools never do. */
+export const randomOn = (chainId: number) => chainId !== ROBINHOOD_CHAIN_ID
 
-/** Pool tokens needed to take `units` NFTs out. */
+/** Why a pool has no random redeems, in a few words (only asked when `randomEnabled` is false). */
+export function noRandomWhy(kind: PoolKind | undefined, chainId: number): string {
+  if (kind === KIND.ERC1155) return 'ERC-1155 pools have pick only.'
+  if (!randomOn(chainId))
+    return 'Robinhood Chain has pick only: its block hashes come from one sequencer, so a draw there would not be fair.'
+  return 'This pool has pick only.'
+}
+
+/* ---------- the pick fee ---------- */
+
+/** IMD and INFER both have 18 decimals; fees are token wei per piece. */
+export const FEE_DECIMALS = 18
+
+export type FeeSymbol = 'IMD' | 'INFER'
+export const FEE_SYMBOLS: readonly FeeSymbol[] = ['IMD', 'INFER']
+
+/** A pool's pick fees per piece (token wei); undefined when the read failed. */
+export type PickFees = { imdFee?: bigint; inferFee?: bigint }
+
+/**
+ * A token amount for people: 1e18 → "1", 3500e18 → "3,500", 0.5e18 → "0.5". Exact (every decimal kept) unless
+ * `maxDecimals` cuts it, so a fee is never shown smaller than it is.
+ */
+export function tokenAmountText(amount: bigint | undefined, decimals = FEE_DECIMALS, maxDecimals = decimals): string {
+  if (amount === undefined) return '–'
+  const base = 10n ** BigInt(decimals)
+  const whole = amount / base
+  let frac = (amount % base).toString().padStart(decimals, '0').slice(0, maxDecimals).replace(/0+$/, '')
+  if (!frac && amount % base !== 0n) frac = `${'0'.repeat(Math.max(0, maxDecimals - 1))}1`
+  return frac ? `${whole.toLocaleString('en-US')}.${frac}` : whole.toLocaleString('en-US')
+}
+
+/**
+ * A fee typed into the create form, in whole tokens: "1", "3,500", "0.5", "1 IMD". Empty or 0 means not offered (0n).
+ * Up to `decimals` decimals.
+ */
+export function parseTokenAmount(input: string, decimals = FEE_DECIMALS): { amount?: bigint; error?: string } {
+  const t = input
+    .trim()
+    .replace(/\s*(IMD|INFER)$/i, '')
+    .trim()
+  if (!t) return { amount: 0n }
+  const m = /^(\d{1,3}(?:,\d{3})+|\d+)?(?:\.(\d*))?$/.exec(t)
+  if (!m || (!m[1] && !m[2])) return { error: `"${input.trim()}" is not an amount. Use a number like 1 or 3500.` }
+  const whole = (m[1] ?? '0').replace(/,/g, '')
+  const frac = (m[2] ?? '').replace(/0+$/, '')
+  if (frac.length > decimals) return { error: `Use at most ${decimals} decimals.` }
+  if (whole.length > 30) return { error: 'That amount is too large.' }
+  return { amount: BigInt(whole) * 10n ** BigInt(decimals) + BigInt(frac.padEnd(decimals, '0') || '0') }
+}
+
+/**
+ * A fee against the vault's least contribution for that token. 0 (not offered) is always fine. A nonzero fee needs the
+ * minimum: when it couldn't be read the answer is "unknown", never a guess.
+ */
+export function checkFee(
+  amount: bigint,
+  minimum: bigint | undefined,
+  symbol: FeeSymbol
+): { ok: true } | { ok: false; unknown?: boolean; error: string } {
+  if (amount === 0n) return { ok: true }
+  if (minimum === undefined)
+    return {
+      ok: false,
+      unknown: true,
+      error: `Couldn't read the vault's least ${symbol} amount, so this can't be checked.`,
+    }
+  if (amount < minimum)
+    return {
+      ok: false,
+      error: `The vault takes at least ${tokenAmountText(minimum)} ${symbol}. Use that or more, or 0.`,
+    }
+  return { ok: true }
+}
+
+/** The tokens a pool takes pick fees in, IMD first, with the fee per piece. Empty = picks are free (or unknown). */
+export function offeredFees(fees: PickFees): { symbol: FeeSymbol; fee: bigint }[] {
+  const out: { symbol: FeeSymbol; fee: bigint }[] = []
+  if (fees.imdFee) out.push({ symbol: 'IMD', fee: fees.imdFee })
+  if (fees.inferFee) out.push({ symbol: 'INFER', fee: fees.inferFee })
+  return out
+}
+
+/** Whether both fee reads answered. */
+export const feesKnown = (fees: PickFees) => fees.imdFee !== undefined && fees.inferFee !== undefined
+
+/** Picks cost only the pool token: neither fee is set (and both reads answered). */
+export const picksFreeOf = (fees: PickFees) => fees.imdFee === 0n && fees.inferFee === 0n
+
+/**
+ * Which offered token a pick pays in: the one chosen, if the pool offers it, else the first offered. Undefined when
+ * picks are free.
+ */
+export function chooseFeeToken(fees: PickFees, wanted?: FeeSymbol): { symbol: FeeSymbol; fee: bigint } | undefined {
+  const offered = offeredFees(fees)
+  return offered.find((o) => o.symbol === wanted) ?? offered[0]
+}
+
+/** The pick fee for `units` pieces: fee per piece × pieces (MiyaPool.pickFee). */
+export const pickFeeTotal = (feePerPiece: bigint, units: number | bigint) => feePerPiece * BigInt(units)
+
+/** The pick fee per NFT in words: "1 IMD or 3,500 INFER", "free", or undefined when a fee read failed. */
+export function pickFeeAmounts(fees: PickFees, or = ' or '): string | undefined {
+  if (!feesKnown(fees)) return undefined
+  const offered = offeredFees(fees)
+  if (!offered.length) return 'free'
+  return offered.map((o) => `${tokenAmountText(o.fee)} ${o.symbol}`).join(or)
+}
+
+/** A pool's pick price in words for chips and rows: "Pick +1 IMD / 3,500 INFER", "Pick free", "Pick +?". */
+export function pickFeeWords(fees: PickFees): string {
+  const amounts = pickFeeAmounts(fees, ' / ')
+  if (amounts === undefined) return 'Pick +?'
+  return amounts === 'free' ? 'Pick free' : `Pick +${amounts}`
+}
+
+/**
+ * Whether taking an NFT out costs more than 1 pool token: only when random is off (or unknown) and picks have a fee
+ * (or the fee is unknown). Prices compare at the token price; the app has no IMD/INFER price, so the fee is said in
+ * words, never converted.
+ */
+export const buyNeedsFee = (pool: PickFees & { randomEnabled?: boolean }) =>
+  !(pool.randomEnabled === true || picksFreeOf(pool))
+
+/**
+ * A pool's line in the best-price comparison: 1 pool token at its price buys a random NFT where random is on, or a
+ * picked one where picks are free. Where every way out pays a pick fee in IMD or INFER, the token price is not the cost
+ * (the app has no IMD/INFER price), so the pool isn't ranked: undefined. Its own line names the fee instead.
+ */
+export function poolBuyQuote<P>(
+  pool: PickFees & { randomEnabled?: boolean },
+  price: P
+): { where: string; price: P } | undefined {
+  if (buyNeedsFee(pool)) return undefined
+  return {
+    where: pool.randomEnabled === true && !picksFreeOf(pool) ? 'on MiyaPool (a random NFT)' : 'on MiyaPool',
+    price,
+  }
+}
+
+/** The fee step of a pick: nothing to pay, approve the pool for the total first, or ready to pick. */
+export function feeStep(
+  total: bigint,
+  allowance: bigint | undefined,
+  balance: bigint | undefined
+): 'free' | 'unknown' | 'short' | 'approve' | 'ready' {
+  if (total === 0n) return 'free'
+  if (balance === undefined || allowance === undefined) return 'unknown'
+  if (balance < total) return 'short'
+  return allowance < total ? 'approve' : 'ready'
+}
+
+/** Pool tokens a redeem of `units` NFTs burns, random or pick: exactly 1 each. */
 export const redeemCost = (units: number | bigint) => POOL_UNIT * BigInt(units)
 
 /** How many whole NFTs a pool-token balance can take out. */
@@ -110,7 +273,7 @@ export function depositPlan(
   kind: PoolKind,
   count: number,
   approvedForAll: boolean | undefined,
-  directOnly = false,
+  directOnly = false
 ): DepositPlan {
   if (kind === KIND.ERC1155) return 'transfer-1155'
   if (count <= 1) return 'transfer-721'
@@ -162,7 +325,12 @@ export type PoolSummary = {
   address: string
   collection: string
   kind: PoolKind
-  mode: PoolMode
+  /** Pick fee per piece in IMD (token wei; 0 = not offered), fixed at creation; undefined when the read failed. */
+  imdFee?: bigint
+  /** Pick fee per piece in INFER, likewise. */
+  inferFee?: bigint
+  /** Random redeems on this pool; undefined when the read failed. */
+  randomEnabled?: boolean
   symbol: string
   name: string
   collectionName?: string
@@ -171,9 +339,9 @@ export type PoolSummary = {
 }
 
 /**
- * Whether `address` is the pool the factory made for its collection and mode: the factory's poolOf answer must be that
+ * Whether `address` is the pool the factory made for its collection: the factory's poolOf answer must be that
  * same address. A pool page opened from a link shows only such a pool, never any contract that answers collection()
- * and mode(). undefined = not answered yet (or the read failed).
+ * and kind(). undefined = not answered yet (or the read failed).
  */
 export function factoryMadePool(poolOfAnswer: string | undefined, address: string): boolean | undefined {
   if (poolOfAnswer === undefined) return undefined
@@ -185,7 +353,7 @@ export function filterPools<T extends PoolSummary>(pools: T[], query: string): T
   const q = query.trim().toLowerCase()
   if (!q) return pools
   return pools.filter((p) =>
-    [p.symbol, p.name, p.collectionName || '', p.address, p.collection].some((s) => s.toLowerCase().includes(q)),
+    [p.symbol, p.name, p.collectionName || '', p.address, p.collection].some((s) => s.toLowerCase().includes(q))
   )
 }
 
@@ -202,23 +370,34 @@ export function revealWords(ids: readonly bigint[], held: readonly bigint[] = []
   return sent.length ? `You got ${list(sent)}, now in your wallet. ${keep}` : keep
 }
 
+export type PoolLookup = { state: 'unknown' } | { state: 'none' } | { state: 'found'; address: string }
+
 /**
- * Which redeem modes still have no pool, from the factory's poolOf reads per mode. A mode whose read gave no answer
- * (`undefined`) is neither free nor taken: it goes in `unknown`, so a failed read never offers a duplicate pool.
+ * A collection's pool from the factory's poolOf read. A read that gave no answer (`undefined`) is `unknown`, never
+ * `none`, so a failed read never offers to start a pool that already exists.
  */
-export function freeModesFrom(
-  poolOf: readonly (string | undefined)[],
-  modes: readonly PoolMode[],
+export function poolLookup(
+  poolOf: string | undefined,
   zero = '0x0000000000000000000000000000000000000000'
-): { free: PoolMode[]; unknown: PoolMode[] } {
-  const free: PoolMode[] = []
-  const unknown: PoolMode[] = []
-  for (const m of modes) {
-    const a = poolOf[m]
-    if (a === undefined) unknown.push(m)
-    else if (a.toLowerCase() === zero) free.push(m)
+): PoolLookup {
+  if (poolOf === undefined) return { state: 'unknown' }
+  return poolOf.toLowerCase() === zero ? { state: 'none' } : { state: 'found', address: poolOf }
+}
+
+/**
+ * Picked ids a pending random redeem has locked (MiyaPool.isLocked), and picked ids whose lock read failed. Picks
+ * can go ahead only when both are empty.
+ */
+export function pickLocks(picked: readonly string[], lockOf: (id: string) => boolean | undefined) {
+  const locked: string[] = []
+  const unknown: string[] = []
+  for (const id of picked) {
+    const l = lockOf(id)
+    if (l === undefined) unknown.push(id)
+    else if (l) locked.push(id)
   }
-  return { free, unknown }
+
+  return { locked, unknown }
 }
 
 /** NFTs in a pool not promised to an open draw; undefined when either read failed. */

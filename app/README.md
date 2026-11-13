@@ -6,8 +6,10 @@ Vite + React frontend for miyamaker (`yarn`, `yarn dev`, `yarn build`). Copy `.e
 ## Trade window and the 0x API key
 
 The Trade window (formerly "miya swaps", at `/trade`; old `/swap` links redirect) has two tabs.
-**NFTs** trades NFTs through the zero-fee MiyaPool pools (`contracts/src/pools`) of the `MiyaPoolFactory`
-set by `VITE_MIYA_POOL_FACTORY_<chainId>` or `contracts/deployments/<chainId>.json`; on a chain without one it
+**NFTs** trades NFTs through the MiyaPool pools (`contracts/src/pools`, v2: one pool per collection; a random NFT
+costs 1 pool token, picking one costs 1 token + the pool's fixed pick fee in IMD or INFER, if it has one, paid to
+the alignment vault as the picker's contribution)
+of the `MiyaPoolFactory` set by `VITE_MIYA_POOL_FACTORY_<chainId>` or `contracts/deployments/<chainId>.json`; on a chain without one it
 says the pools are not there yet. **Tokens** quotes and routes trades through the
 [0x Swap API v2](https://docs.0x.org/evm/0x-swap-api/guides/swap-tokens-with-0x-swap-api)
 (AllowanceHolder flow). **The 0x key never reaches the browser.** The frontend only calls the
@@ -34,7 +36,7 @@ then `yarn dev`. A Vite dev middleware (`vite.config.ts`) runs the same proxy co
 ### NFTs: every market a collection trades on (OpenSea key)
 
 Open a collection in Trade → NFTs (search by name, paste an address, tap one of your NFTs' collections, or a pool)
-and it lists every venue: **MiyaPool** (our pools, 0% fees, on-chain), **OpenSea** (floor, best offer, sales this
+and it lists every venue: **MiyaPool** (our pools, on-chain; no fee for random, a pick fee in IMD/INFER to pick), **OpenSea** (floor, best offer, sales this
 week, the cheapest listings), **Blur** and **Magic Eden** (links only: no public price API). Each NFT has its own
 page too (`/trade/nfts/collection/<chainId>/<address>/<tokenId>`): its OpenSea listing and best offer, whether a
 MiyaPool holds it, and links to it everywhere. OpenSea listings can be **bought in-app** and offers **accepted

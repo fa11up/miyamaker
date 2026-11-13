@@ -201,6 +201,11 @@ test('the bar names ETH for listings and tokens for pools, never adding a pool t
   )
   assert.equal(sell.words, 'Sell 3 · ~0.5 WETH before fees + 2 MIYAP')
   assert.equal(sell.poolEth, undefined)
+  // A pool whose picks pay a fee says so on a buy (never on a sell): the fee is in IMD/INFER, not ETH.
+  const picks = [{ key: 'p:3', tokenId: '3', venue: 'pool' as const, pool: POOL_A }]
+  const fee = [{ address: POOL_A, symbol: 'MIYAP', pickFee: true }]
+  assert.equal(batchSummary('buy', picks, fee).words, 'Buy 1 · 1 MIYAP + pick fee')
+  assert.equal(batchSummary('sell', picks, fee).words, 'Sell 1 · 1 MIYAP')
   const usdc = batchSummary('buy', [{ key: 'a', tokenId: '1', venue: 'opensea', order: order('0xa', 5n, 'USDC') }], [])
   assert.equal(usdc.words, 'Buy 1 · 1 order in another token')
   assert.equal(batchSummary('buy', [], []).words, '')
@@ -311,7 +316,11 @@ test('every venue is checked again right before its wallet prompt, and nothing i
 test('approvals are their own presses, never folded into a wallet batch with the trade', () => {
   assert.doesNotMatch(review, /tryBatch|runBatch|sendCalls/)
   assert.match(review, /tx\.run\('os-nft'/)
-  assert.match(review, /tx\.run\(`pool-approve-/)
+  // A pool approval is checked (only this pool, only this batch's exact fee), then sent as a decoded contract write.
+  assert.match(
+    review,
+    /const id = `pool-approve-[\s\S]*checkPoolCalls\(\[s\.call\], plan\)[\s\S]*contractCall\(s\.call, ref\)[\s\S]*tx\.run\(id, \{ \.\.\.write, chainId \}\)/
+  )
   // An ERC-20 allowance is exactly the fees, never unlimited.
   assert.match(review, /functionName: 'approve',\s*args: \[operator, osPlan\.fromYou\]/)
   assert.doesNotMatch(review, /maxUint256/)

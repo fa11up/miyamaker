@@ -1,25 +1,37 @@
 // Trade window pure logic: src/pages/Swap/tradePath.ts (paths, /swap → /trade) and src/pages/Swap/nft/pool.ts
-// (MiyaPool maths, id parsing, deposit plans, random-redeem commits). Run: yarn test
+// (MiyaPool v2 maths and the IMD/INFER pick fee, id parsing, deposit plans, random-redeem commits). Run: yarn test
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
 import {
   blocksToReveal,
+  buyNeedsFee,
+  checkFee,
+  chooseFeeToken,
   commitPhase,
   depositPlan,
   directSendOnly,
+  feeStep,
   filterPools,
   KIND,
-  MODE,
+  noRandomWhy,
+  offeredFees,
+  parseTokenAmount,
   parseTokenIds,
   pendingFor,
+  pickFeeAmounts,
+  pickFeeTotal,
+  pickFeeWords,
+  picksFreeOf,
   POOL_UNIT,
   poolIndexes,
   poolTitle,
+  randomOn,
   redeemCost,
+  revealWords,
+  tokenAmountText,
   unitsText,
   wholeUnits,
-  revealWords,
 } from '../src/pages/Swap/nft/pool.ts'
 import { canonicalPath, parseTradePath, tabPath, tradePath } from '../src/pages/Swap/tradePath.ts'
 
@@ -64,6 +76,122 @@ test('1 NFT is 1e18 pool tokens', () => {
   assert.equal(unitsText(POOL_UNIT * 1234n), '1,234')
   assert.equal(unitsText((POOL_UNIT * 5n) / 2n), '2.5')
   assert.equal(unitsText(1n), '0.0001')
+})
+
+const E18 = 10n ** 18n
+const IMD_MIN = E18 // live mainnet minContribution(IMD): 1 IMD
+const INFER_MIN = 3500n * E18 // live mainnet minContribution(INFER): 3,500 INFER
+
+test('pick fee amounts: typed in whole tokens with 18 decimals, shown exactly', () => {
+  assert.deepEqual(parseTokenAmount(''), { amount: 0n })
+  assert.deepEqual(parseTokenAmount('  '), { amount: 0n })
+  assert.deepEqual(parseTokenAmount('0'), { amount: 0n })
+  assert.deepEqual(parseTokenAmount('1'), { amount: E18 })
+  assert.deepEqual(parseTokenAmount('3500'), { amount: INFER_MIN })
+  assert.deepEqual(parseTokenAmount('3,500'), { amount: INFER_MIN })
+  assert.deepEqual(parseTokenAmount('1,234,567.5'), { amount: 1234567n * E18 + E18 / 2n })
+  assert.deepEqual(parseTokenAmount('0.5'), { amount: E18 / 2n })
+  assert.deepEqual(parseTokenAmount('.5'), { amount: E18 / 2n })
+  assert.deepEqual(parseTokenAmount('2.'), { amount: 2n * E18 })
+  assert.deepEqual(parseTokenAmount('1.50'), { amount: (3n * E18) / 2n })
+  assert.deepEqual(parseTokenAmount('1 IMD'), { amount: E18 })
+  assert.deepEqual(parseTokenAmount('3500 infer'), { amount: INFER_MIN })
+  assert.deepEqual(parseTokenAmount('0.000000000000000001'), { amount: 1n })
+  assert.match(parseTokenAmount('0.0000000000000000001').error!, /18 decimals/)
+  for (const bad of ['abc', '-1', '1e18', '1,00', '1.2.3', '.', '0x10']) {
+    assert.match(parseTokenAmount(bad).error!, /not an amount/, bad)
+  }
+  assert.equal(tokenAmountText(E18), '1')
+  assert.equal(tokenAmountText(INFER_MIN), '3,500')
+  assert.equal(tokenAmountText(E18 / 2n), '0.5')
+  assert.equal(tokenAmountText(1n), '0.000000000000000001')
+  assert.equal(tokenAmountText(0n), '0')
+  assert.equal(tokenAmountText(undefined), '–')
+  // Cut for a balance line: never shown as less than it is.
+  assert.equal(tokenAmountText(1n, 18, 4), '0.0001')
+  assert.equal(tokenAmountText((12345n * E18) / 10000n, 18, 2), '1.23')
+  // What the form shows reads back as the same amount.
+  for (const a of [1n, E18, INFER_MIN, 1234567n * E18 + 89n]) assert.deepEqual(parseTokenAmount(tokenAmountText(a)), { amount: a })
+})
+
+test('pick fees: 0 or at least the vault minimum, and never a guess when the minimum is unknown', () => {
+  assert.deepEqual(checkFee(0n, IMD_MIN, 'IMD'), { ok: true })
+  assert.deepEqual(checkFee(0n, undefined, 'INFER'), { ok: true })
+  assert.deepEqual(checkFee(IMD_MIN, IMD_MIN, 'IMD'), { ok: true })
+  assert.deepEqual(checkFee(5n * E18, IMD_MIN, 'IMD'), { ok: true })
+  const low = checkFee(IMD_MIN - 1n, IMD_MIN, 'IMD')
+  assert.equal(low.ok, false)
+  assert.match(!low.ok ? low.error : '', /at least 1 IMD/)
+  const lowInfer = checkFee(3499n * E18, INFER_MIN, 'INFER')
+  assert.match(!lowInfer.ok ? lowInfer.error : '', /at least 3,500 INFER/)
+  const unknown = checkFee(E18, undefined, 'IMD')
+  assert.equal(unknown.ok, false)
+  assert.equal(!unknown.ok && unknown.unknown, true)
+})
+
+test('pick fee per pool: which tokens are offered, the choice, the total, and the free case', () => {
+  const both = { imdFee: IMD_MIN, inferFee: INFER_MIN }
+  const imdOnly = { imdFee: 2n * E18, inferFee: 0n }
+  const free = { imdFee: 0n, inferFee: 0n }
+  const unread = { imdFee: undefined, inferFee: INFER_MIN }
+  assert.deepEqual(offeredFees(both), [
+    { symbol: 'IMD', fee: IMD_MIN },
+    { symbol: 'INFER', fee: INFER_MIN },
+  ])
+  assert.deepEqual(offeredFees(imdOnly), [{ symbol: 'IMD', fee: 2n * E18 }])
+  assert.deepEqual(offeredFees(free), [])
+  // Token choice: the one asked for if offered, else the first offered; none when picks are free.
+  assert.equal(chooseFeeToken(both)?.symbol, 'IMD')
+  assert.equal(chooseFeeToken(both, 'INFER')?.symbol, 'INFER')
+  assert.equal(chooseFeeToken(imdOnly, 'INFER')?.symbol, 'IMD')
+  assert.equal(chooseFeeToken({ imdFee: 0n, inferFee: INFER_MIN }, 'IMD')?.symbol, 'INFER')
+  assert.equal(chooseFeeToken(free), undefined)
+  assert.equal(chooseFeeToken(free, 'IMD'), undefined)
+  // total = fee × pieces (MiyaPool.pickFee)
+  assert.equal(pickFeeTotal(IMD_MIN, 3), 3n * E18)
+  assert.equal(pickFeeTotal(INFER_MIN, 2n), 7000n * E18)
+  assert.equal(pickFeeTotal(INFER_MIN, 0), 0n)
+  // Free only when both reads answered 0.
+  assert.equal(picksFreeOf(free), true)
+  assert.equal(picksFreeOf(imdOnly), false)
+  assert.equal(picksFreeOf({ imdFee: 0n, inferFee: undefined }), false)
+  // In words.
+  assert.equal(pickFeeWords(both), 'Pick +1 IMD / 3,500 INFER')
+  assert.equal(pickFeeWords(imdOnly), 'Pick +2 IMD')
+  assert.equal(pickFeeWords(free), 'Pick free')
+  assert.equal(pickFeeWords(unread), 'Pick +?')
+  assert.equal(pickFeeAmounts(both), '1 IMD or 3,500 INFER')
+  assert.equal(pickFeeAmounts(free), 'free')
+  assert.equal(pickFeeAmounts(unread), undefined)
+  // Taking an NFT out costs more than 1 token only when random is off and picks have a fee (or either is unknown).
+  assert.equal(buyNeedsFee({ ...both, randomEnabled: true }), false)
+  assert.equal(buyNeedsFee({ ...free, randomEnabled: false }), false)
+  assert.equal(buyNeedsFee({ ...both, randomEnabled: false }), true)
+  assert.equal(buyNeedsFee({ ...unread, randomEnabled: false }), true)
+  assert.equal(buyNeedsFee({ ...free, randomEnabled: undefined }), false)
+  assert.equal(buyNeedsFee({ ...both, randomEnabled: undefined }), true)
+  // Both redeems burn exactly 1 pool token per NFT; the fee is paid on top, in IMD or INFER.
+  assert.equal(redeemCost(3), 3n * POOL_UNIT)
+})
+
+test('pick fee step: free, approve exactly the total first, short, or ready', () => {
+  const total = 2n * E18
+  assert.equal(feeStep(0n, undefined, undefined), 'free')
+  assert.equal(feeStep(total, undefined, 5n * E18), 'unknown')
+  assert.equal(feeStep(total, 0n, undefined), 'unknown')
+  assert.equal(feeStep(total, 0n, total - 1n), 'short')
+  assert.equal(feeStep(total, 0n, total), 'approve')
+  assert.equal(feeStep(total, total - 1n, 10n * E18), 'approve')
+  assert.equal(feeStep(total, total, total), 'ready')
+  assert.equal(feeStep(total, 10n * E18, total), 'ready')
+})
+
+test('random redeems: off on Robinhood Chain and for ERC-1155, with the reason in words', () => {
+  assert.equal(randomOn(1), true)
+  assert.equal(randomOn(11155111), true)
+  assert.equal(randomOn(4663), false)
+  assert.match(noRandomWhy(KIND.ERC1155, 1), /ERC-1155/)
+  assert.match(noRandomWhy(KIND.ERC721, 4663), /Robinhood Chain/)
 })
 
 test('token ids: lists, ranges, # prefixes, dedupe, and plain errors', () => {
@@ -125,7 +253,9 @@ test('pool list: newest first, filtered by name, ticker or address', () => {
       address: POOL,
       collection: '0x2222222222222222222222222222222222222222',
       kind: KIND.ERC721,
-      mode: MODE.TARGETED,
+      imdFee: 10n ** 18n,
+      inferFee: 3500n * 10n ** 18n,
+      randomEnabled: true,
       symbol: 'mMIL',
       name: 'miya pool: Milady',
       collectionName: 'Milady',
@@ -135,7 +265,9 @@ test('pool list: newest first, filtered by name, ticker or address', () => {
       address: '0x3333333333333333333333333333333333333333',
       collection: '0x4444444444444444444444444444444444444444',
       kind: KIND.ERC1155,
-      mode: MODE.RANDOM,
+      imdFee: 0n,
+      inferFee: 0n,
+      randomEnabled: false,
       symbol: 'mSONG',
       name: 'miya pool: Song',
       held: 1n,

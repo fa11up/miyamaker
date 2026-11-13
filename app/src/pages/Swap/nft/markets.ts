@@ -5,7 +5,9 @@
  * runtime import is viem's ABI coder (pure), so `node --test` can load it (tests/markets.test.mts).
  *
  * Venues (checked Nov 2026):
- *   MiyaPool  our pools, on-chain, 0% fees (Ethereum, Sepolia, Robinhood Chain once the factory is live).
+ *   MiyaPool  our pools, on-chain: no fee to sell in or for a random NFT; picking one may add the pool's pick fee in
+ *             IMD or INFER
+ *             (Ethereum, Sepolia, Robinhood Chain once the factory is live).
  *   OpenSea   API v2 through our proxy (/api/opensea): prices, listings, offers, in-app Seaport fills.
  *             Ethereum + Robinhood Chain. OpenSea closed its testnets, so no Sepolia.
  * Left out: Reservoir (api.reservoir.tools no longer resolves), LooksRare (API v2 answers 404), X2Y2 (API down).
@@ -34,7 +36,14 @@ export type Venue = {
 }
 
 export const VENUES: Venue[] = [
-  { id: 'miyapool', name: 'MiyaPool', fees: '0% fees', chains: [1, 11155111, 4663], data: 'onchain', inApp: true },
+  {
+    id: 'miyapool',
+    name: 'MiyaPool',
+    fees: 'Random: no fee · pick: pool fee in IMD/INFER',
+    chains: [1, 11155111, 4663],
+    data: 'onchain',
+    inApp: true,
+  },
   // In-app OpenSea fills never add optional creator fees; only ones a collection enforces apply.
   {
     id: 'opensea',

@@ -196,8 +196,8 @@ contract ERC1155FreeMintTest is Test {
         vm.prank(user1);
         inst.claimFreeMint(editionId, "");
 
-        MiyaPoolFactory poolFactory = new MiyaPoolFactory();
-        MiyaPool pool = MiyaPool(poolFactory.createPool(address(inst), MiyaPool.RedeemMode.TARGETED));
+        MiyaPoolFactory poolFactory = new MiyaPoolFactory(address(0));
+        MiyaPool pool = MiyaPool(poolFactory.createPool(address(inst), 0, 0));
         assertEq(uint256(pool.kind()), uint256(MiyaPool.Kind.ERC1155));
 
         uint256[] memory ids = new uint256[](1);

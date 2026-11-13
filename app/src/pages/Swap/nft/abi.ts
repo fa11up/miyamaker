@@ -1,22 +1,39 @@
 import { parseAbi } from 'viem'
 
-/** Hand-copied from contracts/src/pools/MiyaPoolFactory.sol. */
+/** Hand-copied from contracts/src/pools/MiyaPoolFactory.sol (v2: one pool per collection, pick fee set at creation). */
 export const poolFactoryAbi = parseAbi([
+  'function vault() view returns (address)',
+  'function imd() view returns (address)',
+  'function infer() view returns (address)',
   'function allPoolsLength() view returns (uint256)',
   'function allPools(uint256) view returns (address)',
-  'function poolOf(address collection, uint8 mode) view returns (address)',
-  'function createPool(address collection, uint8 mode) returns (address pool)',
-  'event PoolCreated(address indexed collection, address indexed pool, uint8 kind, uint8 mode, address creator)',
+  'function poolOf(address collection) view returns (address)',
+  'function createPool(address collection, uint256 imdFee, uint256 inferFee) returns (address pool)',
+  'function predictPool(address collection, uint8 kind, uint256 imdFee, uint256 inferFee) view returns (address)',
+  'event PoolCreated(address indexed collection, address indexed pool, uint8 kind, uint256 imdFee, uint256 inferFee, bool randomEnabled, address creator)',
   'error PoolExists(address pool)',
   'error UnsupportedCollection()',
-  'error RandomRequiresERC721()',
+  // From the pool's constructor, through createPool.
+  'error NoVault()',
+  'error FeeBelowVaultMinimum(address token, uint256 minimum)',
+  'error FeeTokenNotAccepted(address token)',
 ])
 
-/** Hand-copied from contracts/src/pools/MiyaPool.sol (plus the ERC20 reads it inherits). */
+/**
+ * Hand-copied from contracts/src/pools/MiyaPool.sol (v2: random and pick redeems on one pool; picks pay a fee in IMD
+ * or INFER that goes to the alignment vault), plus the ERC20 reads it inherits.
+ */
 export const poolAbi = parseAbi([
   'function collection() view returns (address)',
   'function kind() view returns (uint8)',
-  'function mode() view returns (uint8)',
+  'function randomEnabled() view returns (bool)',
+  'function vault() view returns (address)',
+  'function imd() view returns (address)',
+  'function infer() view returns (address)',
+  'function imdFee() view returns (uint256)',
+  'function inferFee() view returns (uint256)',
+  'function picksFree() view returns (bool)',
+  'function pickFee(address token, uint256 units) view returns (uint256)',
   'function name() view returns (string)',
   'function symbol() view returns (string)',
   'function totalSupply() view returns (uint256)',
@@ -31,19 +48,24 @@ export const poolAbi = parseAbi([
   'function nextRevealId() view returns (uint256)',
   'function commits(uint256 commitId) view returns (address recipient, uint64 targetBlock, uint32 amount, uint32 queueEnd)',
   'function deposit(uint256[] ids, uint256[] amounts, address to)',
-  'function redeem(uint256[] ids, uint256[] amounts, address to)',
+  'function redeem(uint256[] ids, uint256[] amounts, address to, address feeToken)',
   'function commitRedeem(uint256 amount, address to) returns (uint256 commitId)',
   'function revealRedeem(uint256 commitId)',
   'function escrowedTo(uint256 id) view returns (address)',
   'function claimEscrowed(uint256 id, address to)',
+  'function isLocked(uint256 id) view returns (bool)',
+  'function lockedEnd() view returns (uint256)',
+  'function queueBounds() view returns (uint256 head, uint256 tail)',
+  'function queuePositionOf(uint256 id) view returns (uint256)',
   'event Deposited(address indexed from, address indexed to, uint256[] ids, uint256[] amounts)',
   'event Redeemed(address indexed by, address indexed to, uint256[] ids, uint256[] amounts)',
   'event RedeemCommitted(uint256 indexed commitId, address indexed by, address indexed to, uint256 amount, uint256 targetBlock)',
   'event RedeemRearmed(uint256 indexed commitId, uint256 targetBlock)',
   'event RedeemRevealed(uint256 indexed commitId, uint256[] ids)',
   'event RedeemEscrowed(uint256 indexed commitId, address indexed recipient, uint256 id)',
+  'event PickFeePaid(address indexed by, address indexed token, uint256 amount)',
   'error NotCollection()',
-  'error WrongMode()',
+  'error RandomUnavailable()',
   'error EmptyRequest()',
   'error LengthMismatch()',
   'error NotHeld(uint256 id)',
@@ -58,7 +80,18 @@ export const poolAbi = parseAbi([
   'error RevealGasTooLow()',
   'error TransferNotReceived(uint256 id)',
   'error InsufficientBalance()',
+  'error LockedForRandomRedeem(uint256 id)',
+  'error NoVault()',
+  'error FeeTokenNotOffered(address token)',
+  'error FeeNotReceived()',
+  'error FeeNotForwarded()',
 ])
+
+/** The alignment vault's config (contracts/src/vaults/uni/UniAlignmentVault.sol), where its minimums live. */
+export const poolVaultAbi = parseAbi(['function config() view returns (address)'])
+
+/** The vault config (UniAlignmentVaultFactory): least amount of each token a contribution can carry. */
+export const vaultConfigAbi = parseAbi(['function minContribution(address token) view returns (uint256)'])
 
 /** The collection side: names, metadata, ownership and the transfers that deposit into a pool. */
 export const erc721Abi = parseAbi([

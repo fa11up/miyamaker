@@ -143,7 +143,7 @@ contract DeployMiyamintsForkTest is Test {
 
         // MiyaPool for the drop: deposit one NFT, get 1e18 pool tokens.
         MiyaPool pool =
-            MiyaPool(MiyaPoolFactory(d.poolFactory).createPool(address(drop), MiyaPool.RedeemMode.TARGETED));
+            MiyaPool(MiyaPoolFactory(d.poolFactory).createPool(address(drop), 1e18, 3500e18));
         uint256[] memory ids = new uint256[](1);
         ids[0] = 1;
         vm.startPrank(buyer);
@@ -226,7 +226,7 @@ contract DeployMiyamintsForkTest is Test {
         assertGt(music.getCurrentPrice(2, address(0)), p2, "dynamic price rose");
 
         // 1155 collections can be pooled too
-        address pool = MiyaPoolFactory(d.poolFactory).createPool(address(music), MiyaPool.RedeemMode.TARGETED);
+        address pool = MiyaPoolFactory(d.poolFactory).createPool(address(music), 0, 0);
         assertTrue(pool != address(0));
     }
 

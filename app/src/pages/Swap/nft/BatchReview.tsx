@@ -35,10 +35,12 @@ import {
 import { fillFailureKind, fillFailureWords, isShort } from './fillLogic'
 import type { OsOrder } from './markets'
 import { formatAmount, OPENSEA_CHAIN, usesSeaportItself } from './markets'
-import { heldAmount, KIND, MODE_LABEL } from './pool'
-import type { PoolBatchPlan, PoolRef, PoolStep } from './poolBatch'
+import { heldAmount, KIND } from './pool'
+import type { FeeSymbol, PoolBatchPlan, PoolRef, PoolStep } from './poolBatch'
 import {
+  checkPoolCalls,
   collectionBatchAbi,
+  contractCall,
   planPoolBatch,
   poolBatchAbi,
   readPoolReceipt,
@@ -223,6 +225,10 @@ const osSimProblemWords = (buying: boolean) =>
   buying
     ? "The check didn't match what you're buying, so nothing was sent. Buy them one by one."
     : "The check didn't match the offers you're accepting, so nothing was sent. Sell them one by one."
+
+/** A pool buy's pick fee as words after its token cost (" + 4 IMD"), or nothing when picks are free. */
+const feePart = (plan: PoolBatchPlan) =>
+  plan.totals.fee ? ` + ${tokensText(plan.totals.fee.amount)} ${plan.totals.fee.symbol}` : ''
 
 /** The review itself; BatchReview below starts it over when the person asks to review again. */
 function Review({
@@ -471,8 +477,13 @@ function Review({
 
   /* ---------- MiyaPool: reads, plans, checks ---------- */
 
-  // One flat read list: per pool its balance (buy) or approval (sell), then per NFT whether it is there to move.
-  type ReadRef = { pool: number; what: 'balance' | 'approved' | 'item'; id?: string }
+  // One flat read list: per pool its balance and pick-fee wallet (buy) or approval (sell), then per NFT whether it is
+  // there to move (and, for a pick from a random-enabled ERC-721 pool, whether an open draw has locked it).
+  type ReadRef = {
+    pool: number
+    what: 'balance' | 'approved' | 'item' | 'locked' | 'fee-balance' | 'fee-allowance'
+    id?: string
+  }
   const readRefs: ReadRef[] = []
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const contracts: any[] = []
@@ -488,6 +499,23 @@ function Review({
         args: [me || zeroAddress],
         chainId,
       })
+      const feeTokens: [string, Address | undefined, bigint | undefined][] = [
+        ['IMD', ref.imd, ref.imdFee],
+        ['INFER', ref.infer, ref.inferFee],
+      ]
+      for (const [symbol, token, fee] of feeTokens) {
+        if (!token || !fee) continue
+        readRefs.push({ pool: i, what: 'fee-balance', id: symbol })
+        contracts.push({ address: token, abi: erc20Abi, functionName: 'balanceOf', args: [me || zeroAddress], chainId })
+        readRefs.push({ pool: i, what: 'fee-allowance', id: symbol })
+        contracts.push({
+          address: token,
+          abi: erc20Abi,
+          functionName: 'allowance',
+          args: [me || zeroAddress, ref.address],
+          chainId,
+        })
+      }
     } else if (erc721) {
       readRefs.push({ pool: i, what: 'approved' })
       contracts.push({
@@ -500,6 +528,17 @@ function Review({
     }
 
     for (const p of list) {
+      if (buying && erc721 && ref.randomEnabled !== false) {
+        readRefs.push({ pool: i, what: 'locked', id: p.tokenId })
+        contracts.push({
+          address: ref.address,
+          abi: poolAbi,
+          functionName: 'isLocked',
+          args: [BigInt(p.tokenId)],
+          chainId,
+        })
+      }
+
       readRefs.push({ pool: i, what: 'item', id: p.tokenId })
       const id = BigInt(p.tokenId)
       contracts.push(
@@ -537,9 +576,21 @@ function Review({
     if (buying) {
       const b = at('balance')
       const poolHeld: Record<string, bigint | undefined> = {}
+      const locked: Record<string, boolean | undefined> = {}
       for (const p of list) {
         const r = at('item', p.tokenId)
         poolHeld[p.tokenId] = r?.status !== 'success' ? undefined : erc721 ? (r.result ? 1n : 0n) : (r.result as bigint)
+        const l = at('locked', p.tokenId)
+        locked[p.tokenId] = l?.status === 'success' ? (l.result as boolean) : undefined
+      }
+
+      const wallet = (symbol: FeeSymbol) => {
+        const bal = at('fee-balance', symbol)
+        const allow = at('fee-allowance', symbol)
+        return {
+          balance: bal?.status === 'success' ? (bal.result as bigint) : undefined,
+          allowance: allow?.status === 'success' ? (allow.result as bigint) : undefined,
+        }
       }
 
       return planPoolBatch({
@@ -550,6 +601,8 @@ function Review({
         balance: b?.status === 'success' ? (b.result as bigint) : undefined,
         items,
         poolHeld,
+        locked,
+        feeWallet: { IMD: wallet('IMD'), INFER: wallet('INFER') },
       })
     }
 
@@ -592,7 +645,7 @@ function Review({
     queries: poolPlans.map((plan, i) => {
       const step = poolConfirms(plan)[0]
       return {
-        queryKey: ['pool-batch-sim', poolVenues[i]?.venue, step?.call?.data, me?.toLowerCase()],
+        queryKey: ['pool-batch-sim', chainId, poolVenues[i]?.venue, step?.call?.data, me?.toLowerCase()],
         enabled: !!plan && !!step && !running && !cancelled,
         staleTime: 30_000,
         gcTime: 0,
@@ -655,15 +708,26 @@ function Review({
   poolPlans.forEach((plan, i) => {
     const ref = poolVenues[i]?.ref
     if (!plan || !ref) return
-    const label = `MiyaPool (${MODE_LABEL[ref.mode]})`
+    const label = 'MiyaPool'
     for (const s of plan.steps) {
       if (s.key === 'approve')
         gates.push({
           id: `pool-approve-${ref.address}`,
           title: `${s.title} · ${label}`,
-          label: `Allow the ${label} pool`,
+          label: plan.side === 'buy' ? s.title : `Allow the ${label}`,
           words: s.words,
-          press: () => tx.run(`pool-approve-${ref.address}`, { ...s.call!, chainId }),
+          press: () => {
+            const id = `pool-approve-${ref.address}`
+            // The same check as every confirm: only this pool, only this batch's exact fee.
+            const check = checkPoolCalls([s.call], plan)
+            const write = check.ok && s.call ? contractCall(s.call, ref) : undefined
+            if (!write) {
+              tx.refuse(id, check.problems.join(' ') || "This approval isn't one we can check, so it wasn't sent.")
+              return
+            }
+
+            tx.run(id, { ...write, chainId })
+          },
         })
       if (s.key === 'get-tokens')
         gates.push({
@@ -896,7 +960,7 @@ function Review({
   const sent = Object.keys(runs).length > 0
   const osTotal = osPlan?.totals.total ?? 0n
   const tokenParts = poolPlans.flatMap((p) =>
-    p && p.totals.units > 0n ? [`${tokensText(p.totals.tokens)} ${p.pool.symbol}`] : []
+    p && p.totals.units > 0n ? [`${tokensText(p.totals.tokens)} ${p.pool.symbol}${feePart(p)}`] : []
   )
   const finishWords = [osPlan && osJobReady ? `${ethText(osTotal)} ${buying ? 'ETH' : feeSymbol}` : '', ...tokenParts]
     .filter(Boolean)
@@ -1140,7 +1204,7 @@ function Review({
           {poolVenues.map(({ venue, ref, picks: list }, i) => {
             const plan = poolPlans[i]
             const sim = poolSims[i]?.data
-            const label = ref ? `MiyaPool (${MODE_LABEL[ref.mode]})` : 'MiyaPool'
+            const label = 'MiyaPool'
             return (
               <section key={venue} aria-label={label} data-batch-venue={venue}>
                 <Eyebrow>
@@ -1165,13 +1229,18 @@ function Review({
                 {plan && (
                   <Lines>
                     <div>
-                      <dt>Fees</dt>
-                      <dd>None</dd>
+                      <dt>{buying ? 'Pick fee' : 'Fees'}</dt>
+                      <dd>
+                        {plan.totals.fee
+                          ? `${tokensText(plan.totals.fee.amount)} ${plan.totals.fee.symbol}, to the alignment vault`
+                          : 'None'}
+                      </dd>
                     </div>
                     <div className="total">
                       <dt>{buying ? 'You pay' : 'You get'}</dt>
                       <dd>
                         {tokensText(plan.totals.tokens)} {plan.pool.symbol}
+                        {feePart(plan)}
                       </dd>
                     </div>
                     {buying && plan.totals.have !== undefined && (
@@ -1264,7 +1333,7 @@ function Review({
                     .filter((s) => s.call && s.key !== 'approve')
                     .map((s, k) => (
                       <li key={`${poolVenues[i]!.venue}-${k}`}>
-                        {s.title} · MiyaPool ({MODE_LABEL[plan.pool.mode]})
+                        {s.title} · MiyaPool
                         <span>{runs[`${poolVenues[i]!.venue}-${k}`]?.note ?? s.words}</span>
                       </li>
                     ))

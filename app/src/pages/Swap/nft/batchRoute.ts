@@ -241,7 +241,7 @@ const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`
 export function batchSummary(
   side: 'buy' | 'sell',
   picks: readonly BatchPick[],
-  pools: readonly { address: string; symbol: string; ethAsk?: bigint; ethBid?: bigint }[]
+  pools: readonly { address: string; symbol: string; ethAsk?: bigint; ethBid?: bigint; pickFee?: boolean }[]
 ): BatchSummary {
   let eth = 0n
   let other = 0
@@ -272,7 +272,12 @@ export function batchSummary(
   const parts: string[] = []
   if (osCount - other > 0) parts.push(side === 'buy' ? `${ethText(eth)} ETH` : `~${ethText(eth)} WETH before fees`)
   if (other) parts.push(`${plural(other, 'order')} in another token`)
-  for (const t of byPool.values()) parts.push(`${t.count} ${t.symbol}`)
+  for (const t of byPool.values()) {
+    // Picks from a pool with a fee also pay it in IMD or INFER; it isn't priced in ETH here, so it is named.
+    const fee = side === 'buy' && pools.find((x) => x.address.toLowerCase() === t.pool)?.pickFee
+    parts.push(`${t.count} ${t.symbol}${fee ? ' + pick fee' : ''}`)
+  }
+
   const verb = side === 'buy' ? 'Buy' : 'Sell'
   return {
     count: picks.length,
