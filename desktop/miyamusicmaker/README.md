@@ -8,7 +8,7 @@ Some parts need the site's server, and they only work on the website, not in thi
 - loading a sample from a link or a video
 - the allowlist
 
-Your songs and kits are kept between launches (in builds after 1.0.0, see below). They live in the program's own storage on this computer, the same way the website keeps them in the browser. The website and the program do not share that storage. Save a `.m1ya` or `.k1t` file to move work between them.
+Your songs and kits are kept between launches (since 1.0.1, see below). They live in the program's own storage on this computer, the same way the website keeps them in the browser. The website and the program do not share that storage. Save a `.m1ya` or `.k1t` file to move work between them.
 
 Upgrading from 1.0.0: version 1.0.0 opened on a new local port every launch, so each launch had its own empty storage. Work that 1.0.0 kept only in that storage cannot be recovered by a newer version. Anything you saved to a `.m1ya` or `.k1t` file is fine. Open the file in the new version.
 
@@ -20,9 +20,9 @@ The app is AGPL-3.0. See [app/LICENSE](../../app/LICENSE). The chord-panel secti
 
 ## Mac
 
-The Apple Silicon build is the zip on the GitHub release `MiyaMusicMaker-v1.0.0`.
+The Apple Silicon build is the zip on the GitHub release `MiyaMusicMaker-v1.0.1`.
 
-1. Download `MiyaMusicMaker-1.0.0-mac-arm64.zip`.
+1. Download `MiyaMusicMaker-1.0.1-mac-arm64.zip`.
 2. Unzip it.
 3. Move `MiyaMusicMaker.app` to Applications if you like, then open it once. macOS will refuse it the first time.
 4. On macOS 15 (Sequoia) or newer: open System Settings › Privacy & Security, scroll down to the message about MiyaMusicMaker, and click Open Anyway. Confirm with your password. On macOS 14 or older, right-click the app, choose Open, then Open again.
@@ -109,4 +109,4 @@ The dev server has to already be running at `http://localhost:5173`. If it is no
 
 ## What the shell does
 
-`main.js` registers an `app://` scheme and serves `app/dist` through it (`serve.js`), then loads `app://music/music`. The address is the same every launch, so the browser storage is too. It counts as a secure page, so the microphone, MIDI, and audio worklets work. Media files answer range requests, so seeking works. Anything under `/api/` is a 404, because there is no server behind it. A link that leaves `app://music` opens in the system browser. Only that page may use the microphone and MIDI. The window is large enough for the instrument, which stays 1180 by 760 inside the desk. Sample recording asks for the microphone. The Mac build's signature is ad-hoc (`identity` `-`), with the entitlements in `build/`: JIT for JavaScript, and audio input for the microphone. Nothing else.
+`main.js` registers an `app://` scheme and serves `app/dist` through it (`serve.js`), then loads `app://music/music`. The address is the same every launch, so the browser storage is too. It counts as a secure page, so the microphone, MIDI, and audio worklets work. Media files answer range requests, so seeking works. Anything under `/api/` is a 404, because there is no server behind it. A link that leaves `app://music` opens in the system browser. Only that page may use the microphone and MIDI. The window is large enough for the instrument, which stays 1180 by 760 inside the desk. Sample recording asks for the microphone. The Mac build's signature is ad-hoc (`identity` `-`), with the entitlements in `build/`: JIT for JavaScript, audio input for the microphone, and turning off library validation, which an ad-hoc signed Electron app needs to load its own framework (without it the app will not launch). Nothing else.
