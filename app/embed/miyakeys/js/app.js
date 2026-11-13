@@ -13,7 +13,8 @@ import {
 import { renderPanel, syncUI, showKeyEditor, hideKeyEditor, setupPanelEvents } from './ui/panels.js';
 import { initTheme } from './ui/theme.js';
 import { toast } from './ui/toast.js';
-import { openLibrary, openGallery, openSwitchesModal, openAccessories, closeModal, openShareDialog, showLinkDialog } from './ui/modals.js';
+import { openLibrary, openGallery, openSwitchesModal, openAccessories, closeModal, isModalOpen, openShareDialog, showLinkDialog } from './ui/modals.js';
+import { isTextEntry } from './ui/textEntry.js';
 import { PRESETS } from './data/presets.js';
 import { COLORWAYS } from './data/colorways.js';
 import { CASES, PLATES, SWITCHES } from './data/components.js';
@@ -273,21 +274,30 @@ export function mountModkeys() {
 
   /* keyboard shortcuts */
   const keyHandler = (ev) => {
-    if (ev.target.tagName === 'INPUT' || ev.target.tagName === 'TEXTAREA') return;
-    if ((ev.ctrlKey || ev.metaKey) && ev.key === 'z') {
+    /* One Escape closes one thing: the dialog on top, else the key editor (not while typing in it). */
+    if (ev.key === 'Escape') {
+      if (isModalOpen()) {
+        ev.preventDefault();
+        closeModal();
+      } else if (!isTextEntry(ev.target)) {
+        hideKeyEditor();
+      }
+      return;
+    }
+    if (isTextEntry(ev.target)) return;
+    const mod = (ev.ctrlKey || ev.metaKey) && !ev.altKey;
+    /* ev.key is 'Z' with Shift or Caps Lock on, so compare in lower case. Cmd+Shift+Z is redo on a Mac. */
+    const k = (ev.key || '').toLowerCase();
+    if (mod && k === 'z' && !ev.shiftKey) {
       ev.preventDefault();
       const ok = undo();
       if (!ok) toast('Nothing to undo');
       else toast('Undo');
-    }
-    if ((ev.ctrlKey || ev.metaKey) && ev.key === 'y') {
+    } else if (mod && (k === 'y' || (k === 'z' && ev.shiftKey))) {
       ev.preventDefault();
       const ok = redo();
       if (!ok) toast('Nothing to redo');
       else toast('Redo');
-    }
-    if (ev.key === 'Escape') {
-      hideKeyEditor();
     }
   };
   document.addEventListener('keydown', keyHandler);

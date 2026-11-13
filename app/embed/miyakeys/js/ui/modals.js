@@ -21,6 +21,10 @@ export function closeModal() {
   syncNav('builder');
 }
 
+export function isModalOpen() {
+  return !!$('modal')?.classList.contains('open');
+}
+
 export function openModal(title, html) {
   if (stopThumbs) { stopThumbs(); stopThumbs = null; }
   $('modalTitle').textContent = title;
@@ -294,10 +298,5 @@ $('tnav')?.addEventListener('click', (ev) => {
 
 $('modalClose')?.addEventListener('click', closeModal);
 $('modalBack')?.addEventListener('click', closeModal);
-document.addEventListener('keydown', (ev) => {
-  if (!$('modal')) return;
-  if (ev.key === 'Escape') {
-    closeModal();
-  }
-});
+/* Escape is handled once, in app.js's key handler, so it closes only the dialog on top. */
 
