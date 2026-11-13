@@ -5,3 +5,10 @@ node_modules/
 
 # Claude Code worktrees
 .claude/worktrees/
+
+# Vite build output
+.vite/
+node_modules/
+dist/
+# claudetest folder
+claudetest/

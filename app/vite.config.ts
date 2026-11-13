@@ -531,9 +531,74 @@ function publicAccessDevProxy(): Plugin {
   }
 }
 
+/** The desktop program's version, from its own package.json. The MiyaOS corner shows it inside the program. */
+const MMM_VERSION: string = JSON.parse(
+  fs.readFileSync(path.resolve(__dirname, '../desktop/miyamusicmaker/package.json'), 'utf8')
+).version
+
 export default defineConfig(({ mode }) => ({
   base: '/',
+  define: { __MMM_VERSION__: JSON.stringify(MMM_VERSION) },
   plugins: [
+    // Serve Miya PFP Engine from its own folder: app/public/apps/pfp-engine/
+    {
+      name: 'pfp-engine-static',
+      enforce: 'pre',
+      configureServer(server) {
+        server.middlewares.use('/apps/pfp-engine', async (req, res, next) => {
+          try {
+            const url = req.url || ''
+            const pathname = decodeURIComponent(url.split('?')[0] || '')
+            // Strip the prefix to get the relative path
+            const relativePath = pathname.replace(/^\/apps\/pfp-engine/, '').replace(/^\/+/, '')
+            // Prevent path traversal
+            if (relativePath.includes('..') || relativePath.includes('\\0')) {
+              res.statusCode = 403
+              res.end('Forbidden')
+              return
+            }
+            let filePath = path.join(__dirname, 'public', 'apps', 'pfp-engine', relativePath)
+            let stat
+            try {
+              stat = await fs.promises.stat(filePath)
+              if (!stat.isFile()) {
+                // Directory requested - serve gui/index.html inside it
+                const indexPath = path.join(filePath, 'gui', 'index.html')
+                try {
+                  await fs.promises.stat(indexPath)
+                  filePath = indexPath
+                  stat = await fs.promises.stat(filePath)
+                } catch {
+                  res.statusCode = 404
+                  res.end('Not found')
+                  return
+                }
+              }
+            } catch (err) {
+              if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+                res.statusCode = 404
+                res.end('Not found')
+              } else {
+                res.statusCode = 500
+                res.end('Internal server error')
+              }
+            }
+            const ext = path.extname(filePath).toLowerCase()
+            const contentType = ext === '.html' ? 'text/html' : ext === '.js' ? 'application/javascript' : ext === '.css' ? 'text/css' : ext === '.png' ? 'image/png' : ext === '.svg' ? 'image/svg+xml' : 'application/octet-stream'
+            res.setHeader('Content-Type', contentType)
+            res.setHeader('Cache-Control', 'no-cache')
+            const stream = fs.createReadStream(filePath)
+            stream.pipe(res)
+            stream.on('error', (err) => {
+              res.statusCode = 500
+              res.end('Internal server error')
+            })
+          } catch (err) {
+            next()
+          }
+        })
+      },
+    },
     rpcDevProxy(loadEnv(mode, __dirname, ['RPC_URL_', 'ALCHEMY_API_KEY'])),
     layersDevProxy(),
     zeroExDevProxy(loadEnv(mode, __dirname, ['ZEROX_'])),

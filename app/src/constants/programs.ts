@@ -1,6 +1,8 @@
 import MiyaLogo from 'assets/134321870.png'
 import CreateNew from 'assets/miyamints1.png?preset=thumbnail&resize=true'
 
+import pfpEngineIcon from 'assets/pfp-engine-icon.png?preset=thumbnail&resize=true'
+
 import Pages from '@/constants/pages'
 import type { PageKey } from '@/store/windows/reducer'
 
@@ -22,6 +24,7 @@ export const DESKTOP_ICONS: DesktopApp[] = [
   { id: 'dropmusic', label: Pages.dropmusic?.label || 'Drop Music', src: Pages.dropmusic?.icon?.src },
   { id: 'music', label: Pages.music?.label || 'MiyaMusicMaker', src: Pages.music?.icon?.src },
   { id: 'miyakeys', label: Pages.miyakeys?.label || 'miyakeys', src: Pages.miyakeys?.icon?.src },
+  { id: 'pfpEngine', label: 'Miya PFP Engine', src: Pages.pfpEngine?.icon?.src },
 ]
 
 const pick = (ids: string[]) =>

@@ -13,6 +13,8 @@ import LaunchIcon from 'assets/miyamints1.png?preset=icon&resize=true'
 import SwapIcon from 'assets/miyaswaps1.png?preset=icon&resize=true'
 import TvIcon from 'assets/miyatv.png?preset=icon&resize=true'
 
+import pfpEngineIcon from 'assets/pfp-engine-icon.png?preset=icon&resize=true'
+
 export type Page = {
   id: string
   path: string
@@ -187,6 +189,16 @@ const Pages: Record<string, Page> = {
     minSize: {
       width: 1240,
       height: 780,
+    },
+  },
+  pfpEngine: {
+    id: 'pfpEngine',
+    path: '/apps/pfp-engine',
+    label: 'Miya PFP Engine',
+    icon: pfpEngineIcon[0],
+    minSize: {
+      width: 1024,
+      height: 768,
     },
   },
 }

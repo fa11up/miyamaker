@@ -1,0 +1,19 @@
+{
+  "name": "miya-pfp-engine",
+  "version": "1.0.0",
+  "description": "Miya pfp engine, the original PFP generation and collection management engine with its AI Chef tab removed.",
+  "main": "index.js",
+  "scripts": {
+    "start": "node gui/server.js",
+    "test": "node scripts/test-reindex.js && node scripts/test-general-metadata.js && node scripts/test-manual-maker.js && node scripts/test-edit-trait.js && node scripts/test-phase2.js"
+  },
+  "keywords": [
+    "pfp",
+    "nft",
+    "generative-art",
+    "metadata",
+    "postproduction",
+    "traits"
+  ],
+  "license": "MIT"
+}

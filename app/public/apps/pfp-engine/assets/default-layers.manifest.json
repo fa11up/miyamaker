@@ -1,0 +1,2357 @@
+{
+  "source": "https://koolskull.com/miyamaker/layers/",
+  "maxImageEdge": 512,
+  "generatedAt": "2026-11-12T23:54:35.264Z",
+  "images": [
+    {
+      "path": "BG/101 Freeway.png",
+      "source": "https://koolskull.com/miyamaker/layers/BG/101%20Freeway.png",
+      "sourceBytes": 43244662,
+      "bundledBytes": 593667
+    },
+    {
+      "path": "BG/Angelic.png",
+      "source": "https://koolskull.com/miyamaker/layers/BG/Angelic.png",
+      "sourceBytes": 15949513,
+      "bundledBytes": 525789
+    },
+    {
+      "path": "BG/Apocalypse Sky 01.png",
+      "source": "https://koolskull.com/miyamaker/layers/BG/Apocalypse%20Sky%2001.png",
+      "sourceBytes": 43269255,
+      "bundledBytes": 554301
+    },
+    {
+      "path": "BG/Apocalypse Sky 02.png",
+      "source": "https://koolskull.com/miyamaker/layers/BG/Apocalypse%20Sky%2002.png",
+      "sourceBytes": 47528775,
+      "bundledBytes": 726957
+    },
+    {
+      "path": "BG/Apocalypse Sky 03.png",
+      "source": "https://koolskull.com/miyamaker/layers/BG/Apocalypse%20Sky%2003.png",
+      "sourceBytes": 27270165,
+      "bundledBytes": 814909
+    },
+    {
+      "path": "BG/Ariel Pink and Jean Mors.png",
+      "source": "https://koolskull.com/miyamaker/layers/BG/Ariel%20Pink%20and%20Jean%20Mors.png",
+      "sourceBytes": 33051373,
+      "bundledBytes": 502743
+    },
+    {
+      "path": "BG/Art Center Faculty.png",
+      "source": "https://koolskull.com/miyamaker/layers/BG/Art%20Center%20Faculty.png",
+      "sourceBytes": 36270155,
+      "bundledBytes": 497674
+    },
+    {
+      "path": "BG/Art Studio.png",
+      "source": "https://koolskull.com/miyamaker/layers/BG/Art%20Studio.png",
+      "sourceBytes": 44504956,
+      "bundledBytes": 693186
+    },
+    {
+      "path": "BG/Asian Temple.png",
+      "source": "https://koolskull.com/miyamaker/layers/BG/Asian%20Temple.png",
+      "sourceBytes": 29932823,
+      "bundledBytes": 694707
+    },
+    {
+      "path": "BG/Astral Grid.png",
+      "source": "https://koolskull.com/miyamaker/layers/BG/Astral%20Grid.png",
+      "sourceBytes": 7969212,
+      "bundledBytes": 497141
+    },
+    {
+      "path": "BG/Blossom.png",
+      "source": "https://koolskull.com/miyamaker/layers/BG/Blossom.png",
+      "sourceBytes": 10361452,
+      "bundledBytes": 570956
+    },
+    {
+      "path": "BG/Corona Virus Stan.png",
+      "source": "https://koolskull.com/miyamaker/layers/BG/Corona%20Virus%20Stan.png",
+      "sourceBytes": 13753651,
+      "bundledBytes": 521225
+    },
+    {
+      "path": "BG/Dark Angel Portal.png",
+      "source": "https://koolskull.com/miyamaker/layers/BG/Dark%20Angel%20Portal.png",
+      "sourceBytes": 6528679,
+      "bundledBytes": 478761
+    },
+    {
+      "path": "BG/HEA Head Heaven.png",
+      "source": "https://koolskull.com/miyamaker/layers/BG/HEA%20Head%20Heaven.png",
+      "sourceBytes": 40429600,
+      "bundledBytes": 827185
+    },
+    {
+      "path": "BG/Hemi Sync.png",
+      "source": "https://koolskull.com/miyamaker/layers/BG/Hemi%20Sync.png",
+      "sourceBytes": 8630953,
+      "bundledBytes": 320373
+    },
+    {
+      "path": "BG/I dont want to marry for convenience.png",
+      "source": "https://koolskull.com/miyamaker/layers/BG/I%20dont%20want%20to%20marry%20for%20convenience.png",
+      "sourceBytes": 33508557,
+      "bundledBytes": 765041
+    },
+    {
+      "path": "BG/Inside Salvation Mountain.png",
+      "source": "https://koolskull.com/miyamaker/layers/BG/Inside%20Salvation%20Mountain.png",
+      "sourceBytes": 21621697,
+      "bundledBytes": 643402
+    },
+    {
+      "path": "BG/Light Angel Portal.png",
+      "source": "https://koolskull.com/miyamaker/layers/BG/Light%20Angel%20Portal.png",
+      "sourceBytes": 5668841,
+      "bundledBytes": 412422
+    },
+    {
+      "path": "BG/Log On And Win Forever.png",
+      "source": "https://koolskull.com/miyamaker/layers/BG/Log%20On%20And%20Win%20Forever.png",
+      "sourceBytes": 7631577,
+      "bundledBytes": 302186
+    },
+    {
+      "path": "BG/Meta Planet.png",
+      "source": "https://koolskull.com/miyamaker/layers/BG/Meta%20Planet.png",
+      "sourceBytes": 10172304,
+      "bundledBytes": 411240
+    },
+    {
+      "path": "BG/MiyaMakerPyramid.png",
+      "source": "https://koolskull.com/miyamaker/layers/BG/MiyaMakerPyramid.png",
+      "sourceBytes": 20400316,
+      "bundledBytes": 574622
+    },
+    {
+      "path": "BG/MiyaUniverse.png",
+      "source": "https://koolskull.com/miyamaker/layers/BG/MiyaUniverse.png",
+      "sourceBytes": 18716084,
+      "bundledBytes": 504699
+    },
+    {
+      "path": "BG/Neon Hallway B&W.png",
+      "source": "https://koolskull.com/miyamaker/layers/BG/Neon%20Hallway%20B%26W.png",
+      "sourceBytes": 7485353,
+      "bundledBytes": 256432
+    },
+    {
+      "path": "BG/Neon Hallway.png",
+      "source": "https://koolskull.com/miyamaker/layers/BG/Neon%20Hallway.png",
+      "sourceBytes": 12280773,
+      "bundledBytes": 479200
+    },
+    {
+      "path": "BG/Reaper DAW.png",
+      "source": "https://koolskull.com/miyamaker/layers/BG/Reaper%20DAW.png",
+      "sourceBytes": 16241928,
+      "bundledBytes": 591500
+    },
+    {
+      "path": "BG/Red Sky.png",
+      "source": "https://koolskull.com/miyamaker/layers/BG/Red%20Sky.png",
+      "sourceBytes": 20768436,
+      "bundledBytes": 713466
+    },
+    {
+      "path": "BG/Remco Tuners Parking Lot.png",
+      "source": "https://koolskull.com/miyamaker/layers/BG/Remco%20Tuners%20Parking%20Lot.png",
+      "sourceBytes": 28119962,
+      "bundledBytes": 718874
+    },
+    {
+      "path": "BG/Reptile Poster Ripped.png",
+      "source": "https://koolskull.com/miyamaker/layers/BG/Reptile%20Poster%20Ripped.png",
+      "sourceBytes": 50246688,
+      "bundledBytes": 777596
+    },
+    {
+      "path": "BG/Vapor Train.png",
+      "source": "https://koolskull.com/miyamaker/layers/BG/Vapor%20Train.png",
+      "sourceBytes": 24914426,
+      "bundledBytes": 578926
+    },
+    {
+      "path": "Body/Accelerated Silver.png",
+      "source": "https://koolskull.com/miyamaker/layers/Body/Accelerated%20Silver.png",
+      "sourceBytes": 1796861,
+      "bundledBytes": 84566
+    },
+    {
+      "path": "Body/Aztec Warrior.png",
+      "source": "https://koolskull.com/miyamaker/layers/Body/Aztec%20Warrior.png",
+      "sourceBytes": 6355519,
+      "bundledBytes": 134954
+    },
+    {
+      "path": "Body/Blue Alien.png",
+      "source": "https://koolskull.com/miyamaker/layers/Body/Blue%20Alien.png",
+      "sourceBytes": 3821810,
+      "bundledBytes": 98763
+    },
+    {
+      "path": "Body/Cyborg.png",
+      "source": "https://koolskull.com/miyamaker/layers/Body/Cyborg.png",
+      "sourceBytes": 9146439,
+      "bundledBytes": 171803
+    },
+    {
+      "path": "Body/Dark.png",
+      "source": "https://koolskull.com/miyamaker/layers/Body/Dark.png",
+      "sourceBytes": 2539427,
+      "bundledBytes": 108582
+    },
+    {
+      "path": "Body/Dithered Glitch Aura.png",
+      "source": "https://koolskull.com/miyamaker/layers/Body/Dithered%20Glitch%20Aura.png",
+      "sourceBytes": 6052972,
+      "bundledBytes": 233565
+    },
+    {
+      "path": "Body/FrankenMiya.png",
+      "source": "https://koolskull.com/miyamaker/layers/Body/FrankenMiya.png",
+      "sourceBytes": 12943994,
+      "bundledBytes": 210537
+    },
+    {
+      "path": "Body/Glitch Aura 2.png",
+      "source": "https://koolskull.com/miyamaker/layers/Body/Glitch%20Aura%202.png",
+      "sourceBytes": 12529831,
+      "bundledBytes": 242715
+    },
+    {
+      "path": "Body/Glitch Aura 3.png",
+      "source": "https://koolskull.com/miyamaker/layers/Body/Glitch%20Aura%203.png",
+      "sourceBytes": 3397307,
+      "bundledBytes": 151616
+    },
+    {
+      "path": "Body/Glitch Aura 4.png",
+      "source": "https://koolskull.com/miyamaker/layers/Body/Glitch%20Aura%204.png",
+      "sourceBytes": 10711164,
+      "bundledBytes": 258558
+    },
+    {
+      "path": "Body/Glitch Aura.png",
+      "source": "https://koolskull.com/miyamaker/layers/Body/Glitch%20Aura.png",
+      "sourceBytes": 7412887,
+      "bundledBytes": 167601
+    },
+    {
+      "path": "Body/Green Alien.png",
+      "source": "https://koolskull.com/miyamaker/layers/Body/Green%20Alien.png",
+      "sourceBytes": 205881,
+      "bundledBytes": 92238
+    },
+    {
+      "path": "Body/Green.png",
+      "source": "https://koolskull.com/miyamaker/layers/Body/Green.png",
+      "sourceBytes": 2549356,
+      "bundledBytes": 88524
+    },
+    {
+      "path": "Body/Grey Alien.png",
+      "source": "https://koolskull.com/miyamaker/layers/Body/Grey%20Alien.png",
+      "sourceBytes": 1736951,
+      "bundledBytes": 72234
+    },
+    {
+      "path": "Body/Illuminated.png",
+      "source": "https://koolskull.com/miyamaker/layers/Body/Illuminated.png",
+      "sourceBytes": 8138960,
+      "bundledBytes": 233925
+    },
+    {
+      "path": "Body/Light Tone.png",
+      "source": "https://koolskull.com/miyamaker/layers/Body/Light%20Tone.png",
+      "sourceBytes": 3993026,
+      "bundledBytes": 106702
+    },
+    {
+      "path": "Body/Mangachrome.png",
+      "source": "https://koolskull.com/miyamaker/layers/Body/Mangachrome.png",
+      "sourceBytes": 287863,
+      "bundledBytes": 143174
+    },
+    {
+      "path": "Body/Mexican.png",
+      "source": "https://koolskull.com/miyamaker/layers/Body/Mexican.png",
+      "sourceBytes": 2706529,
+      "bundledBytes": 116760
+    },
+    {
+      "path": "Body/Neon Accelerated.png",
+      "source": "https://koolskull.com/miyamaker/layers/Body/Neon%20Accelerated.png",
+      "sourceBytes": 2156718,
+      "bundledBytes": 135068
+    },
+    {
+      "path": "Body/Neon Jesus Glitch.png",
+      "source": "https://koolskull.com/miyamaker/layers/Body/Neon%20Jesus%20Glitch.png",
+      "sourceBytes": 7989720,
+      "bundledBytes": 268127
+    },
+    {
+      "path": "Body/None.png",
+      "source": "https://koolskull.com/miyamaker/layers/Body/None.png",
+      "sourceBytes": 5750,
+      "bundledBytes": 5560
+    },
+    {
+      "path": "Body/Pink Alien.png",
+      "source": "https://koolskull.com/miyamaker/layers/Body/Pink%20Alien.png",
+      "sourceBytes": 3880238,
+      "bundledBytes": 100174
+    },
+    {
+      "path": "Body/Psychedelic Pink.png",
+      "source": "https://koolskull.com/miyamaker/layers/Body/Psychedelic%20Pink.png",
+      "sourceBytes": 3990429,
+      "bundledBytes": 161537
+    },
+    {
+      "path": "Body/Psychedelic Purple.png",
+      "source": "https://koolskull.com/miyamaker/layers/Body/Psychedelic%20Purple.png",
+      "sourceBytes": 4091341,
+      "bundledBytes": 166375
+    },
+    {
+      "path": "Body/Schizoposter Glitch Aura.png",
+      "source": "https://koolskull.com/miyamaker/layers/Body/Schizoposter%20Glitch%20Aura.png",
+      "sourceBytes": 7853305,
+      "bundledBytes": 248227
+    },
+    {
+      "path": "Body/Tan.png",
+      "source": "https://koolskull.com/miyamaker/layers/Body/Tan.png",
+      "sourceBytes": 4193931,
+      "bundledBytes": 117448
+    },
+    {
+      "path": "Earrings/Chinese Royalty Earrings.png",
+      "source": "https://koolskull.com/miyamaker/layers/Earrings/Chinese%20Royalty%20Earrings.png",
+      "sourceBytes": 278718,
+      "bundledBytes": 28052
+    },
+    {
+      "path": "Eyes/Alien.png",
+      "source": "https://koolskull.com/miyamaker/layers/Eyes/Alien.png",
+      "sourceBytes": 91994,
+      "bundledBytes": 10738
+    },
+    {
+      "path": "Eyes/Aweee.png",
+      "source": "https://koolskull.com/miyamaker/layers/Eyes/Aweee.png",
+      "sourceBytes": 74019,
+      "bundledBytes": 7026
+    },
+    {
+      "path": "Eyes/Brown Hearts.png",
+      "source": "https://koolskull.com/miyamaker/layers/Eyes/Brown%20Hearts.png",
+      "sourceBytes": 118764,
+      "bundledBytes": 10169
+    },
+    {
+      "path": "Eyes/Brown Surprised.png",
+      "source": "https://koolskull.com/miyamaker/layers/Eyes/Brown%20Surprised.png",
+      "sourceBytes": 82806,
+      "bundledBytes": 10535
+    },
+    {
+      "path": "Eyes/Button Eyed.png",
+      "source": "https://koolskull.com/miyamaker/layers/Eyes/Button%20Eyed.png",
+      "sourceBytes": 324452,
+      "bundledBytes": 16962
+    },
+    {
+      "path": "Eyes/closed 2.png",
+      "source": "https://koolskull.com/miyamaker/layers/Eyes/closed%202.png",
+      "sourceBytes": 130796,
+      "bundledBytes": 11081
+    },
+    {
+      "path": "Eyes/Closed Pleased.png",
+      "source": "https://koolskull.com/miyamaker/layers/Eyes/Closed%20Pleased.png",
+      "sourceBytes": 75866,
+      "bundledBytes": 7523
+    },
+    {
+      "path": "Eyes/Closed.png",
+      "source": "https://koolskull.com/miyamaker/layers/Eyes/Closed.png",
+      "sourceBytes": 88005,
+      "bundledBytes": 8971
+    },
+    {
+      "path": "Eyes/Cyborg and Reptilian.png",
+      "source": "https://koolskull.com/miyamaker/layers/Eyes/Cyborg%20and%20Reptilian.png",
+      "sourceBytes": 668221,
+      "bundledBytes": 26690
+    },
+    {
+      "path": "Eyes/Cyborg Goggles.png",
+      "source": "https://koolskull.com/miyamaker/layers/Eyes/Cyborg%20Goggles.png",
+      "sourceBytes": 1523423,
+      "bundledBytes": 47908
+    },
+    {
+      "path": "Eyes/Feline Eyes Yellow.png",
+      "source": "https://koolskull.com/miyamaker/layers/Eyes/Feline%20Eyes%20Yellow.png",
+      "sourceBytes": 83395,
+      "bundledBytes": 10847
+    },
+    {
+      "path": "Eyes/Green Raised Brow.png",
+      "source": "https://koolskull.com/miyamaker/layers/Eyes/Green%20Raised%20Brow.png",
+      "sourceBytes": 84522,
+      "bundledBytes": 10385
+    },
+    {
+      "path": "Eyes/Green Warrior for Christ.png",
+      "source": "https://koolskull.com/miyamaker/layers/Eyes/Green%20Warrior%20for%20Christ.png",
+      "sourceBytes": 136580,
+      "bundledBytes": 10853
+    },
+    {
+      "path": "Eyes/Half Open Eyes.png",
+      "source": "https://koolskull.com/miyamaker/layers/Eyes/Half%20Open%20Eyes.png",
+      "sourceBytes": 104031,
+      "bundledBytes": 9951
+    },
+    {
+      "path": "Eyes/Hangry.png",
+      "source": "https://koolskull.com/miyamaker/layers/Eyes/Hangry.png",
+      "sourceBytes": 669869,
+      "bundledBytes": 34345
+    },
+    {
+      "path": "Eyes/Heart Eyes.png",
+      "source": "https://koolskull.com/miyamaker/layers/Eyes/Heart%20Eyes.png",
+      "sourceBytes": 2026680,
+      "bundledBytes": 57250
+    },
+    {
+      "path": "Eyes/Hyper-dimensional eyes.png",
+      "source": "https://koolskull.com/miyamaker/layers/Eyes/Hyper-dimensional%20eyes.png",
+      "sourceBytes": 319839,
+      "bundledBytes": 16429
+    },
+    {
+      "path": "Eyes/Laser Visor Goggles.png",
+      "source": "https://koolskull.com/miyamaker/layers/Eyes/Laser%20Visor%20Goggles.png",
+      "sourceBytes": 984386,
+      "bundledBytes": 38523
+    },
+    {
+      "path": "Eyes/Lazer Ascension.png",
+      "source": "https://koolskull.com/miyamaker/layers/Eyes/Lazer%20Ascension.png",
+      "sourceBytes": 1314005,
+      "bundledBytes": 128010
+    },
+    {
+      "path": "Eyes/Metal Clown.png",
+      "source": "https://koolskull.com/miyamaker/layers/Eyes/Metal%20Clown.png",
+      "sourceBytes": 2039813,
+      "bundledBytes": 64962
+    },
+    {
+      "path": "Eyes/Monochromatic Question Mark.png",
+      "source": "https://koolskull.com/miyamaker/layers/Eyes/Monochromatic%20Question%20Mark.png",
+      "sourceBytes": 82248,
+      "bundledBytes": 10278
+    },
+    {
+      "path": "Eyes/Pink Heart Glimmer.png",
+      "source": "https://koolskull.com/miyamaker/layers/Eyes/Pink%20Heart%20Glimmer.png",
+      "sourceBytes": 120273,
+      "bundledBytes": 11018
+    },
+    {
+      "path": "Eyes/Reptilian Eyes.png",
+      "source": "https://koolskull.com/miyamaker/layers/Eyes/Reptilian%20Eyes.png",
+      "sourceBytes": 437229,
+      "bundledBytes": 11324
+    },
+    {
+      "path": "Eyes/Reptilian Tri-vision.png",
+      "source": "https://koolskull.com/miyamaker/layers/Eyes/Reptilian%20Tri-vision.png",
+      "sourceBytes": 1459529,
+      "bundledBytes": 41970
+    },
+    {
+      "path": "Eyes/Sad McChibi.png",
+      "source": "https://koolskull.com/miyamaker/layers/Eyes/Sad%20McChibi.png",
+      "sourceBytes": 311864,
+      "bundledBytes": 12153
+    },
+    {
+      "path": "Eyes/SHOCKED.png",
+      "source": "https://koolskull.com/miyamaker/layers/Eyes/SHOCKED.png",
+      "sourceBytes": 76492,
+      "bundledBytes": 8612
+    },
+    {
+      "path": "Eyes/Smile eyes.png",
+      "source": "https://koolskull.com/miyamaker/layers/Eyes/Smile%20eyes.png",
+      "sourceBytes": 134580,
+      "bundledBytes": 11686
+    },
+    {
+      "path": "Eyes/Squinted Bushy Brows.png",
+      "source": "https://koolskull.com/miyamaker/layers/Eyes/Squinted%20Bushy%20Brows.png",
+      "sourceBytes": 80114,
+      "bundledBytes": 9592
+    },
+    {
+      "path": "Eyes/squinted.png",
+      "source": "https://koolskull.com/miyamaker/layers/Eyes/squinted.png",
+      "sourceBytes": 85680,
+      "bundledBytes": 10517
+    },
+    {
+      "path": "Eyes/Symbiote Slime.png",
+      "source": "https://koolskull.com/miyamaker/layers/Eyes/Symbiote%20Slime.png",
+      "sourceBytes": 78364,
+      "bundledBytes": 9608
+    },
+    {
+      "path": "Hair/Anime Purple.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/Anime%20Purple.png",
+      "sourceBytes": 3103180,
+      "bundledBytes": 126465
+    },
+    {
+      "path": "Hair/Asymmetrical impossible Cornrows.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/Asymmetrical%20impossible%20Cornrows.png",
+      "sourceBytes": 777025,
+      "bundledBytes": 27354
+    },
+    {
+      "path": "Hair/Black Messy Short/Black Messy Short.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/Black%20Messy%20Short/Black%20Messy%20Short.png",
+      "sourceBytes": 2182628,
+      "bundledBytes": 56596
+    },
+    {
+      "path": "Hair/Black Messy Short/z-3,Black Messy Short.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/Black%20Messy%20Short/z-3%2CBlack%20Messy%20Short.png",
+      "sourceBytes": 544538,
+      "bundledBytes": 24068
+    },
+    {
+      "path": "Hair/Black Pigtails/Black Pigtails.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/Black%20Pigtails/Black%20Pigtails.png",
+      "sourceBytes": 916939,
+      "bundledBytes": 38881
+    },
+    {
+      "path": "Hair/Black Pigtails/z-3,Black Pigtails.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/Black%20Pigtails/z-3%2CBlack%20Pigtails.png",
+      "sourceBytes": 1346250,
+      "bundledBytes": 57433
+    },
+    {
+      "path": "Hair/Black Straight Straight Bangs with Diamond Clip/Black Straight Straight Bangs with Diamond Clip.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/Black%20Straight%20Straight%20Bangs%20with%20Diamond%20Clip/Black%20Straight%20Straight%20Bangs%20with%20Diamond%20Clip.png",
+      "sourceBytes": 1607613,
+      "bundledBytes": 48222
+    },
+    {
+      "path": "Hair/Black Straight Straight Bangs with Diamond Clip/z-3,Black Straight Straight Bangs with Diamond Clip.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/Black%20Straight%20Straight%20Bangs%20with%20Diamond%20Clip/z-3%2CBlack%20Straight%20Straight%20Bangs%20with%20Diamond%20Clip.png",
+      "sourceBytes": 104442,
+      "bundledBytes": 16077
+    },
+    {
+      "path": "Hair/Black Straight.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/Black%20Straight.png",
+      "sourceBytes": 2807207,
+      "bundledBytes": 91287
+    },
+    {
+      "path": "Hair/Black Tie Up with Braids.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/Black%20Tie%20Up%20with%20Braids.png",
+      "sourceBytes": 1528497,
+      "bundledBytes": 60137
+    },
+    {
+      "path": "Hair/Blonde choppy cut.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/Blonde%20choppy%20cut.png",
+      "sourceBytes": 3602804,
+      "bundledBytes": 104519
+    },
+    {
+      "path": "Hair/Blonde Crazy Ties/Blonde Crazy Ties.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/Blonde%20Crazy%20Ties/Blonde%20Crazy%20Ties.png",
+      "sourceBytes": 3927430,
+      "bundledBytes": 103850
+    },
+    {
+      "path": "Hair/Blonde Crazy Ties/z-3,Blonde Crazy Ties.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/Blonde%20Crazy%20Ties/z-3%2CBlonde%20Crazy%20Ties.png",
+      "sourceBytes": 1491818,
+      "bundledBytes": 51358
+    },
+    {
+      "path": "Hair/Blonde Curls/Blonde Curls.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/Blonde%20Curls/Blonde%20Curls.png",
+      "sourceBytes": 5077262,
+      "bundledBytes": 170360
+    },
+    {
+      "path": "Hair/Blonde Curls/z-3,Blonde Curls.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/Blonde%20Curls/z-3%2CBlonde%20Curls.png",
+      "sourceBytes": 3103196,
+      "bundledBytes": 108446
+    },
+    {
+      "path": "Hair/Blonde spiked Bangs/Blonde spiked Bangs.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/Blonde%20spiked%20Bangs/Blonde%20spiked%20Bangs.png",
+      "sourceBytes": 3745489,
+      "bundledBytes": 76518
+    },
+    {
+      "path": "Hair/Blonde spiked Bangs/z-3,Blonde spiked Bangs.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/Blonde%20spiked%20Bangs/z-3%2CBlonde%20spiked%20Bangs.png",
+      "sourceBytes": 2897862,
+      "bundledBytes": 66664
+    },
+    {
+      "path": "Hair/Blue Bangs/Blue Bangs.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/Blue%20Bangs/Blue%20Bangs.png",
+      "sourceBytes": 1904542,
+      "bundledBytes": 67666
+    },
+    {
+      "path": "Hair/Blue Bangs/z-3,Blue Bangs.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/Blue%20Bangs/z-3%2CBlue%20Bangs.png",
+      "sourceBytes": 1333304,
+      "bundledBytes": 56588
+    },
+    {
+      "path": "Hair/Blue Bob/Blue Bob.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/Blue%20Bob/Blue%20Bob.png",
+      "sourceBytes": 4849863,
+      "bundledBytes": 105083
+    },
+    {
+      "path": "Hair/Blue Bob/z-3,Blue Bob.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/Blue%20Bob/z-3%2CBlue%20Bob.png",
+      "sourceBytes": 563608,
+      "bundledBytes": 23800
+    },
+    {
+      "path": "Hair/Blue tied up with long bangs.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/Blue%20tied%20up%20with%20long%20bangs.png",
+      "sourceBytes": 1438100,
+      "bundledBytes": 113853
+    },
+    {
+      "path": "Hair/Brown Curly/Brown Curly.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/Brown%20Curly/Brown%20Curly.png",
+      "sourceBytes": 3160701,
+      "bundledBytes": 94936
+    },
+    {
+      "path": "Hair/Brown Curly/z-3,Brown Curly.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/Brown%20Curly/z-3%2CBrown%20Curly.png",
+      "sourceBytes": 1848305,
+      "bundledBytes": 63451
+    },
+    {
+      "path": "Hair/Brown Long Wavy/Brown Long Wavy.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/Brown%20Long%20Wavy/Brown%20Long%20Wavy.png",
+      "sourceBytes": 3435233,
+      "bundledBytes": 80021
+    },
+    {
+      "path": "Hair/Brown Long Wavy/z-3,Brown Long Wavy.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/Brown%20Long%20Wavy/z-3%2CBrown%20Long%20Wavy.png",
+      "sourceBytes": 3957830,
+      "bundledBytes": 95071
+    },
+    {
+      "path": "Hair/Brunette Long Straight/Brunette Long Straight.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/Brunette%20Long%20Straight/Brunette%20Long%20Straight.png",
+      "sourceBytes": 3353046,
+      "bundledBytes": 75774
+    },
+    {
+      "path": "Hair/Brunette Long Straight/z-3,Brunette Long Straight.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/Brunette%20Long%20Straight/z-3%2CBrunette%20Long%20Straight.png",
+      "sourceBytes": 94378,
+      "bundledBytes": 13914
+    },
+    {
+      "path": "Hair/Brunette Wind Blown Long/Brunette Wind Blown Long.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/Brunette%20Wind%20Blown%20Long/Brunette%20Wind%20Blown%20Long.png",
+      "sourceBytes": 3036281,
+      "bundledBytes": 74343
+    },
+    {
+      "path": "Hair/Brunette Wind Blown Long/z-3,Brunette Wind Blown Long.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/Brunette%20Wind%20Blown%20Long/z-3%2CBrunette%20Wind%20Blown%20Long.png",
+      "sourceBytes": 1855045,
+      "bundledBytes": 52659
+    },
+    {
+      "path": "Hair/Choppy Redhead.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/Choppy%20Redhead.png",
+      "sourceBytes": 4556290,
+      "bundledBytes": 119090
+    },
+    {
+      "path": "Hair/Dreadlocks with Green Bangs/Dreadlocks with Green Bangs.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/Dreadlocks%20with%20Green%20Bangs/Dreadlocks%20with%20Green%20Bangs.png",
+      "sourceBytes": 2839886,
+      "bundledBytes": 75457
+    },
+    {
+      "path": "Hair/Dreadlocks with Green Bangs/z-3,Dreadlocks with Green Bangs.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/Dreadlocks%20with%20Green%20Bangs/z-3%2CDreadlocks%20with%20Green%20Bangs.png",
+      "sourceBytes": 1224713,
+      "bundledBytes": 52362
+    },
+    {
+      "path": "Hair/Dyed Red Short.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/Dyed%20Red%20Short.png",
+      "sourceBytes": 3521117,
+      "bundledBytes": 104743
+    },
+    {
+      "path": "Hair/Faded SPikes/Faded SPikes.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/Faded%20SPikes/Faded%20SPikes.png",
+      "sourceBytes": 1943084,
+      "bundledBytes": 72575
+    },
+    {
+      "path": "Hair/Faded SPikes/z-3,Faded SPikes.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/Faded%20SPikes/z-3%2CFaded%20SPikes.png",
+      "sourceBytes": 448567,
+      "bundledBytes": 22756
+    },
+    {
+      "path": "Hair/Golden Dragon Tiara.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/Golden%20Dragon%20Tiara.png",
+      "sourceBytes": 1003421,
+      "bundledBytes": 85605
+    },
+    {
+      "path": "Hair/Green Milady Bangs/Green Milady Bangs.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/Green%20Milady%20Bangs/Green%20Milady%20Bangs.png",
+      "sourceBytes": 1985657,
+      "bundledBytes": 48875
+    },
+    {
+      "path": "Hair/Green Milady Bangs/z-3,Green Milady Bangs.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/Green%20Milady%20Bangs/z-3%2CGreen%20Milady%20Bangs.png",
+      "sourceBytes": 1550094,
+      "bundledBytes": 47506
+    },
+    {
+      "path": "Hair/Green Seaweef hair with Pink Strips and Jellyfish Bow.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/Green%20Seaweef%20hair%20with%20Pink%20Strips%20and%20Jellyfish%20Bow.png",
+      "sourceBytes": 2954161,
+      "bundledBytes": 137871
+    },
+    {
+      "path": "Hair/Light Blue Braided.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/Light%20Blue%20Braided.png",
+      "sourceBytes": 3804796,
+      "bundledBytes": 86399
+    },
+    {
+      "path": "Hair/Light Brown Choppy Bangs/Light Brown Choppy Bangs.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/Light%20Brown%20Choppy%20Bangs/Light%20Brown%20Choppy%20Bangs.png",
+      "sourceBytes": 4253430,
+      "bundledBytes": 92715
+    },
+    {
+      "path": "Hair/Light Brown Choppy Bangs/z-3,Light Brown Choppy Bangs.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/Light%20Brown%20Choppy%20Bangs/z-3%2CLight%20Brown%20Choppy%20Bangs.png",
+      "sourceBytes": 1094090,
+      "bundledBytes": 43922
+    },
+    {
+      "path": "Hair/Long Brown V Cut Bangs/Long Brown V Cut Bangs.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/Long%20Brown%20V%20Cut%20Bangs/Long%20Brown%20V%20Cut%20Bangs.png",
+      "sourceBytes": 3243677,
+      "bundledBytes": 71869
+    },
+    {
+      "path": "Hair/Long Brown V Cut Bangs/z-3,Long Brown V Cut Bangs.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/Long%20Brown%20V%20Cut%20Bangs/z-3%2CLong%20Brown%20V%20Cut%20Bangs.png",
+      "sourceBytes": 748180,
+      "bundledBytes": 37744
+    },
+    {
+      "path": "Hair/Long Dreads/Long Dreads.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/Long%20Dreads/Long%20Dreads.png",
+      "sourceBytes": 2418906,
+      "bundledBytes": 85338
+    },
+    {
+      "path": "Hair/Long Dreads/z-3,Long Dreads.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/Long%20Dreads/z-3%2CLong%20Dreads.png",
+      "sourceBytes": 542977,
+      "bundledBytes": 30203
+    },
+    {
+      "path": "Hair/Long Norse Blonde hair with Princess Braids/Long Norse Blonde hair with Princess Braids.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/Long%20Norse%20Blonde%20hair%20with%20Princess%20Braids/Long%20Norse%20Blonde%20hair%20with%20Princess%20Braids.png",
+      "sourceBytes": 1964974,
+      "bundledBytes": 98687
+    },
+    {
+      "path": "Hair/Long Norse Blonde hair with Princess Braids/z-3,Long Norse Blonde hair with Princess Braids.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/Long%20Norse%20Blonde%20hair%20with%20Princess%20Braids/z-3%2CLong%20Norse%20Blonde%20hair%20with%20Princess%20Braids.png",
+      "sourceBytes": 2749745,
+      "bundledBytes": 63052
+    },
+    {
+      "path": "Hair/McChibi Sailor Braid Buns/McChibi Sailor Braid Buns.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/McChibi%20Sailor%20Braid%20Buns/McChibi%20Sailor%20Braid%20Buns.png",
+      "sourceBytes": 3118192,
+      "bundledBytes": 66972
+    },
+    {
+      "path": "Hair/McChibi Sailor Braid Buns/z-3,McChibi Sailor Braid Buns.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/McChibi%20Sailor%20Braid%20Buns/z-3%2CMcChibi%20Sailor%20Braid%20Buns.png",
+      "sourceBytes": 4620368,
+      "bundledBytes": 100565
+    },
+    {
+      "path": "Hair/Mermaid Bun.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/Mermaid%20Bun.png",
+      "sourceBytes": 3623174,
+      "bundledBytes": 102519
+    },
+    {
+      "path": "Hair/MEssy Green Braids.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/MEssy%20Green%20Braids.png",
+      "sourceBytes": 5337410,
+      "bundledBytes": 143279
+    },
+    {
+      "path": "Hair/Mowhawk.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/Mowhawk.png",
+      "sourceBytes": 1641299,
+      "bundledBytes": 49263
+    },
+    {
+      "path": "Hair/OG Miya Brown/OG Miya Brown.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/OG%20Miya%20Brown/OG%20Miya%20Brown.png",
+      "sourceBytes": 1917388,
+      "bundledBytes": 58079
+    },
+    {
+      "path": "Hair/OG Miya Brown/z-3,OG Miya Brown.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/OG%20Miya%20Brown/z-3%2COG%20Miya%20Brown.png",
+      "sourceBytes": 85400,
+      "bundledBytes": 13257
+    },
+    {
+      "path": "Hair/Orange Anime Messy 1.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/Orange%20Anime%20Messy%201.png",
+      "sourceBytes": 4556654,
+      "bundledBytes": 119427
+    },
+    {
+      "path": "Hair/Pastel Green Emo Swoop/Pastel Green Emo Swoop.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/Pastel%20Green%20Emo%20Swoop/Pastel%20Green%20Emo%20Swoop.png",
+      "sourceBytes": 2574397,
+      "bundledBytes": 82987
+    },
+    {
+      "path": "Hair/Pastel Green Emo Swoop/z-3,Pastel Green Emo Swoop.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/Pastel%20Green%20Emo%20Swoop/z-3%2CPastel%20Green%20Emo%20Swoop.png",
+      "sourceBytes": 2208939,
+      "bundledBytes": 60701
+    },
+    {
+      "path": "Hair/Pink and Blue blend Bangs/Pink and Blue blend Bangs.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/Pink%20and%20Blue%20blend%20Bangs/Pink%20and%20Blue%20blend%20Bangs.png",
+      "sourceBytes": 2665681,
+      "bundledBytes": 74115
+    },
+    {
+      "path": "Hair/Pink and Blue blend Bangs/z-3,Pink and Blue blend Bangs.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/Pink%20and%20Blue%20blend%20Bangs/z-3%2CPink%20and%20Blue%20blend%20Bangs.png",
+      "sourceBytes": 2769899,
+      "bundledBytes": 68316
+    },
+    {
+      "path": "Hair/Pink and Blue Pigtails/Pink and Blue Pigtails.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/Pink%20and%20Blue%20Pigtails/Pink%20and%20Blue%20Pigtails.png",
+      "sourceBytes": 2245268,
+      "bundledBytes": 72391
+    },
+    {
+      "path": "Hair/Pink and Blue Pigtails/z-3,Pink and Blue Pigtails.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/Pink%20and%20Blue%20Pigtails/z-3%2CPink%20and%20Blue%20Pigtails.png",
+      "sourceBytes": 2981338,
+      "bundledBytes": 100086
+    },
+    {
+      "path": "Hair/Pink Anime Messy 1.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/Pink%20Anime%20Messy%201.png",
+      "sourceBytes": 4722087,
+      "bundledBytes": 122539
+    },
+    {
+      "path": "Hair/Pink Sailor Miya Ponytails/Pink Sailor Miya Ponytails.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/Pink%20Sailor%20Miya%20Ponytails/Pink%20Sailor%20Miya%20Ponytails.png",
+      "sourceBytes": 1305062,
+      "bundledBytes": 72075
+    },
+    {
+      "path": "Hair/Pink Sailor Miya Ponytails/z-3,Pink Sailor Miya Ponytails.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/Pink%20Sailor%20Miya%20Ponytails/z-3%2CPink%20Sailor%20Miya%20Ponytails.png",
+      "sourceBytes": 2649397,
+      "bundledBytes": 117293
+    },
+    {
+      "path": "Hair/Purple Koolio Braids/Purple Koolio Braids.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/Purple%20Koolio%20Braids/Purple%20Koolio%20Braids.png",
+      "sourceBytes": 3195759,
+      "bundledBytes": 87460
+    },
+    {
+      "path": "Hair/Purple Koolio Braids/z-3,Purple Koolio Braids.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/Purple%20Koolio%20Braids/z-3%2CPurple%20Koolio%20Braids.png",
+      "sourceBytes": 2523800,
+      "bundledBytes": 86410
+    },
+    {
+      "path": "Hair/Purple Lady with Spiked Bangs.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/Purple%20Lady%20with%20Spiked%20Bangs.png",
+      "sourceBytes": 4685415,
+      "bundledBytes": 90480
+    },
+    {
+      "path": "Hair/Purple M-shape Bangs.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/Purple%20M-shape%20Bangs.png",
+      "sourceBytes": 2727547,
+      "bundledBytes": 112444
+    },
+    {
+      "path": "Hair/Red side cut bangs/Red side cut bangs.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/Red%20side%20cut%20bangs/Red%20side%20cut%20bangs.png",
+      "sourceBytes": 2760473,
+      "bundledBytes": 56783
+    },
+    {
+      "path": "Hair/Red side cut bangs/z-3,Red side cut bangs.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/Red%20side%20cut%20bangs/z-3%2CRed%20side%20cut%20bangs.png",
+      "sourceBytes": 250163,
+      "bundledBytes": 16908
+    },
+    {
+      "path": "Hair/Red Straight Bangs with Sidecut/Red Straight Bangs with Sidecut.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/Red%20Straight%20Bangs%20with%20Sidecut/Red%20Straight%20Bangs%20with%20Sidecut.png",
+      "sourceBytes": 4092861,
+      "bundledBytes": 97348
+    },
+    {
+      "path": "Hair/Red Straight Bangs with Sidecut/z-3,Red Straight Bangs with Sidecut.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/Red%20Straight%20Bangs%20with%20Sidecut/z-3%2CRed%20Straight%20Bangs%20with%20Sidecut.png",
+      "sourceBytes": 2714131,
+      "bundledBytes": 65929
+    },
+    {
+      "path": "Hair/Short Brown Side Part/Short Brown Side Part.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/Short%20Brown%20Side%20Part/Short%20Brown%20Side%20Part.png",
+      "sourceBytes": 1746611,
+      "bundledBytes": 52899
+    },
+    {
+      "path": "Hair/Short Brown Side Part/z-3,Short Brown Side Part.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/Short%20Brown%20Side%20Part/z-3%2CShort%20Brown%20Side%20Part.png",
+      "sourceBytes": 1499442,
+      "bundledBytes": 46209
+    },
+    {
+      "path": "Hair/Short Brown Wavy.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/Short%20Brown%20Wavy.png",
+      "sourceBytes": 3790735,
+      "bundledBytes": 94556
+    },
+    {
+      "path": "Hair/Short Dreads.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/Short%20Dreads.png",
+      "sourceBytes": 3508165,
+      "bundledBytes": 93719
+    },
+    {
+      "path": "Hair/Side Cut Brown.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/Side%20Cut%20Brown.png",
+      "sourceBytes": 1943448,
+      "bundledBytes": 72912
+    },
+    {
+      "path": "Hair/Snazzy Lawyer.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/Snazzy%20Lawyer.png",
+      "sourceBytes": 2752568,
+      "bundledBytes": 84232
+    },
+    {
+      "path": "Hair/Spiky Bangs M Cut Black.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/Spiky%20Bangs%20M%20Cut%20Black.png",
+      "sourceBytes": 2162572,
+      "bundledBytes": 50338
+    },
+    {
+      "path": "Hair/Spiky Bangs M Cut Brown.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/Spiky%20Bangs%20M%20Cut%20Brown.png",
+      "sourceBytes": 3904777,
+      "bundledBytes": 76553
+    },
+    {
+      "path": "Hair/Spiky Bangs M Cut Glitch 1.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/Spiky%20Bangs%20M%20Cut%20Glitch%201.png",
+      "sourceBytes": 1695480,
+      "bundledBytes": 86257
+    },
+    {
+      "path": "Hair/Spiky Bangs M Cut Glitch 2.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/Spiky%20Bangs%20M%20Cut%20Glitch%202.png",
+      "sourceBytes": 1015556,
+      "bundledBytes": 100999
+    },
+    {
+      "path": "Hair/Spiky Bangs M Cut Green .png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/Spiky%20Bangs%20M%20Cut%20Green%20.png",
+      "sourceBytes": 4261541,
+      "bundledBytes": 79870
+    },
+    {
+      "path": "Hair/Spiky Bangs M Cut Purple.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/Spiky%20Bangs%20M%20Cut%20Purple.png",
+      "sourceBytes": 4400081,
+      "bundledBytes": 80539
+    },
+    {
+      "path": "Hair/Spiky Bangs M Cut Red.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hair/Spiky%20Bangs%20M%20Cut%20Red.png",
+      "sourceBytes": 3155965,
+      "bundledBytes": 69831
+    },
+    {
+      "path": "Hand/Left/Cute Acceleration Machine Gun.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hand/Left/Cute%20Acceleration%20Machine%20Gun.png",
+      "sourceBytes": 6394958,
+      "bundledBytes": 117223
+    },
+    {
+      "path": "Hand/Left/Golden Machine Gun with Cyborg Hand.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hand/Left/Golden%20Machine%20Gun%20with%20Cyborg%20Hand.png",
+      "sourceBytes": 1473332,
+      "bundledBytes": 122575
+    },
+    {
+      "path": "Hand/Left/Golden Machine Gun.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hand/Left/Golden%20Machine%20Gun.png",
+      "sourceBytes": 1464518,
+      "bundledBytes": 122148
+    },
+    {
+      "path": "Hand/Left/Green Gameboy Color.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hand/Left/Green%20Gameboy%20Color.png",
+      "sourceBytes": 1904221,
+      "bundledBytes": 44202
+    },
+    {
+      "path": "Hand/Left/Master Chief Cigar.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hand/Left/Master%20Chief%20Cigar.png",
+      "sourceBytes": 2845165,
+      "bundledBytes": 74769
+    },
+    {
+      "path": "Hand/Left/Old Cellphone.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hand/Left/Old%20Cellphone.png",
+      "sourceBytes": 1586569,
+      "bundledBytes": 36318
+    },
+    {
+      "path": "Hand/Left/Samurai Sword with Blood.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hand/Left/Samurai%20Sword%20with%20Blood.png",
+      "sourceBytes": 1056205,
+      "bundledBytes": 82562
+    },
+    {
+      "path": "Hand/Right/Golden Axe.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hand/Right/Golden%20Axe.png",
+      "sourceBytes": 1435639,
+      "bundledBytes": 112290
+    },
+    {
+      "path": "Hand/Right/Golden Dagger.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hand/Right/Golden%20Dagger.png",
+      "sourceBytes": 1792688,
+      "bundledBytes": 139089
+    },
+    {
+      "path": "Hand/Right/Golden Handgun.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hand/Right/Golden%20Handgun.png",
+      "sourceBytes": 1344197,
+      "bundledBytes": 99167
+    },
+    {
+      "path": "Hand/Right/Kpop Hand with Green Nails and Milady Tattoo.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hand/Right/Kpop%20Hand%20with%20Green%20Nails%20and%20Milady%20Tattoo.png",
+      "sourceBytes": 2370235,
+      "bundledBytes": 47394
+    },
+    {
+      "path": "Hand/Right/Master Chief Holding Money.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hand/Right/Master%20Chief%20Holding%20Money.png",
+      "sourceBytes": 5071940,
+      "bundledBytes": 123252
+    },
+    {
+      "path": "Hand/Right/Needle Gun.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hand/Right/Needle%20Gun.png",
+      "sourceBytes": 2064322,
+      "bundledBytes": 157503
+    },
+    {
+      "path": "Hand/Right/Open Hand.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hand/Right/Open%20Hand.png",
+      "sourceBytes": 2829888,
+      "bundledBytes": 51108
+    },
+    {
+      "path": "Hand/Right/Reptile Hand with Eye Palm.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hand/Right/Reptile%20Hand%20with%20Eye%20Palm.png",
+      "sourceBytes": 3184772,
+      "bundledBytes": 57263
+    },
+    {
+      "path": "Hand/Right/Reptile Hand.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hand/Right/Reptile%20Hand.png",
+      "sourceBytes": 3165484,
+      "bundledBytes": 56142
+    },
+    {
+      "path": "Hand/Right/Samurai Sword with Blood.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hand/Right/Samurai%20Sword%20with%20Blood.png",
+      "sourceBytes": 6248480,
+      "bundledBytes": 119587
+    },
+    {
+      "path": "Hand/Right/Stainless Steel Handgun.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hand/Right/Stainless%20Steel%20Handgun.png",
+      "sourceBytes": 1178787,
+      "bundledBytes": 86652
+    },
+    {
+      "path": "Hand/Right/Wielding Electricity.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hand/Right/Wielding%20Electricity.png",
+      "sourceBytes": 23776530,
+      "bundledBytes": 470133
+    },
+    {
+      "path": "Hat/A NEW WORLD.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hat/A%20NEW%20WORLD.png",
+      "sourceBytes": 4885373,
+      "bundledBytes": 93442
+    },
+    {
+      "path": "Hat/Alien demon skull hat.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hat/Alien%20demon%20skull%20hat.png",
+      "sourceBytes": 2039507,
+      "bundledBytes": 65113
+    },
+    {
+      "path": "Hat/Alien Hat.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hat/Alien%20Hat.png",
+      "sourceBytes": 3253869,
+      "bundledBytes": 79277
+    },
+    {
+      "path": "Hat/ASTRAS PLUSH HAT.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hat/ASTRAS%20PLUSH%20HAT.png",
+      "sourceBytes": 5659378,
+      "bundledBytes": 101960
+    },
+    {
+      "path": "Hat/Aztec Warrior.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hat/Aztec%20Warrior.png",
+      "sourceBytes": 566632,
+      "bundledBytes": 195545
+    },
+    {
+      "path": "Hat/Aztec Warrior/Aztec Warrior.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hat/Aztec%20Warrior/Aztec%20Warrior.png",
+      "sourceBytes": 8230688,
+      "bundledBytes": 194452
+    },
+    {
+      "path": "Hat/Aztec Warrior/Z-2,Aztec Warrior.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hat/Aztec%20Warrior/Z-2%2CAztec%20Warrior.png",
+      "sourceBytes": 6191593,
+      "bundledBytes": 164275
+    },
+    {
+      "path": "Hat/B4by F4c3.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hat/B4by%20F4c3.png",
+      "sourceBytes": 2194142,
+      "bundledBytes": 49263
+    },
+    {
+      "path": "Hat/Berachain Beanie.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hat/Berachain%20Beanie.png",
+      "sourceBytes": 4142676,
+      "bundledBytes": 72839
+    },
+    {
+      "path": "Hat/Berachain Cap.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hat/Berachain%20Cap.png",
+      "sourceBytes": 4629674,
+      "bundledBytes": 80126
+    },
+    {
+      "path": "Hat/Black Fitted Cap CROSS.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hat/Black%20Fitted%20Cap%20CROSS.png",
+      "sourceBytes": 90855,
+      "bundledBytes": 35957
+    },
+    {
+      "path": "Hat/Black Fitted Cap GODS LOVE NEVER ENDS.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hat/Black%20Fitted%20Cap%20GODS%20LOVE%20NEVER%20ENDS.png",
+      "sourceBytes": 102927,
+      "bundledBytes": 39464
+    },
+    {
+      "path": "Hat/Black Fitted Cap HEADTURAMA.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hat/Black%20Fitted%20Cap%20HEADTURAMA.png",
+      "sourceBytes": 95973,
+      "bundledBytes": 37683
+    },
+    {
+      "path": "Hat/Black Fitted Cap MIYAMAKER LOGO.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hat/Black%20Fitted%20Cap%20MIYAMAKER%20LOGO.png",
+      "sourceBytes": 94584,
+      "bundledBytes": 37342
+    },
+    {
+      "path": "Hat/Black Fitted Cap NO IMAGINATION NO BALLS.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hat/Black%20Fitted%20Cap%20NO%20IMAGINATION%20NO%20BALLS.png",
+      "sourceBytes": 99722,
+      "bundledBytes": 38466
+    },
+    {
+      "path": "Hat/Black Fitted Cap OPEN SOURCE EXTREMIST.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hat/Black%20Fitted%20Cap%20OPEN%20SOURCE%20EXTREMIST.png",
+      "sourceBytes": 102144,
+      "bundledBytes": 39396
+    },
+    {
+      "path": "Hat/Black Fitted Cap TEMPLE OS DEV.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hat/Black%20Fitted%20Cap%20TEMPLE%20OS%20DEV.png",
+      "sourceBytes": 100772,
+      "bundledBytes": 39729
+    },
+    {
+      "path": "Hat/Black Fitted Cap THRASH44 RECORDS.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hat/Black%20Fitted%20Cap%20THRASH44%20RECORDS.png",
+      "sourceBytes": 105919,
+      "bundledBytes": 40486
+    },
+    {
+      "path": "Hat/Bounty Hunter.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hat/Bounty%20Hunter.png",
+      "sourceBytes": 6559323,
+      "bundledBytes": 155020
+    },
+    {
+      "path": "Hat/Brain Drain Machine.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hat/Brain%20Drain%20Machine.png",
+      "sourceBytes": 3083670,
+      "bundledBytes": 96545
+    },
+    {
+      "path": "Hat/Cake Slice.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hat/Cake%20Slice.png",
+      "sourceBytes": 653438,
+      "bundledBytes": 44361
+    },
+    {
+      "path": "Hat/cat ears with bells.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hat/cat%20ears%20with%20bells.png",
+      "sourceBytes": 982424,
+      "bundledBytes": 52070
+    },
+    {
+      "path": "Hat/Cat Ears.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hat/Cat%20Ears.png",
+      "sourceBytes": 97802,
+      "bundledBytes": 40938
+    },
+    {
+      "path": "Hat/Chinese Royalty.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hat/Chinese%20Royalty.png",
+      "sourceBytes": 391183,
+      "bundledBytes": 140705
+    },
+    {
+      "path": "Hat/Chinese Royalty/Chinese Royalty.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hat/Chinese%20Royalty/Chinese%20Royalty.png",
+      "sourceBytes": 5261579,
+      "bundledBytes": 140010
+    },
+    {
+      "path": "Hat/Chinese Royalty/Z-2,Chinese Royalty.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hat/Chinese%20Royalty/Z-2%2CChinese%20Royalty.png",
+      "sourceBytes": 1421495,
+      "bundledBytes": 48459
+    },
+    {
+      "path": "Hat/Christian Paladin.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hat/Christian%20Paladin.png",
+      "sourceBytes": 7629077,
+      "bundledBytes": 142796
+    },
+    {
+      "path": "Hat/Christs Army Helmet.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hat/Christs%20Army%20Helmet.png",
+      "sourceBytes": 5596977,
+      "bundledBytes": 107440
+    },
+    {
+      "path": "Hat/Cleopatra Records.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hat/Cleopatra%20Records.png",
+      "sourceBytes": 2082834,
+      "bundledBytes": 46862
+    },
+    {
+      "path": "Hat/Cowboy Hat IGNORING YOU.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hat/Cowboy%20Hat%20IGNORING%20YOU.png",
+      "sourceBytes": 183709,
+      "bundledBytes": 76850
+    },
+    {
+      "path": "Hat/Cowboy Hat MIYA SHERIFF.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hat/Cowboy%20Hat%20MIYA%20SHERIFF.png",
+      "sourceBytes": 6049725,
+      "bundledBytes": 97149
+    },
+    {
+      "path": "Hat/Crass Lips Records Hand Stitched.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hat/Crass%20Lips%20Records%20Hand%20Stitched.png",
+      "sourceBytes": 2189796,
+      "bundledBytes": 48672
+    },
+    {
+      "path": "Hat/Crown Chakra Download Green.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hat/Crown%20Chakra%20Download%20Green.png",
+      "sourceBytes": 9274323,
+      "bundledBytes": 165715
+    },
+    {
+      "path": "Hat/Crown Chakra Download Purple Pink.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hat/Crown%20Chakra%20Download%20Purple%20Pink.png",
+      "sourceBytes": 8633969,
+      "bundledBytes": 148624
+    },
+    {
+      "path": "Hat/Crown Chakra Download yellow.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hat/Crown%20Chakra%20Download%20yellow.png",
+      "sourceBytes": 9430201,
+      "bundledBytes": 165533
+    },
+    {
+      "path": "Hat/Cyborg Cat Ears.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hat/Cyborg%20Cat%20Ears.png",
+      "sourceBytes": 1944862,
+      "bundledBytes": 41829
+    },
+    {
+      "path": "Hat/fuzzy bucket hat.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hat/fuzzy%20bucket%20hat.png",
+      "sourceBytes": 2489753,
+      "bundledBytes": 83479
+    },
+    {
+      "path": "Hat/Green Fish.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hat/Green%20Fish.png",
+      "sourceBytes": 2807824,
+      "bundledBytes": 116656
+    },
+    {
+      "path": "Hat/Halo.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hat/Halo.png",
+      "sourceBytes": 229393,
+      "bundledBytes": 22105
+    },
+    {
+      "path": "Hat/Headturama.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hat/Headturama.png",
+      "sourceBytes": 2034195,
+      "bundledBytes": 45748
+    },
+    {
+      "path": "Hat/Jack-o-lantern.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hat/Jack-o-lantern.png",
+      "sourceBytes": 4411384,
+      "bundledBytes": 122094
+    },
+    {
+      "path": "Hat/Jesus is King.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hat/Jesus%20is%20King.png",
+      "sourceBytes": 4357326,
+      "bundledBytes": 84193
+    },
+    {
+      "path": "Hat/KOOLSKULL LOGO.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hat/KOOLSKULL%20LOGO.png",
+      "sourceBytes": 2051103,
+      "bundledBytes": 45152
+    },
+    {
+      "path": "Hat/Loved by Christ Psyop Skull.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hat/Loved%20by%20Christ%20Psyop%20Skull.png",
+      "sourceBytes": 1972640,
+      "bundledBytes": 47774
+    },
+    {
+      "path": "Hat/MAGA.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hat/MAGA.png",
+      "sourceBytes": 3981117,
+      "bundledBytes": 79667
+    },
+    {
+      "path": "Hat/Mastermind.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hat/Mastermind.png",
+      "sourceBytes": 2028974,
+      "bundledBytes": 73914
+    },
+    {
+      "path": "Hat/Miya Maker Great Again.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hat/Miya%20Maker%20Great%20Again.png",
+      "sourceBytes": 1971236,
+      "bundledBytes": 57805
+    },
+    {
+      "path": "Hat/Miya Ranger.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hat/Miya%20Ranger.png",
+      "sourceBytes": 2323193,
+      "bundledBytes": 131128
+    },
+    {
+      "path": "Hat/Miyadonalds.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hat/Miyadonalds.png",
+      "sourceBytes": 952466,
+      "bundledBytes": 37865
+    },
+    {
+      "path": "Hat/Miyamaker Christs Love.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hat/Miyamaker%20Christs%20Love.png",
+      "sourceBytes": 2005455,
+      "bundledBytes": 47936
+    },
+    {
+      "path": "Hat/Miyamaker Great Again.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hat/Miyamaker%20Great%20Again.png",
+      "sourceBytes": 3936727,
+      "bundledBytes": 78367
+    },
+    {
+      "path": "Hat/Miyamaker Logo.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hat/Miyamaker%20Logo.png",
+      "sourceBytes": 2005031,
+      "bundledBytes": 45944
+    },
+    {
+      "path": "Hat/MiyaMaker Pro.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hat/MiyaMaker%20Pro.png",
+      "sourceBytes": 1176844,
+      "bundledBytes": 63652
+    },
+    {
+      "path": "Hat/Mutant Octopus.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hat/Mutant%20Octopus.png",
+      "sourceBytes": 168035,
+      "bundledBytes": 71276
+    },
+    {
+      "path": "Hat/Naval Officer.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hat/Naval%20Officer.png",
+      "sourceBytes": 142197,
+      "bundledBytes": 64828
+    },
+    {
+      "path": "Hat/NO IMAGINATION NO BALLS.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hat/NO%20IMAGINATION%20NO%20BALLS.png",
+      "sourceBytes": 1840088,
+      "bundledBytes": 46486
+    },
+    {
+      "path": "Hat/Open-source Software Extremist.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hat/Open-source%20Software%20Extremist.png",
+      "sourceBytes": 2069224,
+      "bundledBytes": 49168
+    },
+    {
+      "path": "Hat/Period Bomb TV.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hat/Period%20Bomb%20TV.png",
+      "sourceBytes": 2053184,
+      "bundledBytes": 48317
+    },
+    {
+      "path": "Hat/Pink Sparkle Cowgirl.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hat/Pink%20Sparkle%20Cowgirl.png",
+      "sourceBytes": 4038525,
+      "bundledBytes": 118345
+    },
+    {
+      "path": "Hat/Placenta Recordings.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hat/Placenta%20Recordings.png",
+      "sourceBytes": 2214756,
+      "bundledBytes": 49529
+    },
+    {
+      "path": "Hat/Please Be Patient with me im soooooooooo.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hat/Please%20Be%20Patient%20with%20me%20im%20soooooooooo.png",
+      "sourceBytes": 4307728,
+      "bundledBytes": 82909
+    },
+    {
+      "path": "Hat/Princess Protection Cow Cap.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hat/Princess%20Protection%20Cow%20Cap.png",
+      "sourceBytes": 2135213,
+      "bundledBytes": 75154
+    },
+    {
+      "path": "Hat/Records Ad Nauseam.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hat/Records%20Ad%20Nauseam.png",
+      "sourceBytes": 2049937,
+      "bundledBytes": 46754
+    },
+    {
+      "path": "Hat/Remilia Corp Cap.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hat/Remilia%20Corp%20Cap.png",
+      "sourceBytes": 2684280,
+      "bundledBytes": 55034
+    },
+    {
+      "path": "Hat/Sailor.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hat/Sailor.png",
+      "sourceBytes": 2199589,
+      "bundledBytes": 63199
+    },
+    {
+      "path": "Hat/Santa Hat.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hat/Santa%20Hat.png",
+      "sourceBytes": 3430346,
+      "bundledBytes": 100003
+    },
+    {
+      "path": "Hat/Solo Christo Salva.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hat/Solo%20Christo%20Salva.png",
+      "sourceBytes": 4316485,
+      "bundledBytes": 84805
+    },
+    {
+      "path": "Hat/Starberry Beret.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hat/Starberry%20Beret.png",
+      "sourceBytes": 1070814,
+      "bundledBytes": 57481
+    },
+    {
+      "path": "Hat/Thrash44 Records.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hat/Thrash44%20Records.png",
+      "sourceBytes": 2033602,
+      "bundledBytes": 48509
+    },
+    {
+      "path": "Hat/Thrash44 Skull.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hat/Thrash44%20Skull.png",
+      "sourceBytes": 2045418,
+      "bundledBytes": 46657
+    },
+    {
+      "path": "Hat/Trump Is My Nigga.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hat/Trump%20Is%20My%20Nigga.png",
+      "sourceBytes": 3946930,
+      "bundledBytes": 78578
+    },
+    {
+      "path": "Hat/Ukranian Bride Crown.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hat/Ukranian%20Bride%20Crown.png",
+      "sourceBytes": 3594735,
+      "bundledBytes": 84893
+    },
+    {
+      "path": "Hat/Vultures.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hat/Vultures.png",
+      "sourceBytes": 3866850,
+      "bundledBytes": 78196
+    },
+    {
+      "path": "Hat/White Trucker Cap MIYA MAKER PRO.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hat/White%20Trucker%20Cap%20MIYA%20MAKER%20PRO.png",
+      "sourceBytes": 150213,
+      "bundledBytes": 64279
+    },
+    {
+      "path": "Hat/Winged Helmet.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hat/Winged%20Helmet.png",
+      "sourceBytes": 10849802,
+      "bundledBytes": 227793
+    },
+    {
+      "path": "Hat/Yellow sun hat.png",
+      "source": "https://koolskull.com/miyamaker/layers/Hat/Yellow%20sun%20hat.png",
+      "sourceBytes": 218076,
+      "bundledBytes": 85100
+    },
+    {
+      "path": "Mask/Bitcoin Glasses.png",
+      "source": "https://koolskull.com/miyamaker/layers/Mask/Bitcoin%20Glasses.png",
+      "sourceBytes": 963814,
+      "bundledBytes": 26168
+    },
+    {
+      "path": "Mask/Cyberskull VR Headset.png",
+      "source": "https://koolskull.com/miyamaker/layers/Mask/Cyberskull%20VR%20Headset.png",
+      "sourceBytes": 1801172,
+      "bundledBytes": 50363
+    },
+    {
+      "path": "Mask/Cyborg Face Melt.png",
+      "source": "https://koolskull.com/miyamaker/layers/Mask/Cyborg%20Face%20Melt.png",
+      "sourceBytes": 1235024,
+      "bundledBytes": 42369
+    },
+    {
+      "path": "Mask/Gasmask.png",
+      "source": "https://koolskull.com/miyamaker/layers/Mask/Gasmask.png",
+      "sourceBytes": 1203904,
+      "bundledBytes": 36693
+    },
+    {
+      "path": "Mask/Golden Silver Oni Mask.png",
+      "source": "https://koolskull.com/miyamaker/layers/Mask/Golden%20Silver%20Oni%20Mask.png",
+      "sourceBytes": 4893646,
+      "bundledBytes": 84129
+    },
+    {
+      "path": "Mask/Heart Skull Digital Vision Mask.png",
+      "source": "https://koolskull.com/miyamaker/layers/Mask/Heart%20Skull%20Digital%20Vision%20Mask.png",
+      "sourceBytes": 1738466,
+      "bundledBytes": 58047
+    },
+    {
+      "path": "Mask/Insectoid Face.png",
+      "source": "https://koolskull.com/miyamaker/layers/Mask/Insectoid%20Face.png",
+      "sourceBytes": 2592571,
+      "bundledBytes": 54994
+    },
+    {
+      "path": "Mask/LCD VISOR/GLITCH 00.png",
+      "source": "https://koolskull.com/miyamaker/layers/Mask/LCD%20VISOR/GLITCH%2000.png",
+      "sourceBytes": 1045900,
+      "bundledBytes": 36127
+    },
+    {
+      "path": "Mask/LCD VISOR/GLITCH 01 Miya Coin Eyes.png",
+      "source": "https://koolskull.com/miyamaker/layers/Mask/LCD%20VISOR/GLITCH%2001%20Miya%20Coin%20Eyes.png",
+      "sourceBytes": 940231,
+      "bundledBytes": 35479
+    },
+    {
+      "path": "Mask/LCD VISOR/GLITCH 02.png",
+      "source": "https://koolskull.com/miyamaker/layers/Mask/LCD%20VISOR/GLITCH%2002.png",
+      "sourceBytes": 969117,
+      "bundledBytes": 35475
+    },
+    {
+      "path": "Mask/LCD VISOR/GLITCH 03 REEETARD.png",
+      "source": "https://koolskull.com/miyamaker/layers/Mask/LCD%20VISOR/GLITCH%2003%20REEETARD.png",
+      "sourceBytes": 1027291,
+      "bundledBytes": 34567
+    },
+    {
+      "path": "Mask/LCD VISOR/GLITCH 04 Schizoposter Eyes.png",
+      "source": "https://koolskull.com/miyamaker/layers/Mask/LCD%20VISOR/GLITCH%2004%20Schizoposter%20Eyes.png",
+      "sourceBytes": 806195,
+      "bundledBytes": 33073
+    },
+    {
+      "path": "Mask/LCD VISOR/GLITCH 05 Curious.png",
+      "source": "https://koolskull.com/miyamaker/layers/Mask/LCD%20VISOR/GLITCH%2005%20Curious.png",
+      "sourceBytes": 1059403,
+      "bundledBytes": 33795
+    },
+    {
+      "path": "Mask/LCD VISOR/GLITCH 06 Garden.png",
+      "source": "https://koolskull.com/miyamaker/layers/Mask/LCD%20VISOR/GLITCH%2006%20Garden.png",
+      "sourceBytes": 913425,
+      "bundledBytes": 33716
+    },
+    {
+      "path": "Mask/LCD VISOR/GLITCH 07 Wownero Mutant.png",
+      "source": "https://koolskull.com/miyamaker/layers/Mask/LCD%20VISOR/GLITCH%2007%20Wownero%20Mutant.png",
+      "sourceBytes": 1031026,
+      "bundledBytes": 35183
+    },
+    {
+      "path": "Mask/LCD VISOR/GLITCH 08 Chinese Conspiracy.png",
+      "source": "https://koolskull.com/miyamaker/layers/Mask/LCD%20VISOR/GLITCH%2008%20Chinese%20Conspiracy.png",
+      "sourceBytes": 506079,
+      "bundledBytes": 27745
+    },
+    {
+      "path": "Mask/LCD VISOR/GLITCH 09 Light Hand.png",
+      "source": "https://koolskull.com/miyamaker/layers/Mask/LCD%20VISOR/GLITCH%2009%20Light%20Hand.png",
+      "sourceBytes": 806570,
+      "bundledBytes": 33399
+    },
+    {
+      "path": "Mask/LCD VISOR/GLITCH 0A 21E8.png",
+      "source": "https://koolskull.com/miyamaker/layers/Mask/LCD%20VISOR/GLITCH%200A%2021E8.png",
+      "sourceBytes": 860377,
+      "bundledBytes": 33507
+    },
+    {
+      "path": "Mask/LCD VISOR/GLITCH 0B Fuinky Fumos 42.png",
+      "source": "https://koolskull.com/miyamaker/layers/Mask/LCD%20VISOR/GLITCH%200B%20Fuinky%20Fumos%2042.png",
+      "sourceBytes": 1008200,
+      "bundledBytes": 35134
+    },
+    {
+      "path": "Mask/LCD VISOR/GLITCH 0C Retarded Citizen and the Law.png",
+      "source": "https://koolskull.com/miyamaker/layers/Mask/LCD%20VISOR/GLITCH%200C%20Retarded%20Citizen%20and%20the%20Law.png",
+      "sourceBytes": 990758,
+      "bundledBytes": 33619
+    },
+    {
+      "path": "Mask/LCD VISOR/GLITCH 0D Terminat0r.png",
+      "source": "https://koolskull.com/miyamaker/layers/Mask/LCD%20VISOR/GLITCH%200D%20Terminat0r.png",
+      "sourceBytes": 1104624,
+      "bundledBytes": 34447
+    },
+    {
+      "path": "Mask/LCD VISOR/GLITCH 0E Deep Research.png",
+      "source": "https://koolskull.com/miyamaker/layers/Mask/LCD%20VISOR/GLITCH%200E%20Deep%20Research.png",
+      "sourceBytes": 992702,
+      "bundledBytes": 33302
+    },
+    {
+      "path": "Mask/LCD VISOR/GLITCH 0F Zodomos Thrash Banner.png",
+      "source": "https://koolskull.com/miyamaker/layers/Mask/LCD%20VISOR/GLITCH%200F%20Zodomos%20Thrash%20Banner.png",
+      "sourceBytes": 1064730,
+      "bundledBytes": 34564
+    },
+    {
+      "path": "Mask/LCD VISOR/GLITCH 10 Gun guy.png",
+      "source": "https://koolskull.com/miyamaker/layers/Mask/LCD%20VISOR/GLITCH%2010%20Gun%20guy.png",
+      "sourceBytes": 847399,
+      "bundledBytes": 33270
+    },
+    {
+      "path": "Mask/LCD VISOR/GLITCH 11 Radcat AI Glitch.png",
+      "source": "https://koolskull.com/miyamaker/layers/Mask/LCD%20VISOR/GLITCH%2011%20Radcat%20AI%20Glitch.png",
+      "sourceBytes": 916599,
+      "bundledBytes": 34438
+    },
+    {
+      "path": "Mask/LCD VISOR/GLITCH 12 Ascended Light VIsion.png",
+      "source": "https://koolskull.com/miyamaker/layers/Mask/LCD%20VISOR/GLITCH%2012%20Ascended%20Light%20VIsion.png",
+      "sourceBytes": 875045,
+      "bundledBytes": 35344
+    },
+    {
+      "path": "Mask/LCD VISOR/GLITCH 13 God Emperor Trump Action Figure.png",
+      "source": "https://koolskull.com/miyamaker/layers/Mask/LCD%20VISOR/GLITCH%2013%20God%20Emperor%20Trump%20Action%20Figure.png",
+      "sourceBytes": 1137036,
+      "bundledBytes": 34473
+    },
+    {
+      "path": "Mask/LCD VISOR/GLITCH 14 Trump Tank.png",
+      "source": "https://koolskull.com/miyamaker/layers/Mask/LCD%20VISOR/GLITCH%2014%20Trump%20Tank.png",
+      "sourceBytes": 1105835,
+      "bundledBytes": 35520
+    },
+    {
+      "path": "Mask/LCD VISOR/GLITCH 15 Mutant Bitcoin guy.png",
+      "source": "https://koolskull.com/miyamaker/layers/Mask/LCD%20VISOR/GLITCH%2015%20Mutant%20Bitcoin%20guy.png",
+      "sourceBytes": 1174134,
+      "bundledBytes": 35359
+    },
+    {
+      "path": "Mask/Mermaid Tiara.png",
+      "source": "https://koolskull.com/miyamaker/layers/Mask/Mermaid%20Tiara.png",
+      "sourceBytes": 2268291,
+      "bundledBytes": 59563
+    },
+    {
+      "path": "Mask/MFiyaDoom.png",
+      "source": "https://koolskull.com/miyamaker/layers/Mask/MFiyaDoom.png",
+      "sourceBytes": 3273597,
+      "bundledBytes": 61761
+    },
+    {
+      "path": "Mask/MIYA GOLD VIPER SHADES.png",
+      "source": "https://koolskull.com/miyamaker/layers/Mask/MIYA%20GOLD%20VIPER%20SHADES.png",
+      "sourceBytes": 1860854,
+      "bundledBytes": 54582
+    },
+    {
+      "path": "Mask/None.png",
+      "source": "https://koolskull.com/miyamaker/layers/Mask/None.png",
+      "sourceBytes": 5750,
+      "bundledBytes": 5560
+    },
+    {
+      "path": "Mask/Oni Mouth.png",
+      "source": "https://koolskull.com/miyamaker/layers/Mask/Oni%20Mouth.png",
+      "sourceBytes": 868674,
+      "bundledBytes": 35732
+    },
+    {
+      "path": "Mask/Spy Shades.png",
+      "source": "https://koolskull.com/miyamaker/layers/Mask/Spy%20Shades.png",
+      "sourceBytes": 1560156,
+      "bundledBytes": 34609
+    },
+    {
+      "path": "Mask/Three Eyed Reptilian Face.png",
+      "source": "https://koolskull.com/miyamaker/layers/Mask/Three%20Eyed%20Reptilian%20Face.png",
+      "sourceBytes": 2050873,
+      "bundledBytes": 46617
+    },
+    {
+      "path": "Mouth/Big smile.png",
+      "source": "https://koolskull.com/miyamaker/layers/Mouth/Big%20smile.png",
+      "sourceBytes": 72073,
+      "bundledBytes": 6041
+    },
+    {
+      "path": "Mouth/Black Lipstick.png",
+      "source": "https://koolskull.com/miyamaker/layers/Mouth/Black%20Lipstick.png",
+      "sourceBytes": 80334,
+      "bundledBytes": 6465
+    },
+    {
+      "path": "Mouth/cigarette.png",
+      "source": "https://koolskull.com/miyamaker/layers/Mouth/cigarette.png",
+      "sourceBytes": 89541,
+      "bundledBytes": 7355
+    },
+    {
+      "path": "Mouth/GRILLZ.png",
+      "source": "https://koolskull.com/miyamaker/layers/Mouth/GRILLZ.png",
+      "sourceBytes": 222616,
+      "bundledBytes": 12685
+    },
+    {
+      "path": "Mouth/Hangry.png",
+      "source": "https://koolskull.com/miyamaker/layers/Mouth/Hangry.png",
+      "sourceBytes": 80001,
+      "bundledBytes": 9674
+    },
+    {
+      "path": "Mouth/Light pink lipstick.png",
+      "source": "https://koolskull.com/miyamaker/layers/Mouth/Light%20pink%20lipstick.png",
+      "sourceBytes": 84247,
+      "bundledBytes": 6764
+    },
+    {
+      "path": "Mouth/Lighter pink lipstick.png",
+      "source": "https://koolskull.com/miyamaker/layers/Mouth/Lighter%20pink%20lipstick.png",
+      "sourceBytes": 89042,
+      "bundledBytes": 6786
+    },
+    {
+      "path": "Mouth/Lil Smile.png",
+      "source": "https://koolskull.com/miyamaker/layers/Mouth/Lil%20Smile.png",
+      "sourceBytes": 72075,
+      "bundledBytes": 5954
+    },
+    {
+      "path": "Mouth/Melting Fang Toothed.png",
+      "source": "https://koolskull.com/miyamaker/layers/Mouth/Melting%20Fang%20Toothed.png",
+      "sourceBytes": 144499,
+      "bundledBytes": 12231
+    },
+    {
+      "path": "Mouth/mildly grumpy.png",
+      "source": "https://koolskull.com/miyamaker/layers/Mouth/mildly%20grumpy.png",
+      "sourceBytes": 72432,
+      "bundledBytes": 6052
+    },
+    {
+      "path": "Mouth/mini frown.png",
+      "source": "https://koolskull.com/miyamaker/layers/Mouth/mini%20frown.png",
+      "sourceBytes": 71836,
+      "bundledBytes": 5824
+    },
+    {
+      "path": "Mouth/mini smirk.png",
+      "source": "https://koolskull.com/miyamaker/layers/Mouth/mini%20smirk.png",
+      "sourceBytes": 71927,
+      "bundledBytes": 5900
+    },
+    {
+      "path": "Mouth/Mutant Fangz.png",
+      "source": "https://koolskull.com/miyamaker/layers/Mouth/Mutant%20Fangz.png",
+      "sourceBytes": 429423,
+      "bundledBytes": 18327
+    },
+    {
+      "path": "Mouth/Mutant Gums.png",
+      "source": "https://koolskull.com/miyamaker/layers/Mouth/Mutant%20Gums.png",
+      "sourceBytes": 694380,
+      "bundledBytes": 24526
+    },
+    {
+      "path": "Mouth/Red Lipstick.png",
+      "source": "https://koolskull.com/miyamaker/layers/Mouth/Red%20Lipstick.png",
+      "sourceBytes": 92629,
+      "bundledBytes": 7130
+    },
+    {
+      "path": "Mouth/Reptil fangz.png",
+      "source": "https://koolskull.com/miyamaker/layers/Mouth/Reptil%20fangz.png",
+      "sourceBytes": 112130,
+      "bundledBytes": 8932
+    },
+    {
+      "path": "Mouth/SHOCKED.png",
+      "source": "https://koolskull.com/miyamaker/layers/Mouth/SHOCKED.png",
+      "sourceBytes": 87414,
+      "bundledBytes": 8320
+    },
+    {
+      "path": "Mouth/smile 1.png",
+      "source": "https://koolskull.com/miyamaker/layers/Mouth/smile%201.png",
+      "sourceBytes": 74375,
+      "bundledBytes": 5910
+    },
+    {
+      "path": "Mouth/smirk.png",
+      "source": "https://koolskull.com/miyamaker/layers/Mouth/smirk.png",
+      "sourceBytes": 72133,
+      "bundledBytes": 6004
+    },
+    {
+      "path": "Mouth/srs.png",
+      "source": "https://koolskull.com/miyamaker/layers/Mouth/srs.png",
+      "sourceBytes": 71641,
+      "bundledBytes": 5786
+    },
+    {
+      "path": "Mouth/Stitched Shut.png",
+      "source": "https://koolskull.com/miyamaker/layers/Mouth/Stitched%20Shut.png",
+      "sourceBytes": 117899,
+      "bundledBytes": 8243
+    },
+    {
+      "path": "Mouth/Unhappy Frown.png",
+      "source": "https://koolskull.com/miyamaker/layers/Mouth/Unhappy%20Frown.png",
+      "sourceBytes": 282367,
+      "bundledBytes": 6587
+    },
+    {
+      "path": "Mouth/Vampire.png",
+      "source": "https://koolskull.com/miyamaker/layers/Mouth/Vampire.png",
+      "sourceBytes": 73163,
+      "bundledBytes": 6735
+    },
+    {
+      "path": "Nose/Hangry Blush.png",
+      "source": "https://koolskull.com/miyamaker/layers/Nose/Hangry%20Blush.png",
+      "sourceBytes": 338810,
+      "bundledBytes": 15772
+    },
+    {
+      "path": "Nose/Nose 1.png",
+      "source": "https://koolskull.com/miyamaker/layers/Nose/Nose%201.png",
+      "sourceBytes": 71309,
+      "bundledBytes": 5333
+    },
+    {
+      "path": "Nose/Shiny Blush.png",
+      "source": "https://koolskull.com/miyamaker/layers/Nose/Shiny%20Blush.png",
+      "sourceBytes": 969992,
+      "bundledBytes": 19308
+    },
+    {
+      "path": "Overlay/Lightcode Glitch 00.png",
+      "source": "https://koolskull.com/miyamaker/layers/Overlay/Lightcode%20Glitch%2000.png",
+      "sourceBytes": 5455327,
+      "bundledBytes": 331193
+    },
+    {
+      "path": "Overlay/Lightcode Glitch 01.png",
+      "source": "https://koolskull.com/miyamaker/layers/Overlay/Lightcode%20Glitch%2001.png",
+      "sourceBytes": 3197839,
+      "bundledBytes": 219909
+    },
+    {
+      "path": "Overlay/Lightcode Glitch 02.png",
+      "source": "https://koolskull.com/miyamaker/layers/Overlay/Lightcode%20Glitch%2002.png",
+      "sourceBytes": 7844442,
+      "bundledBytes": 381330
+    },
+    {
+      "path": "Overlay/Lightcode Glitch 03.png",
+      "source": "https://koolskull.com/miyamaker/layers/Overlay/Lightcode%20Glitch%2003.png",
+      "sourceBytes": 3403849,
+      "bundledBytes": 195695
+    },
+    {
+      "path": "Overlay/Lightcode Glitch 04 Ascension.png",
+      "source": "https://koolskull.com/miyamaker/layers/Overlay/Lightcode%20Glitch%2004%20Ascension.png",
+      "sourceBytes": 2051364,
+      "bundledBytes": 117734
+    },
+    {
+      "path": "Overlay/Lightcode Glitch 05.png",
+      "source": "https://koolskull.com/miyamaker/layers/Overlay/Lightcode%20Glitch%2005.png",
+      "sourceBytes": 3931579,
+      "bundledBytes": 246217
+    },
+    {
+      "path": "Overlay/Lightcode Glitch 06.png",
+      "source": "https://koolskull.com/miyamaker/layers/Overlay/Lightcode%20Glitch%2006.png",
+      "sourceBytes": 5405397,
+      "bundledBytes": 298092
+    },
+    {
+      "path": "Overlay/Lightcode Glitch 07.png",
+      "source": "https://koolskull.com/miyamaker/layers/Overlay/Lightcode%20Glitch%2007.png",
+      "sourceBytes": 4249161,
+      "bundledBytes": 199411
+    },
+    {
+      "path": "Overlay/Lightcode Glitch 08.png",
+      "source": "https://koolskull.com/miyamaker/layers/Overlay/Lightcode%20Glitch%2008.png",
+      "sourceBytes": 7837179,
+      "bundledBytes": 295975
+    },
+    {
+      "path": "Overlay/NONE.png",
+      "source": "https://koolskull.com/miyamaker/layers/Overlay/NONE.png",
+      "sourceBytes": 280642,
+      "bundledBytes": 5989
+    },
+    {
+      "path": "Top/80's Monochrome Jacket.png",
+      "source": "https://koolskull.com/miyamaker/layers/Top/80%27s%20Monochrome%20Jacket.png",
+      "sourceBytes": 3183859,
+      "bundledBytes": 68779
+    },
+    {
+      "path": "Top/Almond Robe thing.png",
+      "source": "https://koolskull.com/miyamaker/layers/Top/Almond%20Robe%20thing.png",
+      "sourceBytes": 2899980,
+      "bundledBytes": 64990
+    },
+    {
+      "path": "Top/Blue Embroidered Mexican Dress.png",
+      "source": "https://koolskull.com/miyamaker/layers/Top/Blue%20Embroidered%20Mexican%20Dress.png",
+      "sourceBytes": 4192466,
+      "bundledBytes": 84879
+    },
+    {
+      "path": "Top/Blue Printed Winter Coat.png",
+      "source": "https://koolskull.com/miyamaker/layers/Top/Blue%20Printed%20Winter%20Coat.png",
+      "sourceBytes": 4616090,
+      "bundledBytes": 111727
+    },
+    {
+      "path": "Top/Bubblegum Bomber Jacket.png",
+      "source": "https://koolskull.com/miyamaker/layers/Top/Bubblegum%20Bomber%20Jacket.png",
+      "sourceBytes": 4113364,
+      "bundledBytes": 105728
+    },
+    {
+      "path": "Top/Bubblegum Bomber Jakcet.png",
+      "source": "https://koolskull.com/miyamaker/layers/Top/Bubblegum%20Bomber%20Jakcet.png",
+      "sourceBytes": 4114790,
+      "bundledBytes": 105465
+    },
+    {
+      "path": "Top/Bubblegum Skull Army Spacesuit.png",
+      "source": "https://koolskull.com/miyamaker/layers/Top/Bubblegum%20Skull%20Army%20Spacesuit.png",
+      "sourceBytes": 6921973,
+      "bundledBytes": 130575
+    },
+    {
+      "path": "Top/Christs Cyber Army.png",
+      "source": "https://koolskull.com/miyamaker/layers/Top/Christs%20Cyber%20Army.png",
+      "sourceBytes": 3569147,
+      "bundledBytes": 71813
+    },
+    {
+      "path": "Top/Cyber Gladiator Pink.png",
+      "source": "https://koolskull.com/miyamaker/layers/Top/Cyber%20Gladiator%20Pink.png",
+      "sourceBytes": 5967649,
+      "bundledBytes": 123189
+    },
+    {
+      "path": "Top/Dark Green Miya Jogger with Neon Trim.png",
+      "source": "https://koolskull.com/miyamaker/layers/Top/Dark%20Green%20Miya%20Jogger%20with%20Neon%20Trim.png",
+      "sourceBytes": 2014263,
+      "bundledBytes": 73370
+    },
+    {
+      "path": "Top/Embroidered Miya Baseball Tee.png",
+      "source": "https://koolskull.com/miyamaker/layers/Top/Embroidered%20Miya%20Baseball%20Tee.png",
+      "sourceBytes": 3839380,
+      "bundledBytes": 80376
+    },
+    {
+      "path": "Top/Executive Suit.png",
+      "source": "https://koolskull.com/miyamaker/layers/Top/Executive%20Suit.png",
+      "sourceBytes": 2041545,
+      "bundledBytes": 76471
+    },
+    {
+      "path": "Top/Floral Dress with Bee.png",
+      "source": "https://koolskull.com/miyamaker/layers/Top/Floral%20Dress%20with%20Bee.png",
+      "sourceBytes": 3021980,
+      "bundledBytes": 65857
+    },
+    {
+      "path": "Top/Floral Western Top.png",
+      "source": "https://koolskull.com/miyamaker/layers/Top/Floral%20Western%20Top.png",
+      "sourceBytes": 2652277,
+      "bundledBytes": 86495
+    },
+    {
+      "path": "Top/Futuristic Sweater.png",
+      "source": "https://koolskull.com/miyamaker/layers/Top/Futuristic%20Sweater.png",
+      "sourceBytes": 406582,
+      "bundledBytes": 129917
+    },
+    {
+      "path": "Top/Futuristic Sweater/Futuristic Sweater.png",
+      "source": "https://koolskull.com/miyamaker/layers/Top/Futuristic%20Sweater/Futuristic%20Sweater.png",
+      "sourceBytes": 4172472,
+      "bundledBytes": 93808
+    },
+    {
+      "path": "Top/Futuristic Sweater/z-2,Futuristic Sweater.png",
+      "source": "https://koolskull.com/miyamaker/layers/Top/Futuristic%20Sweater/z-2%2CFuturistic%20Sweater.png",
+      "sourceBytes": 135704,
+      "bundledBytes": 64950
+    },
+    {
+      "path": "Top/Green Jogger with Lavendar Trim.png",
+      "source": "https://koolskull.com/miyamaker/layers/Top/Green%20Jogger%20with%20Lavendar%20Trim.png",
+      "sourceBytes": 2848541,
+      "bundledBytes": 68645
+    },
+    {
+      "path": "Top/Green Robe.png",
+      "source": "https://koolskull.com/miyamaker/layers/Top/Green%20Robe.png",
+      "sourceBytes": 5228357,
+      "bundledBytes": 95058
+    },
+    {
+      "path": "Top/Green SIlk Robe thing.png",
+      "source": "https://koolskull.com/miyamaker/layers/Top/Green%20SIlk%20Robe%20thing.png",
+      "sourceBytes": 3975413,
+      "bundledBytes": 80057
+    },
+    {
+      "path": "Top/High Collar Winter Jacket.png",
+      "source": "https://koolskull.com/miyamaker/layers/Top/High%20Collar%20Winter%20Jacket.png",
+      "sourceBytes": 253235,
+      "bundledBytes": 95250
+    },
+    {
+      "path": "Top/High Collar Winter Jacket/High Collar Winter Jacket.png",
+      "source": "https://koolskull.com/miyamaker/layers/Top/High%20Collar%20Winter%20Jacket/High%20Collar%20Winter%20Jacket.png",
+      "sourceBytes": 5788958,
+      "bundledBytes": 128246
+    },
+    {
+      "path": "Top/High Collar Winter Jacket/z-2,High Collar Winter Jacket.png",
+      "source": "https://koolskull.com/miyamaker/layers/Top/High%20Collar%20Winter%20Jacket/z-2%2CHigh%20Collar%20Winter%20Jacket.png",
+      "sourceBytes": 94168,
+      "bundledBytes": 43821
+    },
+    {
+      "path": "Top/Lavender Floral Quincenera Dress.png",
+      "source": "https://koolskull.com/miyamaker/layers/Top/Lavender%20Floral%20Quincenera%20Dress.png",
+      "sourceBytes": 3143949,
+      "bundledBytes": 93543
+    },
+    {
+      "path": "Top/Leather Jacket.png",
+      "source": "https://koolskull.com/miyamaker/layers/Top/Leather%20Jacket.png",
+      "sourceBytes": 3449102,
+      "bundledBytes": 77313
+    },
+    {
+      "path": "Top/Leather Jacket/Leather Jacket.png",
+      "source": "https://koolskull.com/miyamaker/layers/Top/Leather%20Jacket/Leather%20Jacket.png",
+      "sourceBytes": 5286022,
+      "bundledBytes": 93884
+    },
+    {
+      "path": "Top/Leather Jacket/Pins/Christian Skull.png",
+      "source": "https://koolskull.com/miyamaker/layers/Top/Leather%20Jacket/Pins/Christian%20Skull.png",
+      "sourceBytes": 452047,
+      "bundledBytes": 11290
+    },
+    {
+      "path": "Top/Leather Jacket/Pins/Maga.png",
+      "source": "https://koolskull.com/miyamaker/layers/Top/Leather%20Jacket/Pins/Maga.png",
+      "sourceBytes": 415934,
+      "bundledBytes": 10372
+    },
+    {
+      "path": "Top/Leather Jacket/Pins/Spikes and Miya.png",
+      "source": "https://koolskull.com/miyamaker/layers/Top/Leather%20Jacket/Pins/Spikes%20and%20Miya.png",
+      "sourceBytes": 702460,
+      "bundledBytes": 18701
+    },
+    {
+      "path": "Top/Leather Jacket/Pins/YE24.png",
+      "source": "https://koolskull.com/miyamaker/layers/Top/Leather%20Jacket/Pins/YE24.png",
+      "sourceBytes": 348379,
+      "bundledBytes": 8007
+    },
+    {
+      "path": "Top/McChibi Pink Shirt.png",
+      "source": "https://koolskull.com/miyamaker/layers/Top/McChibi%20Pink%20Shirt.png",
+      "sourceBytes": 3044047,
+      "bundledBytes": 49883
+    },
+    {
+      "path": "Top/Miya Maid.png",
+      "source": "https://koolskull.com/miyamaker/layers/Top/Miya%20Maid.png",
+      "sourceBytes": 2075824,
+      "bundledBytes": 59648
+    },
+    {
+      "path": "Top/Miya Metal Shirt.png",
+      "source": "https://koolskull.com/miyamaker/layers/Top/Miya%20Metal%20Shirt.png",
+      "sourceBytes": 3108667,
+      "bundledBytes": 76681
+    },
+    {
+      "path": "Top/Neopolitan Hand Sewn Tee.png",
+      "source": "https://koolskull.com/miyamaker/layers/Top/Neopolitan%20Hand%20Sewn%20Tee.png",
+      "sourceBytes": 582295,
+      "bundledBytes": 34182
+    },
+    {
+      "path": "Top/Orange Print Trenchcoat.png",
+      "source": "https://koolskull.com/miyamaker/layers/Top/Orange%20Print%20Trenchcoat.png",
+      "sourceBytes": 2623448,
+      "bundledBytes": 88271
+    },
+    {
+      "path": "Top/Orange Robe.png",
+      "source": "https://koolskull.com/miyamaker/layers/Top/Orange%20Robe.png",
+      "sourceBytes": 4720780,
+      "bundledBytes": 91783
+    },
+    {
+      "path": "Top/Pink Intergalactic Star Dress.png",
+      "source": "https://koolskull.com/miyamaker/layers/Top/Pink%20Intergalactic%20Star%20Dress.png",
+      "sourceBytes": 1989940,
+      "bundledBytes": 66549
+    },
+    {
+      "path": "Top/Pink Jean Sleeveless Vest with Sharp Collar.png",
+      "source": "https://koolskull.com/miyamaker/layers/Top/Pink%20Jean%20Sleeveless%20Vest%20with%20Sharp%20Collar.png",
+      "sourceBytes": 3380495,
+      "bundledBytes": 85469
+    },
+    {
+      "path": "Top/Pink Milady Fluffy Cape.png",
+      "source": "https://koolskull.com/miyamaker/layers/Top/Pink%20Milady%20Fluffy%20Cape.png",
+      "sourceBytes": 3274113,
+      "bundledBytes": 75339
+    },
+    {
+      "path": "Top/Pink Miya Sweater.png",
+      "source": "https://koolskull.com/miyamaker/layers/Top/Pink%20Miya%20Sweater.png",
+      "sourceBytes": 524257,
+      "bundledBytes": 44116
+    },
+    {
+      "path": "Top/Pink Miya Tagged Bomber Jacket.png",
+      "source": "https://koolskull.com/miyamaker/layers/Top/Pink%20Miya%20Tagged%20Bomber%20Jacket.png",
+      "sourceBytes": 2267026,
+      "bundledBytes": 140575
+    },
+    {
+      "path": "Top/Pink Preppy Milady Top.png",
+      "source": "https://koolskull.com/miyamaker/layers/Top/Pink%20Preppy%20Milady%20Top.png",
+      "sourceBytes": 2849205,
+      "bundledBytes": 72052
+    },
+    {
+      "path": "Top/Pink Spiked Cyberpunk Armor.png",
+      "source": "https://koolskull.com/miyamaker/layers/Top/Pink%20Spiked%20Cyberpunk%20Armor.png",
+      "sourceBytes": 339252,
+      "bundledBytes": 120511
+    },
+    {
+      "path": "Top/Pink Tank.png",
+      "source": "https://koolskull.com/miyamaker/layers/Top/Pink%20Tank.png",
+      "sourceBytes": 572211,
+      "bundledBytes": 32272
+    },
+    {
+      "path": "Top/Red Baggy Tee.png",
+      "source": "https://koolskull.com/miyamaker/layers/Top/Red%20Baggy%20Tee.png",
+      "sourceBytes": 1876131,
+      "bundledBytes": 78585
+    },
+    {
+      "path": "Top/Ripped Shirt.png",
+      "source": "https://koolskull.com/miyamaker/layers/Top/Ripped%20Shirt.png",
+      "sourceBytes": 2565684,
+      "bundledBytes": 60446
+    },
+    {
+      "path": "Top/Space Communist.png",
+      "source": "https://koolskull.com/miyamaker/layers/Top/Space%20Communist.png",
+      "sourceBytes": 4052740,
+      "bundledBytes": 81374
+    },
+    {
+      "path": "Top/Velvet Gold Skeleton Army Elitist.png",
+      "source": "https://koolskull.com/miyamaker/layers/Top/Velvet%20Gold%20Skeleton%20Army%20Elitist.png",
+      "sourceBytes": 7514999,
+      "bundledBytes": 141460
+    },
+    {
+      "path": "Top/Western Jean Sleeveless.png",
+      "source": "https://koolskull.com/miyamaker/layers/Top/Western%20Jean%20Sleeveless.png",
+      "sourceBytes": 1754180,
+      "bundledBytes": 94126
+    },
+    {
+      "path": "Top/White Milady Dress with Pink Bow.png",
+      "source": "https://koolskull.com/miyamaker/layers/Top/White%20Milady%20Dress%20with%20Pink%20Bow.png",
+      "sourceBytes": 1293622,
+      "bundledBytes": 48045
+    },
+    {
+      "path": "Top/Wrinkled Dark Grey Shirt.png",
+      "source": "https://koolskull.com/miyamaker/layers/Top/Wrinkled%20Dark%20Grey%20Shirt.png",
+      "sourceBytes": 4242179,
+      "bundledBytes": 71716
+    }
+  ],
+  "skippedZeroByte": [
+    "https://koolskull.com/miyamaker/layers/BG/21e8%20gift.png",
+    "https://koolskull.com/miyamaker/layers/BG/Abandoned%20Building.png"
+  ]
+}
