@@ -458,26 +458,6 @@ body.session-dragging .session-drop-overlay{display:flex;}
 <body>
 <div id="app-window" class="window raised">
 
-  <!-- TITLE BAR -->
-  <div class="title-bar">
-    <div class="title-bar-left">
-      <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
-        <rect x="1" y="1" width="14" height="14" fill="#c0c0c0" stroke="#808080"/>
-        <rect x="3" y="3" width="4" height="4" fill="#000080"/>
-        <rect x="3" y="9" width="4" height="4" fill="#008080"/>
-        <rect x="9" y="3" width="4" height="4" fill="#800080"/>
-        <rect x="9" y="9" width="4" height="4" fill="#808000"/>
-      </svg>
-      Miya pfp engine
-      <span id="server-badge" class="offline">● offline</span>
-    </div>
-    <div style="display:flex;gap:2px;">
-      <div class="title-btn">_</div>
-      <div class="title-btn">□</div>
-      <div class="title-btn" onclick="if(confirm('Close Miya pfp engine?'))window.close()">✕</div>
-    </div>
-  </div>
-
   <!-- MENU BAR -->
   <div class="session-toolbar" aria-label="Project sessions">
     <input id="miya-project-name" class="project-name" type="text" value="Untitled project" aria-label="Project name" title="Project name">
