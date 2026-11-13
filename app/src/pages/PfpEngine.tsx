@@ -1,16 +1,18 @@
 import { memo, useCallback, useEffect, useRef, useState } from 'react'
 import Pages from '@/constants/pages'
+import { useAppDispatch } from '@/store/hooks'
+import { closeWindow, minimizeWindow, toggleFullscreen } from '@/store/windows/actions'
 
 /**
  * PfpEngine window: embeds the Miya PFP Engine as an iframe.
- * Uses the desktop's WindowWrapper + TitleBar so the window
- * is draggable, minimizable, maximizable (full screen), and closable.
- * The iframe content loads lazily when the window first opens.
+ * Uses the desktop's window system: the window is draggable, minimizable, maximizable (full screen), and closable.
+ * The iframe content loads only when the window is opened.
  */
 export default memo(function PfpEngine() {
+  const dispatch = useAppDispatch()
   const [iframeLoaded, setIframeLoaded] = useState(false)
-  const iframeRef = useRef<HTMLIFrameElement>(null)
   const [windowLoaded, setWindowLoaded] = useState(false)
+  const iframeRef = useRef<HTMLIFrameElement>(null)
 
   // Load the iframe content when the window is initialized (lazy)
   useEffect(() => {
@@ -18,21 +20,21 @@ export default memo(function PfpEngine() {
   }, [])
 
   const handleClose = useCallback(() => {
-    // Let the window system close the window via the store
-  }, [])
+    dispatch(closeWindow({ value: 'pfpEngine' }))
+  }, [dispatch])
 
   const handleMinimize = useCallback(() => {
-    // Let the window system minimize via the store
-  }, [])
+    dispatch(minimizeWindow({ value: 'pfpEngine' }))
+  }, [dispatch])
 
   const handleFullscreen = useCallback(() => {
-    // Let the window system toggle fullscreen via the store
-  }, [])
+    dispatch(toggleFullscreen({ value: 'pfpEngine' }))
+  }, [dispatch])
 
   return (
     <>
       {/* Title bar with window controls */}
-      <div style={{ flex: '0 0 auto', height: 26, display: 'flex', alignItems: 'center', gap: 6, paddingLeft: 6, background: 'linear-gradient(90deg, #000080, #1084d0)', color: '#fff', userSelect: 'none' }}>
+      <div style={{ flex: '0 0 auto', height: 26, display: 'flex', alignItems: 'center', gap: 6, paddingLeft: 6, background: 'linear-gradient(90deg, #000080, #1084d0)', color: '#fff', userSelect: 'none', cursor: 'grab' }}>
         <span style={{ flex: 'none', fontSize: 10, lineHeight: 1 }}>
           &#9888;{Pages.pfpEngine?.label}
         </span>
