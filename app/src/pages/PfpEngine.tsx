@@ -34,7 +34,7 @@ export default memo(function PfpEngine() {
   return (
     <>
       {/* Title bar with window controls */}
-      <div style={{ flex: '0 0 auto', height: 26, display: 'flex', alignItems: 'center', gap: 6, paddingLeft: 6, background: 'linear-gradient(90deg, #000080, #1084d0)', color: '#fff', userSelect: 'none', cursor: 'grab' }}>
+      <div className="title-bar" style={{ flex: '0 0 auto', height: 26, display: 'flex', alignItems: 'center', gap: 6, paddingLeft: 6, background: 'linear-gradient(90deg, #000080, #1084d0)', color: '#fff', userSelect: 'none', cursor: 'grab' }}>
         <span style={{ flex: 'none', fontSize: 10, lineHeight: 1 }}>
           &#9888;{Pages.pfpEngine?.label}
         </span>
