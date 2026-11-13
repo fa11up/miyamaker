@@ -128,8 +128,12 @@ v2 `MiyaPoolFactory`, given `deployments/<chainId>.json`'s `defaultVault` (overr
 CREATE3 salt scheme (label `MiyaPoolFactoryV2`). Dry run first (sends nothing):
 `FOUNDRY_PROFILE=deploy forge script script/DeployMiyaPoolV2.s.sol --rpc-url $RPC --sender <deployer>`. A broadcast
 must come from a clean release checkout (`DEPLOY_SCRIPT=script/DeployMiyaPoolV2.s.sol script/deploy.sh ...`, which
-sets `DEPLOY_GIT_COMMIT`), and records `miyaPoolFactory` (and the replaced
-`miyaPoolFactoryV1`) in the deployments JSON; then set `VITE_MIYA_POOL_FACTORY_<chainId>` for the app. The v1 factory
+sets `DEPLOY_GIT_COMMIT`), and records `miyaPoolFactory`, `miyaPoolFactoryGitCommit` and the replaced
+`miyaPoolFactoryV1` in the deployments JSON. It refuses if the JSON already records a v2 factory, so it never overwrites
+the real v1. Then commit the updated `deployments/<chainId>.json` and rebuild and deploy the app from main: the app
+bundles that file at build time, and until it records `miyaPoolFactoryV1` the app ignores the listed v1 factory
+(`V1_POOL_FACTORIES` in `app/src/pages/Swap/nft/pool.ts`) and shows no pools. `VITE_MIYA_POOL_FACTORY_<chainId>` is
+optional; never set it before the broadcast lands, or it turns pools on before the JSON is updated. The v1 factory
 has no pools and nothing references it, so there is nothing to migrate.
 
 **Run the fork tests for real.** Set `REQUIRE_FORK_TESTS=true` before deploying, or a machine without an RPC skips them and

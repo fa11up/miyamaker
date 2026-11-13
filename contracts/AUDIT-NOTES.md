@@ -146,8 +146,9 @@ Accepted or deferred:
 
 - **RANDOM pools on Robinhood Chain (4663) are not safe to offer.** The chain runs on Arbitrum's stack: `block.number` is
   an estimate of the Ethereum block, `blockhash` is documented as "cryptographically insecure" and not to be relied on
-  for randomness, and the EIP-2935 lookup always fails there, so the window is 256 blocks. Mainnet is unaffected. `MiyaPoolFactory` refuses
-  RANDOM on 4663; TARGETED pools still open there. It needs a different source of randomness before that can change.
+  for randomness, and the EIP-2935 lookup always fails there, so the window is 256 blocks. Mainnet is unaffected. In v2 every pool on 4663
+  opens with `randomEnabled = false`: targeted (pick) redeems only. It needs a different source of randomness before that
+  can change.
 - **Gating module**: it gates nothing even if configured: the no-password tier is open, and the "password" is a public
   hash. `FREE_MINT_ONLY` and `claimFreeMint` bugs are latent behind it. It stays off at deploy and needs a redesign
   before it is enabled.
@@ -633,6 +634,11 @@ Consequences the owner accepted or should know:
   design (fixed fees). **Owner rule (2026-11-13): the Safe never delists IMD or INFER and never raises their
   `minContribution` while MiyaPools use them; such a change waits for a redeployed pool system.** Lowering a minimum
   is safe.
+- **Picks can be blocked by random commits (known design limit, accepted for now; no fix in this release).** Any
+  pending random commit locks every id deposited before it (`lockedEnd`) until it is revealed, and a commit can't be
+  revealed until 2 blocks after it is sent. So anyone can front-run a pick with `commitRedeem(1)` (cost: 1 pool token,
+  returned as an NFT, plus gas) to make it revert `LockedForRandomRedeem`, and a bot committing every block can keep
+  picks on existing inventory blocked. Busy random traffic has the same effect. The app leaves locked ids out of picks.
 - Anyone can create a collection's pool first and fix its fees for everyone (squatting). An absurd fee makes picks
   impossible in practice; random redeems still work.
 - A pick now costs the vault's contribution path: about 430-540k gas on the live vault (fork), against ~80-90k for a v1

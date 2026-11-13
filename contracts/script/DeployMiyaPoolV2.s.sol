@@ -25,7 +25,9 @@ interface IRegistryVaults {
  *         Dry run (no transaction):
  *           FOUNDRY_PROFILE=deploy forge script script/DeployMiyaPoolV2.s.sol --rpc-url $RPC --sender <deployer>
  *         A broadcast must go through a clean release checkout (DEPLOY_GIT_COMMIT set, as script/deploy.sh does); it
- *         then records `miyaPoolFactory` (and `miyaPoolFactoryV1`, the replaced one) in deployments/<chainId>.json.
+ *         then records `miyaPoolFactory`, `miyaPoolFactoryGitCommit` and, if the JSON had a v1 factory,
+ *         `miyaPoolFactoryV1` in deployments/<chainId>.json. It refuses if the JSON already records a v2 factory
+ *         (`miyaPoolFactoryV1` set, or `miyaPoolFactory` answers `vault()`), so the real v1 is never overwritten.
  */
 contract DeployMiyaPoolV2 is Script {
     error ConfigError(string reason);
@@ -36,14 +38,15 @@ contract DeployMiyaPoolV2 is Script {
         address registry = vm.parseJsonAddress(json, ".registry");
         address vault = vm.envOr("POOL_VAULT", vm.parseJsonAddress(json, ".defaultVault"));
         address expectedDeployer = vm.parseJsonAddress(json, ".deployer");
-        address v1 = vm.parseJsonAddress(json, ".miyaPoolFactory");
+        address v1 = _priorFactory(json);
         string memory ns = vm.envOr("SALT_NAMESPACE", string("miyamints.v1"));
 
         if (vault.code.length == 0) revert ConfigError("defaultVault has no code");
         if (!IRegistryVaults(registry).isVault(vault)) revert ConfigError("defaultVault is not a registry vault");
 
         bool live = vm.isContext(VmSafe.ForgeContext.ScriptBroadcast) || vm.isContext(VmSafe.ForgeContext.ScriptResume);
-        if (live && bytes(vm.envOr("DEPLOY_GIT_COMMIT", string(""))).length != 40) {
+        string memory gitCommit = vm.envOr("DEPLOY_GIT_COMMIT", string(""));
+        if (live && bytes(gitCommit).length != 40) {
             revert ConfigError("broadcast only from a clean release checkout (set DEPLOY_GIT_COMMIT, as deploy.sh does)");
         }
 
@@ -74,8 +77,26 @@ contract DeployMiyaPoolV2 is Script {
         );
 
         if (live) {
-            vm.writeJson(_quoted(v1), path, ".miyaPoolFactoryV1");
+            if (v1 != address(0)) vm.writeJson(_quoted(v1), path, ".miyaPoolFactoryV1");
             vm.writeJson(_quoted(factory), path, ".miyaPoolFactory");
+            vm.writeJson(string.concat('"', gitCommit, '"'), path, ".miyaPoolFactoryGitCommit");
+        }
+    }
+
+    /// @dev The v1 factory this one replaces, from the deployments JSON; address(0) if it has none. Refuses if the JSON
+    ///      already records a v2 factory, so a second broadcast (e.g. another SALT_NAMESPACE) can't lose the real v1.
+    function _priorFactory(string memory json) internal view returns (address v1) {
+        if (vm.keyExistsJson(json, ".miyaPoolFactoryV1")) {
+            revert ConfigError("deployments json already records miyaPoolFactoryV1: v2 is already deployed here");
+        }
+        if (!vm.keyExistsJson(json, ".miyaPoolFactory")) return address(0);
+        v1 = vm.parseJsonAddress(json, ".miyaPoolFactory");
+        // Only v2 has vault(); v1 has no fallback, so the call reverts there.
+        if (v1.code.length != 0) {
+            (bool ok, bytes memory ret) = v1.staticcall(abi.encodeWithSignature("vault()"));
+            if (ok && ret.length == 32) {
+                revert ConfigError("miyaPoolFactory in deployments json is already a v2 factory");
+            }
         }
     }
 

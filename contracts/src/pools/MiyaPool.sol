@@ -4,6 +4,7 @@ pragma solidity ^0.8.24;
 import { ERC20 } from "solady/tokens/ERC20.sol";
 import { EnumerableSetLib } from "solady/utils/EnumerableSetLib.sol";
 import { ReentrancyGuard } from "solady/utils/ReentrancyGuard.sol";
+import { SafeCastLib } from "solady/utils/SafeCastLib.sol";
 import { SafeTransferLib } from "solady/utils/SafeTransferLib.sol";
 
 interface IERC721Pool {
@@ -415,7 +416,7 @@ contract MiyaPool is ERC20, ReentrancyGuard {
         pendingUnits += amount;
         commitId = nextCommitId++;
         uint256 target = block.number + 1;
-        commits[commitId] = Commit(to, uint64(target), uint32(amount), uint32(_queueTail));
+        commits[commitId] = Commit(to, SafeCastLib.toUint64(target), uint32(amount), SafeCastLib.toUint32(_queueTail));
         emit RedeemCommitted(commitId, msg.sender, to, amount, target);
     }
 
@@ -428,7 +429,7 @@ contract MiyaPool is ERC20, ReentrancyGuard {
         bytes32 seed = _blockHash(c.targetBlock);
         if (seed == bytes32(0)) {
             uint256 target = block.number + 1;
-            commits[commitId].targetBlock = uint64(target);
+            commits[commitId].targetBlock = SafeCastLib.toUint64(target);
             emit RedeemRearmed(commitId, target);
             return;
         }

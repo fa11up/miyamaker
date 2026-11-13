@@ -9,8 +9,8 @@
 #   - the whole repo is clean (no staged, unstaged or untracked files; ignored files are fine),
 #   - submodules are checked out at the commits the repo records,
 #   - HEAD is `main` and equals origin/main (after a fetch), or HEAD is exactly the tag in DEPLOY_TAG.
-# Then runs DeployMiyamints with FOUNDRY_PROFILE=deploy and DEPLOY_GIT_COMMIT / DEPLOY_GIT_REF set; the script refuses
-# to broadcast without them and writes both, with the chain id, into deployments/<chainId>.json.
+# Then runs DEPLOY_SCRIPT (default script/DeployMiyamints.s.sol) with FOUNDRY_PROFILE=deploy and DEPLOY_GIT_COMMIT /
+# DEPLOY_GIT_REF set; the scripts refuse to broadcast without DEPLOY_GIT_COMMIT and record it in deployments/<chainId>.json.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."            # contracts/
