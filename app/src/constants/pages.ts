@@ -6,7 +6,6 @@ import AuctionIcon from 'assets/icon/auction.png?preset=icon&resize=true'
 import DropMusicIcon from 'assets/icon/drop_music.png?preset=icon&resize=true'
 import MiyakeysIcon from 'assets/icon/miyakeys.png?preset=icon&resize=true'
 import MusicIcon from 'assets/icon/music_maker.png?preset=icon&resize=true'
-import TraitIcon from 'assets/create_new.png?preset=icon&resize=true'
 import RadioIcon from 'assets/icon/radio.png?preset=icon&resize=true'
 import MintIcon from 'assets/launchpad_logo.png?preset=icon&resize=true'
 import ManageIcon from 'assets/miya_website_logo_2-removebg-preview.png?preset=icon&resize=true'
@@ -188,18 +187,6 @@ const Pages: Record<string, Page> = {
     minSize: {
       width: 1240,
       height: 780,
-    },
-  },
-  traits: {
-    id: 'traits',
-    path: '/traits',
-    label: 'MiyaMaker Studio',
-    icon: TraitIcon[0],
-    // The 1024 canvas is too heavy to copy into a drag trail.
-    noTrail: true,
-    minSize: {
-      width: 1180,
-      height: 760,
     },
   },
 }

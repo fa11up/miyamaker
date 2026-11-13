@@ -14,7 +14,6 @@ export const APP_LOADERS: Record<string, () => Promise<{ default: React.Componen
   dropmusic: () => import('@/pages/DropMusic'),
   music: () => import('@/pages/MusicMaker'),
   miyakeys: () => import('@/pages/Miyakeys'),
-  traits: () => import('@/pages/MiyaMakerStudio'),
 }
 
 /** Starts an app downloading when someone is about to open it, so the window has its code by the time it's up. */

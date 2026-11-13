@@ -22,7 +22,6 @@ export const DESKTOP_ICONS: DesktopApp[] = [
   { id: 'dropmusic', label: Pages.dropmusic?.label || 'Drop Music', src: Pages.dropmusic?.icon?.src },
   { id: 'music', label: Pages.music?.label || 'MiyaMusicMaker', src: Pages.music?.icon?.src },
   { id: 'miyakeys', label: Pages.miyakeys?.label || 'miyakeys', src: Pages.miyakeys?.icon?.src },
-  { id: 'traits', label: Pages.traits?.label || 'MiyaMaker Studio', src: Pages.traits?.icon?.src },
 ]
 
 const pick = (ids: string[]) =>
@@ -31,7 +30,7 @@ const pick = (ids: string[]) =>
 /** How the Start menu sorts every program. */
 export const PROGRAM_GROUPS: { label: string; apps: DesktopApp[] }[] = [
   { label: 'Collect', apps: pick(['mint', 'auction', 'swap']) },
-  { label: 'Create', apps: pick(['launch', 'manager', 'uploader', 'dropmusic', 'music', 'traits', 'miyakeys']) },
+  { label: 'Create', apps: pick(['launch', 'manager', 'uploader', 'dropmusic', 'music', 'miyakeys']) },
   { label: 'Entertainment', apps: pick(['tv', 'radio', 'home']) },
   { label: 'System', apps: pick(['files', 'display']) },
 ]
