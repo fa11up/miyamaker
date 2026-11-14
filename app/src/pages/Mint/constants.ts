@@ -8,10 +8,14 @@ export const EXPLORER_PAGE_SECTION = {
   COLLECTION_SECTION: 'Collection',
   NFT_SECTION: 'Nft',
   MUSIC_SECTION: 'Music',
+  GALLERY_SECTION: 'Gallery',
 }
 
 /** Deep-link slug for the music section: /mint/music. */
 export const MUSIC_SLUG = 'music'
+
+/** Deep-link slug for the gallery of every collection's minted pieces: /mint/gallery. */
+export const GALLERY_SLUG = 'gallery'
 
 /** Deep-link slug for the device's game select, where it starts: /mint/games. */
 export const GAMES_SLUG = 'games'

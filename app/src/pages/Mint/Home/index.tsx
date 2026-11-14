@@ -45,7 +45,7 @@ function Logo() {
 }
 
 /** Cover: curated image, else the contract's metadata image, else the dithered placeholder. */
-function Cover({ card }: { card: LiveMintCard }) {
+export function Cover({ card }: { card: LiveMintCard }) {
   const fromContract = useContractImage(card.image ? undefined : card.contractURI)
   return <NftImage src={card.image || fromContract.data || undefined} alt={card.name} eager />
 }
@@ -55,6 +55,7 @@ export default function MainMenu({
   onShelf,
   onOpen,
   onMusic,
+  onGallery,
   onBrowseLegacy,
   onBack,
 }: {
@@ -63,6 +64,8 @@ export default function MainMenu({
   onShelf: (shelf: MintShelf | undefined) => void
   onOpen: (card: LiveMintCard) => void
   onMusic: () => void
+  /** Every collection's minted pieces, to look at without minting. */
+  onGallery: () => void
   onBrowseLegacy?: () => void
   /** Back to the game select. */
   onBack?: () => void
@@ -84,7 +87,6 @@ export default function MainMenu({
         lampLabel={shelf === 'official' ? 'Miyamaker mints' : 'Community mints'}
         ariaLabel={shelf === 'official' ? 'Miyamaker mints' : `Community mints, ${COMMUNITY_WORDS}`}
         back={{ label: 'Shelves', onClick: () => onShelf(undefined) }}
-        badge={shelf === 'official' ? <img src={logoSrc} alt="miyamaker" /> : undefined}
         items={
           list.length
             ? list.map((c) => {
@@ -128,6 +130,14 @@ export default function MainMenu({
           action: 'Open Miyamaker mints',
           open: () => onShelf('official'),
           pic: <Logo />,
+        },
+        {
+          key: 'gallery',
+          name: 'Gallery',
+          line: 'Browse every minted piece',
+          action: 'Open the gallery',
+          open: onGallery,
+          pic: official[0] ? <Cover card={official[0]} /> : <Glyph>▦</Glyph>,
         },
         {
           key: 'shelf-community',

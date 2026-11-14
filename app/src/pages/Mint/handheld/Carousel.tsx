@@ -148,35 +148,6 @@ const Dots = styled.div`
   }
 `
 
-/** A mark in the screen's top left corner, e.g. whose shelf this is. */
-const Badge = styled.div`
-  position: absolute;
-  z-index: 3;
-  left: 10px;
-  top: 10px;
-  width: 60px;
-  height: 60px;
-  border-radius: 50%;
-  overflow: hidden;
-  background: #fff;
-  box-shadow:
-    0 0 0 2px #fff,
-    0 4px 10px rgba(20, 6, 60, 0.5);
-  animation: ${settle} ${SETTLE} 0.2s backwards;
-  @media (prefers-reduced-motion: reduce) {
-    animation: none;
-  }
-  img {
-    display: block;
-    width: 100%;
-    height: 100%;
-    max-width: none;
-    margin: 0;
-    border: none;
-    object-fit: contain;
-  }
-`
-
 /** The picture on a card with no art of its own. */
 export const Glyph = styled.div<{ $bg?: string }>`
   display: grid;
@@ -194,14 +165,12 @@ export default function Carousel({
   items,
   back,
   ariaLabel,
-  badge,
 }: {
   title: string
   lampLabel: string
   items: CarouselItem[]
   back: DeviceAction
   ariaLabel: string
-  badge?: ReactNode
 }) {
   const [at, setAt] = useState(0)
   const index = Math.min(at, items.length - 1)
@@ -248,7 +217,6 @@ export default function Carousel({
             e.preventDefault()
           }}
         >
-          {badge && <Badge>{badge}</Badge>}
           {items.map((item, i) => {
             const o = offset(i)
             return (

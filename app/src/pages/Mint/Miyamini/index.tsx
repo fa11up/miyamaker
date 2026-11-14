@@ -57,7 +57,7 @@ const Thumb = styled.button<{ selected?: boolean }>`
   }
 `
 
-function TokenImage({ id, alt }: { id: number | undefined; alt: string }) {
+export function TokenImage({ id, alt }: { id: number | undefined; alt: string }) {
   const { data, isLoading } = useTokenMeta(id)
   const [failed, setFailed] = useState(false)
   useEffect(() => setFailed(false), [id])
