@@ -10,6 +10,7 @@ import { fedWords, parsePet, petImage } from '../src/pages/Mint/handheld/petData
 import { release } from '../src/pages/Mint/handheld/release.ts'
 import {
   deviceZoom,
+  gridStep,
   MAX_ZOOM,
   panBy,
   pixelRatio,
@@ -29,6 +30,19 @@ test('the D-pad wraps round its choices both ways', () => {
   assert.equal(wrapIndex(3, 2, 1), 0)
   assert.equal(wrapIndex(3, 0, -1), 2)
   assert.equal(wrapIndex(0, 0, 1), 0)
+})
+
+test('the gallery D-pad runs through the rows sideways and stops at the top and bottom', () => {
+  // 7 pieces, 3 wide: rows [0 1 2] [3 4 5] [6]
+  assert.equal(gridStep(7, 3, 2, 1, 0), 3)
+  assert.equal(gridStep(7, 3, 6, 1, 0), 0)
+  assert.equal(gridStep(7, 3, 0, -1, 0), 6)
+  assert.equal(gridStep(7, 3, 1, 0, 1), 4)
+  assert.equal(gridStep(7, 3, 1, 0, -1), 1)
+  assert.equal(gridStep(7, 3, 5, 0, 1), 6)
+  assert.equal(gridStep(7, 3, 6, 0, 1), 6)
+  assert.equal(gridStep(7, 3, 6, 0, -1), 3)
+  assert.equal(gridStep(0, 3, 0, 1, 0), 0)
 })
 
 test('quantity stays between 1 and what can be minted', () => {
