@@ -26,7 +26,7 @@ bytes32 constant TYPE_ERC1155_CURVE = keccak256("erc1155-curve");
  *         edition is added) is id `(e << 1) | 1`. Whoever holds the master earns the master share and the royalty.
  *
  *         Each copy's price splits into:
- *         - the reserve:  price minus the spread; paid back by burning that copy, never anywhere else
+ *         - the reserve:  price minus the spread; paid out only by burns, which take the top copies first
  *         - the spread:   spreadBps of the price, split into
  *           - protocol:   protocolBps of the price (snapshotted from the registry at launch), to the treasury
  *           - vault:      30% of the spread, to the alignment vault as this collection's contribution
@@ -34,8 +34,13 @@ bytes32 constant TYPE_ERC1155_CURVE = keccak256("erc1155-curve");
  *         At a 10% spread and a 1% protocol fee: 90% reserve, 6% master, 3% vault, 1% protocol.
  *
  *         Solvency: an edition's reserve always equals the sum of its copies' burn values (CurveMath), so every copy
- *         can be burned back, down to zero supply. Reserves, master earnings and parked cuts are tracked per token and
- *         nothing but `burn` and the claims pays out of them.
+ *         can be burned back, down to zero supply. Reserves, master earnings and parked cuts are tracked per token:
+ *         reserves pay out only through `burn`, master earnings only through `claimMasterEarnings`, parked cuts only to
+ *         the treasury or the vault (`flushPending*`), or to the owner once a delisted token's vault cut is released.
+ *
+ *         Master earnings are credited to whichever address holds the master when a copy is minted, and stay with that
+ *         address if the master moves on: a holder that can't call `claimMasterEarnings` (an escrow, a vault) can't
+ *         claim them, so the app should only send masters to wallets.
  */
 contract CurveEdition is ERC1155, Ownable, ReentrancyGuard, IInstanceLifecycle {
     using PaymentLib for PaymentLib.Ledger;
@@ -196,7 +201,13 @@ contract CurveEdition is ERC1155, Ownable, ReentrancyGuard, IInstanceLifecycle {
         ) revert InvalidCurve();
         if (p.royaltyBps > MAX_ROYALTY_BPS) revert InvalidCurve();
         uint256 cap = ICurvePriceCaps(factory).priceCap(p.currency);
-        uint256 top = CurveMath.price(p.shape, p.startPrice, p.step, p.maxSupply);
+        // An exponential curve too steep for its supply overflows: refuse it plainly.
+        uint256 top;
+        try this.curvePrice(p.shape, p.startPrice, p.step, p.maxSupply) returns (uint256 t) {
+            top = t;
+        } catch {
+            revert InvalidCurve();
+        }
         if (cap == 0 || top > cap) revert PriceOverCap(top, cap);
     }
 
@@ -205,17 +216,27 @@ contract CurveEdition is ERC1155, Ownable, ReentrancyGuard, IInstanceLifecycle {
     // └─────────────────────────┘
 
     /// @notice Mint `qty` copies of `editionId` at the curve's next prices, paying at most `maxCost` (a guard against
-    ///         prices moving before this lands). ETH: msg.value must equal the cost. ERC-20: pulled from an allowance.
+    ///         prices moving before this lands). ETH: send up to `maxCost`; anything over the cost is refunded. ERC-20:
+    ///         exactly the cost is pulled from an allowance. Keep `maxCost` close to a fresh quote: a loose one lets
+    ///         someone mint just ahead of you and burn just after at your expense.
     function mint(uint256 editionId, uint256 qty, uint256 maxCost) external payable nonReentrant {
         Edition storage e = _edition(editionId);
         if (qty == 0 || qty > MAX_PER_TX) revert InvalidQuantity();
         uint256 supply = e.supply;
         if (supply + qty > e.maxSupply) revert SoldOut();
 
+        address token = e.currency;
+        // A currency the registry has dropped takes no new money (burns and claims still work).
+        PaymentLib.checkAllowed(address(registry), token);
         (uint256 cost, uint256 toReserve, uint256 toProtocol) = _quoteMint(e, supply, qty);
         if (cost > maxCost) revert CostTooHigh(cost);
-        address token = e.currency;
-        PaymentLib.collect(token, cost);
+        uint256 refund;
+        if (token == PaymentLib.ETH) {
+            if (msg.value < cost || msg.value > maxCost) revert PaymentLib.WrongValue();
+            refund = msg.value - cost;
+        } else {
+            PaymentLib.collect(token, cost);
+        }
 
         uint256 spread = cost - toReserve;
         if (toProtocol > spread) toProtocol = spread;
@@ -236,6 +257,7 @@ contract CurveEdition is ERC1155, Ownable, ReentrancyGuard, IInstanceLifecycle {
         emit CurveMinted(editionId, msg.sender, qty, cost, toReserve, toMaster, sent, toProtocol);
 
         _mint(msg.sender, copyId(editionId), qty, "");
+        if (refund != 0) PaymentLib.payOut(PaymentLib.ETH, msg.sender, refund, weth);
     }
 
     /// @notice Burn `qty` of your copies of `editionId` back to its reserve, highest copies first. Reverts if the
@@ -261,13 +283,19 @@ contract CurveEdition is ERC1155, Ownable, ReentrancyGuard, IInstanceLifecycle {
     }
 
     /// @notice Pay the caller their master earnings in `token`.
-    function claimMasterEarnings(address token) external nonReentrant returns (uint256 amount) {
+    function claimMasterEarnings(address token) external returns (uint256) {
+        return claimMasterEarningsTo(token, msg.sender);
+    }
+
+    /// @notice Pay the caller's master earnings in `token` to `to` (e.g. when the caller can't receive that token).
+    function claimMasterEarningsTo(address token, address to) public nonReentrant returns (uint256 amount) {
+        if (to == address(0)) revert InvalidAddress();
         amount = masterOwed[msg.sender][token];
         if (amount == 0) revert NothingToClaim();
         masterOwed[msg.sender][token] = 0;
         masterOwedTotal[token] -= amount;
         emit MasterClaimed(msg.sender, token, amount);
-        PaymentLib.payOut(token, msg.sender, amount, weth);
+        PaymentLib.payOut(token, to, amount, weth);
     }
 
     // ┌─────────────────────────┐
@@ -300,8 +328,11 @@ contract CurveEdition is ERC1155, Ownable, ReentrancyGuard, IInstanceLifecycle {
         return PaymentLib.claimVaultFees(vault, mode, minEthOut, owner(), weth, true);
     }
 
-    /// @notice Accept ETH the vault pays out when fees are claimed; claimVaultFees forwards it to the owner.
-    receive() external payable { }
+    /// @notice Accept ETH only from the vault, which pays it out when fees are claimed (claimVaultFees forwards it to
+    ///         the owner). ETH from anywhere else would be stuck, since nothing counts or sweeps it.
+    receive() external payable {
+        if (msg.sender != vault) revert InvalidAddress();
+    }
 
     // ┌─────────────────────────┐
     // │          Views          │
@@ -326,14 +357,14 @@ contract CurveEdition is ERC1155, Ownable, ReentrancyGuard, IInstanceLifecycle {
     /// @notice Cost of minting the next `qty` copies now.
     function mintQuote(uint256 editionId, uint256 qty) external view returns (uint256 cost) {
         Edition storage e = _edition(editionId);
-        if (qty == 0 || e.supply + qty > e.maxSupply) revert InvalidQuantity();
+        if (qty == 0 || qty > MAX_PER_TX || e.supply + qty > e.maxSupply) revert InvalidQuantity();
         (cost,,) = _quoteMint(e, e.supply, qty);
     }
 
     /// @notice What burning the top `qty` copies pays now.
     function burnQuote(uint256 editionId, uint256 qty) external view returns (uint256) {
         Edition storage e = _edition(editionId);
-        if (qty == 0 || qty > e.supply) revert InvalidQuantity();
+        if (qty == 0 || qty > MAX_PER_TX || qty > e.supply) revert InvalidQuantity();
         return CurveMath.burnPayout(e.shape, e.startPrice, e.step, e.spreadBps, e.supply, qty);
     }
 
@@ -354,10 +385,18 @@ contract CurveEdition is ERC1155, Ownable, ReentrancyGuard, IInstanceLifecycle {
         return id & 1 == 1 ? e.masterUri : e.uri;
     }
 
-    /// @notice ERC-2981: royalties on a copy or the master go to the edition's current master holder.
+    /// @notice ERC-2981: royalties on a copy go to the edition's current master holder. The master itself carries
+    ///         none (its seller would be paying itself).
     function royaltyInfo(uint256 id, uint256 salePrice) external view returns (address receiver, uint256 amount) {
         Edition storage e = _edition(id >> 1);
+        if (id & 1 == 1) return (address(0), 0);
         return (e.master, (salePrice * e.royaltyBps) / CurveMath.BPS);
+    }
+
+    /// @notice The price of copy `n` on a curve, as `addEdition` computes it; external so `_checkCurve` can turn an
+    ///         overflow into InvalidCurve.
+    function curvePrice(uint8 shape, uint256 startPrice, uint256 step, uint256 n) external pure returns (uint256) {
+        return CurveMath.price(shape, startPrice, step, n);
     }
 
     function supportsInterface(bytes4 interfaceId) public view override returns (bool) {

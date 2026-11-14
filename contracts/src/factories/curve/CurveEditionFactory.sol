@@ -21,6 +21,7 @@ contract CurveEditionFactory is Ownable, ReentrancyGuard {
     error InvalidName();
     error InvalidVault();
     error NotCreator();
+    error CapTooHigh();
 
     /// @notice The vault's share of each spread, checked against the registry's alignment minimum.
     uint16 public constant VAULT_SHARE_OF_SPREAD_BPS = 3000;
@@ -38,7 +39,7 @@ contract CurveEditionFactory is Ownable, ReentrancyGuard {
 
     /// @dev Stores its arguments only, so it deploys the same on an empty chain.
     constructor(address owner_, IMiyaRegistry registry_, address weth_) {
-        if (owner_ == address(0) || address(registry_) == address(0)) revert InvalidAddress();
+        if (owner_ == address(0) || address(registry_) == address(0) || weth_ == address(0)) revert InvalidAddress();
         _initializeOwner(owner_);
         registry = registry_;
         weth = weth_;
@@ -66,7 +67,9 @@ contract CurveEditionFactory is Ownable, ReentrancyGuard {
     }
 
     /// @notice Set the highest price a curve may reach in `token`. 0 stops new editions in that token.
+    /// @dev Bounded so no price under the cap can overflow the per-copy splits or a 50-copy sum.
     function setPriceCap(address token, uint256 cap) external onlyOwner {
+        if (cap > type(uint128).max) revert CapTooHigh();
         priceCap[token] = cap;
         emit PriceCapSet(token, cap);
     }

@@ -207,6 +207,21 @@ Steps 4 below are the same broadcast by hand.
    unchanged.
 8. **Smoke on the live chain**: launch a test track from Drop Music, mint it, and confirm it appears in Mint → Music.
 
+## Curve editions (CurveEditionFactory)
+
+Deployed on its own, after the system (docs/CURVE-EDITIONS.md). One contract: `CurveEditionFactory(owner, registry,
+weth)`, with the Safe as owner, `deployments/1.json`'s `registry`, and WETH. Its constructor only stores these, so a
+swarm `launch.open` (kind `evm_contracts`) can deploy it; the public launch copy needs `bytecode_hash = "none"`.
+
+Then, from the Safe, in order:
+
+1. `registry.setFactory(curveFactory, true)`: until then `createInstance` reverts `NotFactory`.
+2. `curveFactory.setPriceCap(token, cap)` for each currency curve editions may use (`address(0)` = ETH), at most 2^128.
+   A currency without a cap refuses every edition. Suggested start, about 1,000 ETH worth each (the vault minimums'
+   price notes): ETH `1000e18`; IMD and INFER from their ETH prices at the time.
+3. Record `curveEditionFactory` (and its source and block) in `deployments/1.json` and rebuild the app. The app must
+   know curve collections (Manage's curve kind) before step 1, or a creator's collection shows as legacy.
+
 ## Decisions and keys you must supply
 
 - **Deployer key**: a fresh keystore account or Ledger (`--account` / `--ledger`). Nothing is hardcoded.

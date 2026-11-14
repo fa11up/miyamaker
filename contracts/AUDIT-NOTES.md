@@ -700,3 +700,17 @@ New contracts in `src/factories/curve/` (design and as-built notes: docs/CURVE-E
   The collection owner adds editions and claims vault fees; it can't touch reserves or master earnings.
 - **Known limits:** the regulatory note in docs/CURVE-EDITIONS.md (redeemable tokens); a thin currency gives a solvent
   but illiquid market; front-running is bounded by `maxCost`, `minPayout` and `minSupply`.
+
+### Curve editions: audit-suite fixes (2026-11-14)
+
+Internal `/audit-suite` (three reviewers, no P1): ETH mints now take up to `maxCost` and refund the rest (exact
+`msg.value` made every mint fail when another landed first); `mint` re-checks that the registry still allows the
+currency (a dropped token kept selling and its vault share would have reached the owner); `receive()` takes ETH only
+from the vault; quotes apply the 50-copy cap; an overflowing curve is refused as `InvalidCurve`; `priceCap` <= 2^128 and
+the factory requires WETH; no royalty on the master id; `claimMasterEarningsTo`. Tests added for each, plus reentrancy
+through the receiver hook, ERC-20 vault-share parking and flush, the delisted release and `withdraw`, a refused
+protocol cut, vault fees paid in the edition's own currency, and a wider solvency fuzz.
+
+Accepted: a loose `maxCost` on a steep curve can be sandwiched (mint ahead, burn after); the app sends the quote plus a
+small tolerance. In the shared `PaymentLib.claimVaultFees`, a vault whose `infer()` and `imd()` are the same token
+would be counted twice; the live vault's are different tokens (INFER, IMD).

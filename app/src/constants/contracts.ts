@@ -53,6 +53,8 @@ export type MiyamintsAddresses = {
   defaultVault?: Address
   miyaPoolFactory?: Address
   vaultFactory?: Address
+  /** Curve editions (contracts/docs/CURVE-EDITIONS.md); absent until deployed. */
+  curveEditionFactory?: Address
 }
 
 /** Env prefix per address; the chain id is appended (VITE_MUSIC_FACTORY_1, ...). */
@@ -64,6 +66,7 @@ export const MIYAMINTS_ENV: Record<keyof MiyamintsAddresses, string> = {
   defaultVault: 'VITE_MUSIC_VAULT_',
   miyaPoolFactory: 'VITE_MIYA_POOL_FACTORY_',
   vaultFactory: 'VITE_VAULT_FACTORY_',
+  curveEditionFactory: 'VITE_CURVE_EDITION_FACTORY_',
 }
 
 const MIYAMINTS_KEYS = Object.keys(MIYAMINTS_ENV) as (keyof MiyamintsAddresses)[]

@@ -27,6 +27,11 @@
   },
   {
     "type": "error",
+    "name": "CapTooHigh",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "InvalidAddress",
     "inputs": []
   },

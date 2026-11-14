@@ -1,5 +1,6 @@
 // Launch wizard + My launches pure logic: src/miyamints/{split,launch,collections}.ts. Run: yarn test
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 
 import { parseEther, parseUnits, zeroAddress } from 'viem'
@@ -443,6 +444,18 @@ test('kindFromFactory, scanRange and progress labels', () => {
   assert.equal(progressLabel('editions', 3n, undefined), '3 minted')
   assert.equal(progressLabel('auction', 1n), '1 piece')
   assert.equal(KIND_LABEL.legacy, 'Legacy (MiyaMints v1)')
+})
+
+test('curve collections are their own kind, and a registered factory the app does not know is never legacy', () => {
+  const f = { erc721DropFactory: '0xD0', erc1155Factory: '0xE0', curveEditionFactory: '0xC0' }
+  assert.equal(kindFromFactory('0xc0', f), 'curve')
+  assert.equal(KIND_LABEL.curve, 'Curve editions')
+  // Before the curve factory's address is known, its collections come back 'unknown' from here...
+  assert.equal(kindFromFactory('0xC0', { erc1155Factory: '0xE0' }), 'unknown')
+  // ...and Manage turns a registered-but-unknown factory into 'other', keeping 'legacy' for unregistered contracts.
+  const manage = readFileSync(new URL('../src/pages/Manage/index.tsx', import.meta.url), 'utf8')
+  assert.match(manage, /return registered \? 'other' : 'legacy'/)
+  assert.match(manage, /data-manage-curve/)
 })
 
 test('buildPhases: a phase can cap what it sells', () => {
