@@ -12,11 +12,6 @@
   },
   {
     "type": "error",
-    "name": "InvalidVault",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "PoolExists",
     "inputs": [
       {

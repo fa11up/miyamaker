@@ -338,6 +338,26 @@ export type PoolSummary = {
   held?: bigint
 }
 
+/** ERC-165 interface ids the factory detects a collection's kind by (MiyaPoolFactory._detectKind). */
+export const ERC721_INTERFACE = '0x80ac58cd'
+export const ERC1155_INTERFACE = '0xd9b67a26'
+
+/**
+ * What the app offers a collection that has no pool yet, from its ERC-165 answers (undefined = not answered):
+ * 'pool' for an ERC-721; 'curve' for an ERC-1155 edition, which trades on its own price curve instead
+ * (contracts/docs/CURVE-EDITIONS.md), so the app doesn't open pools for editions; 'unsupported' when it is
+ * neither; undefined while either answer is missing, so nothing is offered on a guess.
+ */
+export function poolStartFor(
+  is721: boolean | undefined,
+  is1155: boolean | undefined
+): 'pool' | 'curve' | 'unsupported' | undefined {
+  if (is721 === true) return 'pool'
+  if (is1155 === true) return 'curve'
+  if (is721 === false && is1155 === false) return 'unsupported'
+  return undefined
+}
+
 /**
  * Whether `address` is the pool the factory made for its collection: the factory's poolOf answer must be that
  * same address. A pool page opened from a link shows only such a pool, never any contract that answers collection()

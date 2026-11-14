@@ -41,7 +41,15 @@ import {
 import type { PoolPrice } from './usePoolPrices'
 import { pairsFor, poolSide, usePoolPrices } from './usePoolPrices'
 import type { Pool } from './usePools'
-import { HELD_PAGE, poolFactoryFor, useFeeRules, useHeldIds, useNftMeta, usePoolsForCollection } from './usePools'
+import {
+  HELD_PAGE,
+  poolFactoryFor,
+  useCollectionKind,
+  useFeeRules,
+  useHeldIds,
+  useNftMeta,
+  usePoolsForCollection,
+} from './usePools'
 import { Best, PairSwitch, VenueList, VenueRow } from './venueUi'
 import type { ViewerItem } from './Viewer'
 import Viewer from './Viewer'
@@ -715,6 +723,8 @@ export default function CollectionView({
   const sales = useMarketSales(os.slug)
   const factory = poolFactoryFor(chainId)
   const pools = usePoolsForCollection(chainId, factory, address)
+  // Editions (ERC-1155) get no pool from the app: they trade on their own curve (CreatePool says so).
+  const isEdition = useCollectionKind(chainId, factory && pools.free ? address : undefined).start === 'curve'
   // The factory's IMD and INFER: a batch pick pays the pool's pick fee in one of them.
   const feeRules = useFeeRules(chainId, factory)
   const onchainName = useReadContract({
@@ -1417,8 +1427,8 @@ export default function CollectionView({
       )}
 
       {noPoolYet && factory && (
-        <Card aria-label="Start the first pool" data-start-pool>
-          <Eyebrow>Start the first pool</Eyebrow>
+        <Card aria-label={isEdition ? 'Editions trade on a curve' : 'Start the first pool'} data-start-pool>
+          <Eyebrow>{isEdition ? 'Editions trade on a curve' : 'Start the first pool'}</Eyebrow>
           <CreatePool
             key={`${chainId}-${address}`}
             chainId={chainId}
@@ -1436,7 +1446,7 @@ export default function CollectionView({
               openConnectModal,
             }}
           />
-          <Hint>It shows no price until someone adds liquidity for its token.</Hint>
+          {!isEdition && <Hint>It shows no price until someone adds liquidity for its token.</Hint>}
         </Card>
       )}
       {pools.checkFailed && (

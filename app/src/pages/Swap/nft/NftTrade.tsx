@@ -37,7 +37,7 @@ import {
   useOpenSeaSearch,
 } from './useMarkets'
 import type { Pool } from './usePools'
-import { poolFactoryFor, usePools, usePoolsForCollection } from './usePools'
+import { poolFactoryFor, useCollectionKind, usePools, usePoolsForCollection } from './usePools'
 
 const List = styled.ul`
   list-style: none;
@@ -353,6 +353,9 @@ export default function NftTrade({
   const factory = poolFactoryFor(chainId)
   const list = usePools(chainId, factory)
   const lookup = usePoolsForCollection(chainId, factory, query)
+  // Editions (ERC-1155) get no pool from the app: they trade on their own curve (CreatePool says so).
+  const lookupIsEdition =
+    useCollectionKind(chainId, lookup.free ? lookup.collection : undefined).start === 'curve'
   const search = useOpenSeaSearch(chainId, query)
   const owned = useOpenSeaOwned(chainId, address)
   const walletNfts = useWalletNfts(chainId === mainnet.id && owned.needsKey ? address : undefined)
@@ -665,9 +668,9 @@ export default function NftTrade({
           )}
 
           {lookup.collection && lookup.free && (
-            <Card aria-label="Start a pool">
+            <Card aria-label={lookupIsEdition ? 'Editions trade on a curve' : 'Start a pool'}>
               <Head>
-                <h2>Start a pool for this collection</h2>
+                <h2>{lookupIsEdition ? 'Editions trade on a curve' : 'Start a pool for this collection'}</h2>
               </Head>
               <CreatePool
                 key={`${chainId}-${lookup.collection}`}

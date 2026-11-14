@@ -12,8 +12,8 @@ import { space, text } from '../floor/tokens'
 import { poolFactoryAbi } from './abi'
 import type { FeeSymbol } from './pool'
 import { checkFee, parseTokenAmount, randomOn, tokenAmountText } from './pool'
-import { Field, Hint, Prose, PushButton, SwitchNote } from './ui'
-import { useFeeRules } from './usePools'
+import { Field, Hint, LinkButton, Prose, PushButton, SwitchNote } from './ui'
+import { useCollectionKind, useFeeRules } from './usePools'
 
 const FeeRow = styled.label`
   display: grid;
@@ -41,7 +41,36 @@ export type CreateWallet = {
  * Each fee must be 0 or at least the vault's least contribution in that token, read on chain; on a chain whose
  * factory has no vault, both are 0.
  */
-export function CreatePool({
+/**
+ * Start a collection's pool, for ERC-721 collections only. An ERC-1155 edition gets no pool from the app: editions
+ * trade on their own price curve (contracts/docs/CURVE-EDITIONS.md), so it says that instead of offering the form.
+ */
+export function CreatePool(props: Parameters<typeof CreatePoolForm>[0]) {
+  const kind = useCollectionKind(props.chainId, props.collection)
+  if (kind.start === 'pool') return <CreatePoolForm {...props} />
+  if (kind.start === 'curve')
+    return (
+      <Prose data-edition-curve>
+        This is an edition (ERC-1155), so it doesn&apos;t get a pool here. Editions will trade on their own price
+        curve instead: mint the next copy at the curve&apos;s price, or sell one back to the edition for 90% of it.
+        That&apos;s coming; nothing to do yet.
+      </Prose>
+    )
+  if (kind.start === 'unsupported')
+    return <Prose>This address isn&apos;t an ERC-721 collection, so it can&apos;t have a pool.</Prose>
+  if (kind.failed)
+    return (
+      <Hint role="status">
+        Couldn&apos;t check what kind of collection this is.{' '}
+        <LinkButton type="button" onClick={() => kind.refetch()}>
+          Check again
+        </LinkButton>
+      </Hint>
+    )
+  return <Hint>Checking the collection…</Hint>
+}
+
+function CreatePoolForm({
   chainId,
   factory,
   collection,

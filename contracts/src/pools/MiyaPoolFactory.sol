@@ -24,9 +24,6 @@ contract MiyaPoolFactory {
 
     /// @notice The alignment vault every pool's pick fees go to. address(0) on a chain without one: picks are free.
     address public immutable vault;
-    /// @notice The vault's IMD and INFER, the tokens pick fees can be paid in (address(0) without a vault).
-    address public immutable imd;
-    address public immutable infer;
 
     mapping(address collection => address pool) public poolOf;
     address[] public allPools;
@@ -43,16 +40,22 @@ contract MiyaPoolFactory {
 
     error PoolExists(address pool);
     error UnsupportedCollection();
-    error InvalidVault();
 
+    /// @dev Stores the vault only. The launch's deployment rehearsal runs this constructor on an empty chain where the
+    ///      vault has no code, so nothing may be read from it here: `imd()` / `infer()` read the live vault when a pool
+    ///      is created, and `MiyaPool`'s constructor requires vault code and a registered fee token for any nonzero fee.
     constructor(address vault_) {
-        if (vault_ != address(0) && vault_.code.length == 0) revert InvalidVault();
         vault = vault_;
-        if (vault_ != address(0)) {
-            imd = IVaultTokens(vault_).imd();
-            infer = IVaultTokens(vault_).infer();
-            if (imd == address(0) || infer == address(0)) revert InvalidVault();
-        }
+    }
+
+    /// @notice The vault's IMD, the first token pick fees can be paid in (address(0) without a vault).
+    function imd() public view returns (address) {
+        return _vaultToken(IVaultTokens.imd.selector);
+    }
+
+    /// @notice The vault's INFER, the second token pick fees can be paid in (address(0) without a vault).
+    function infer() public view returns (address) {
+        return _vaultToken(IVaultTokens.infer.selector);
     }
 
     /// @notice Create `collection`'s pool with a pick fee per piece of `imdFee` IMD and/or `inferFee` INFER (token wei;
@@ -73,9 +76,9 @@ contract MiyaPoolFactory {
         view
         returns (address)
     {
-        bytes32 initHash = keccak256(
-            abi.encodePacked(type(MiyaPool).creationCode, abi.encode(collection, kind, imdFee, inferFee))
-        );
+        // bytes.concat: the same init code `new MiyaPool{salt}(...)` hashes, without packing two dynamic values.
+        bytes32 initHash =
+            keccak256(bytes.concat(type(MiyaPool).creationCode, abi.encode(collection, kind, imdFee, inferFee)));
         return address(
             uint160(uint256(keccak256(abi.encodePacked(bytes1(0xff), address(this), _salt(collection), initHash))))
         );
@@ -87,6 +90,17 @@ contract MiyaPoolFactory {
 
     function _salt(address collection) internal pure returns (bytes32) {
         return keccak256(abi.encode(collection));
+    }
+
+    /// @dev `vault.imd()` / `vault.infer()`, read live; address(0) without a vault, where the vault has no code, or
+    ///      where it does not answer with an address.
+    function _vaultToken(bytes4 selector) internal view returns (address) {
+        address v = vault;
+        if (v.code.length == 0) return address(0);
+        (bool ok, bytes memory ret) = v.staticcall(abi.encodeWithSelector(selector));
+        if (!ok || ret.length != 32) return address(0);
+        uint256 word = abi.decode(ret, (uint256));
+        return word > type(uint160).max ? address(0) : address(uint160(word));
     }
 
     function _detectKind(address collection) internal view returns (MiyaPool.Kind) {

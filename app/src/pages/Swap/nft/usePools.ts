@@ -15,7 +15,19 @@ import { resolveUri } from '@/utils/resolveUri'
 
 import { erc721Abi, erc1155Abi, poolAbi, poolFactoryAbi, poolVaultAbi, vaultConfigAbi } from './abi'
 import type { CommitRow, PoolKind, PoolSummary } from './pool'
-import { asKind, factoryMadePool, heldAmount, KIND, pendingFor, poolIndexes, poolLookup, v2PoolFactory } from './pool'
+import {
+  asKind,
+  ERC721_INTERFACE,
+  ERC1155_INTERFACE,
+  factoryMadePool,
+  heldAmount,
+  KIND,
+  pendingFor,
+  poolIndexes,
+  poolLookup,
+  poolStartFor,
+  v2PoolFactory,
+} from './pool'
 
 /**
  * The v2 MiyaPoolFactory on a chain, from env or contracts/deployments (undefined = not deployed there yet). A v1
@@ -32,6 +44,42 @@ const COMMIT_SCAN = 100
 const OWNED_PAGE = 100
 const OWNED_MAX_PAGES = 10
 export const HELD_PAGE = 24
+
+const erc165Abi = [
+  {
+    type: 'function',
+    name: 'supportsInterface',
+    stateMutability: 'view',
+    inputs: [{ name: 'interfaceId', type: 'bytes4' }],
+    outputs: [{ type: 'bool' }],
+  },
+] as const
+
+/**
+ * What a collection with no pool may start (pool.ts poolStartFor): its ERC-721 and ERC-1155 answers to ERC-165. A
+ * revert counts as "no" (not ERC-165 at all); an RPC failure stays unknown.
+ */
+export function useCollectionKind(chainId: SupportedChainId, collection: Address | undefined) {
+  const reads = useReadContracts({
+    allowFailure: true,
+    contracts: [ERC721_INTERFACE, ERC1155_INTERFACE].map((id) => ({
+      address: collection,
+      abi: erc165Abi,
+      functionName: 'supportsInterface' as const,
+      args: [id as `0x${string}`] as const,
+      chainId,
+    })),
+    query: { enabled: !!collection, staleTime: Infinity },
+  })
+  const answer = (i: number): boolean | undefined => {
+    const r = reads.data?.[i]
+    if (!r) return undefined
+    if (r.status === 'success') return r.result === true
+    return isRevert(r.error) ? false : undefined
+  }
+  const start = poolStartFor(answer(0), answer(1))
+  return { start, loading: reads.isLoading, failed: !reads.isLoading && start === undefined, refetch: reads.refetch }
+}
 
 const ok = <T>(r: { status: string; result?: unknown } | undefined) =>
   r && r.status === 'success' ? (r.result as T) : undefined

@@ -122,7 +122,7 @@ contract MockVault {
         minContribution[token] = m;
     }
 
-    function receiveContribution(address currency, uint256 amount, address benefactor) external payable {
+    function receiveContribution(address currency, uint256 amount, address benefactor) external payable virtual {
         require(!refuse, "vault refused");
         require(amount != 0, "AmountMustBePositive");
         require(benefactor != address(0), "InvalidAddress");
@@ -323,9 +323,32 @@ contract MiyaPoolTest is Test {
         assertTrue(p.picksFree());
     }
 
-    function test_factory_rejectsVaultWithoutCode() public {
-        vm.expectRevert(MiyaPoolFactory.InvalidVault.selector);
-        new MiyaPoolFactory(makeAddr("eoa vault"));
+    /// The launch rehearses the constructor on an empty chain (no vault code), so it must not read the vault. A pool
+    /// with a fee still needs the vault to exist when it is created.
+    function test_factory_deploysWithAVaultWithoutCodeAndReadsItLazily() public {
+        address eoaVault = makeAddr("eoa vault");
+        MiyaPoolFactory f = new MiyaPoolFactory(eoaVault);
+        assertEq(f.vault(), eoaVault);
+        assertEq(f.imd(), address(0));
+        assertEq(f.infer(), address(0));
+        vm.expectRevert(MiyaPool.NoVault.selector);
+        f.createPool(address(nft), 1e18, 0);
+        vm.expectRevert(MiyaPool.NoVault.selector);
+        f.createPool(address(editions), 0, 3500e18);
+        MiyaPool p = MiyaPool(f.createPool(address(nft), 0, 0));
+        assertTrue(p.picksFree());
+        assertEq(p.vault(), eoaVault);
+        // once the vault exists at that address, the factory answers with its tokens and fee pools can be created
+        vm.etch(eoaVault, address(vault).code);
+        vm.store(eoaVault, bytes32(uint256(0)), bytes32(uint256(uint160(address(imd)))));
+        vm.store(eoaVault, bytes32(uint256(1)), bytes32(uint256(uint160(address(infer)))));
+        vm.store(eoaVault, keccak256(abi.encode(address(imd), uint256(2))), bytes32(uint256(1e18)));
+        vm.store(eoaVault, keccak256(abi.encode(address(imd), uint256(3))), bytes32(uint256(1)));
+        assertEq(f.imd(), address(imd));
+        assertEq(f.infer(), address(infer));
+        MiyaPool q = MiyaPool(f.createPool(address(editions), 1e18, 0));
+        assertEq(q.imd(), address(imd));
+        assertEq(q.imdFee(), 1e18);
     }
 
     function test_factory_detects1155() public {
