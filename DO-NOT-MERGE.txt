@@ -1,7 +1,7 @@
 NOT MEANT TO BE MERGED YET
 
-Branch: test/do-not-merge-polyphony
+Do not check out test/do-not-merge-polyphony.
+The upload is incomplete. model.js on this branch is empty, so the app will not run.
+main was not changed. Leave main alone.
 
-This is a desktop test of sequencer polyphony (chords, lanes past 16, up to 256) and the menu sound check.
-Do not merge this branch into main.
-Pull it only to try the work on your machine. Leave main alone.
+This branch is only a placeholder until the full test commit can be pushed.
