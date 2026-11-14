@@ -3,7 +3,7 @@ import { test } from 'node:test'
 import * as music from '../src/pages/MusicMaker/model.js'
 
 // model.js is JSDoc-typed for the app's own calls; the test pokes at its state directly.
-const { currentPattern, noteRuns } = music
+const { currentPattern, noteRuns, laneCount } = music
 const model = music.model as any
 const commitTrackerNote = music.commitTrackerNote as (note: Record<string, unknown>) => void
 const ensurePattern = music.ensurePattern as (index: number) => any
@@ -62,5 +62,74 @@ test('a recorded chord keeps every note, and the sequence lists each one', () =>
   model.tracker.row = prevRow
   model.tracker.col = prevCol
   model.playing = prevPlay
+  currentPattern()
+})
+
+test('a 17th pitch grows a lane, and older step shapes still load', () => {
+  const prev = model.pattern
+  const prevEdit = model.tracker.edit
+  const prevRow = model.tracker.row
+  const prevCol = model.tracker.col
+  const prevPlay = model.playing
+  model.pattern = 9
+  model.patterns[9] = null
+  model.tracker.edit = true
+  model.tracker.row = 0
+  model.tracker.col = 0
+  model.playing = false
+  const seq = ensurePattern(9)
+  for (let i = 0; i < 17; i++) {
+    commitTrackerNote({ pad: 1, vel: 0.8, pitch: -12 + i, row: 0, live: true })
+  }
+  const occupied = []
+  seq.steps[0].forEach((ev: { pad?: number } | null, i: number) => {
+    if (ev && ev.pad === 1) occupied.push(i)
+  })
+  assert.deepEqual(occupied, Array.from({ length: 17 }, (_, i) => i))
+  assert.ok(laneCount(seq) >= 17)
+
+  seq.steps[3] = Array.from({ length: 20 }, () => null)
+  seq.steps[3][19] = { pad: 2, vel: 0.5, pitch: 3, nudge: 0 }
+  seq.steps[4] = [
+    { pad: 3, vel: 0.4, pitch: 1, nudge: 0 },
+    { pad: 3, vel: 0.4, pitch: 2, nudge: 0 },
+    { pad: 3, vel: 0.4, pitch: 4, nudge: 0 },
+  ]
+  ensurePattern(9)
+  assert.equal(seq.steps[3].length, 20)
+  assert.equal(seq.steps[3][19].pitch, 3)
+  assert.equal(seq.steps[3][0], null)
+  assert.equal(seq.steps[4].length, 16)
+  assert.deepEqual(seq.steps[4].slice(0, 3).map((ev: { pitch: number }) => ev.pitch), [1, 2, 4])
+  assert.equal(seq.steps[4][3], null)
+
+  model.patterns[9] = null
+  model.pattern = prev
+  model.tracker.edit = prevEdit
+  model.tracker.row = prevRow
+  model.tracker.col = prevCol
+  model.playing = prevPlay
+  currentPattern()
+})
+
+test('a new pitch on a full step grows a lane instead of replacing one', () => {
+  const prev = model.pattern
+  model.pattern = 11
+  model.patterns[11] = null
+  const seq = ensurePattern(11)
+  for (let i = 0; i < 16; i++) {
+    seq.steps[0][i] = { pad: 4, vel: 0.8, pitch: i, nudge: 0 }
+  }
+  music.setHit(0, 4, { pitch: 20, vel: 0.7 })
+  assert.equal(seq.steps[0].length, 17)
+  assert.equal(seq.steps[0][0].pitch, 0)
+  assert.equal(seq.steps[0][16].pitch, 20)
+  assert.equal(seq.steps[0][16].pad, 4)
+  music.setHit(0, 4, { vel: 0.4 }, 20)
+  assert.equal(seq.steps[0].length, 17)
+  assert.equal(seq.steps[0][16].vel, 0.4)
+
+  model.patterns[11] = null
+  model.pattern = prev
   currentPattern()
 })
