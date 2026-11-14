@@ -184,8 +184,11 @@ export default function ManagePage() {
     // A failed read isn't an answer: calling that legacy would pin the collection as what it may not be. No registry on
     // this network is one, since nothing from Launch can be here.
     if (a.registry && reads.data[0]?.status !== 'success') return undefined
-    const k = kindFromFactory(factory && factory !== zeroAddress ? factory : undefined, a)
-    return k === 'unknown' ? 'legacy' : k
+    const registered = !!factory && factory !== zeroAddress
+    const k = kindFromFactory(registered ? factory : undefined, a)
+    // Legacy is only what the registry has no factory for; a registered one we don't know is 'other', never legacy.
+    if (k !== 'unknown') return k
+    return registered ? 'other' : 'legacy'
   })()
   const readFailed = !detected && !reads.isFetching && (reads.isError || !!reads.data)
   const isOwner = !!owner && !!wallet && owner.toLowerCase() === wallet.toLowerCase()
@@ -378,6 +381,16 @@ export default function ManagePage() {
                   <span style={{ fontSize: text.sm }}>Loading…</span>
                 ) : detected === 'legacy' ? (
                   <LegacyManage key={collection} collection={collection} onChange={clear} />
+                ) : detected === 'curve' ? (
+                  <span style={{ fontSize: text.sm }} data-manage-curve>
+                    A curve-edition collection. Its editions, master earnings and claims will be managed here soon;
+                    until then nothing here changes it.
+                  </span>
+                ) : detected === 'other' ? (
+                  <span style={{ fontSize: text.sm }} data-manage-other>
+                    This collection was launched by a factory this app doesn&apos;t manage yet, so there&apos;s nothing
+                    to change here.
+                  </span>
                 ) : (
                   <MiyamintsManage
                     key={`${chainId}:${collection}`}

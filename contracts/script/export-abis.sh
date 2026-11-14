@@ -22,6 +22,8 @@ CONTRACTS=(
   "ERC1155Instance:factories/erc1155/ERC1155Instance.sol"
   "MiyaPoolFactory:pools/MiyaPoolFactory.sol"
   "MiyaPool:pools/MiyaPool.sol"
+  "CurveEditionFactory:factories/curve/CurveEditionFactory.sol"
+  "CurveEdition:factories/curve/CurveEdition.sol"
 )
 
 CHECK=0

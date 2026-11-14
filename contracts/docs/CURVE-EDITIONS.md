@@ -1,7 +1,7 @@
 # Design: bonding-curve editions (mint, burn, trade)
 
-Status: proposal (2026-11-08). Builds on the multi-token editions in IMD-INFER-VAULT.md; code starts after that lands.
-Nothing here is built or deployed. Mainnet only.
+Status: contracts built (2026-11-14), not audited or deployed. Mainnet only. See "As built" below for where the code
+differs from the proposal.
 
 ## Idea
 
@@ -43,7 +43,7 @@ spread between 5% and 30%.
 
 ## Flows
 
-**Mint** `mintCurve(editionId, qty, maxCost)`:
+**Mint** `mint(editionId, qty, maxCost)` (proposal name `mintCurve`):
 1. Cost = `sum P(s+1 .. s+qty)`; revert if over `maxCost` (front-running guard).
 2. Take payment in the edition's currency (ETH `msg.value` exact; ERC-20 `transferFrom` with a balance-delta check).
 3. Per copy: `reserve += r * P(i)`; master share `0.06 * P(i)` credited to the **current master holder** (pull);
@@ -51,19 +51,21 @@ spread between 5% and 30%.
    treasury (pull). Rounding dust goes to the reserve, never out of it.
 4. Mint `qty` copies; `s += qty`.
 
-**Burn** `burnCurve(editionId, qty, minPayout, minSupply)`:
+**Burn** `burn(editionId, qty, minPayout, minSupply)` (proposal name `burnCurve`):
 1. Revert if `s < minSupply` or the payout is under `minPayout` (front-running guard).
 2. Payout = `sum r * P(s .. s-qty+1)` (the top copies come off the curve, highest first).
 3. `reserve -= payout`; burn `qty` from the caller; `s -= qty`; pay the caller.
 
-**Claims**: master holders call `claimMasterEarnings(currency)`; the treasury pulls its share; vault fees follow the
+**Claims**: master holders call `claimMasterEarnings(currency)` (or `claimMasterEarningsTo`); the protocol cut is pushed to the
+treasury at each mint (parked and retried if it refuses); vault fees follow the
 vault's own claim modes.
 
 ## Solvency invariant
 
 For every edition: `reserve == sum_{i=1..s} r * P(i)` (plus rounding dust, which only ever adds). Each mint adds exactly
 `r * P(s+1)` and each burn removes exactly `r * P(s)` for the top copy, so the reserve can always pay every copy back down
-to zero. Proven with fuzzed sequences of mints, burns and transfers per curve shape and currency decimals.
+to zero. Fuzzed (test/factories/curve) over random mints, burns of up to 50 and master transfers, on both curve
+shapes, in ETH and in a 6-decimal token, up to 2,000 copies.
 
 ## Alignment rule
 
@@ -81,7 +83,7 @@ minimum. The protocol fee is 1% of price, as for other sales.
 
 ## Contracts
 
-- `ERC1155Instance`: a new edition type `CURVE` beside `OPEN`, `LIMITED_FIXED` and `LIMITED_DYNAMIC`, with the per-edition
+- (Proposal; built instead as separate contracts, see "As built".) `ERC1155Instance`: a new edition type `CURVE` beside `OPEN`, `LIMITED_FIXED` and `LIMITED_DYNAMIC`, with the per-edition
   reserve, master token id, curve parameters, `mintCurve`, `burnCurve`, `claimMasterEarnings`, ERC-2981 to the master holder.
 - A pure `CurveMath` library (both shapes, sums, limits) so pricing is testable on its own.
 - `ERC1155Factory`: accepts curve parameters at `addEdition`; validates limits against the registry.
@@ -111,3 +113,38 @@ minimum. The protocol fee is 1% of price, as for other sales.
 - **Thin currencies**: an edition priced in a thin token is still solvent (the reserve is in that token), but its
   market may be illiquid.
 - **Front-running**: covered by `maxCost`, `minPayout` and `minSupply`.
+
+## As built (2026-11-14)
+
+`src/factories/curve/`: `CurveMath`, `CurveEdition` (the collection), `CurveEditionFactory`. Tests:
+`test/factories/curve/CurveEdition.t.sol` (maths, limits, splits, guards, master transfer, royalties, ERC-20, a
+solvency fuzz) and `test/fork/CurveEditionFork.t.sol` (live registry, vault, treasury and IMD).
+
+Where it differs from the proposal, and why:
+
+- **Separate contracts, not a fourth type in `ERC1155Instance`.** That contract is 19.9 KB of the 24 KB limit; the
+  reserve, burn, master and claims do not fit. Existing 1155 collections and their factory are untouched. The registry
+  owner (the Safe) lists the new factory once with `registry.setFactory(factory, true)`.
+- **The price cap per currency lives in the factory** (`priceCap`, set by its owner, the Safe), not the registry, which
+  is deployed and has no such field. A currency without a cap can't be used; caps apply to editions added after a change.
+- **Token ids:** copies of edition `e` are id `e << 1`, its master `(e << 1) | 1`.
+- **Split:** protocol = `protocolFeeBps` of each copy's price (snapshotted at launch, 1% today); vault = 30% of the
+  spread; master = the rest of the spread. An edition is refused unless the master keeps a share
+  (`protocol + 0.3 x spread < spread`). At a 10% spread: 90 / 6 / 3 / 1, as agreed.
+- **Vault share under the vault's minimum is parked**, not lost: the shared `PaymentLib` carries it with the next mint
+  or `flushPendingVaultCut` (anyone, optional top-up), as for the other collections. Contributions are booked to the
+  collection; its owner claims the vault fees (`claimVaultFees`).
+- **At most 50 copies per mint or burn** (about 300k gas at the top of a curve). `royaltyBps` is chosen per edition, at
+  most 10%, paid on copies (not the master) by marketplaces that honour ERC-2981 to the current master holder.
+- **ETH mints** send up to `maxCost` and get the difference back, so a mint or burn landing first doesn't fail them.
+  `maxCost` must stay close to a fresh quote: a loose one lets someone mint just ahead and burn just after (the app
+  always sends the quote plus a small tolerance).
+- **A currency the registry drops takes no new mints**; burns and claims keep working.
+- **Effective limits:** an exponential curve whose top copy overflows is refused as invalid (at 5% growth that is around
+  1,900 copies, whatever the start price). Price caps are at most 2^128.
+- **Master earnings stay with the address that held the master at each mint.** A holder that can't call
+  `claimMasterEarnings` (an escrow, a vault) can't collect them; `claimMasterEarningsTo` pays a holder's earnings
+  elsewhere.
+- **Only the vault may send ETH directly** to a collection (its fee payouts); anything else would be stuck.
+- **Exponential prices** come from solady `rpow` in 1e18 fixed point, which rounds at each step (a few wei from the
+  exact power). A copy's price is always computed the same way, so its mint and its burn always agree.

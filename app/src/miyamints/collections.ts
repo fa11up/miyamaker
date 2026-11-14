@@ -3,7 +3,11 @@
  * browser, legacy collections managed here) into one list. Pure: tested in tests/miyamints-launch.test.mts.
  */
 
-export type LaunchKind = 'drop' | 'auction' | 'editions' | 'legacy' | 'unknown'
+/**
+ * What a collection is: one of ours by its registry factory ('drop', 'auction', 'editions', 'curve'), 'other' when the
+ * registry names a factory this app doesn't manage, 'legacy' for the old MiyaMints contracts (not in the registry).
+ */
+export type LaunchKind = 'drop' | 'auction' | 'editions' | 'curve' | 'other' | 'legacy' | 'unknown'
 
 export type LaunchRef = {
   chainId: number
@@ -48,13 +52,19 @@ export function mergeLaunches(...lists: LaunchRef[][]): LaunchRef[] {
 /** Which factory made an instance, from MiyaRegistry.factoryOf and the chain's factory addresses. */
 export function kindFromFactory(
   factory: string | undefined,
-  f: { erc721DropFactory?: string; erc721AuctionFactory?: string; erc1155Factory?: string }
+  f: {
+    erc721DropFactory?: string
+    erc721AuctionFactory?: string
+    erc1155Factory?: string
+    curveEditionFactory?: string
+  }
 ): LaunchKind {
   const lc = (factory || '').toLowerCase()
   if (!lc) return 'unknown'
   if (lc === f.erc721DropFactory?.toLowerCase()) return 'drop'
   if (lc === f.erc721AuctionFactory?.toLowerCase()) return 'auction'
   if (lc === f.erc1155Factory?.toLowerCase()) return 'editions'
+  if (lc === f.curveEditionFactory?.toLowerCase()) return 'curve'
   return 'unknown'
 }
 
@@ -77,6 +87,8 @@ export const KIND_LABEL: Record<LaunchKind, string> = {
   drop: 'Fixed-price drop',
   auction: 'Auction',
   editions: 'Editions',
+  curve: 'Curve editions',
+  other: 'Collection',
   legacy: 'Legacy (MiyaMints v1)',
   unknown: 'Collection',
 }

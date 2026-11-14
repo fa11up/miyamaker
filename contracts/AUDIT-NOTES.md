@@ -681,3 +681,36 @@ Review focus:
   for someone else; reentrancy (`redeem` is `nonReentrant`; IMD and INFER are plain ERC-20s; the vault is trusted code;
   NFT transfers happen after the fee).
 - `_checkFeeToken` at creation (live reads of the vault's registry and config) and what happens when those change later.
+
+## Curve editions (2026-11-14, not yet reviewed)
+
+New contracts in `src/factories/curve/` (design and as-built notes: docs/CURVE-EDITIONS.md). Points for a reviewer:
+
+- **Solvency.** An edition's reserve must always equal the sum of its live copies' burn values, and the collection's
+  balance of a token must cover `liabilities(token)` (reserves, master earnings owed, parked protocol and vault cuts,
+  owner balance). Each mint adds exactly the burn value of each new copy and each burn removes exactly that of the top
+  copies, computed by the same `CurveMath.price`. Fuzzed over random mints and burns.
+- **Master tracking.** `_afterTokenTransfer` sets an edition's master holder on every move of its master id; earnings
+  are credited to whoever holds it at the moment of each mint (pull, `claimMasterEarnings`).
+- **External calls in `mint`:** ERC-20 `transferFrom` (balance-delta checked), the treasury (protocol cut, parked if
+  refused), the vault (`receiveContribution`, parked if refused), then `_mint` (receiver hook). All under
+  `nonReentrant`; state is written before the treasury and vault calls.
+- **Burn** pays the caller with `SmartTransferLib` (WETH fallback) or `safeTransfer`, after state and `_burn`.
+- **Trust:** the factory owner (Safe) sets price caps for future editions only; nothing it does can move a reserve.
+  The collection owner adds editions and claims vault fees; it can't touch reserves or master earnings.
+- **Known limits:** the regulatory note in docs/CURVE-EDITIONS.md (redeemable tokens); a thin currency gives a solvent
+  but illiquid market; front-running is bounded by `maxCost`, `minPayout` and `minSupply`.
+
+### Curve editions: audit-suite fixes (2026-11-14)
+
+Internal `/audit-suite` (three reviewers, no P1): ETH mints now take up to `maxCost` and refund the rest (exact
+`msg.value` made every mint fail when another landed first); `mint` re-checks that the registry still allows the
+currency (a dropped token kept selling and its vault share would have reached the owner); `receive()` takes ETH only
+from the vault; quotes apply the 50-copy cap; an overflowing curve is refused as `InvalidCurve`; `priceCap` <= 2^128 and
+the factory requires WETH; no royalty on the master id; `claimMasterEarningsTo`. Tests added for each, plus reentrancy
+through the receiver hook, ERC-20 vault-share parking and flush, the delisted release and `withdraw`, a refused
+protocol cut, vault fees paid in the edition's own currency, and a wider solvency fuzz.
+
+Accepted: a loose `maxCost` on a steep curve can be sandwiched (mint ahead, burn after); the app sends the quote plus a
+small tolerance. In the shared `PaymentLib.claimVaultFees`, a vault whose `infer()` and `imd()` are the same token
+would be counted twice; the live vault's are different tokens (INFER, IMD).
