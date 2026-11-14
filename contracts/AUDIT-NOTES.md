@@ -681,3 +681,22 @@ Review focus:
   for someone else; reentrancy (`redeem` is `nonReentrant`; IMD and INFER are plain ERC-20s; the vault is trusted code;
   NFT transfers happen after the fee).
 - `_checkFeeToken` at creation (live reads of the vault's registry and config) and what happens when those change later.
+
+## Curve editions (2026-11-14, not yet reviewed)
+
+New contracts in `src/factories/curve/` (design and as-built notes: docs/CURVE-EDITIONS.md). Points for a reviewer:
+
+- **Solvency.** An edition's reserve must always equal the sum of its live copies' burn values, and the collection's
+  balance of a token must cover `liabilities(token)` (reserves, master earnings owed, parked protocol and vault cuts,
+  owner balance). Each mint adds exactly the burn value of each new copy and each burn removes exactly that of the top
+  copies, computed by the same `CurveMath.price`. Fuzzed over random mints and burns.
+- **Master tracking.** `_afterTokenTransfer` sets an edition's master holder on every move of its master id; earnings
+  are credited to whoever holds it at the moment of each mint (pull, `claimMasterEarnings`).
+- **External calls in `mint`:** ERC-20 `transferFrom` (balance-delta checked), the treasury (protocol cut, parked if
+  refused), the vault (`receiveContribution`, parked if refused), then `_mint` (receiver hook). All under
+  `nonReentrant`; state is written before the treasury and vault calls.
+- **Burn** pays the caller with `SmartTransferLib` (WETH fallback) or `safeTransfer`, after state and `_burn`.
+- **Trust:** the factory owner (Safe) sets price caps for future editions only; nothing it does can move a reserve.
+  The collection owner adds editions and claims vault fees; it can't touch reserves or master earnings.
+- **Known limits:** the regulatory note in docs/CURVE-EDITIONS.md (redeemable tokens); a thin currency gives a solvent
+  but illiquid market; front-running is bounded by `maxCost`, `minPayout` and `minSupply`.

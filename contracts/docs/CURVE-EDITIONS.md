@@ -1,7 +1,7 @@
 # Design: bonding-curve editions (mint, burn, trade)
 
-Status: proposal (2026-11-08). Builds on the multi-token editions in IMD-INFER-VAULT.md; code starts after that lands.
-Nothing here is built or deployed. Mainnet only.
+Status: contracts built (2026-11-14), not audited or deployed. Mainnet only. See "As built" below for where the code
+differs from the proposal.
 
 ## Idea
 
@@ -111,3 +111,28 @@ minimum. The protocol fee is 1% of price, as for other sales.
 - **Thin currencies**: an edition priced in a thin token is still solvent (the reserve is in that token), but its
   market may be illiquid.
 - **Front-running**: covered by `maxCost`, `minPayout` and `minSupply`.
+
+## As built (2026-11-14)
+
+`src/factories/curve/`: `CurveMath`, `CurveEdition` (the collection), `CurveEditionFactory`. Tests:
+`test/factories/curve/CurveEdition.t.sol` (maths, limits, splits, guards, master transfer, royalties, ERC-20, a
+solvency fuzz) and `test/fork/CurveEditionFork.t.sol` (live registry, vault, treasury and IMD).
+
+Where it differs from the proposal, and why:
+
+- **Separate contracts, not a fourth type in `ERC1155Instance`.** That contract is 19.9 KB of the 24 KB limit; the
+  reserve, burn, master and claims do not fit. Existing 1155 collections and their factory are untouched. The registry
+  owner (the Safe) lists the new factory once with `registry.setFactory(factory, true)`.
+- **The price cap per currency lives in the factory** (`priceCap`, set by its owner, the Safe), not the registry, which
+  is deployed and has no such field. A currency without a cap can't be used; caps apply to editions added after a change.
+- **Token ids:** copies of edition `e` are id `e << 1`, its master `(e << 1) | 1`.
+- **Split:** protocol = `protocolFeeBps` of each copy's price (snapshotted at launch, 1% today); vault = 30% of the
+  spread; master = the rest of the spread. An edition is refused unless the master keeps a share
+  (`protocol + 0.3 x spread < spread`). At a 10% spread: 90 / 6 / 3 / 1, as agreed.
+- **Vault share under the vault's minimum is parked**, not lost: the shared `PaymentLib` carries it with the next mint
+  or `flushPendingVaultCut` (anyone, optional top-up), as for the other collections. Contributions are booked to the
+  collection; its owner claims the vault fees (`claimVaultFees`).
+- **At most 50 copies per mint or burn** (gas). `royaltyBps` is chosen per edition, at most 10%, paid by marketplaces
+  that honour ERC-2981 to the current master holder.
+- **Exponential prices** come from solady `rpow` in 1e18 fixed point, which rounds at each step (a few wei from the
+  exact power). A copy's price is always computed the same way, so its mint and its burn always agree.
