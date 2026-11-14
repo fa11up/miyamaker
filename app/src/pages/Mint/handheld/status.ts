@@ -27,6 +27,19 @@ export const statusLamp = (status: LiveMintStatus, loading: boolean): { tone: La
 export const wrapIndex = (count: number, index: number, step: number): number =>
   count <= 0 ? 0 : (((index + step) % count) + count) % count
 
+/**
+ * Where the D-pad lands in a grid of `count` pieces, `cols` wide, read row by row. ◀▶ run on through the rows and wrap at
+ * the ends; ▲▼ move a row and stop at the top and bottom, landing on the last piece when the row below is short.
+ */
+export const gridStep = (count: number, cols: number, index: number, dx: number, dy: number): number => {
+  if (count <= 0) return 0
+  if (dx) return wrapIndex(count, index, dx)
+  const to = index + dy * Math.max(1, cols)
+  if (to < 0) return index
+  if (to >= count) return Math.floor((count - 1) / cols) > Math.floor(index / cols) ? count - 1 : index
+  return to
+}
+
 /** The next quantity from ▲▼, kept between 1 and the most that can be minted now. */
 export const stepQuantity = (quantity: number, step: number, max: number): number =>
   Math.min(Math.max(1, max), Math.max(1, quantity + step))

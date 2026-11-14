@@ -1,3 +1,5 @@
+import logoSrc from 'assets/miyamaker-loved-logo.png'
+
 import NftImage from '@/components/NftImage'
 import { Chip } from '@/components/Retro'
 import Carousel, { Glyph } from '@/pages/Mint/handheld/Carousel'
@@ -31,6 +33,15 @@ const STATUS_TONE: Record<LiveMintStatus, 'ok' | 'warn' | 'off'> = {
 export function StatusChip({ status, loading = true }: { status: LiveMintStatus; loading?: boolean }) {
   if (status === 'unknown' && !loading) return <Chip tone="warn">Can&apos;t reach chain</Chip>
   return <Chip tone={STATUS_TONE[status]}>{STATUS_LABEL[status]}</Chip>
+}
+
+/** The miyamaker face on white, for the official shelf and the head of its list. */
+function Logo() {
+  return (
+    <Glyph $bg="radial-gradient(circle at 50% 40%, #fff 0 62%, #ffd9ef)">
+      <img src={logoSrc} alt="miyamaker" style={{ width: '90%', height: '90%', objectFit: 'contain' }} />
+    </Glyph>
+  )
 }
 
 /** Cover: curated image, else the contract's metadata image, else the dithered placeholder. */
@@ -73,6 +84,7 @@ export default function MainMenu({
         lampLabel={shelf === 'official' ? 'Miyamaker mints' : 'Community mints'}
         ariaLabel={shelf === 'official' ? 'Miyamaker mints' : `Community mints, ${COMMUNITY_WORDS}`}
         back={{ label: 'Shelves', onClick: () => onShelf(undefined) }}
+        badge={shelf === 'official' ? <img src={logoSrc} alt="miyamaker" /> : undefined}
         items={
           list.length
             ? list.map((c) => {
@@ -115,11 +127,7 @@ export default function MainMenu({
           line: `Official drops · ${count(official)}`,
           action: 'Open Miyamaker mints',
           open: () => onShelf('official'),
-          pic: official[0]?.image ? (
-            <Cover card={official[0]} />
-          ) : (
-            <Glyph $bg="linear-gradient(160deg, #ff6fbf, #7a2fd0)">♥</Glyph>
-          ),
+          pic: <Logo />,
         },
         {
           key: 'shelf-community',

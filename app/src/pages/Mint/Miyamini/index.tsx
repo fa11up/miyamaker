@@ -214,6 +214,11 @@ export default function MiyaminiMint() {
             }
           : undefined
       }
+      gallery={{
+        ids: Array.from({ length: state.totalSupply ?? 0 }, (_, i) => i + 1),
+        art: (id) => <TokenImage id={id} alt={`#${id}`} />,
+        loading: state.isLoading,
+      }}
       caption={previewId ? `#${previewId}` : undefined}
       blurb={CREDIT?.blurb}
       price={`${formatEth(state.price)} ETH`}

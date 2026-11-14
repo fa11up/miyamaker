@@ -7,6 +7,7 @@ import type { LampTone } from './status'
 import { stepQuantity } from './status'
 import { PAINTED } from './Carousel'
 import Device, { Dialog, LCD_FONT, Lcd } from './Device'
+import Gallery from './Gallery'
 import Holo from './Holo'
 
 const scan = keyframes`
@@ -40,7 +41,8 @@ const Tag = styled.span`
   left: 8px;
   top: 8px;
   /* A long caption (community notice and the sale) wraps instead of running over the art's edge. */
-  max-width: calc(100% - 16px);
+  /* Room on the right for the Gallery button. */
+  max-width: calc(100% - 104px);
   padding: 2px 7px;
   border-radius: 3px;
   background: rgba(12, 10, 24, 0.8);
@@ -132,6 +134,26 @@ const HoloButton = styled.button`
   }
 `
 
+/** On the art's top right: into the gallery of everything minted so far. */
+const GalleryChip = styled.button`
+  position: absolute;
+  z-index: 2;
+  right: 8px;
+  top: 8px;
+  min-height: 30px;
+  padding: 0 9px;
+  border: 1px solid rgba(190, 240, 255, 0.85);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+  color: #e4f8ff;
+  background: rgba(8, 24, 52, 0.85);
+  &:focus-visible {
+    outline: 2px dashed #fff35c;
+    outline-offset: 2px;
+  }
+`
+
 const LAMP: Record<LampTone, string> = { ok: '#3dff7a', warn: '#ffc400', off: '#79808a' }
 
 export type MachineStatus = { tone: 'info' | 'ok' | 'error'; body: ReactNode; alert?: boolean }
@@ -169,6 +191,7 @@ export default function MintCart({
   dropped,
   stamp,
   onArtStep,
+  gallery,
   children,
 }: {
   name: string
@@ -204,6 +227,8 @@ export default function MintCart({
   stamp: ReactNode
   /** Moves the art to the piece before or after this one, for the holographic viewer. */
   onArtStep?: (step: number) => void
+  /** Every piece minted so far, for the gallery (Select, or the button on Info). */
+  gallery?: { ids: number[]; art: (id: number) => ReactNode; loading?: boolean }
   children?: ReactNode
 }) {
   const nav = useHandheld()
@@ -211,6 +236,7 @@ export default function MintCart({
   useEffect(() => (holding ? nav.hold?.() : undefined), [holding])
   const [info, setInfo] = useState(false)
   const [holo, setHolo] = useState(false)
+  const [browsing, setBrowsing] = useState(false)
   const landed = !!dropped
   const scanned = useRef(false)
   const [scanning, setScanning] = useState(false)
@@ -235,6 +261,20 @@ export default function MintCart({
   const up = canStep && quantity < maxQty ? () => onQuantity(stepQuantity(quantity, 1, maxQty)) : undefined
   const down = canStep && quantity > 1 ? () => onQuantity(stepQuantity(quantity, -1, maxQty)) : undefined
   const back = onBack ?? nav.openMenu
+  const canBrowse = !!gallery && !busy
+
+  if (browsing && gallery) {
+    return (
+      <Gallery
+        name={name}
+        ids={gallery.ids}
+        art={gallery.art}
+        loading={gallery.loading}
+        empty="Nothing minted yet. Be the first."
+        onBack={() => setBrowsing(false)}
+      />
+    )
+  }
 
   return (
     <Device
@@ -258,6 +298,15 @@ export default function MintCart({
             {art}
           </button>
           {caption && <Tag>{caption}</Tag>}
+          {canBrowse && (
+            <GalleryChip
+              type="button"
+              aria-label={`Browse every minted piece of ${name}`}
+              onClick={() => setBrowsing(true)}
+            >
+              ▦ Gallery
+            </GalleryChip>
+          )}
           {scanning && <Scan aria-hidden />}
           {status ? (
             <Dialog $tone={status.tone} role={status.alert ? 'alert' : 'status'}>
@@ -288,6 +337,17 @@ export default function MintCart({
               >
                 ◈ View as hologram
               </HoloButton>
+              {canBrowse && (
+                <HoloButton
+                  type="button"
+                  onClick={() => {
+                    setInfo(false)
+                    setBrowsing(true)
+                  }}
+                >
+                  ▦ Browse minted pieces
+                </HoloButton>
+              )}
               <dl>
                 {minted !== undefined && supply !== undefined && (
                   <>
@@ -344,6 +404,17 @@ export default function MintCart({
           : { label: 'Menu', disabled: holding, onClick: back }
       }
       start={{ label: info ? 'Close info' : 'Info', onClick: () => setInfo((v) => !v) }}
+      select={
+        canBrowse
+          ? {
+              label: 'Gallery',
+              onClick: () => {
+                setInfo(false)
+                setBrowsing(true)
+              },
+            }
+          : undefined
+      }
       dpad={info ? { up: scrollInfo(-90), down: scrollInfo(90) } : { up, down }}
     />
   )
