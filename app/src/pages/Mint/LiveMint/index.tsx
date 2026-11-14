@@ -23,6 +23,7 @@ import { revertName } from '@/miyamints/errors'
 import { COULDNT_CHECK_WORDS, freshCost, phaseGate, priceRoseWords } from '@/miyamints/precheck'
 import { approveWords, ETH, isEth, knownToken, payPlan, pickToken, sameToken, tokenLabel } from '@/miyamints/tokens'
 import { runPay } from '@/miyamints/payRun'
+import { mintRefSuffix } from '@/miyamints/referral'
 import { readTokenGate, useTokenInfo, useWalletToken } from '@/miyamints/usePay'
 import { useTx } from '@/miyamints/useTx'
 import ArtistTag from '@/pages/Mint/ArtistTag'
@@ -57,6 +58,7 @@ import {
   useStickyReads,
 } from '@/pages/Mint/useLiveMints'
 
+import ShareLink from './ShareLink'
 import { mintedWhere } from './where'
 
 /**
@@ -223,7 +225,15 @@ function useMint(
               return false
             }
             const plan = payPlan(token, total)
-            const common = { address: card.address as Address, abi: dropAbi, chainId, value: plan.value }
+            // A ref link this browser opened rides along after the arguments (src/miyamints/referral.ts); the drop
+            // ignores it, so the mint is the same with or without it.
+            const common = {
+              address: card.address as Address,
+              abi: dropAbi,
+              chainId,
+              value: plan.value,
+              dataSuffix: mintRefSuffix(address),
+            }
             if (to) {
               write.writeContract({
                 ...common,
@@ -709,6 +719,9 @@ export default function LiveMintView({ card }: { card: LiveMintCard }) {
               )}
               {!sendElsewhere && <Note>It goes to the wallet you mint from.</Note>}
             </OptionGroup>
+            {account && card.address && (
+              <ShareLink wallet={account} drop={card.address as Address} chainId={card.chainId} />
+            )}
           </OptionsRoot>
         )
       }

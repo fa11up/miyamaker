@@ -23,6 +23,9 @@ import { handleOpenSeaRequest, OPENSEA_PROXY_PATH, quoteBigInts } from './_lib/o
 import { d1TapeStore, handlePublicAccessRequest, PUBLIC_ACCESS_PATH, youtubeLookup } from './_lib/publicaccess'
 import { handleSampleMediaRequest, SAMPLE_MEDIA_PATH, SAMPLE_MEDIA_RATE } from './_lib/samplemedia'
 import { serveRange } from './_lib/ranges'
+import type { ReferralChain } from './_lib/referrals'
+import { handleReferralsRequest, REFERRALS_PATH, runReferralCron } from './_lib/referrals'
+import { creditFor } from '../src/miyamints/referral'
 import type { RevealBucket, RevealDb } from './_lib/reveal'
 import {
   handleRevealRequest,
@@ -110,6 +113,7 @@ const publicAccessReadLimiter = createRateLimiter({ capacity: 60, perSecond: 1 }
 // Drop allowlists: a wallet asks for its proof once per list phase; saving a list happens once per launch.
 const allowlistLimiter = createRateLimiter({ capacity: 60, perSecond: 1 })
 const allowlistWriteLimiter = createRateLimiter({ capacity: 5, perSecond: 0.05 })
+const referralsLimiter = createRateLimiter({ capacity: 60, perSecond: 1 })
 // These limiters are per isolate. The global limit is the Cloudflare WAF rate-limiting rule on /api/* described at
 // createRateLimiter (api/_lib/zeroex.ts); set it up in the dashboard.
 
@@ -163,13 +167,30 @@ const logSpanFrom = (raw?: string) => {
   return Number.isInteger(n) && n >= 1 && n <= 10_000 ? n : undefined
 }
 
+const revealRpcUrl = (env: Env, chainId: number) =>
+  chainId === REVEAL_CHAIN_ID
+    ? (revealSettings(env).devRpc ??
+      upstreamFor(String(chainId), { RPC_URL_1: env.REVEAL_RPC_URL_1?.trim() || env.RPC_URL_1 }))
+    : undefined
+
 const revealChain = (env: Env) => (chainId: number) => {
-  if (chainId !== REVEAL_CHAIN_ID) return undefined
-  const url =
-    revealSettings(env).devRpc ??
-    upstreamFor(String(chainId), { RPC_URL_1: env.REVEAL_RPC_URL_1?.trim() || env.RPC_URL_1 })
+  const url = revealRpcUrl(env, chainId)
   return url ? rpcChain(url, chainId) : undefined
 }
+
+/** The ref stats' chain reads: the reveal's node (api/_lib/referrals.ts). */
+const referralChain =
+  (env: Env) =>
+  (chainId: number): ReferralChain | undefined => {
+    const url = revealRpcUrl(env, chainId)
+    if (!url) return undefined
+    const c = createPublicClient({ chain: mainnet, transport: http(url, { timeout: 20_000 }) })
+    return {
+      tx: (hash) => c.getTransaction({ hash }),
+      receipt: (hash) => c.getTransactionReceipt({ hash }),
+      blockTime: async (n) => Number((await c.getBlock({ blockNumber: n })).timestamp),
+    }
+  }
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -207,7 +228,7 @@ export default {
     return env.ASSETS.fetch(request)
   },
 
-  /** Every minute (wrangler.jsonc triggers): the reveal reads new mints and draws their pieces. */
+  /** Every 15 minutes (wrangler.jsonc triggers): the reveal reads new mints and draws their pieces, then the ref stats read them. */
   async scheduled(_controller: unknown, env: Env, ctx: { waitUntil: (p: Promise<unknown>) => void }): Promise<void> {
     if (!env.DB) return
     ctx.waitUntil(
@@ -222,6 +243,9 @@ export default {
           // Before migrations/0004_reveal.sql there is no table to read: nothing to do yet.
           console.log(`reveal cron: ${String((e as Error)?.message ?? e).slice(0, 300)}`)
       )
+        // Ref stats read the mints the reveal just stored. Before migrations/0006_referrals.sql: nothing to do yet.
+        .then(() => runReferralCron(env.DB as RevealDb, referralChain(env), creditFor))
+        .catch((e) => console.log(`referrals cron: ${String((e as Error)?.message ?? e).slice(0, 300)}`))
     )
   },
 }
@@ -347,6 +371,10 @@ async function api(request: Request, env: Env, url: URL): Promise<Response> {
         listCache: edge(),
       }
     )
+  }
+
+  if (url.pathname === REFERRALS_PATH) {
+    return handleReferralsRequest(request, { db: env.DB, clientKey, limiter: referralsLimiter })
   }
 
   if (url.pathname === ALLOWLIST_PATH || url.pathname.startsWith(`${ALLOWLIST_PATH}/`)) {

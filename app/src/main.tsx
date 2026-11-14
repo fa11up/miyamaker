@@ -7,6 +7,7 @@ import { BrowserRouter } from 'react-router-dom'
 import App from './App'
 import ErrorBoundary, { RootErrorFallback } from './components/ErrorBoundary'
 import { GlobalHistory } from './GlobalHistory'
+import { captureRef } from './miyamints/referral'
 import { canonicalPath } from './pages/Swap/tradePath'
 
 window.Buffer = Buffer
@@ -24,6 +25,9 @@ if (window.location.hash.startsWith('#/')) {
 // Renamed windows keep their old links: /swap (miya swaps) is now /trade.
 const renamed = canonicalPath(`${window.location.pathname}${window.location.search}${window.location.hash}`)
 if (renamed) window.history.replaceState(null, '', renamed)
+
+// A ref link (?ref=0x…) is remembered so a mint from this browser can credit whoever shared it.
+captureRef()
 
 // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
 const rootElement = document.getElementById('app')!
