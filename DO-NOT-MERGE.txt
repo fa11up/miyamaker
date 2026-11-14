@@ -1,0 +1,7 @@
+NOT MEANT TO BE MERGED YET
+
+Branch: test/do-not-merge-polyphony
+
+This is a desktop test of sequencer polyphony (chords, lanes past 16, up to 256) and the menu sound check.
+Do not merge this branch into main.
+Pull it only to try the work on your machine. Leave main alone.
