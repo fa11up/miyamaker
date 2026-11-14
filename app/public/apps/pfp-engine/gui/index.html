@@ -554,13 +554,16 @@ body.session-dragging .session-drop-overlay{display:flex;}
             <div class="drop-zone" id="drop-zone" onclick="document.getElementById('file-input').click()" style="padding:12px 6px;font-size:10px;text-align:center;">
               📄<br>Drop PNGs<br><span style="font-size:9px;color:#888;">files only</span>
             </div>
-            <div class="drop-zone" id="folder-drop-zone" onclick="MiyaFilesystem.pickDirectory(false).then(handled=>{if(!handled)document.getElementById('folder-input').click()})" style="padding:12px 6px;font-size:10px;text-align:center;">
+            <div class="drop-zone" id="folder-drop-zone" onclick="openFolderPicker('folder-input')" style="padding:12px 6px;font-size:10px;text-align:center;">
               📁<br>Drop Layer Folder<br><span style="font-size:9px;color:#888;">one layer's PNGs</span>
             </div>
-            <div class="drop-zone" id="collection-drop-zone" onclick="MiyaFilesystem.pickDirectory(true).then(handled=>{if(!handled)document.getElementById('collection-input').click()})" style="padding:12px 6px;font-size:10px;text-align:center;border-color:var(--win-title-a);">
+            <div class="drop-zone" id="collection-drop-zone" onclick="openFolderPicker('collection-input')" style="padding:12px 6px;font-size:10px;text-align:center;border-color:var(--win-title-a);">
               🗂<br>Drop Collection<br><span style="font-size:9px;color:#888;">folder of folders</span>
             </div>
-          </div>
+            <div id="default-layers-loading" style="display:none;text-align:center;padding:4px 6px;font-size:9px;color:#006600;">
+              &#127911; <span id="default-layers-loading-text">Loading default layers…</span>
+            </div>
+            <button id="defaults-toggle-btn" onclick="toggleDefaultLayers()" style="font-size:9px;padding:2px 6px;color:#999;" title="Hide the bundled default layers; your uploads stay">✕ Clear defaults</button>
           <input type="file" id="file-input" multiple accept=".png,.jpg,.jpeg,.gif,.webp" style="display:none;">
           <input type="file" id="folder-input" webkitdirectory multiple style="display:none;">
           <input type="file" id="collection-input" webkitdirectory multiple style="display:none;">
@@ -1101,6 +1104,7 @@ body.session-dragging .session-drop-overlay{display:flex;}
   </div>
 </div>
 
+<script src="storage/miyaos-layer-store.js"></script>
 <script>
 // ══════════════════════════════════════════════════════════════════
 // CONFIG STATE
@@ -1164,7 +1168,14 @@ function getTraitCache(layerName) {
   return key ? traitCache[key] : [];
 }
 
+function withCacheBust(url) {
+  if (!url) return url;
+  if (/^(blob:|data:)/i.test(url)) return url;
+  return url + (url.includes('?') ? '&' : '?') + 't=' + Date.now();
+}
+
 function traitImageUrl(path) {
+  if (window.MiyaLayerStore) return window.MiyaLayerStore.imageUrl(path);
   return `/api/layer-image?path=${encodeURIComponent(path)}`;
 }
 
@@ -1525,6 +1536,70 @@ async function apiFetch(path, opts = {}) {
   return res.json();
 }
 
+// ── Default layers loading indicator (Task 3) ───────────────────────────────
+let defaultLayersLoading = false;
+
+function setDefaultLayersLoading(loading, message) {
+  defaultLayersLoading = loading;
+  const el = document.getElementById('default-layers-loading');
+  if (el) el.style.display = loading ? 'block' : 'none';
+  const txt = document.getElementById('default-layers-loading-text');
+  if (txt) txt.textContent = message || (loading ? 'Loading default layers…' : 'Loaded.');
+}
+
+function layerStatsText() {
+  let traits = 0;
+  const walk = nodes => (nodes || []).forEach(node => {
+    if (node.type === 'file') traits++;
+    else walk(node.children);
+  });
+  walk(layerTree);
+  return `${layerOrder.length} layer folder(s) · ${traits} trait(s)`;
+}
+
+function defaultsToggleLabel() {
+  const hidden = !!(window.MiyaLayerStore && window.MiyaLayerStore.defaultsHidden());
+  const btn = document.getElementById('defaults-toggle-btn');
+  if (!btn) return;
+  btn.textContent = hidden ? '↺ Restore defaults' : '✕ Clear defaults';
+  btn.title = hidden ? 'Bring back the bundled default layers' : 'Hide the bundled default layers; your uploads stay';
+}
+
+async function toggleDefaultLayers() {
+  if (!window.MiyaLayerStore) {
+    if (!confirm('Remove all layer folders from the local layers directory? This cannot be undone.')) return;
+    const folders = layerOrder.filter(n => n.type === 'dir');
+    for (const f of folders) {
+      try { await apiFetch(`/api/layers?path=${encodeURIComponent(f.path)}`, { method: 'DELETE' }); } catch {}
+    }
+    await refreshLayers();
+    setUploadStatus(`Cleared default layers · ${layerStatsText()}`, true);
+    await updateLivePreview();
+    return;
+  }
+  try {
+    if (window.MiyaLayerStore.defaultsHidden()) {
+      window.MiyaLayerStore.restoreDefaults();
+      setStatus('Default layers restored.');
+    } else {
+      if (!confirm('Hide the bundled default layers? Your uploaded layers stay, and you can restore the defaults with the same button.')) return;
+      window.MiyaLayerStore.hideDefaults();
+      setStatus('Default layers hidden — your uploads remain.');
+    }
+    await refreshLayers();
+    const hidden = window.MiyaLayerStore.defaultsHidden();
+    setUploadStatus(`${hidden ? 'Defaults hidden' : 'Defaults restored'} · ${layerStatsText()}`, true);
+    defaultsToggleLabel();
+    await updateLivePreview();
+  } catch (e) {
+    setStatus('Could not update defaults: ' + e.message);
+  }
+}
+
+async function clearDefaultLayers() {
+  await toggleDefaultLayers();
+}
+
 async function checkServer() {
   try {
     const data = await apiFetch('/api/status');
@@ -1539,11 +1614,20 @@ async function checkServer() {
 
 function setServerOnline(info) {
   const badge = document.getElementById('server-badge');
-  badge.textContent = '● online';
-  badge.className = 'online';
+  if (badge) {
+    badge.textContent = '● online';
+    badge.className = 'online';
+  }
+  if (info && info.miyaos) {
+    setStatus('Ready — bundled layers loaded');
+    const box = document.getElementById('server-info');
+    if (box) box.innerHTML = 'Bundled layer store active.<br>Layer edits are saved in this browser.<br>Collection generation still needs the desktop engine.';
+    return;
+  }
   setStatus('Connected to Miya pfp engine');
   if (info) {
-    document.getElementById('server-info').innerHTML =
+    const box = document.getElementById('server-info');
+    if (box) box.innerHTML =
       `Engine dir: ${info.engineDir}<br>` +
       `Layers dir: ${info.layersDir}<br>` +
       `Config:     ${info.configPath}<br>` +
@@ -1553,11 +1637,13 @@ function setServerOnline(info) {
 
 function setServerOffline() {
   const badge = document.getElementById('server-badge');
-  badge.textContent = '● offline';
-  badge.className = 'offline';
-  setStatus('⚠ Server offline — run: node gui/server.js');
-  document.getElementById('server-info').innerHTML =
-    'Server not reachable.<br>Run: <b>node gui/server.js</b><br>from inside your Miya pfp engine folder.';
+  if (badge) {
+    badge.textContent = '● offline';
+    badge.className = 'offline';
+  }
+  setStatus('⚠ Layer store unavailable');
+  const box = document.getElementById('server-info');
+  if (box) box.innerHTML = 'Bundled layer store not reachable.<br>Reload this window to retry.';
 }
 
 // ── SSE log stream ──────────────────────────────────────────────
@@ -2179,7 +2265,7 @@ function showFolderThumbs(node) {
     chk.addEventListener('click', e => e.stopPropagation());
     chk.addEventListener('change', e => { toggleTraitMarked(f.path, e.target.checked); });
     const img=document.createElement('img');
-    img.src=`/api/layer-image?path=${encodeURIComponent(f.path)}`;
+    img.src=traitImageUrl(f.path);
     img.style.cssText='width:48px;height:48px;object-fit:cover;border:1px solid var(--win-dark);image-rendering:pixelated;';
     const nl=document.createElement('div');
     nl.textContent=clean.length>8?clean.slice(0,7)+'…':clean;
@@ -2535,6 +2621,15 @@ function syncUploadToSelected() {
   for (const opt of sel.options) { if (opt.value === folderPath) { sel.value = folderPath; return; } }
 }
 
+function openFolderPicker(inputId) {
+  if (!('webkitdirectory' in document.createElement('input'))) {
+    setUploadStatus('Folder picking is not supported on this browser. Use “Drop PNGs” to select individual files instead.', false);
+    return;
+  }
+  const input = document.getElementById(inputId);
+  if (input) input.click();
+}
+
 function setupUpload() {
   const zone           = document.getElementById('drop-zone');
   const folderZone     = document.getElementById('folder-drop-zone');
@@ -2543,7 +2638,6 @@ function setupUpload() {
   const folderInput    = document.getElementById('folder-input');
   const collInput      = document.getElementById('collection-input');
 
-  // ── Plain files ──────────────────────────────────────────────
   zone.addEventListener('dragover',  e => { e.preventDefault(); zone.classList.add('dragover'); });
   zone.addEventListener('dragleave', ()=> zone.classList.remove('dragover'));
   zone.addEventListener('drop', e => {
@@ -2555,24 +2649,22 @@ function setupUpload() {
     fileInput.value = '';
   });
 
-  // ── Single layer folder ──────────────────────────────────────
   folderZone.addEventListener('dragover',  e => { e.preventDefault(); folderZone.classList.add('dragover'); });
   folderZone.addEventListener('dragleave', ()=> folderZone.classList.remove('dragover'));
   folderZone.addEventListener('drop', e => {
     e.preventDefault(); folderZone.classList.remove('dragover');
-    uploadViaDataTransfer(e.dataTransfer.items, false);
+    uploadViaDataTransfer(e.dataTransfer, false);
   });
   folderInput.addEventListener('change', () => {
     uploadViaWebkitDir(Array.from(folderInput.files), false);
     folderInput.value = '';
   });
 
-  // ── Collection folder (folder-of-folders) ───────────────────
   collectionZone.addEventListener('dragover',  e => { e.preventDefault(); collectionZone.classList.add('dragover'); });
   collectionZone.addEventListener('dragleave', ()=> collectionZone.classList.remove('dragover'));
   collectionZone.addEventListener('drop', e => {
     e.preventDefault(); collectionZone.classList.remove('dragover');
-    uploadViaDataTransfer(e.dataTransfer.items, true);
+    uploadViaDataTransfer(e.dataTransfer, true);
   });
   collInput.addEventListener('change', () => {
     uploadViaWebkitDir(Array.from(collInput.files), true);
@@ -2583,7 +2675,8 @@ function setupUpload() {
 // Upload plain files (no folder structure) into the selected target folder
 async function uploadPlainFiles(files) {
   const imageFiles = files.filter(f => /\.(png|jpg|jpeg|gif|webp)$/i.test(f.name));
-  if (!imageFiles.length) { setUploadStatus('No image files selected.', false); return; }
+  const skipped = files.length - imageFiles.length;
+  if (!imageFiles.length) { setUploadStatus(`No image files selected${skipped ? ` (${skipped} non-image skipped)` : ''}.`, false); return; }
   const folder = document.getElementById('upload-target-folder').value;
   setUploadStatus(`Uploading ${imageFiles.length} file(s)…`);
 
@@ -2596,15 +2689,23 @@ async function uploadPlainFiles(files) {
     const res  = await fetch(url, { method: 'POST', body: form });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Upload failed');
-    setUploadStatus(`✔ Uploaded ${data.count} file(s) into layers/${folder || '/'}`, true);
     await refreshLayers();
+    setUploadStatus(`✔ Uploaded ${data.count} file(s) into layers/${folder || '/'}${skipped ? ` · skipped ${skipped} non-image file(s)` : ''} · ${layerStatsText()}`, true);
   } catch(e) { setUploadStatus('✘ ' + e.message, false); }
 }
 
 // Upload files from a DataTransfer (drag-drop folder) preserving folder structure
-async function uploadViaDataTransfer(items, isCollection) {
+async function uploadViaDataTransfer(dataTransfer, isCollection) {
   setUploadStatus('Reading folder structure…');
   const allFiles = []; // [{file, relPath}]
+
+  const entries = [];
+  for (const item of Array.from(dataTransfer.items || [])) {
+    try {
+      const entry = item.webkitGetAsEntry ? item.webkitGetAsEntry() : null;
+      if (entry) entries.push(entry);
+    } catch {}
+  }
 
   async function readEntry(entry, prefix) {
     if (entry.isFile) {
@@ -2612,11 +2713,10 @@ async function uploadViaDataTransfer(items, isCollection) {
     } else if (entry.isDirectory) {
       await new Promise(res => {
         const reader = entry.createReader();
-        // readEntries may need multiple calls for >100 items
         function readBatch() {
-          reader.readEntries(async entries => {
-            if (!entries.length) { res(); return; }
-            for (const e of entries) await readEntry(e, prefix + entry.name + '/');
+          reader.readEntries(async batch => {
+            if (!batch.length) { res(); return; }
+            for (const e of batch) await readEntry(e, prefix + entry.name + '/');
             readBatch();
           });
         }
@@ -2625,20 +2725,24 @@ async function uploadViaDataTransfer(items, isCollection) {
     }
   }
 
-  for (const item of Array.from(items)) {
-    const entry = item.webkitGetAsEntry ? item.webkitGetAsEntry() : null;
-    if (entry) await readEntry(entry, '');
+  if (entries.length) {
+    for (const entry of entries) await readEntry(entry, '');
+  } else {
+    for (const file of Array.from(dataTransfer.files || [])) {
+      allFiles.push({ file, relPath: (file.webkitRelativePath || file.name).replace(/\\/g, '/') });
+    }
   }
 
+  if (!allFiles.length) { setUploadStatus('No files found. Drop a folder or use “Drop PNGs”.', false); return; }
   await sendFolderFiles(allFiles, isCollection);
 }
 
 // Upload files from <input webkitdirectory> preserving folder structure
 async function uploadViaWebkitDir(files, isCollection) {
-  const imageFiles = files.filter(f => /\.(png|jpg|jpeg|gif|webp)$/i.test(f.name));
-  if (!imageFiles.length) { setUploadStatus('No image files found.', false); return; }
+  const usable = files.filter(f => f && f.name);
+  if (!usable.length) { setUploadStatus('No files found.', false); return; }
 
-  const allFiles = imageFiles.map(f => ({
+  const allFiles = usable.map(f => ({
     file:    f,
     relPath: (f.webkitRelativePath || f.name).replace(/\\/g, '/'),
   }));
@@ -2649,13 +2753,13 @@ async function uploadViaWebkitDir(files, isCollection) {
 // Common sender for folder uploads
 async function sendFolderFiles(allFiles, isCollection) {
   const imageFiles = allFiles.filter(({file}) => /\.(png|jpg|jpeg|gif|webp)$/i.test(file.name));
-  if (!imageFiles.length) { setUploadStatus('No image files found in folder.', false); return; }
+  const skipped = allFiles.length - imageFiles.length;
+  if (!imageFiles.length) { setUploadStatus(`No image files found in folder${skipped ? ` (${skipped} non-image skipped)` : ''}.`, false); return; }
 
   const folder = document.getElementById('upload-target-folder').value;
   setUploadStatus(`Uploading ${imageFiles.length} file(s)${isCollection ? ' (collection mode)' : ''}…`);
 
   const form = new FormData();
-  // Send webkitRelativePath as the fieldName so server can reconstruct folder structure
   imageFiles.forEach(({file, relPath}) => form.append(relPath, file, file.name));
 
   try {
@@ -2663,9 +2767,9 @@ async function sendFolderFiles(allFiles, isCollection) {
     const res    = await fetch('/api/layers/upload' + params, { method: 'POST', body: form });
     const data   = await res.json();
     if (!res.ok) throw new Error(data.error || 'Upload failed');
-    const mode = isCollection ? ' (collection — layer folders created at root)' : '';
-    setUploadStatus(`✔ Uploaded ${data.count} file(s)${mode}`, true);
     await refreshLayers();
+    const mode = isCollection ? ' (collection — layer folders created at root)' : '';
+    setUploadStatus(`✔ Uploaded ${data.count} file(s)${mode}${skipped ? ` · skipped ${skipped} non-image file(s)` : ''} · ${layerStatsText()}`, true);
   } catch(e) { setUploadStatus('✘ ' + e.message, false); }
 }
 
@@ -3030,7 +3134,7 @@ function drawLayerImage(ctx, filePath) {
       console.warn('Failed to load layer image:', filePath, e);
       resolve(); // Don't fail the whole composite
     };
-    img.src = `/api/layer-image?path=${encodeURIComponent(filePath)}&t=${Date.now()}`;
+    img.src = withCacheBust(traitImageUrl(filePath));
   });
 }
 
@@ -4069,10 +4173,20 @@ async function saveAndGenerate() {
   const online = await checkServer();
   if (!online) { alert('Server is not running.\n\nStart it with:\n  node gui/server.js'); return; }
 
-  // Ensure layers are loaded
+  // Ensure layers are loaded (default layers at startup)
   if (!layerTree.length) {
-    try { const d = await apiFetch('/api/layers'); layerTree = d.layers || []; }
-    catch { alert('Server not reachable.'); return; }
+    try {
+      setDefaultLayersLoading(true);
+      const d = await apiFetch('/api/layers');
+      layerTree = d.layers || [];
+      layerOrder = layerTree.filter(n => n.type === 'dir');
+    } catch (e) {
+      setDefaultLayersLoading(false);
+      alert('Server not reachable. Default layers will not load. You can add layers manually.');
+      return;
+    } finally {
+      setDefaultLayersLoading(false);
+    }
   }
 
   layerOrder = layerTree.filter(n => n.type === 'dir');
@@ -4530,7 +4644,7 @@ async function renderEditTraitCanvas() {
     const state = editTraitState[layer.name];
     if (!state?.trait || state.transform.visible === false) continue;
     try {
-      const img = await loadImageForCanvas(traitImageUrl(state.trait.path) + '&t=' + Date.now());
+      const img = await loadImageForCanvas(withCacheBust(traitImageUrl(state.trait.path)));
       const info = editTraitDrawInfo(layer.name);
       if (!img || !info) continue;
       ctx.save();
@@ -5079,7 +5193,7 @@ function renderManualMakerMetadata() {
 async function drawManualMakerLayer(ctx, file) {
   if (!file || manualMakerIsNone(file)) return;
   try {
-    const img = await loadImageForCanvas(traitImageUrl(file.path) + '&t=' + Date.now());
+    const img = await loadImageForCanvas(withCacheBust(traitImageUrl(file.path)));
     if (!img) return;
     ctx.drawImage(img, 0, 0, ctx.canvas.width, ctx.canvas.height);
   } catch (e) {
@@ -9715,7 +9829,7 @@ function renderAiChefResults(mode, results, opts = {}) {
       return `<div class="suggestion-row danger" style="max-width:220px;"><b>Failed</b><br>${r.source || r.sourceEdition || ''}<br>${r.error}</div>`;
     }
     const imgUrl = mode === 'traits'
-      ? `/api/layer-image?path=${encodeURIComponent(r.path)}&t=${Date.now()}`
+      ? withCacheBust(traitImageUrl(r.path))
       : `/api/build/edition-image?edition=${r.edition}&t=${Date.now()}`;
     const label = mode === 'traits' ? r.name : `#${r.edition}`;
     return `<div class="ai-chef-output-card"><img src="${imgUrl}" onerror="this.style.display='none'"><span>${label}</span><span style="color:#666;">${r.provider || 'mock'}</span></div>`;
@@ -10036,12 +10150,25 @@ window.onload = async () => {
   initEditTraitCanvasMouse();
   setupUpload();
   connectLogStream();
+  if (window.MiyaLayerStore) {
+    setDefaultLayersLoading(true, 'Loading default layers…');
+    try { await window.MiyaLayerStore.ready; } catch {}
+  }
   await checkServer();
   await refreshLayers();
   await loadRaritySetup();
   if (!layerConfigs.length) renderAll();
   onPieceCountChange(); // init collection count from "Number of pieces"
   renderGeneralMetadataPreview();
+  defaultsToggleLabel();
+  if (window.MiyaLayerStore) {
+    const storeStats = window.MiyaLayerStore.stats();
+    setDefaultLayersLoading(false, `${storeStats.layers} layer folders · ${storeStats.traits} traits ready`);
+    const loadingBox = document.getElementById('default-layers-loading');
+    if (loadingBox) loadingBox.style.display = 'none';
+    setUploadStatus(`Ready · ${layerStatsText()}${window.MiyaLayerStore.memoryOnly() ? ' · uploads are session-only' : ''}`, true);
+  }
+  try { await updateLivePreview(); } catch (e) { console.warn('Live preview failed:', e); }
 
   // Pre-load trait cache in background for visual selectors
   preloadTraitCache();
@@ -10071,8 +10198,8 @@ window.MiyaEngineState = {
   },
 };
 </script>
-<script src="/storage/filesystem.js"></script>
-<script src="/storage/recent.js"></script>
-<script src="/storage/sessions.js"></script>
+<script src="storage/filesystem.js"></script>
+<script src="storage/recent.js"></script>
+<script src="storage/sessions.js"></script>
 </body>
 </html>
