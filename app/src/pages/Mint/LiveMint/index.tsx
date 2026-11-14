@@ -46,8 +46,8 @@ import { statusLamp } from '@/pages/Mint/handheld/status'
 import { TX_CANCELLED_WORDS, TX_UNCONFIRMED_WORDS } from '@/miyamints/txOutcome'
 import { useTxOutcome } from '@/miyamints/useTxOutcome'
 import MintNeeds from '@/pages/Mint/MintNeeds'
+import PieceArt from '@/pages/Mint/PieceArt'
 import { erc721mAbi } from '@/pages/Mint/Miyamini/abi'
-import { useMetadata } from '@/utils/nftMetadata'
 import { describeError } from '@/pages/Mint/Miyamini/useMiyamini'
 import type { ReadResult } from '@/pages/Mint/useLiveMints'
 import {
@@ -73,20 +73,6 @@ import { mintedWhere } from './where'
 const MAX_PER_TX = 10
 /** Said when the wallet changed between pressing Mint and the wallet prompt: the checks were for the other one. */
 const WALLET_CHANGED_WORDS = 'Your wallet changed since you pressed Mint. Nothing was sent. Check the screen and try again.'
-
-/** One minted piece of a drop, for the gallery: its tokenURI, then the image its metadata names. */
-function DropPiece({ card, id }: { card: LiveMintCard; id: number }) {
-  const uri = useReadContract({
-    address: card.address as Address,
-    abi: dropAbi,
-    chainId: card.chainId as SupportedChainId,
-    functionName: 'tokenURI',
-    args: [BigInt(id)],
-    query: { staleTime: 60 * 60_000 },
-  })
-  const meta = useMetadata<{ name?: string; image?: string }>(typeof uri.data === 'string' ? uri.data : undefined)
-  return <NftImage src={meta.data?.image || undefined} alt={meta.data?.name || `#${id}`} />
-}
 
 function useCollection(card: LiveMintCard) {
   const address = card.address as Address
@@ -625,7 +611,7 @@ export default function LiveMintView({ card }: { card: LiveMintCard }) {
         card.kind === 'drop'
           ? {
               ids: Array.from({ length: live.minted ?? 0 }, (_, i) => i + 1),
-              art: (id) => <DropPiece card={card} id={id} />,
+              art: (id) => <PieceArt card={card} id={id} />,
               loading: isLoading,
             }
           : undefined

@@ -11,7 +11,8 @@ import { INDEXER_ENABLED } from '@/constants/indexer'
 import Pages from '@/constants/pages'
 import CollectionInfo from '@/pages/Mint/Collection'
 import Collections from '@/pages/Mint/Collections'
-import { EXPLORER_PAGE_SECTION, FRENPET_SLUG, GAMES_SLUG, MUSIC_SLUG } from '@/pages/Mint/constants'
+import { EXPLORER_PAGE_SECTION, FRENPET_SLUG, GALLERY_SLUG, GAMES_SLUG, MUSIC_SLUG } from '@/pages/Mint/constants'
+import GalleryShelf from '@/pages/Mint/Gallery'
 import Boot from '@/pages/Mint/handheld/Boot'
 import FrenPet from '@/pages/Mint/handheld/FrenPet'
 import GameSelect from '@/pages/Mint/handheld/GameSelect'
@@ -86,6 +87,8 @@ export default function MintPage() {
       ? EXPLORER_PAGE_SECTION.FRENPET_SECTION
       : slug === MUSIC_SLUG
       ? EXPLORER_PAGE_SECTION.MUSIC_SECTION
+      : slug === GALLERY_SLUG
+      ? EXPLORER_PAGE_SECTION.GALLERY_SECTION
       : EXPLORER_PAGE_SECTION.LIVE_SECTION
   // Powering on with no deep link lands on the game select.
   const initialSlug = useRef(slugFromPath(location.pathname) ?? GAMES_SLUG)
@@ -182,6 +185,7 @@ export default function MintPage() {
   // from Music), then the music. Stepping never reaches a community mint without its shelf being open.
   const openable = cards.filter((c) => c.clickable && shelfOf(c) === (shelf ?? 'official'))
   const toMusic = () => go(EXPLORER_PAGE_SECTION.MUSIC_SECTION, MUSIC_SLUG)
+  const toGallery = () => go(EXPLORER_PAGE_SECTION.GALLERY_SECTION, GALLERY_SLUG)
   const carts: { slug: string; open: () => void }[] = [
     ...openable.map((c) => ({ slug: c.view === 'miyamini' ? 'miyamini' : c.slug, open: () => openCard(c) })),
     { slug: MUSIC_SLUG, open: toMusic },
@@ -206,6 +210,7 @@ export default function MintPage() {
       onShelf={setShelf}
       onOpen={openCard}
       onMusic={toMusic}
+      onGallery={toGallery}
       onBrowseLegacy={INDEXER_ENABLED ? () => setPageSection(EXPLORER_PAGE_SECTION.COLLECTIONS_SECTION) : undefined}
       onBack={toGames}
     />
@@ -271,6 +276,8 @@ export default function MintPage() {
         return cartFor(liveCard)
       case EXPLORER_PAGE_SECTION.MUSIC_SECTION:
         return <MusicDrops />
+      case EXPLORER_PAGE_SECTION.GALLERY_SECTION:
+        return <GalleryShelf onBack={toMenu} />
       case EXPLORER_PAGE_SECTION.COLLECTIONS_SECTION:
         return legacy(
           <Collections
