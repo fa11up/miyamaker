@@ -146,7 +146,7 @@ export function classifyHear(report) {
   const htmlSilent = html.some((probe) => probe.userHeard === false)
   const toneSilent = web.some((probe) => webOk(probe) && probe.userHeard === false)
   if ((htmlHeard || (htmlMoved && htmlSilent)) && toneSilent) {
-    notes.push('A music file was allowed to play, and a tone was generated, but the tone did not come out of the speaker. This browser is muting Web Audio while still playing music files. On a phone that is the silent switch \u2014 the physical one, or Silent in Control Center \u2014 not the mute button inside the app and not the volume rocker. Turning those off does not open this route.')
+    notes.push('A music file was allowed to play, and a tone was generated, but the tone did not come out of the speaker. This browser is muting Web Audio while still playing music files. On a phone that is the silent switch — the physical one, or Silent in Control Center — not the mute button inside the app and not the volume rocker. Turning those off does not open this route.')
   }
   const session = probes.find((probe) => probe.id === 'playback-session')
   if (session?.userHeard === true && toneSilent && !session.awaited) {
@@ -163,7 +163,7 @@ export function classifyHear(report) {
   const direct = probes.filter((probe) => probe.id === 'engine-direct')
   const graph = probes.filter((probe) => probe.id === 'engine-graph')
   if (direct.some(webOk) && graph.some((probe) => probe.stateAfter === 'running' && probe.clockMoved && !signalPresent(probe.rms))) {
-    notes.push('A tone straight to the speakers produced a signal, and the same tone through the instrument did not. The instrument\u2019s output chain is eating the sound. Master volume, a muted bus, or a failed limiter are the places to look. The phone\u2019s mute switch is not.')
+    notes.push('A tone straight to the speakers produced a signal, and the same tone through the instrument did not. The instrument’s output chain is eating the sound. Master volume, a muted bus, or a failed limiter are the places to look. The phone’s mute switch is not.')
   }
   const directHeard = direct.some((probe) => probe.userHeard === true && webOk(probe))
   const graphDropped = graph.some((probe) => probe.userHeard === false && webOk(probe))
@@ -171,7 +171,7 @@ export function classifyHear(report) {
     notes.push('A tone around the instrument was heard, and a tone through the instrument was generated but not heard. The output chain is dropping it on the way to the speakers.')
   }
   if (graph.some((probe) => probe.userHeard === false && typeof probe.master === 'number' && probe.master < 0.02)) {
-    notes.push('The instrument\u2019s master volume is down, so a tone through it cannot be heard even when the browser is playing. Raise the master before comparing phones.')
+    notes.push('The instrument’s master volume is down, so a tone through it cannot be heard even when the browser is playing. Raise the master before comparing phones.')
   }
   const refused = probes.some((probe) => probe.error === 'NotAllowedError' || probe.resumeError === 'NotAllowedError')
   const untrusted = probes.some((probe) => probe.gesture?.isTrusted === false)
@@ -205,7 +205,7 @@ export function classifyHear(report) {
     notes.push('Every test you answered was heard. The silence is not happening in this browser right now. Run the same check, with a finger, on a phone that stays quiet, and compare the two reports.')
   }
   if (!notes.length && probes.length && !answered.length) {
-    notes.push('The readings are in. Say whether you heard each test \u2014 the meter cannot know what reached the speaker.')
+    notes.push('The readings are in. Say whether you heard each test — the meter cannot know what reached the speaker.')
   }
   if (!notes.length && !probes.length) {
     notes.push('No test yet. Use a finger on the first row, then the same rows with a click, and say what you heard before sending the report.')
@@ -216,20 +216,20 @@ export function classifyHear(report) {
 function yn(value) {
   if (value === true) return 'yes'
   if (value === false) return 'no'
-  return '\u2014'
+  return '—'
 }
 
 function pressLabel(gesture) {
-  if (!gesture) return '\u2014'
+  if (!gesture) return '—'
   const bits = [gesture.type || '?', gesture.pointerType || '', gesture.key || ''].filter(Boolean)
   const trust = gesture.isTrusted === false ? 'untrusted' : gesture.isTrusted ? 'trusted' : ''
   const active = gesture.activation ? (gesture.activation.isActive ? 'counted' : 'not counted') : ''
-  return [bits.join(' '), trust, active].filter(Boolean).join(' \u00b7 ')
+  return [bits.join(' '), trust, active].filter(Boolean).join(' · ')
 }
 
 function probeLine(probe, index) {
   const heard = probe.userHeard === true ? 'heard' : probe.userHeard === false ? 'silent' : 'unanswered'
-  const state = `${probe.stateBefore || '\u2014'} \u2192 ${probe.stateAfter || '\u2014'}`
+  const state = `${probe.stateBefore || '—'} → ${probe.stateAfter || '—'}`
   const bits = [
     `${index + 1}. ${probe.id || probe.kind || 'test'}`,
     pressLabel(probe.gesture),
@@ -257,10 +257,10 @@ export function formatHearReport(report) {
     'MiyaMusicMaker sound check',
     'A reading only. The instrument was not changed.',
     '',
-    `Browser: ${device.ua || '\u2014'}`,
-    `Phone: ${yn(device.ios)}  Frame: ${yn(device.iframe)}  Secure: ${yn(device.secure)}  Page: ${device.visibility || '\u2014'}`,
+    `Browser: ${device.ua || '—'}`,
+    `Phone: ${yn(device.ios)}  Frame: ${yn(device.iframe)}  Secure: ${yn(device.secure)}  Page: ${device.visibility || '—'}`,
     `Audio session: ${device.audioSession || '(none)'}${device.audioSessionState ? ` ${device.audioSessionState}` : ''}`,
-    `Engine: ${engine.built ? engine.state : 'not built'}  rate ${engine.sampleRate || '\u2014'}  master ${engine.master ?? '\u2014'}  limiter ${yn(engine.limiterReady)}  clock ${engine.clockDelta ?? '\u2014'}`,
+    `Engine: ${engine.built ? engine.state : 'not built'}  rate ${engine.sampleRate || '—'}  master ${engine.master ?? '—'}  limiter ${yn(engine.limiterReady)}  clock ${engine.clockDelta ?? '—'}`,
     '',
     'Tests:',
     ...(probes.length ? probes.map(probeLine) : ['(none)']),
