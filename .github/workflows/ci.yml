@@ -147,7 +147,7 @@ jobs:
     env:
       MAINNET_RPC_URL: ${{ secrets.MAINNET_RPC_URL }}
       REQUIRE_FORK_TESTS: 'true'
-      FORK_BLOCK: '26384728' # pinned 2026-11-10: after the imdUSD/IMD 3000/10 pool (block 26379044); move it forward when the tests need newer chain state
+      FORK_BLOCK: '26410000' # pinned 2026-11-14: after the miyamints registry (26388865), the Miyamaker drop (26397610) and MiyaPool v2 (26409615); move it forward when the tests need newer chain state
     steps:
       - name: Fork RPC configured?
         id: rpc

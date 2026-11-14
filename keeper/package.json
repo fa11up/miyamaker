@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node index.mjs",
     "once": "node index.mjs --once",
-    "test": "node --test test/",
+    "test": "node --test \"test/**/*.test.mjs\"",
     "smoke": "node scripts/smoke.mjs",
     "fork-e2e": "node scripts/fork-e2e.mjs"
   },
