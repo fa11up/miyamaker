@@ -97,15 +97,20 @@ test("writeJson: temp file fsynced before the rename, the directory fsynced afte
 test("keeper.service is hardened (and the README says to verify it on the host)", () => {
   const unit = readFileSync(new URL("../keeper.service", import.meta.url), "utf8");
   for (const line of [
-    "UMask=0077", "ProtectHome=tmpfs", "ProtectKernelTunables=yes", "ProtectKernelModules=yes", "ProtectKernelLogs=yes",
+    "UMask=0077", "ProtectHome=tmpfs", "ProtectKernelTunables=yes",
     "RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX", "SystemCallFilter=@system-service", "NoNewPrivileges=true",
     "ProtectSystem=strict",
   ]) assert.match(unit, new RegExp(`^${line.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "m"), line);
+  // A user unit can't drop capabilities (it fails 218/CAPABILITIES), so these stay out on purpose, as the unit says.
+  for (const opt of ["CapabilityBoundingSet", "ProtectKernelModules", "ProtectKernelLogs", "ProtectClock"]) {
+    assert.doesNotMatch(unit, new RegExp(`^${opt}=`, "m"), `${opt} must stay out of a user unit`);
+  }
   // One name everywhere: the unit (imd-vault-keeper.service), its folder, its .env, its state/ and its key folder.
   assert.match(unit, /^WorkingDirectory=%h\/imd-vault-keeper$/m);
   assert.match(unit, /^EnvironmentFile=%h\/imd-vault-keeper\/\.env$/m);
   assert.match(unit, /^BindReadOnlyPaths=%h\/imd-vault-keeper$/m);
-  assert.match(unit, /^BindReadOnlyPaths=%h\/\.config\/imd-vault-keeper\/keeper\.key$/m);
+  // "-": optional, so the unit starts report-only before the key file exists.
+  assert.match(unit, /^BindReadOnlyPaths=-%h\/\.config\/imd-vault-keeper\/keeper\.key$/m);
   assert.match(unit, /^BindPaths=%h\/imd-vault-keeper\/state$/m);
   assert.match(unit, /^ReadWritePaths=%h\/imd-vault-keeper\/state$/m);
   const paths = [...unit.matchAll(/%h\/(?:\.config\/)?([\w.-]+)/g)].map((m) => m[1]);
